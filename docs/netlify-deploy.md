@@ -119,6 +119,7 @@ $env:DATABASE_URL="你的 Supabase PostgreSQL 生产连接串"
 
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
+pnpm db:check
 ```
 
 看到下面结果后再部署：
@@ -126,6 +127,8 @@ pnpm exec prisma migrate status
 ```text
 Database schema is up to date!
 ```
+
+如果部署后 `/api/health` 返回 `database:false`，不要继续测试投喂和问答，先按 [Netlify 数据库修复指南](./fix-netlify-database.md) 修复生产数据库连接。
 
 ## 6. Git 部署
 

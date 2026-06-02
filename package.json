@@ -17,6 +17,7 @@
     "postinstall": "prisma generate",
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",
+    "db:check": "tsx scripts/check-production-db.ts",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",

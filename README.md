@@ -77,21 +77,14 @@ pnpm dev
 http://localhost:3000
 ```
 
-如果本地没有配置 Supabase，`localhost` 会启用开发登录 fallback：
-
-```text
-邮箱：local-dev@ai-knowledge-base.local
-密码：local-password
-```
-
-也可以在登录页输入任意邮箱和密码进入本地开发会话。配置真实 Supabase 后，本地 fallback 会自动停用。
+本地和生产环境都使用 Supabase Auth。请先在 Supabase 创建项目，并填写 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY`。
 
 ## 环境变量
 
 复制 `.env.example` 到 `.env` 后填写：
 
 ```env
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ai_knowledge_base?schema=public"
+DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
 NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
 OPENAI_API_KEY="sk-your-openai-api-key"
@@ -105,7 +98,7 @@ ADMIN_USER_IDS=""
 
 说明：
 
-- `DATABASE_URL`：PostgreSQL 连接地址，生产环境必填。
+- `DATABASE_URL`：PostgreSQL 连接地址，生产环境必填。Netlify 生产环境不能使用 localhost。
 - `NEXT_PUBLIC_SUPABASE_URL`：Supabase 项目 URL。
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase anon key，不要使用 service role key。
 - `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 mock / fallback；生产环境必须配置真实 key。
@@ -154,14 +147,7 @@ pnpm exec prisma db seed
 
 seed 会创建一个本地 demo 用户，并生成 20 条示例知识和 5 条示例问答记录。示例知识覆盖客户成功、销售赋能、客服支持、产品资料、研发流程、AI 使用规范、市场运营、内部流程、数据分析、安全合规、知识库运营等分类和标签。
 
-本地无 Supabase 配置时，可以用下面账号登录查看 demo 数据：
-
-```text
-邮箱：demo@example.com
-密码：local-password
-```
-
-seed 可以重复执行。每次执行会先清理 `demo@example.com` 名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。
+seed 可以重复执行。每次执行会先清理 `demo@example.com` 名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。登录仍需通过 Supabase Auth 创建同邮箱账号。
 
 生产环境执行：
 
@@ -220,6 +206,7 @@ pnpm jobs:once                   # 手动执行一次后台任务
 pnpm prisma:seed                 # 创建演示数据
 pnpm prisma:generate             # 生成 Prisma Client
 pnpm prisma:format               # 格式化 Prisma schema
+pnpm db:check                    # 检查生产数据库、pgvector 和关键数据表
 pnpm prisma:migrate:create -- --name change-name
 pnpm prisma:migrate:deploy       # 部署迁移
 pnpm prisma:studio               # 打开 Prisma Studio
@@ -303,6 +290,7 @@ pnpm exec prisma migrate status
 详细步骤见：
 
 - [Netlify 部署指南](./docs/netlify-deploy.md)
+- [Netlify 数据库修复指南](./docs/fix-netlify-database.md)
 
 Netlify 环境变量与 Vercel 基本一致，至少包括：
 

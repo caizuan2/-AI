@@ -7,12 +7,11 @@
   "status": "ok",
   "database": false,
   "openai": true,
-  "auth": true,
-  "license": true
+  "supabase": true
 }
 ```
 
-说明登录 session 配置和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用，或生产数据库还没有应用最新 migration。
+说明 Supabase Auth 和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用。
 
 ## 1. 不要使用 localhost
 
@@ -32,21 +31,17 @@ DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ai_knowledge_base?sc
 Supabase Dashboard -> Project Settings -> Database -> Connection string
 ```
 
-复制两条连接串：
-
-- Pooler URI：给 Netlify Functions 运行时使用，填写到 `DATABASE_URL`。
-- Direct URI：给 Prisma CLI 迁移使用，填写到 `DIRECT_URL`。
-
-不要只把 `db.xxx.supabase.co:5432` 改成 `6543`。Supabase Pooler 的 host、用户名格式和参数通常都不同，必须复制完整 Pooler URI，然后把 `[YOUR-PASSWORD]` 替换为数据库密码。
+复制 PostgreSQL URI。Serverless 部署建议使用 Supabase pooler 连接串，然后把 `[YOUR-PASSWORD]` 替换为数据库密码。
 
 如果密码包含 `@`、`#`、`:`、`/`、空格等字符，需要先做 URL encode。
 
 示例格式：
 
 ```env
-DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&schema=public"
-DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
+DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
 ```
+
+也可以使用 Supabase 提供的 direct connection URI，但在 serverless 环境更容易耗尽连接数。
 
 ## 3. 填入 Netlify
 
@@ -60,12 +55,18 @@ Netlify Dashboard -> Site configuration -> Environment variables
 
 ```env
 DATABASE_URL="你的 Supabase PostgreSQL URI"
-DIRECT_URL="你的 Supabase Direct URI"
 ```
 
-确认不要填本地地址、不要保留 `[YOUR-PASSWORD]`，也不要把引号内换行。`DATABASE_URL` 必须是 Pooler URI；`DIRECT_URL` 必须是 Direct URI。
+确认不要填本地地址、不要保留 `[YOUR-PASSWORD]`，也不要把引号内换行。
 
-项目运行时只读取 `DATABASE_URL`。Prisma CLI 迁移会读取 `DIRECT_URL`。请不要只填写 `POSTGRES_URL`、`POSTGRES_PRISMA_URL`、`SUPABASE_DATABASE_URL` 或其他别名。
+项目运行时也会识别以下常见别名，但推荐统一使用 `DATABASE_URL`：
+
+```text
+POSTGRES_PRISMA_URL
+POSTGRES_URL
+SUPABASE_DATABASE_URL
+SUPABASE_DB_URL
+```
 
 ## 4. 启用 pgvector
 
@@ -82,24 +83,9 @@ create extension if not exists vector;
 ```powershell
 cd D:\XT
 $env:DATABASE_URL="你的 Supabase PostgreSQL URI"
-$env:DIRECT_URL="你的 Supabase Direct URI"
 pnpm prisma:migrate:deploy
 pnpm db:check
 ```
-
-如果 `DIRECT_URL` 因 IPv6 或网络限制无法连接，不要把 `pnpm prisma:migrate:deploy` 放进 Netlify build command。先保持 Netlify build command 为：
-
-```bash
-pnpm prisma:generate && pnpm build
-```
-
-注册 API 会在发现生产库缺少注册结构时自动补齐 `users`、`sessions`、`license_keys` 的最小表结构。如果自动补齐失败，再进入 Supabase SQL Editor，执行项目中的备用修复脚本：
-
-```text
-prisma/supabase-registration-bootstrap.sql
-```
-
-该脚本只补充注册、登录和卡密激活需要的 `users`、`sessions`、`license_keys` 表与字段，不会删除数据。
 
 `pnpm db:check` 应输出：
 
@@ -107,8 +93,6 @@ prisma/supabase-registration-bootstrap.sql
 Database connection: ok
 pgvector extension: enabled
 users table: exists
-sessions table: exists
-license_keys table: exists
 knowledge_chunks table: exists
 ```
 
@@ -133,7 +117,6 @@ https://stately-sawine-1efd4d.netlify.app/api/health
   "status": "ok",
   "database": true,
   "openai": true,
-  "auth": true,
-  "license": true
+  "supabase": true
 }
 ```
