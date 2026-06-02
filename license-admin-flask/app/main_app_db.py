@@ -92,8 +92,9 @@ def normalize_postgres_url(url: str) -> str:
     scheme = "postgresql" if parts.scheme == "postgres" else parts.scheme
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
 
-    # Prisma uses pgbouncer=true, but psycopg does not accept that connection option.
-    query.pop("pgbouncer", None)
+    # Prisma accepts a few query params that psycopg/libpq doesn't.
+    for prisma_only_key in ("pgbouncer", "schema", "connection_limit", "pool_timeout"):
+        query.pop(prisma_only_key, None)
 
     hostname = parts.hostname or ""
     if "supabase" in hostname.lower():
