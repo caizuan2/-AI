@@ -15,7 +15,7 @@ Netlify Dashboard -> 你的站点 -> Site configuration -> Environment variables
 ## 2. 完整变量列表
 
 ```env
-DATABASE_URL="postgresql://..."
+DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
 NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
 NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
 OPENAI_API_KEY="sk-..."
@@ -34,7 +34,7 @@ NODE_VERSION="22"
 
 ## 3. 变量说明
 
-- `DATABASE_URL`：Supabase PostgreSQL 生产连接串，必须是生产库，不要使用本地地址。
+- `DATABASE_URL`：Supabase PostgreSQL 生产连接串，必须是生产库，不要使用本地地址。建议使用 Supabase pooler URI，并替换真实数据库密码。
 - `NEXT_PUBLIC_SUPABASE_URL`：Supabase Project URL。
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase anon key。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
@@ -80,8 +80,10 @@ Netlify Dashboard -> Site configuration -> Environment variables
 
 部署前确认：
 
-- `DATABASE_URL` 可以连接 Supabase 生产数据库。
+- `DATABASE_URL` 可以连接 Supabase 生产数据库，且不是 `localhost`。
 - Supabase Auth 的 Site URL 指向 Netlify 生产域名。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
 - `ADMIN_EMAILS` 包含至少一个可登录的管理员邮箱。
+
+如果线上 `/api/health` 返回 `database:false`，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。
