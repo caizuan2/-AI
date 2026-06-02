@@ -20,7 +20,7 @@ Base directory / Root directory:
 .
 
 Build command:
-pnpm prisma:generate && pnpm build
+corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm build
 
 Publish directory:
 .next
@@ -36,12 +36,11 @@ Node version:
 
 ```toml
 [build]
-command = "pnpm prisma:generate && pnpm build"
+command = "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
 NODE_VERSION = "20"
-PNPM_VERSION = "11.3.0"
 
 [functions]
 directory = "netlify/functions"
@@ -183,4 +182,3 @@ https://你的-netlify-site.netlify.app
 10. 测试 `/upload` 上传小于 4MB 的文件。
 11. 测试 `/settings` 导入导出。
 12. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
-

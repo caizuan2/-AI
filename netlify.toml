@@ -1,13 +1,11 @@
 [build]
-command = "pnpm prisma:generate && pnpm build"
+command = "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
 NODE_VERSION = "20"
-PNPM_VERSION = "11.3.0"
 
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
 included_files = ["prisma/**"]
-
