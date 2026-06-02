@@ -7,6 +7,20 @@ export const dynamic = "force-dynamic";
 export interface DatabaseHealthResponse {
   database: boolean;
   error?: string;
+  stack?: string;
+}
+
+function serializeDatabaseError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      error: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    error: String(error)
+  };
 }
 
 export async function GET() {
@@ -23,10 +37,14 @@ export async function GET() {
     return NextResponse.json<DatabaseHealthResponse>({
       database: true
     });
-  } catch {
+  } catch (error) {
+    const debugError = serializeDatabaseError(error);
+
+    console.error("[api/health/db] database check failed", debugError);
+
     return NextResponse.json<DatabaseHealthResponse>({
       database: false,
-      error: "数据库连接失败。"
+      ...debugError
     });
   }
 }
