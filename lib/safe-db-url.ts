@@ -79,34 +79,3 @@ export function getDatabasePoolerWarnings(info = getSafeDatabaseUrlInfo()) {
 
   return warnings;
 }
-
-export function getDatabaseUrlWithPoolerParams(rawUrl = process.env.DATABASE_URL) {
-  if (!rawUrl?.trim()) {
-    return rawUrl;
-  }
-
-  try {
-    const url = new URL(rawUrl);
-    const isSupabasePooler = url.hostname.includes("pooler.supabase.com") || url.port === "6543";
-
-    if (!isSupabasePooler) {
-      return rawUrl;
-    }
-
-    if (!url.searchParams.has("pgbouncer")) {
-      url.searchParams.set("pgbouncer", "true");
-    }
-
-    if (!url.searchParams.has("connection_limit")) {
-      url.searchParams.set("connection_limit", "1");
-    }
-
-    if (!url.searchParams.has("pool_timeout")) {
-      url.searchParams.set("pool_timeout", "20");
-    }
-
-    return url.toString();
-  } catch {
-    return rawUrl;
-  }
-}

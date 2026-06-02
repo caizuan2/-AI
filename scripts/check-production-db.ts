@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { getDatabasePoolerWarnings, getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 import { getDatabaseUrl, getDatabaseUrlEnvName } from "@/lib/server-config-core";
 
 const databaseUrl = getDatabaseUrl();
@@ -16,40 +17,18 @@ const prisma = new PrismaClient({
   log: ["error"]
 });
 
-function describeDatabaseUrl(value: string) {
-  try {
-    const url = new URL(value);
-    const hostname = url.hostname;
-    const port = url.port || "default";
-    const pooler = hostname.includes("pooler.supabase.com") || port === "6543";
-    const pgbouncer = url.searchParams.get("pgbouncer") === "true";
-
-    return {
-      hostname,
-      port,
-      pooler,
-      pgbouncer
-    };
-  } catch {
-    return null;
-  }
-}
-
 async function main() {
-  const runtimeTarget = describeDatabaseUrl(databaseUrl);
-  const migrationTarget = directUrl ? describeDatabaseUrl(directUrl) : null;
+  const runtimeTarget = getSafeDatabaseUrlInfo(databaseUrl);
+  const migrationTarget = directUrl ? getSafeDatabaseUrlInfo(directUrl) : { present: false };
+  const warnings = getDatabasePoolerWarnings(runtimeTarget);
 
   console.log(`Using database env: ${databaseUrlEnvName ?? "DATABASE_URL"}`);
-  console.log(`Runtime DATABASE_URL target: ${
-    runtimeTarget
-      ? `${runtimeTarget.hostname}:${runtimeTarget.port} (${runtimeTarget.pooler ? "pooler" : "direct-or-other"}, pgbouncer=${runtimeTarget.pgbouncer})`
-      : "invalid-url"
-  }`);
-  console.log(`Migration DIRECT_URL target: ${
-    migrationTarget
-      ? `${migrationTarget.hostname}:${migrationTarget.port}`
-      : "missing"
-  }`);
+  console.log("Runtime DATABASE_URL target:", runtimeTarget);
+  console.log("Migration DIRECT_URL target:", migrationTarget);
+
+  if (warnings.length > 0) {
+    console.warn("DATABASE_URL warnings:", warnings);
+  }
 
   await prisma.$queryRaw`SELECT 1`;
 
@@ -93,9 +72,33 @@ async function main() {
 
 main()
   .catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "数据库检查失败。";
+    const details = error instanceof Error
+      ? {
+          name: error.name,
+          code: typeof (error as Error & { code?: unknown }).code === "string"
+            ? (error as Error & { code?: string }).code
+            : undefined,
+          message: error.message
+        }
+      : {
+          name: "UnknownError",
+          message: "数据库检查失败。"
+        };
 
-    console.error(message);
+    console.error("Database check failed:", details);
+
+    if (details.code === "P1000") {
+      console.error("P1000: 数据库认证失败，请检查用户名和密码。");
+    }
+
+    if (details.code === "P1001") {
+      console.error("P1001: 数据库不可达，请检查 host、port 和 Supabase Pooler URL。");
+    }
+
+    if (details.code === "P2024") {
+      console.error("P2024: 连接池超时，请检查 connection_limit 和 pool_timeout。");
+    }
+
     process.exitCode = 1;
   })
   .finally(async () => {
