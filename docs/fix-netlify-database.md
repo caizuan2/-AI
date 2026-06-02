@@ -12,7 +12,7 @@
 }
 ```
 
-说明登录 session 配置和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用。
+说明登录 session 配置和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用，或生产数据库还没有应用最新 migration。
 
 ## 1. 不要使用 localhost
 
@@ -94,6 +94,8 @@ pnpm db:check
 Database connection: ok
 pgvector extension: enabled
 users table: exists
+sessions table: exists
+license_keys table: exists
 knowledge_chunks table: exists
 ```
 

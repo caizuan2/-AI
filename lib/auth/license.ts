@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
 import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
+import { ConfigError, ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
 
 function normalizeLicenseKey(key: string) {
   return key.trim().toUpperCase().replace(/\s+/g, "");
@@ -11,7 +11,7 @@ export function hashLicenseKey(key: string) {
   const secret = process.env.SESSION_SECRET?.trim();
 
   if (!secret) {
-    throw new Error("SESSION_SECRET is required for license hashing.");
+    throw new ConfigError("认证密钥未配置，无法校验卡密。请在 Netlify 设置 SESSION_SECRET。");
   }
 
   return createHash("sha256").update(`${secret}:license:${normalizeLicenseKey(key)}`).digest("hex");

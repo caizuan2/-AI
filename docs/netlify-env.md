@@ -59,6 +59,12 @@ OPENAI_API_KEY
 CRON_SECRET
 ```
 
+可以用 Node.js 生成 `SESSION_SECRET`：
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
+```
+
 ## 5. 本地与生产区别
 
 本地开发使用：
@@ -85,5 +91,6 @@ Netlify Dashboard -> Site configuration -> Environment variables
 - `CRON_SECRET` 是随机长字符串。
 - `ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
 - 使用 `pnpm license:generate --count 100` 生成卡密前，确认 `SESSION_SECRET` 与生产环境一致。
+- 执行过 `pnpm prisma:migrate:deploy`，并用 `pnpm db:check` 确认 `users`、`sessions`、`license_keys`、`knowledge_chunks` 表存在。
 
-如果线上 `/api/health` 返回 `database:false`，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。
+如果线上 `/api/health` 返回 `database:false`，说明 `DATABASE_URL` 缺失、连接失败，或生产 migration 尚未应用，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。

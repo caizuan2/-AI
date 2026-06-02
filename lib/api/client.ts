@@ -9,6 +9,7 @@ const friendlyMessages: Record<AppErrorCode, string> = {
   NOT_FOUND: "没有找到对应内容。",
   AI_ERROR: "AI 服务暂时不可用，请稍后重试。",
   DATABASE_ERROR: "数据库暂不可用，请检查本地数据库配置。",
+  CONFIG_ERROR: "系统配置未完成，请联系管理员。",
   RATE_LIMITED: "请求过于频繁，请稍后再试。",
   APP_ERROR: "请求处理失败，请稍后重试。"
 };

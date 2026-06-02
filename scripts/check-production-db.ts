@@ -27,18 +27,33 @@ async function main() {
       WHERE extname = 'vector'
     ) AS installed
   `;
-  const tableRows = await prisma.$queryRaw<Array<{ users_table: string | null; chunks_table: string | null }>>`
+  const tableRows = await prisma.$queryRaw<Array<{
+    usersTable: string | null;
+    sessionsTable: string | null;
+    licenseKeysTable: string | null;
+    chunksTable: string | null;
+  }>>`
     SELECT
-      to_regclass('public.users')::text AS users_table,
-      to_regclass('public.knowledge_chunks')::text AS chunks_table
+      to_regclass('public.users')::text AS "usersTable",
+      to_regclass('public.sessions')::text AS "sessionsTable",
+      to_regclass('public.license_keys')::text AS "licenseKeysTable",
+      to_regclass('public.knowledge_chunks')::text AS "chunksTable"
   `;
 
   console.log("Database connection: ok");
   console.log(`pgvector extension: ${vectorRows[0]?.installed ? "enabled" : "missing"}`);
-  console.log(`users table: ${tableRows[0]?.users_table ? "exists" : "missing"}`);
-  console.log(`knowledge_chunks table: ${tableRows[0]?.chunks_table ? "exists" : "missing"}`);
+  console.log(`users table: ${tableRows[0]?.usersTable ? "exists" : "missing"}`);
+  console.log(`sessions table: ${tableRows[0]?.sessionsTable ? "exists" : "missing"}`);
+  console.log(`license_keys table: ${tableRows[0]?.licenseKeysTable ? "exists" : "missing"}`);
+  console.log(`knowledge_chunks table: ${tableRows[0]?.chunksTable ? "exists" : "missing"}`);
 
-  if (!vectorRows[0]?.installed || !tableRows[0]?.users_table || !tableRows[0]?.chunks_table) {
+  if (
+    !vectorRows[0]?.installed ||
+    !tableRows[0]?.usersTable ||
+    !tableRows[0]?.sessionsTable ||
+    !tableRows[0]?.licenseKeysTable ||
+    !tableRows[0]?.chunksTable
+  ) {
     process.exitCode = 1;
   }
 }

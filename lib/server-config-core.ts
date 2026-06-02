@@ -74,3 +74,7 @@ export function getDatabaseUrlEnvName() {
 export function hasDatabaseUrl() {
   return Boolean(getDatabaseUrl());
 }
+
+export function hasSessionSecret() {
+  return Boolean(process.env.SESSION_SECRET?.trim());
+}
