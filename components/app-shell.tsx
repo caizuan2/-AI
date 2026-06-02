@@ -38,7 +38,9 @@ const baseNavItems = [
 ];
 
 interface AppShellUser {
-  email: string;
+  id: string;
+  email: string | null;
+  phone: string | null;
   name: string;
   isAdmin?: boolean;
 }
@@ -49,6 +51,7 @@ export function AppShell({ children, user }: { children: ReactNode; user?: AppSh
   const navItems = user?.isAdmin
     ? [...baseNavItems, { href: "/admin", label: "管理后台", icon: Gauge }]
     : baseNavItems;
+  const userIdentity = user ? user.phone || user.email || user.id : "点击进入登录";
 
   async function handleLogout() {
     if (!user) {
@@ -127,7 +130,7 @@ export function AppShell({ children, user }: { children: ReactNode; user?: AppSh
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium text-ink">{user?.name ?? "未登录"}</p>
-              <p className="truncate text-xs text-muted">{user?.email ?? "点击进入登录"}</p>
+              <p className="truncate text-xs text-muted">{userIdentity}</p>
             </div>
             <button
               type="button"

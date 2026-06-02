@@ -27,6 +27,7 @@ OPENAI_EMBEDDING_COST_PER_1M="0.02"
 JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="use-a-long-random-secret"
 ADMIN_EMAILS="admin@example.com"
+ADMIN_PHONES="+8613812345678"
 ADMIN_USER_IDS=""
 NODE_ENV="production"
 NODE_VERSION="22"
@@ -46,6 +47,7 @@ NODE_VERSION="22"
 - `JOBS_TIMEZONE`：后台任务日志和本地 worker 使用的时区，建议 `Asia/Shanghai`。
 - `CRON_SECRET`：保护 HTTP Job 接口的随机密钥。
 - `ADMIN_EMAILS`：管理员邮箱，多个邮箱用英文逗号分隔。
+- `ADMIN_PHONES`：管理员手机号，必须使用 E.164 格式，多个手机号用英文逗号分隔。
 - `ADMIN_USER_IDS`：管理员 Supabase user id，多个 ID 用英文逗号分隔。
 - `NODE_ENV`：生产环境填写 `production`。
 - `NODE_VERSION`：Netlify Node.js 版本，填写 `22`。
@@ -84,6 +86,6 @@ Netlify Dashboard -> Site configuration -> Environment variables
 - Supabase Auth 的 Site URL 指向 Netlify 生产域名。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
-- `ADMIN_EMAILS` 包含至少一个可登录的管理员邮箱。
+- `ADMIN_EMAILS`、`ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
 
 如果线上 `/api/health` 返回 `database:false`，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。

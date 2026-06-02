@@ -7,9 +7,11 @@ export const dynamic = "force-dynamic";
 
 export interface HealthResponse {
   status: "ok";
+  auth: boolean;
   database: boolean;
   openai: boolean;
   supabase: boolean;
+  phoneAuth: true;
 }
 
 async function checkDatabase() {
@@ -28,9 +30,11 @@ async function checkDatabase() {
 export async function GET() {
   const response: HealthResponse = {
     status: "ok",
+    auth: hasSupabaseConfig(),
     database: await checkDatabase(),
     openai: hasUsableOpenAIKey(),
-    supabase: hasSupabaseConfig()
+    supabase: hasSupabaseConfig(),
+    phoneAuth: true
   };
 
   return NextResponse.json(response);

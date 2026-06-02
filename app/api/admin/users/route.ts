@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 
 interface AdminUserResponse {
   id: string;
-  email: string;
+  email: string | null;
+  phone: string | null;
   name: string;
   betaAccess: boolean;
   betaRequestedAt: string | null;
@@ -23,7 +24,8 @@ interface UpdateBetaAccessResponse {
 
 function serializeUser(user: {
   id: string;
-  email: string;
+  email: string | null;
+  phone: string | null;
   name: string;
   betaAccess: boolean;
   betaRequestedAt: Date | null;
@@ -33,6 +35,7 @@ function serializeUser(user: {
   return {
     id: user.id,
     email: user.email,
+    phone: user.phone,
     name: user.name,
     betaAccess: user.betaAccess,
     betaRequestedAt: user.betaRequestedAt?.toISOString() ?? null,

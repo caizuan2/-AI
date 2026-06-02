@@ -18,7 +18,9 @@ export default async function WaitlistPage() {
       <main className="min-h-dvh bg-canvas px-4 py-10 sm:px-6">
         <WaitlistPanel
           user={{
+            id: user.id,
             email: user.email,
+            phone: user.phone,
             name: user.name,
             betaRequestedAt: user.betaRequestedAt?.toISOString() ?? null
           }}

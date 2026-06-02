@@ -12,7 +12,7 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 
 ## v1.0.0 已支持
 
-- 登录、注册、退出登录。
+- 手机号短信验证码登录、注册、退出登录。
 - 文本投喂、网页 URL 投喂、文件上传投喂。
 - AI 自动整理标题、摘要、标签、分类、重要度和质量评分。
 - 手动确认入库、AI 判断后自动入库、仅分析不入库三种保存策略。
@@ -27,8 +27,9 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 
 ## 主要页面
 
-- `/login`：登录。
-- `/register`：注册。
+- `/login`：手机号登录。
+- `/register`：手机号注册。
+- `/verify`：短信验证码验证。
 - `/ingest`：投喂文本或网页链接。
 - `/upload`：上传 `txt`、`md`、`pdf`、`docx` 文件。
 - `/knowledge`：查看、搜索和筛选知识。
@@ -50,7 +51,7 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 - Prisma
 - PostgreSQL
 - pgvector
-- Supabase Auth
+- Supabase Auth Phone OTP
 - OpenAI API
 - node-cron / Vercel Cron / Netlify Scheduled Functions
 
@@ -77,7 +78,7 @@ pnpm dev
 http://localhost:3000
 ```
 
-本地和生产环境都使用 Supabase Auth。请先在 Supabase 创建项目，并填写 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY`。
+本地和生产环境都使用 Supabase Phone Auth。请先在 Supabase 创建项目，启用 Phone provider，并填写 `NEXT_PUBLIC_SUPABASE_URL` 和 `NEXT_PUBLIC_SUPABASE_ANON_KEY`。
 
 ## 环境变量
 
@@ -93,6 +94,7 @@ OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="replace-with-a-random-string"
 ADMIN_EMAILS="admin@example.com"
+ADMIN_PHONES="+8613812345678"
 ADMIN_USER_IDS=""
 ```
 
@@ -106,7 +108,8 @@ ADMIN_USER_IDS=""
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型。
 - `JOBS_TIMEZONE`：后台任务时区，默认建议 `Asia/Shanghai`。
 - `CRON_SECRET`：Vercel Cron 调用后台任务 API 的密钥，生产环境必须配置。
-- `ADMIN_EMAILS`：允许访问 `/admin` 的管理员邮箱，多个邮箱用英文逗号分隔。
+- `ADMIN_EMAILS`：允许访问 `/admin` 的管理员邮箱，多个邮箱用英文逗号分隔，保留用于历史账号兼容。
+- `ADMIN_PHONES`：允许访问 `/admin` 的管理员手机号，必须使用 E.164 格式，多个手机号用英文逗号分隔。
 - `ADMIN_USER_IDS`：允许访问 `/admin` 的 Supabase user id，多个 ID 用英文逗号分隔。
 
 不要把真实 key 写进代码或提交到仓库。
@@ -147,7 +150,7 @@ pnpm exec prisma db seed
 
 seed 会创建一个本地 demo 用户，并生成 20 条示例知识和 5 条示例问答记录。示例知识覆盖客户成功、销售赋能、客服支持、产品资料、研发流程、AI 使用规范、市场运营、内部流程、数据分析、安全合规、知识库运营等分类和标签。
 
-seed 可以重复执行。每次执行会先清理 `demo@example.com` 名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。登录仍需通过 Supabase Auth 创建同邮箱账号。
+seed 可以重复执行。每次执行会先清理 demo 用户名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。登录仍需通过 Supabase Phone Auth 创建对应手机号账号。
 
 生产环境执行：
 
@@ -269,6 +272,7 @@ OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 CRON_SECRET="use-a-long-random-secret"
 JOBS_TIMEZONE="Asia/Shanghai"
 ADMIN_EMAILS="admin@example.com"
+ADMIN_PHONES="+8613812345678"
 ADMIN_USER_IDS=""
 ```
 
@@ -304,6 +308,7 @@ OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 CRON_SECRET="use-a-long-random-secret"
 JOBS_TIMEZONE="Asia/Shanghai"
 ADMIN_EMAILS="admin@example.com"
+ADMIN_PHONES="+8613812345678"
 ADMIN_USER_IDS=""
 ```
 
@@ -348,7 +353,7 @@ v1.0.0 支持 Beta 灰度模式。`users.betaAccess` 控制用户是否能进入
 - 已登录但没有 `betaAccess` 的普通用户会进入 `/waitlist`。
 - 用户可以在 `/waitlist` 申请测试资格，系统会记录 `betaRequestedAt`。
 - 管理员可以在 `/admin` 的“Beta 测试资格”区域为用户开启或关闭 `betaAccess`。
-- 管理员由 `ADMIN_EMAILS` 或 `ADMIN_USER_IDS` 控制，admin API 会二次校验权限。
+- 管理员由 `ADMIN_PHONES`、`ADMIN_EMAILS` 或 `ADMIN_USER_IDS` 控制，admin API 会二次校验权限。
 
 本地演示账号 `demo@example.com` 通过 seed 默认拥有 `betaAccess`，可以直接进入知识库。
 

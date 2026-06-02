@@ -90,6 +90,8 @@ https://你的-netlify-site.netlify.app/**
 http://localhost:3000/**
 ```
 
+手机号验证码还需要启用 Supabase Phone provider 并配置短信服务商，详见 [Supabase 手机号 OTP 认证配置](./supabase-phone-auth.md)。
+
 ## 4. 本地预检查
 
 在项目根目录执行：

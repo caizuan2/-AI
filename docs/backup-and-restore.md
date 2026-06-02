@@ -181,7 +181,7 @@ pnpm prisma:generate
 
 - [ ] Supabase Auth 用户可登录。
 - [ ] 应用 `users` 表与 Supabase Auth 用户一致。
-- [ ] 管理员 `ADMIN_EMAILS` / `ADMIN_USER_IDS` 配置仍正确。
+- [ ] 管理员 `ADMIN_PHONES` / `ADMIN_EMAILS` / `ADMIN_USER_IDS` 配置仍正确。
 - [ ] 普通用户不能访问其他用户知识。
 - [ ] 未获得 `betaAccess` 的用户仍进入 `/waitlist`。
 

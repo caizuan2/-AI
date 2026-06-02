@@ -62,7 +62,8 @@ type AdminOverviewResponse = {
   }>;
   users: Array<{
     id: string;
-    email: string;
+    email: string | null;
+    phone: string | null;
     name: string;
     betaAccess: boolean;
     betaRequestedAt: string | null;
@@ -78,7 +79,8 @@ type AdminOverviewResponse = {
     updatedAt: string;
     user: {
       id: string;
-      email: string;
+      email: string | null;
+      phone: string | null;
       name: string;
     };
   }>;
@@ -148,6 +150,10 @@ function stringifySafe(value: unknown) {
   } catch {
     return "-";
   }
+}
+
+function getUserIdentity(user: { id: string; phone?: string | null; email?: string | null }) {
+  return user.phone || user.email || user.id;
 }
 
 function getPathOrOperation(entry: AdminOverviewResponse["recentErrors"][number]) {
@@ -316,7 +322,7 @@ function BetaUsersPanel({
                   <tr key={user.id}>
                     <td className="px-3 py-3">
                       <p className="font-medium text-ink">{user.name}</p>
-                      <p className="mt-1 text-xs text-muted">{user.email}</p>
+                      <p className="mt-1 text-xs text-muted">{getUserIdentity(user)}</p>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">
                       <Badge variant={user.betaAccess ? "default" : user.betaRequestedAt ? "warning" : "secondary"}>
@@ -392,7 +398,7 @@ function FeedbackPanel({ overview }: { overview: AdminOverviewResponse }) {
                     </td>
                     <td className="px-3 py-3">
                       <p className="font-medium text-ink">{item.user.name}</p>
-                      <p className="mt-1 text-xs text-muted">{item.user.email}</p>
+                      <p className="mt-1 text-xs text-muted">{getUserIdentity(item.user)}</p>
                     </td>
                     <td className="max-w-[440px] px-3 py-3">
                       <p className="line-clamp-3 whitespace-pre-wrap text-muted">{item.content}</p>

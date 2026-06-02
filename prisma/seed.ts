@@ -11,6 +11,7 @@ const prisma = new PrismaClient();
 const demoUser = {
   id: "local-demo-example-com",
   email: "demo@example.com",
+  phone: "+8613812345678",
   name: "Demo 用户"
 };
 
@@ -400,6 +401,7 @@ async function seedDemoUser() {
     where: { id: demoUser.id },
     update: {
       email: demoUser.email,
+      phone: demoUser.phone,
       name: demoUser.name,
       betaAccess: true,
       betaRequestedAt: null
@@ -535,8 +537,8 @@ async function main() {
   console.info(
     [
       "Seed completed.",
-      `Demo user: ${demoUser.email}`,
-      "Local password: local-password",
+      `Demo user phone: ${demoUser.phone}`,
+      `Demo user email: ${demoUser.email}`,
       `Knowledge items: ${knowledgeSeeds.length}`,
       `QA conversations: ${qaSeeds.length}`
     ].join("\n")

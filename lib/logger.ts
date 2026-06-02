@@ -24,6 +24,7 @@ const sensitiveKeys = new Set([
   "openaiapikey",
   "databaseurl",
   "email",
+  "phone",
   "username",
   "displayname",
   "prompt",

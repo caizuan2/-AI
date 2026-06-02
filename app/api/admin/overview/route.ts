@@ -51,7 +51,8 @@ interface AdminOverviewResponse {
   }>;
   users: Array<{
     id: string;
-    email: string;
+    email: string | null;
+    phone: string | null;
     name: string;
     betaAccess: boolean;
     betaRequestedAt: string | null;
@@ -67,7 +68,8 @@ interface AdminOverviewResponse {
     updatedAt: string;
     user: {
       id: string;
-      email: string;
+      email: string | null;
+      phone: string | null;
       name: string;
     };
   }>;
@@ -146,6 +148,7 @@ async function collectDatabaseMetrics() {
         select: {
           id: true,
           email: true,
+          phone: true,
           name: true,
           betaAccess: true,
           betaRequestedAt: true,
@@ -169,6 +172,7 @@ async function collectDatabaseMetrics() {
             select: {
               id: true,
               email: true,
+              phone: true,
               name: true
             }
           }
