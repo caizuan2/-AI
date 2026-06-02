@@ -1,25 +1,19 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ArrowRight, Database, LockKeyhole, Mail, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { unwrapApiResponse } from "@/lib/api/client";
-import { LOCAL_AUTH_DEFAULT_EMAIL, LOCAL_AUTH_DEFAULT_PASSWORD } from "@/lib/auth/local";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
-import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 function LoginForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const useSupabase = hasSupabaseConfig();
-  const [email, setEmail] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_EMAIL);
-  const [password, setPassword] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_PASSWORD);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const redirectTo = searchParams.get("redirectTo") || "/knowledge";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,24 +27,6 @@ function LoginForm() {
     setError("");
 
     try {
-      if (!useSupabase) {
-        const response = await fetch("/api/auth/local-login", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            email: email.trim(),
-            password
-          })
-        });
-
-        await unwrapApiResponse<unknown>(response, "本地登录失败，请稍后重试。");
-        router.push(redirectTo);
-        router.refresh();
-        return;
-      }
-
       const supabase = createBrowserSupabaseClient();
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim(),
@@ -62,7 +38,7 @@ function LoginForm() {
         return;
       }
 
-      router.push(redirectTo);
+      router.push("/");
       router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "登录失败，请稍后重试。");
@@ -167,13 +143,11 @@ export default function LoginPage() {
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">登录工作台</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              {hasSupabaseConfig() ? "使用 Supabase Auth 账号继续。" : "当前为本地开发登录，不需要 Supabase key。"}
+              使用 Supabase Auth 账号继续。
             </p>
           </div>
 
-          <Suspense fallback={<div className="mt-8 text-sm text-muted">加载登录表单...</div>}>
-            <LoginForm />
-          </Suspense>
+          <LoginForm />
         </div>
       </section>
     </main>

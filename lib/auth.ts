@@ -1,11 +1,9 @@
 import "server-only";
 
 import type { User as SupabaseUser } from "@supabase/supabase-js";
-import { cookies, headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
-import { isLocalAuthAllowedHost, LOCAL_AUTH_COOKIE_NAME, readLocalAuthCookie } from "@/lib/auth/local";
 import { UnauthorizedError } from "@/lib/errors";
 
 export interface CurrentUser {
@@ -49,19 +47,7 @@ function toCurrentUserIdentity(user: SupabaseUser): CurrentUser {
 
 export async function getCurrentAuthUser(): Promise<CurrentUser> {
   if (!hasSupabaseConfig()) {
-    const host = headers().get("host");
-
-    if (!isLocalAuthAllowedHost(host)) {
-      throw new UnauthorizedError("认证服务未配置，请先设置 Supabase 环境变量。");
-    }
-
-    const localUser = readLocalAuthCookie(cookies().get(LOCAL_AUTH_COOKIE_NAME)?.value);
-
-    if (!localUser) {
-      throw new UnauthorizedError("请先登录后再继续。");
-    }
-
-    return localUser;
+    throw new UnauthorizedError("认证服务未配置，请先设置 Supabase 环境变量。");
   }
 
   const supabase = createServerSupabaseClient();

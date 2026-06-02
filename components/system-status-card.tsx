@@ -7,18 +7,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 
 interface HealthResponse {
-  status: "ok";
+  auth: boolean;
   database: boolean;
-  openai: boolean;
-  supabase: boolean;
+  status: "ok";
 }
 
-type ServiceKey = "database" | "openai" | "supabase";
+type ServiceKey = "auth" | "database";
 
 const services: Array<{ key: ServiceKey; label: string }> = [
-  { key: "database", label: "Database" },
-  { key: "openai", label: "OpenAI" },
-  { key: "supabase", label: "Supabase" }
+  { key: "auth", label: "Auth" },
+  { key: "database", label: "Database" }
 ];
 
 const REFRESH_INTERVAL_MS = 30_000;

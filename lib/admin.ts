@@ -1,9 +1,7 @@
 import "server-only";
 
 import { getCurrentAuthUser, type CurrentUser } from "@/lib/auth";
-import { LOCAL_AUTH_DEFAULT_EMAIL } from "@/lib/auth/local";
 import { ForbiddenError } from "@/lib/errors";
-import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 function readCsvEnv(name: string) {
   return (process.env[name] ?? "")
@@ -28,10 +26,7 @@ export function isAdminUser(user: Pick<CurrentUser, "id" | "email">) {
     return true;
   }
 
-  return !hasSupabaseConfig() &&
-    config.userIds.length === 0 &&
-    config.emails.length === 0 &&
-    email === LOCAL_AUTH_DEFAULT_EMAIL;
+  return false;
 }
 
 export async function requireAdminUser() {
