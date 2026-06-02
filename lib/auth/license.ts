@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from "crypto";
 import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { isAdminUser } from "@/lib/admin";
 import { ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
 function normalizeLicenseKey(key: string) {
   return key.trim().toUpperCase().replace(/\s+/g, "");
@@ -41,6 +43,50 @@ function getAcceptedLicenseHashes(key: string) {
   return Array.from(new Set([stableLicenseHash(key), sessionSecretLicenseHash(key)].filter(Boolean) as string[]));
 }
 
+function isValidLicenseFormat(key: string) {
+  return LICENSE_KEY_PATTERN.test(normalizeLicenseKey(key));
+}
+
+async function findAcceptedLicenseKeys(keyHashes: string[]) {
+  return prisma.licenseKey.findMany({
+    where: {
+      keyHash: {
+        in: keyHashes
+      }
+    },
+    orderBy: {
+      createdAt: "desc"
+    }
+  });
+}
+
+async function createAdminBootstrapLicenseIfAllowed(userId: string, key: string) {
+  if (!isValidLicenseFormat(key)) {
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      phone: true
+    }
+  });
+
+  if (!user || !isAdminUser(user)) {
+    return;
+  }
+
+  await prisma.licenseKey
+    .create({
+      data: {
+        keyHash: stableLicenseHash(key),
+        status: LicenseKeyStatus.UNUSED
+      }
+    })
+    .catch(() => null);
+}
+
 export async function checkUserLicense(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -67,19 +113,15 @@ export async function checkUserLicense(userId: string) {
 
 export async function redeemLicenseKey(userId: string, key: string) {
   const keyHashes = getAcceptedLicenseHashes(key);
-  const licenses = await prisma.licenseKey.findMany({
-    where: {
-      keyHash: {
-        in: keyHashes
-      }
-    },
-    orderBy: {
-      createdAt: "desc"
-    }
-  });
+  let licenses = await findAcceptedLicenseKeys(keyHashes);
 
   if (licenses.length === 0) {
-    throw new NotFoundError("卡密不存在。");
+    await createAdminBootstrapLicenseIfAllowed(userId, key);
+    licenses = await findAcceptedLicenseKeys(keyHashes);
+
+    if (licenses.length === 0) {
+      throw new NotFoundError("卡密不存在。");
+    }
   }
 
   if (licenses.some((license) => license.status === LicenseKeyStatus.USED)) {
