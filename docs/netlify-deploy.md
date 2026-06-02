@@ -20,7 +20,7 @@ Base directory / Root directory:
 .
 
 Build command:
-corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm build
+pnpm prisma:generate && pnpm build
 
 Publish directory:
 .next
@@ -29,18 +29,19 @@ Functions directory:
 netlify/functions
 
 Node version:
-20
+22
 ```
 
 项目根目录已提供 [netlify.toml](../netlify.toml)，Netlify 会优先读取其中的配置：
 
 ```toml
 [build]
-command = "corepack enable && corepack prepare pnpm@latest --activate && pnpm install --frozen-lockfile && pnpm prisma:generate && pnpm build"
+command = "pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
-NODE_VERSION = "20"
+NODE_VERSION = "22"
+PNPM_VERSION = "10.12.4"
 
 [functions]
 directory = "netlify/functions"
@@ -97,7 +98,7 @@ http://localhost:3000/**
 cd D:\XT
 
 corepack enable
-corepack prepare pnpm@11.3.0 --activate
+corepack prepare pnpm@10.12.4 --activate
 
 pnpm install --frozen-lockfile
 pnpm prisma:generate

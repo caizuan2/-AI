@@ -29,7 +29,7 @@ All notable changes to this project are documented here.
 ### Changed
 
 - 项目版本升级为 `1.0.0`。
-- 包管理器明确为 `pnpm@11.3.0`。
+- 包管理器明确为 `pnpm@10.12.4`。
 - Vercel 构建命令调整为 `pnpm build`。
 - README 调整为面向真实用户和部署人员的 v1 使用说明。
 

@@ -29,7 +29,7 @@ CRON_SECRET="use-a-long-random-secret"
 ADMIN_EMAILS="admin@example.com"
 ADMIN_USER_IDS=""
 NODE_ENV="production"
-NODE_VERSION="20"
+NODE_VERSION="22"
 ```
 
 ## 3. 变量说明
@@ -48,7 +48,7 @@ NODE_VERSION="20"
 - `ADMIN_EMAILS`：管理员邮箱，多个邮箱用英文逗号分隔。
 - `ADMIN_USER_IDS`：管理员 Supabase user id，多个 ID 用英文逗号分隔。
 - `NODE_ENV`：生产环境填写 `production`。
-- `NODE_VERSION`：Netlify Node.js 版本，填写 `20`。
+- `NODE_VERSION`：Netlify Node.js 版本，填写 `22`。
 
 ## 4. 敏感变量
 
