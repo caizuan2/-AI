@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "buildCommand": "pnpm build",
+  "crons": [
+    {
+      "path": "/api/jobs/check-stale",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/jobs/refresh-suggestions",
+      "schedule": "15 19 * * *"
+    },
+    {
+      "path": "/api/jobs/cleanup-orphans",
+      "schedule": "0 20 * * *"
+    }
+  ]
+}

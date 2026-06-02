@@ -1,0 +1,255 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConversationType {
+  INGEST
+  CHAT
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+enum KnowledgeSaveStrategy {
+  MANUAL_CONFIRM
+  AUTO_SAVE_AFTER_AI
+  ANALYZE_ONLY
+}
+
+enum KnowledgeReviewStatus {
+  NEEDS_REVIEW
+  MASTERED
+  EXPIRED
+}
+
+enum FeedbackType {
+  ISSUE
+  SUGGESTION
+  BUG
+  RAG_HELPFUL
+  RAG_NOT_HELPFUL
+}
+
+enum FeedbackStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  ARCHIVED
+}
+
+enum AnalyticsEventType {
+  CHAT_QUESTION
+  RAG_RETRIEVAL
+  AI_CALL
+  FILE_UPLOAD
+}
+
+model User {
+  /// Supabase Auth user id. Keep this in sync with auth.users.id.
+  id              String           @id
+  email           String           @unique
+  name            String
+  betaAccess      Boolean          @default(false)
+  betaRequestedAt DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  conversations   Conversation[]
+  knowledgeItems  KnowledgeItem[]
+  settings        UserSettings?
+  feedback        Feedback[]
+  analyticsEvents AnalyticsEvent[]
+
+  @@index([betaAccess])
+  @@index([betaRequestedAt])
+  @@map("users")
+}
+
+model UserSettings {
+  id                String                @id @default(cuid())
+  userId            String                @unique
+  saveStrategy      KnowledgeSaveStrategy @default(MANUAL_CONFIRM)
+  defaultExpireDays Int                   @default(90)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([saveStrategy])
+  @@map("user_settings")
+}
+
+model Conversation {
+  id        String           @id @default(cuid())
+  userId    String
+  title     String
+  type      ConversationType
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@index([userId])
+  @@index([type])
+  @@index([updatedAt])
+  @@map("conversations")
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  role           MessageRole
+  content        String       @db.Text
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([createdAt])
+  @@map("messages")
+}
+
+model KnowledgeItem {
+  id                    String                          @id @default(cuid())
+  userId                String
+  title                 String
+  content               String                          @db.Text
+  summary               String                          @db.Text
+  tags                  String[]                        @default([])
+  category              String
+  importance            Int
+  clarityScore          Int                             @default(3)
+  completenessScore     Int                             @default(3)
+  usefulnessScore       Int                             @default(3)
+  confidenceScore       Int                             @default(3)
+  sourceType            String
+  sourceId              String?
+  sourceTitle           String?
+  sourceUrl             String?
+  sourceMessageId       String?
+  expiresAt             DateTime?
+  status                String                          @default("active")
+  reviewStatus          KnowledgeReviewStatus           @default(NEEDS_REVIEW)
+  lastReviewedAt        DateTime?
+  nextReviewAt          DateTime?                       @default(now())
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @updatedAt
+  user                  User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks                KnowledgeChunk[]
+  mergeHistories        KnowledgeMergeHistory[]
+  completionSuggestions KnowledgeCompletionSuggestion[]
+
+  @@index([userId])
+  @@index([category])
+  @@index([importance])
+  @@index([status])
+  @@index([expiresAt])
+  @@index([userId, status, expiresAt])
+  @@index([reviewStatus])
+  @@index([nextReviewAt])
+  @@index([userId, reviewStatus, nextReviewAt])
+  @@index([clarityScore, completenessScore, usefulnessScore, confidenceScore])
+  @@index([sourceType, sourceId])
+  @@index([sourceType, sourceMessageId])
+  @@index([updatedAt])
+  @@map("knowledge_items")
+}
+
+model KnowledgeMergeHistory {
+  id                      String        @id @default(cuid())
+  knowledgeItemId         String
+  incomingTitle           String
+  incomingSummary         String        @db.Text
+  incomingContent         String        @db.Text
+  incomingTags            String[]      @default([])
+  incomingCategory        String
+  incomingImportance      Int
+  incomingSourceType      String
+  incomingSourceTitle     String?
+  incomingSourceUrl       String?
+  incomingSourceMessageId String?
+  createdAt               DateTime      @default(now())
+  knowledgeItem           KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@index([knowledgeItemId])
+  @@index([createdAt])
+  @@map("knowledge_merge_histories")
+}
+
+model KnowledgeCompletionSuggestion {
+  id              String        @id @default(cuid())
+  knowledgeItemId String
+  title           String
+  detail          String        @db.Text
+  question        String        @db.Text
+  priority        Int
+  mode            String        @default("local")
+  model           String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  knowledgeItem   KnowledgeItem @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([knowledgeItemId])
+  @@index([updatedAt])
+  @@index([mode])
+  @@map("knowledge_completion_suggestions")
+}
+
+model Feedback {
+  id        String         @id @default(cuid())
+  userId    String
+  type      FeedbackType
+  content   String         @db.Text
+  status    FeedbackStatus @default(OPEN)
+  metadata  Json?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
+  @@map("feedback")
+}
+
+model AnalyticsEvent {
+  id           String             @id @default(cuid())
+  userId       String?
+  type         AnalyticsEventType
+  numericValue Float?
+  metadata     Json?
+  occurredAt   DateTime           @default(now())
+  createdAt    DateTime           @default(now())
+  user         User?              @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([userId])
+  @@index([userId, occurredAt])
+  @@index([type])
+  @@index([type, occurredAt])
+  @@index([occurredAt])
+  @@map("analytics_events")
+}
+
+model KnowledgeChunk {
+  id              String                       @id @default(cuid())
+  knowledgeItemId String
+  chunkText       String                       @db.Text
+  chunkIndex      Int
+  metadata        Json?
+  /// pgvector is represented as Unsupported because Prisma Client does not natively support VECTOR.
+  /// Write and search embeddings with raw SQL, for example via prisma.$queryRaw.
+  embedding       Unsupported("vector(1536)")?
+  createdAt       DateTime                     @default(now())
+  knowledgeItem   KnowledgeItem                @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+
+  @@unique([knowledgeItemId, chunkIndex])
+  @@index([knowledgeItemId])
+  @@map("knowledge_chunks")
+}
