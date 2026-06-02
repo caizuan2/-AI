@@ -6,17 +6,13 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, CheckCircle2, Database, LockKeyhole, Mail, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { unwrapApiResponse } from "@/lib/api/client";
-import { LOCAL_AUTH_DEFAULT_EMAIL, LOCAL_AUTH_DEFAULT_NAME, LOCAL_AUTH_DEFAULT_PASSWORD } from "@/lib/auth/local";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
-import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 export default function RegisterPage() {
   const router = useRouter();
-  const useSupabase = hasSupabaseConfig();
-  const [name, setName] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_NAME);
-  const [email, setEmail] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_EMAIL);
-  const [password, setPassword] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_PASSWORD);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -39,27 +35,8 @@ export default function RegisterPage() {
     setSuccess("");
 
     try {
-      if (!useSupabase) {
-        const response = await fetch("/api/auth/local-register", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            name: name.trim(),
-            email: email.trim(),
-            password
-          })
-        });
-
-        await unwrapApiResponse<unknown>(response, "本地注册失败，请稍后重试。");
-        router.push("/knowledge");
-        router.refresh();
-        return;
-      }
-
       const supabase = createBrowserSupabaseClient();
-      const { data, error: signUpError } = await supabase.auth.signUp({
+      const { error: signUpError } = await supabase.auth.signUp({
         email: email.trim(),
         password,
         options: {
@@ -74,13 +51,9 @@ export default function RegisterPage() {
         return;
       }
 
-      if (data.session) {
-        router.push("/knowledge");
-        router.refresh();
-        return;
-      }
-
-      setSuccess("注册成功，请检查邮箱完成验证。");
+      setSuccess("注册成功，正在进入知识库。");
+      router.push("/knowledge");
+      router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "注册失败，请稍后重试。");
     } finally {
@@ -129,7 +102,7 @@ export default function RegisterPage() {
             <p className="text-sm font-medium text-teal-700">创建账号</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">注册工作台</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              {useSupabase ? "使用邮箱密码创建 Supabase Auth 账号。" : "当前为本地开发注册，会创建本地开发会话。"}
+              使用邮箱密码创建 Supabase Auth 账号。
             </p>
           </div>
 

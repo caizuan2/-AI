@@ -1,6 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { isLocalAuthAllowedHost, LOCAL_AUTH_COOKIE_NAME, readLocalAuthCookie } from "@/lib/auth/local";
 import { getSupabaseConfig, hasSupabaseConfig } from "@/lib/supabase/config";
 
 const protectedPagePrefixes = [
@@ -50,21 +49,8 @@ export async function updateSupabaseSession(request: NextRequest, requestHeaders
   const isAuthPage = isPathUnder(pathname, authPagePrefixes);
 
   if (!hasSupabaseConfig()) {
-    const localUser = isLocalAuthAllowedHost(request.nextUrl.hostname)
-      ? readLocalAuthCookie(request.cookies.get(LOCAL_AUTH_COOKIE_NAME)?.value)
-      : null;
-
-    if (isProtectedPage && !localUser) {
+    if (isProtectedPage) {
       return redirectToLogin(request);
-    }
-
-    if (isAuthPage && localUser) {
-      const url = request.nextUrl.clone();
-
-      url.pathname = "/knowledge";
-      url.search = "";
-
-      return NextResponse.redirect(url);
     }
 
     return nextWithRequestHeaders(request, requestHeaders);

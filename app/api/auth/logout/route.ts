@@ -1,6 +1,5 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { getCurrentAuthUser } from "@/lib/auth";
-import { LOCAL_AUTH_COOKIE_NAME } from "@/lib/auth/local";
+import { UnauthorizedError } from "@/lib/errors";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
@@ -13,29 +12,17 @@ interface LogoutResponse {
 export async function POST() {
   try {
     if (!hasSupabaseConfig()) {
-      const response = apiSuccess<LogoutResponse>({ signedOut: true });
-
-      response.cookies.set(LOCAL_AUTH_COOKIE_NAME, "", {
-        path: "/",
-        maxAge: 0
-      });
-
-      return response;
+      throw new UnauthorizedError("认证服务未配置，请先设置 Supabase 环境变量。");
     }
 
-    await getCurrentAuthUser();
     const supabase = createServerSupabaseClient();
+    const { error } = await supabase.auth.signOut();
 
-    await supabase.auth.signOut();
+    if (error) {
+      throw new UnauthorizedError("退出登录失败，请稍后重试。");
+    }
 
-    const response = apiSuccess<LogoutResponse>({ signedOut: true });
-
-    response.cookies.set(LOCAL_AUTH_COOKIE_NAME, "", {
-      path: "/",
-      maxAge: 0
-    });
-
-    return response;
+    return apiSuccess<LogoutResponse>({ signedOut: true });
   } catch (error) {
     return apiError(error);
   }
