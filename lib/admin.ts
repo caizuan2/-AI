@@ -2,7 +2,6 @@ import "server-only";
 
 import { normalizePhone } from "@/lib/auth/phone";
 import { requireUser, type CurrentUser } from "@/lib/auth";
-import { checkUserLicense } from "@/lib/auth/license";
 import { ForbiddenError } from "@/lib/errors";
 
 function readCsvEnv(name: string) {
@@ -41,8 +40,6 @@ export function isAdminUser(user: Pick<CurrentUser, "id" | "phone">) {
 
 export async function requireAdminUser() {
   const user = await requireUser();
-
-  await checkUserLicense(user.id);
 
   if (!isAdminUser(user)) {
     throw new ForbiddenError("仅管理员可以访问管理后台。");
