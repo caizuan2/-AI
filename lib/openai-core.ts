@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import { env } from "@/lib/env";
 import { AIError } from "@/lib/errors";
 
 export interface OpenAIClientConfig {
@@ -17,16 +16,51 @@ export class OpenAIServiceError extends AIError {
   }
 }
 
+const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const DEFAULT_OPENAI_EMBEDDING_MODEL = "text-embedding-3-small";
+
+let cachedOpenAI: OpenAI | null = null;
+
+function readOpenAIKey() {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+
+  if (!apiKey) {
+    throw new OpenAIServiceError("OpenAI API key 未配置，请在运行环境设置 OPENAI_API_KEY。");
+  }
+
+  return apiKey;
+}
+
 export const openaiConfig: OpenAIClientConfig = {
-  chatModel: env.OPENAI_MODEL,
-  embeddingModel: env.OPENAI_EMBEDDING_MODEL
+  get chatModel() {
+    return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+  },
+  get embeddingModel() {
+    return process.env.OPENAI_EMBEDDING_MODEL?.trim() || DEFAULT_OPENAI_EMBEDDING_MODEL;
+  }
 };
 
-export const openai = new OpenAI({
-  apiKey: env.OPENAI_API_KEY
+function getOpenAIClient() {
+  if (!cachedOpenAI) {
+    cachedOpenAI = new OpenAI({
+      apiKey: readOpenAIKey()
+    });
+  }
+
+  return cachedOpenAI;
+}
+
+export const openai = new Proxy({} as OpenAI, {
+  get(_target, property, receiver) {
+    return Reflect.get(getOpenAIClient(), property, receiver);
+  }
 });
 
 export function normalizeOpenAIError(error: unknown, fallbackMessage: string) {
+  if (error instanceof OpenAIServiceError) {
+    return error;
+  }
+
   if (error instanceof OpenAI.APIError) {
     return new OpenAIServiceError(fallbackMessage, error);
   }

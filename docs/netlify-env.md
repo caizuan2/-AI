@@ -28,6 +28,8 @@ JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="use-a-long-random-secret"
 ADMIN_EMAILS="admin@example.com"
 ADMIN_USER_IDS=""
+NODE_ENV="production"
+NODE_VERSION="20"
 ```
 
 ## 3. 变量说明
@@ -45,6 +47,8 @@ ADMIN_USER_IDS=""
 - `CRON_SECRET`：保护 HTTP Job 接口的随机密钥。
 - `ADMIN_EMAILS`：管理员邮箱，多个邮箱用英文逗号分隔。
 - `ADMIN_USER_IDS`：管理员 Supabase user id，多个 ID 用英文逗号分隔。
+- `NODE_ENV`：生产环境填写 `production`。
+- `NODE_VERSION`：Netlify Node.js 版本，填写 `20`。
 
 ## 4. 敏感变量
 
@@ -81,4 +85,3 @@ Netlify Dashboard -> Site configuration -> Environment variables
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
 - `ADMIN_EMAILS` 包含至少一个可登录的管理员邮箱。
-

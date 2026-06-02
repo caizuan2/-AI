@@ -17,24 +17,28 @@ function readRequiredEnv(key: EnvKey) {
   return value;
 }
 
-function loadEnv() {
-  const values = Object.fromEntries(requiredEnvKeys.map((key) => [key, readRequiredEnv(key)])) as Record<
-    EnvKey,
-    string | null
-  >;
-  const missingKeys = requiredEnvKeys.filter((key) => values[key] === null);
+export function getRequiredEnv(key: EnvKey) {
+  const value = readRequiredEnv(key);
 
-  if (missingKeys.length > 0) {
+  if (!value) {
     throw new Error(
       [
-        `Missing required environment variable${missingKeys.length > 1 ? "s" : ""}: ${missingKeys.join(", ")}`,
+        `Missing required environment variable: ${key}`,
         "Create a .env file from .env.example and fill in these values.",
         "Never commit real API keys."
       ].join(" ")
     );
   }
 
-  return values as Record<EnvKey, string>;
+  return value;
 }
 
-export const env = loadEnv();
+export const env = new Proxy({} as Record<EnvKey, string>, {
+  get(_target, property) {
+    if (typeof property !== "string" || !requiredEnvKeys.includes(property as EnvKey)) {
+      return undefined;
+    }
+
+    return getRequiredEnv(property as EnvKey);
+  }
+});
