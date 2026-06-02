@@ -18,7 +18,7 @@ interface AdminOverviewResponse {
     knowledgeCount: number | null;
     aiCallsToday: number;
     recentErrorCount: number;
-    betaPendingCount: number | null;
+    inactiveLicenseCount: number | null;
     openFeedbackCount: number | null;
   };
   health: {
@@ -54,8 +54,8 @@ interface AdminOverviewResponse {
     email: string | null;
     phone: string | null;
     name: string;
-    betaAccess: boolean;
-    betaRequestedAt: string | null;
+    licenseActivated: boolean;
+    isActive: boolean;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -107,7 +107,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount: null,
       knowledgeCount: null,
-      betaPendingCount: null,
+      inactiveLicenseCount: null,
       users: [],
       openFeedbackCount: null,
       feedback: [],
@@ -124,13 +124,12 @@ async function collectDatabaseMetrics() {
   try {
     await prisma.$queryRaw`SELECT 1`;
 
-    const [userCount, knowledgeCount, betaPendingCount, openFeedbackCount, users, feedback] = await prisma.$transaction([
+    const [userCount, knowledgeCount, inactiveLicenseCount, openFeedbackCount, users, feedback] = await prisma.$transaction([
       prisma.user.count(),
       prisma.knowledgeItem.count(),
       prisma.user.count({
         where: {
-          betaAccess: false,
-          betaRequestedAt: { not: null }
+          licenseActivated: false
         }
       }),
       prisma.feedback.count({
@@ -140,8 +139,7 @@ async function collectDatabaseMetrics() {
       }),
       prisma.user.findMany({
         orderBy: [
-          { betaAccess: "asc" },
-          { betaRequestedAt: "desc" },
+          { licenseActivated: "asc" },
           { createdAt: "desc" }
         ],
         take: 50,
@@ -150,8 +148,8 @@ async function collectDatabaseMetrics() {
           email: true,
           phone: true,
           name: true,
-          betaAccess: true,
-          betaRequestedAt: true,
+          licenseActivated: true,
+          isActive: true,
           createdAt: true,
           updatedAt: true
         }
@@ -183,7 +181,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount,
       knowledgeCount,
-      betaPendingCount,
+      inactiveLicenseCount,
       users,
       openFeedbackCount,
       feedback,
@@ -197,7 +195,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount: null,
       knowledgeCount: null,
-      betaPendingCount: null,
+      inactiveLicenseCount: null,
       users: [],
       openFeedbackCount: null,
       feedback: [],
@@ -260,7 +258,7 @@ export async function GET() {
         knowledgeCount: databaseMetrics.knowledgeCount,
         aiCallsToday,
         recentErrorCount,
-        betaPendingCount: databaseMetrics.betaPendingCount,
+        inactiveLicenseCount: databaseMetrics.inactiveLicenseCount,
         openFeedbackCount: databaseMetrics.openFeedbackCount
       },
       health: {
@@ -278,12 +276,16 @@ export async function GET() {
       recentErrors: recentErrors.map(serializeErrorEntry),
       users: databaseMetrics.users.map((user) => ({
         ...user,
-        betaRequestedAt: user.betaRequestedAt?.toISOString() ?? null,
+        name: user.name ?? user.phone ?? user.email ?? user.id,
         createdAt: user.createdAt.toISOString(),
         updatedAt: user.updatedAt.toISOString()
       })),
       feedback: databaseMetrics.feedback.map((item) => ({
         ...item,
+        user: {
+          ...item.user,
+          name: item.user.name ?? item.user.phone ?? item.user.email ?? item.user.id
+        },
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString()
       }))

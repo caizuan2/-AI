@@ -1,6 +1,6 @@
 # 备份与恢复手册
 
-本文档用于生产环境的数据库备份、文件备份、恢复操作和灾难恢复演练。目标平台为 Vercel + Supabase。
+本文档用于生产环境的数据库备份、文件备份、恢复操作和灾难恢复演练。目标平台为 Netlify + Supabase PostgreSQL。
 
 > 注意：备份策略和保留周期会受 Supabase 套餐、项目区域、Postgres 版本和 PITR 设置影响。上线前必须以 Supabase Dashboard 与官方文档为准复核一次。
 
@@ -108,7 +108,7 @@ Storage 备份要求：
 
 ### 4.1 恢复前准备
 
-- [ ] 暂停 Vercel Cron 或后台任务，避免恢复过程中继续写入。
+- [ ] 暂停 Netlify Scheduled Functions 或后台任务，避免恢复过程中继续写入。
 - [ ] 暂停高风险写接口，必要时进入维护模式。
 - [ ] 记录当前应用版本、迁移版本、环境变量摘要和事故时间。
 - [ ] 确认恢复目标：恢复到当前项目，还是恢复到新 Supabase 项目。
@@ -179,11 +179,11 @@ pnpm prisma:generate
 
 认证与权限：
 
-- [ ] Supabase Auth 用户可登录。
-- [ ] 应用 `users` 表与 Supabase Auth 用户一致。
-- [ ] 管理员 `ADMIN_PHONES` / `ADMIN_EMAILS` / `ADMIN_USER_IDS` 配置仍正确。
+- [ ] 手机号 + 密码登录可用。
+- [ ] `sessions` 表可以正常写入和清理。
+- [ ] 管理员 `ADMIN_PHONES` / `ADMIN_USER_IDS` 配置仍正确。
 - [ ] 普通用户不能访问其他用户知识。
-- [ ] 未获得 `betaAccess` 的用户仍进入 `/waitlist`。
+- [ ] 未激活卡密的用户仍进入 `/unlock`。
 
 业务数据：
 
@@ -198,7 +198,7 @@ AI 与任务：
 
 - [ ] `OPENAI_API_KEY`、模型和 embedding 模型仍配置正确。
 - [ ] 本地开发环境没有 OpenAI key 时 mock / fallback 模式仍可运行；生产环境必须重新配置真实 key。
-- [ ] Vercel Cron 或后台任务恢复启用。
+- [ ] Netlify Scheduled Functions 或后台任务恢复启用。
 - [ ] `/api/jobs/check-stale`、`/api/jobs/refresh-suggestions`、`/api/jobs/cleanup-orphans` 可正常执行。
 
 Storage：
@@ -210,7 +210,7 @@ Storage：
 
 监控与日志：
 
-- [ ] Vercel Logs 没有持续 5xx。
+- [ ] Netlify Logs 没有持续 5xx。
 - [ ] `/admin` 系统健康状态正常。
 - [ ] 最近错误日志没有大量数据库错误。
 - [ ] 已记录恢复时间、恢复点、操作人和验证结果。
@@ -225,7 +225,7 @@ Storage：
 - [ ] 定义演练场景，例如误删知识表、错误迁移、Storage 文件丢失、OpenAI key 失效。
 - [ ] 确认演练只在测试项目或临时项目执行，不碰生产数据。
 - [ ] 准备最近一次生产手动备份。
-- [ ] 准备测试 Supabase 项目和测试 Vercel 环境变量。
+- [ ] 准备测试 Supabase 项目和测试 Netlify 环境变量。
 - [ ] 记录预期 RPO 和 RTO。
 
 ### 6.2 演练执行
@@ -239,7 +239,7 @@ create extension if not exists vector;
 
 3. 恢复数据库备份到测试项目。
 4. 如果有 Storage 备份，恢复文件到测试 bucket。
-5. 在 Vercel Preview 或本地 `.env` 中切换到测试项目连接串。
+5. 在 Netlify Deploy Preview 或本地 `.env` 中切换到测试项目连接串。
 6. 执行迁移状态检查。
 
 ```bash
@@ -278,7 +278,7 @@ pnpm build
 - [ ] 备份文件是否容易找到且权限正确。
 - [ ] 恢复命令是否可以无歧义执行。
 - [ ] 是否有人依赖个人账号、个人电脑或未共享密钥。
-- [ ] 是否遗漏 Storage 文件、Auth 用户或环境变量。
+- [ ] 是否遗漏 Storage 文件、应用用户或环境变量。
 - [ ] 是否需要开启 PITR 或提升备份频率。
 - [ ] 是否需要自动化导出脚本和恢复脚本。
 - [ ] 是否更新了本文档和 `docs/production-checklist.md`。

@@ -7,11 +7,12 @@
   "status": "ok",
   "database": false,
   "openai": true,
-  "supabase": true
+  "auth": true,
+  "license": true
 }
 ```
 
-说明 Supabase Auth 和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用。
+说明登录 session 配置和 OpenAI 已配置，但 Netlify 的 PostgreSQL 连接不可用。
 
 ## 1. 不要使用 localhost
 
@@ -117,6 +118,7 @@ https://stately-sawine-1efd4d.netlify.app/api/health
   "status": "ok",
   "database": true,
   "openai": true,
-  "supabase": true
+  "auth": true,
+  "license": true
 }
 ```

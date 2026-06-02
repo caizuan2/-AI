@@ -15,7 +15,7 @@ All notable changes to this project are documented here.
 - RAG 问答：`/chat` 支持基于当前用户知识库回答问题，展示引用编号和来源卡片。
 - 检索能力：封装 hybrid search，结合向量检索、关键词检索、importance 加权、更新时间加权和低相似度过滤。
 - Prompt injection 防护：RAG prompt 明确区分系统指令、用户问题和检索上下文，不执行知识内容中的指令。
-- 用户认证：接入 Supabase Auth，并提供 localhost 本地开发登录 fallback。
+- 用户认证：支持手机号 + 密码注册登录，使用 HttpOnly Cookie session，并加入卡密激活门禁。
 - 用户数据隔离：核心 API 按当前用户读取、写入、检索和导出知识。
 - 统一错误处理：新增 `AppError` 系列错误和统一 API success/error 响应格式。
 - Rate limit：对核心 API 增加用户级或 IP 级限流。
@@ -23,14 +23,14 @@ All notable changes to this project are documented here.
 - 知识复习：新增 `/review`，支持重要知识推荐和复习状态更新。
 - 知识过期检测：支持 `expiresAt`、`status`、默认过期周期和后台 stale 检查。
 - 导入导出：`/settings` 支持 JSON、Markdown、CSV 导出，以及 JSON 导入和重复检测。
-- 后台任务：使用 `node-cron` 和 Vercel Cron route 检查过期知识、刷新补全建议、清理孤立 chunks。
-- 部署准备：新增 Vercel + Supabase 配置、pgvector 说明、生产检查清单和 v1 发布说明。
+- 后台任务：使用 `node-cron` 和 Netlify Scheduled Functions 检查过期知识、刷新补全建议、清理孤立 chunks。
+- 部署准备：新增 Netlify + Supabase PostgreSQL 配置、pgvector 说明、生产检查清单和 v1 发布说明。
 
 ### Changed
 
 - 项目版本升级为 `1.0.0`。
 - 包管理器明确为 `pnpm@10.12.4`。
-- Vercel 构建命令调整为 `pnpm build`。
+- Netlify 构建命令调整为 `pnpm prisma:generate && pnpm build`。
 - README 调整为面向真实用户和部署人员的 v1 使用说明。
 
 ### Security
@@ -45,7 +45,7 @@ All notable changes to this project are documented here.
 ### Known Gaps
 
 - 多轮对话历史尚未持久化到 `conversations` / `messages` 主流程。
-- 限流目前为内存实现，Vercel 多实例生产环境建议接入 Redis / Upstash。
+- 限流目前为内存实现，多实例生产环境建议接入 Redis / Upstash。
 - 长文档处理仍以同步 API 流程为主，尚未接入完整队列系统。
 - 尚未提供团队空间、角色权限、审计日志和知识图谱。
 - 尚未提供生产级监控告警、自动备份恢复演练和端到端测试套件。

@@ -12,7 +12,7 @@ function authorizeCronRequest(request: Request) {
 
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
-      throw new UnauthorizedError("后台任务密钥未配置，请在 Vercel 中设置 CRON_SECRET。");
+      throw new UnauthorizedError("后台任务密钥未配置，请在部署平台中设置 CRON_SECRET。");
     }
 
     return;

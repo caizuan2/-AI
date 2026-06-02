@@ -29,7 +29,7 @@ type AdminOverviewResponse = {
     knowledgeCount: number | null;
     aiCallsToday: number;
     recentErrorCount: number;
-    betaPendingCount: number | null;
+    inactiveLicenseCount: number | null;
     openFeedbackCount: number | null;
   };
   health: {
@@ -65,8 +65,8 @@ type AdminOverviewResponse = {
     email: string | null;
     phone: string | null;
     name: string;
-    betaAccess: boolean;
-    betaRequestedAt: string | null;
+    licenseActivated: boolean;
+    isActive: boolean;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -285,20 +285,20 @@ function RecentErrors({ overview }: { overview: AdminOverviewResponse }) {
   );
 }
 
-function BetaUsersPanel({
+function LicenseUsersPanel({
   overview,
   updatingUserId,
-  onUpdateBetaAccess
+  onUpdateLicenseActivation
 }: {
   overview: AdminOverviewResponse;
   updatingUserId: string | null;
-  onUpdateBetaAccess: (userId: string, betaAccess: boolean) => void;
+  onUpdateLicenseActivation: (userId: string, licenseActivated: boolean) => void;
 }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Beta 测试资格</CardTitle>
-        <CardDescription>审核等待名单，并为用户开启或关闭 betaAccess。</CardDescription>
+        <CardTitle>卡密激活状态</CardTitle>
+        <CardDescription>查看用户是否已激活，并可手动开启或关闭知识库访问。</CardDescription>
       </CardHeader>
       <CardContent>
         {overview.users.length === 0 ? (
@@ -312,7 +312,7 @@ function BetaUsersPanel({
                 <tr>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">用户</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">状态</th>
-                  <th className="whitespace-nowrap px-3 py-3 font-semibold">申请时间</th>
+                  <th className="whitespace-nowrap px-3 py-3 font-semibold">账号状态</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">创建时间</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">操作</th>
                 </tr>
@@ -325,19 +325,19 @@ function BetaUsersPanel({
                       <p className="mt-1 text-xs text-muted">{getUserIdentity(user)}</p>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">
-                      <Badge variant={user.betaAccess ? "default" : user.betaRequestedAt ? "warning" : "secondary"}>
-                        {user.betaAccess ? "已开通" : user.betaRequestedAt ? "待审核" : "未申请"}
+                      <Badge variant={user.licenseActivated ? "default" : "warning"}>
+                        {user.licenseActivated ? "已激活" : "未激活"}
                       </Badge>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">
-                      {user.betaRequestedAt ? formatTime(user.betaRequestedAt) : "-"}
+                      {user.isActive ? "正常" : "已禁用"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">{formatTime(user.createdAt)}</td>
                     <td className="whitespace-nowrap px-3 py-3">
                       <Button
                         size="sm"
-                        variant={user.betaAccess ? "outline" : "secondary"}
-                        onClick={() => onUpdateBetaAccess(user.id, !user.betaAccess)}
+                        variant={user.licenseActivated ? "outline" : "secondary"}
+                        onClick={() => onUpdateLicenseActivation(user.id, !user.licenseActivated)}
                         disabled={updatingUserId === user.id}
                       >
                         {updatingUserId === user.id ? (
@@ -345,7 +345,7 @@ function BetaUsersPanel({
                         ) : (
                           <ShieldCheck className="h-4 w-4" />
                         )}
-                        {user.betaAccess ? "关闭" : "开通"}
+                        {user.licenseActivated ? "关闭激活" : "开启激活"}
                       </Button>
                     </td>
                   </tr>
@@ -453,9 +453,9 @@ export function AdminDashboard() {
         icon: AlertTriangle
       },
       {
-        title: "Beta 待审核",
-        value: formatCount(overview.metrics.betaPendingCount),
-        description: "已申请但尚未开通 betaAccess 的用户。",
+        title: "未激活用户",
+        value: formatCount(overview.metrics.inactiveLicenseCount),
+        description: "尚未完成卡密激活的账号数量。",
         icon: ShieldCheck
       },
       {
@@ -493,7 +493,7 @@ export function AdminDashboard() {
     void loadOverview();
   }, []);
 
-  async function updateBetaAccess(userId: string, betaAccess: boolean) {
+  async function updateLicenseActivation(userId: string, licenseActivated: boolean) {
     setUpdatingUserId(userId);
     setError("");
 
@@ -503,13 +503,13 @@ export function AdminDashboard() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ userId, betaAccess })
+        body: JSON.stringify({ userId, licenseActivated })
       });
 
-      await unwrapApiResponse<unknown>(response, "更新 Beta 测试资格失败。");
+      await unwrapApiResponse<unknown>(response, "更新卡密激活状态失败。");
       await loadOverview({ refresh: true });
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "更新 Beta 测试资格失败。");
+      setError(caughtError instanceof Error ? caughtError.message : "更新卡密激活状态失败。");
     } finally {
       setUpdatingUserId(null);
     }
@@ -558,10 +558,10 @@ export function AdminDashboard() {
 
           <HealthPanel overview={overview} />
           <FeedbackPanel overview={overview} />
-          <BetaUsersPanel
+          <LicenseUsersPanel
             overview={overview}
             updatingUserId={updatingUserId}
-            onUpdateBetaAccess={updateBetaAccess}
+            onUpdateLicenseActivation={updateLicenseActivation}
           />
           <RecentErrors overview={overview} />
         </>

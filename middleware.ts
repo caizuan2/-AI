@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
-import { updateSupabaseSession } from "@/lib/supabase/middleware";
 
 type RateLimitBucket = {
   count: number;
@@ -104,6 +104,77 @@ function rateLimitApiRequest(request: NextRequest) {
   return withSecurityHeaders(response);
 }
 
+const protectedPagePrefixes = [
+  "/",
+  "/ingest",
+  "/upload",
+  "/knowledge",
+  "/chat",
+  "/review",
+  "/tags",
+  "/categories",
+  "/settings",
+  "/feedback",
+  "/admin"
+];
+const authPagePrefixes = ["/login", "/register"];
+const sessionOnlyPagePrefixes = ["/unlock"];
+
+function isPathUnder(pathname: string, prefixes: string[]) {
+  return prefixes.some((prefix) => {
+    if (prefix === "/") {
+      return pathname === "/";
+    }
+
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
+}
+
+function nextWithRequestHeaders(requestHeaders?: Headers) {
+  if (requestHeaders) {
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders
+      }
+    });
+  }
+
+  return NextResponse.next();
+}
+
+function redirectToLogin(request: NextRequest) {
+  const loginUrl = request.nextUrl.clone();
+
+  loginUrl.pathname = "/login";
+  loginUrl.searchParams.set("redirectTo", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+
+  return NextResponse.redirect(loginUrl);
+}
+
+function applyPageAuth(request: NextRequest, requestHeaders: Headers) {
+  if (request.nextUrl.pathname.startsWith("/api/")) {
+    return nextWithRequestHeaders(requestHeaders);
+  }
+
+  const pathname = request.nextUrl.pathname;
+  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+
+  if ((isPathUnder(pathname, protectedPagePrefixes) || isPathUnder(pathname, sessionOnlyPagePrefixes)) && !hasSession) {
+    return redirectToLogin(request);
+  }
+
+  if (isPathUnder(pathname, authPagePrefixes) && hasSession) {
+    const url = request.nextUrl.clone();
+
+    url.pathname = "/";
+    url.search = "";
+
+    return NextResponse.redirect(url);
+  }
+
+  return nextWithRequestHeaders(requestHeaders);
+}
+
 export async function middleware(request: NextRequest) {
   const requestId = getRequestIdFromHeaders(request.headers);
   const requestHeaders = new Headers(request.headers);
@@ -138,7 +209,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const response = withSecurityHeaders(await updateSupabaseSession(request, requestHeaders));
+  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders));
 
   response.headers.set(REQUEST_ID_HEADER, requestId);
 

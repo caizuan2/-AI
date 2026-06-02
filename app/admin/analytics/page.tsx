@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { AdminAnalyticsDashboard } from "@/app/admin/analytics/analytics-dashboard";
 import { requireAdminUser } from "@/lib/admin";
-import { ForbiddenError, UnauthorizedError } from "@/lib/errors";
+import { ForbiddenError, LicenseRequiredError, UnauthorizedError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +15,10 @@ export default async function AdminAnalyticsPage() {
 
     if (error instanceof ForbiddenError) {
       redirect("/knowledge");
+    }
+
+    if (error instanceof LicenseRequiredError) {
+      redirect("/unlock");
     }
 
     throw error;

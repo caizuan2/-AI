@@ -16,8 +16,7 @@ Netlify Dashboard -> 你的站点 -> Site configuration -> Environment variables
 
 ```env
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
-NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+SESSION_SECRET="use-a-long-random-session-secret"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -26,7 +25,6 @@ OPENAI_CHAT_OUTPUT_COST_PER_1M="1.60"
 OPENAI_EMBEDDING_COST_PER_1M="0.02"
 JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="use-a-long-random-secret"
-ADMIN_EMAILS="admin@example.com"
 ADMIN_PHONES="+8613812345678"
 ADMIN_USER_IDS=""
 NODE_ENV="production"
@@ -36,8 +34,7 @@ NODE_VERSION="22"
 ## 3. 变量说明
 
 - `DATABASE_URL`：Supabase PostgreSQL 生产连接串，必须是生产库，不要使用本地地址。建议使用 Supabase pooler URI，并替换真实数据库密码。
-- `NEXT_PUBLIC_SUPABASE_URL`：Supabase Project URL。
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase anon key。
+- `SESSION_SECRET`：用于 session token 和卡密 hash，生产环境必须配置为长随机字符串。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
 - `OPENAI_MODEL`：知识整理和 RAG 问答模型，建议 `gpt-4.1-mini`。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型，建议 `text-embedding-3-small`。
@@ -46,9 +43,8 @@ NODE_VERSION="22"
 - `OPENAI_EMBEDDING_COST_PER_1M`：embedding token 成本估算。
 - `JOBS_TIMEZONE`：后台任务日志和本地 worker 使用的时区，建议 `Asia/Shanghai`。
 - `CRON_SECRET`：保护 HTTP Job 接口的随机密钥。
-- `ADMIN_EMAILS`：管理员邮箱，多个邮箱用英文逗号分隔。
 - `ADMIN_PHONES`：管理员手机号，必须使用 E.164 格式，多个手机号用英文逗号分隔。
-- `ADMIN_USER_IDS`：管理员 Supabase user id，多个 ID 用英文逗号分隔。
+- `ADMIN_USER_IDS`：管理员用户 id，多个 ID 用英文逗号分隔。
 - `NODE_ENV`：生产环境填写 `production`。
 - `NODE_VERSION`：Netlify Node.js 版本，填写 `22`。
 
@@ -58,6 +54,7 @@ NODE_VERSION="22"
 
 ```text
 DATABASE_URL
+SESSION_SECRET
 OPENAI_API_KEY
 CRON_SECRET
 ```
@@ -83,9 +80,10 @@ Netlify Dashboard -> Site configuration -> Environment variables
 部署前确认：
 
 - `DATABASE_URL` 可以连接 Supabase 生产数据库，且不是 `localhost`。
-- Supabase Auth 的 Site URL 指向 Netlify 生产域名。
+- `SESSION_SECRET` 已配置，且不要和其他项目共用。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
-- `ADMIN_EMAILS`、`ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
+- `ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
+- 使用 `pnpm license:generate --count 100` 生成卡密前，确认 `SESSION_SECRET` 与生产环境一致。
 
 如果线上 `/api/health` 返回 `database:false`，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。

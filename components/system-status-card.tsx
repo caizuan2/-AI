@@ -11,15 +11,17 @@ interface HealthResponse {
   status: "ok";
   database: boolean;
   openai: boolean;
-  supabase: boolean;
+  auth: boolean;
+  license: boolean;
 }
 
-type ServiceKey = "database" | "openai" | "supabase";
+type ServiceKey = "database" | "openai" | "auth" | "license";
 
 const services: Array<{ key: ServiceKey; label: string }> = [
   { key: "database", label: "Database" },
   { key: "openai", label: "OpenAI" },
-  { key: "supabase", label: "Supabase" }
+  { key: "auth", label: "Auth" },
+  { key: "license", label: "License" }
 ];
 
 const REFRESH_INTERVAL_MS = 30_000;
@@ -99,7 +101,7 @@ export function SystemStatusCard() {
             <span>{error}</span>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-4">
             {services.map((service) => {
               const ready = Boolean(health?.[service.key]);
 

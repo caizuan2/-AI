@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
@@ -36,10 +36,10 @@ function parseSettingsPatch(body: unknown) {
 }
 
 export async function GET() {
-  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    user = await requireBetaAccess();
+    user = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }
@@ -56,10 +56,10 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    user = await requireBetaAccess();
+    user = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

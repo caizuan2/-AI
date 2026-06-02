@@ -52,25 +52,62 @@ enum AnalyticsEventType {
   FILE_UPLOAD
 }
 
-model User {
-  /// Supabase Auth user id. Keep this in sync with auth.users.id.
-  id              String           @id
-  email           String?          @unique
-  phone           String?          @unique
-  name            String
-  betaAccess      Boolean          @default(false)
-  betaRequestedAt DateTime?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  conversations   Conversation[]
-  knowledgeItems  KnowledgeItem[]
-  settings        UserSettings?
-  feedback        Feedback[]
-  analyticsEvents AnalyticsEvent[]
+enum LicenseKeyStatus {
+  UNUSED
+  USED
+  DISABLED
+}
 
-  @@index([betaAccess])
-  @@index([betaRequestedAt])
+model User {
+  id               String           @id @default(cuid())
+  email            String?          @unique
+  phone            String           @unique
+  passwordHash     String           @default("")
+  name             String?
+  isActive         Boolean          @default(true)
+  licenseActivated Boolean          @default(false)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  sessions         Session[]
+  redeemedLicenses LicenseKey[]     @relation("LicenseRedeemer")
+  conversations    Conversation[]
+  knowledgeItems   KnowledgeItem[]
+  settings         UserSettings?
+  feedback         Feedback[]
+  analyticsEvents  AnalyticsEvent[]
+
+  @@index([licenseActivated])
+  @@index([isActive])
   @@map("users")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+model LicenseKey {
+  id               String           @id @default(cuid())
+  keyHash          String           @unique
+  status           LicenseKeyStatus @default(UNUSED)
+  redeemedByUserId String?
+  redeemedAt       DateTime?
+  expiresAt        DateTime?
+  createdAt        DateTime         @default(now())
+  redeemedByUser   User?            @relation("LicenseRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([status])
+  @@index([redeemedByUserId])
+  @@index([expiresAt])
+  @@map("license_keys")
 }
 
 model UserSettings {

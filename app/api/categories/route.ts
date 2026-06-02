@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { defaultKnowledgeCategory, listKnowledgeCategories, normalizeCategoryName } from "@/lib/knowledge/categories";
 import type { KnowledgeCategoriesResponse } from "@/lib/knowledge/categories";
 import { prisma } from "@/lib/prisma";
@@ -22,7 +22,7 @@ async function parseJsonBody(request: Request) {
 }
 
 async function getCurrentUserOrThrow() {
-  return requireBetaAccess();
+  return requireLicensedUser();
 }
 
 async function getCategoriesResponse(userId: string) {

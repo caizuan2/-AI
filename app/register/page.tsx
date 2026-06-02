@@ -3,50 +3,65 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, CheckCircle2, Database, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { normalizePhone, validatePhone } from "@/lib/auth/phone";
-import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { unwrapApiResponse } from "@/lib/api/client";
+
+interface RegisterResponse {
+  user: {
+    licenseActivated: boolean;
+  };
+}
 
 function RegisterForm() {
   const router = useRouter();
+  const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const normalizedPhone = normalizePhone(phone);
 
-    if (!validatePhone(normalizedPhone)) {
-      setError("请输入合法手机号，例如 13812345678 或 +8613812345678。");
+    if (!name.trim() || !phone.trim() || !password || !confirmPassword) {
+      setError("请输入姓名、手机号、密码和确认密码。");
+      return;
+    }
+
+    if (password.length < 8) {
+      setError("密码至少需要 8 位。");
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setError("两次输入的密码不一致。");
       return;
     }
 
     setLoading(true);
     setError("");
-    setSuccess("");
 
     try {
-      const supabase = createBrowserSupabaseClient();
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        phone: normalizedPhone,
-        options: {
-          shouldCreateUser: true
-        }
+      const response = await fetch("/api/auth/register", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name,
+          phone,
+          password
+        })
       });
+      const data = await unwrapApiResponse<RegisterResponse>(response, "注册失败，请稍后重试。");
 
-      if (otpError) {
-        setError("短信验证码发送失败，请检查手机号或短信服务配置。");
-        return;
-      }
-
-      setSuccess("短信验证码已发送。");
-      router.push(`/verify?phone=${encodeURIComponent(normalizedPhone)}&mode=register`);
+      router.push(data.user.licenseActivated ? "/" : "/unlock");
+      router.refresh();
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "发送验证码失败，请稍后重试。");
+      setError(caughtError instanceof Error ? caughtError.message : "注册失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
@@ -54,6 +69,20 @@ function RegisterForm() {
 
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      <label className="block">
+        <span className="text-sm font-medium text-ink">姓名</span>
+        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+          <UserRound className="h-4 w-4 text-muted" />
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            autoComplete="name"
+            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+            placeholder="你的姓名"
+          />
+        </span>
+      </label>
+
       <label className="block">
         <span className="text-sm font-medium text-ink">手机号</span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
@@ -65,7 +94,37 @@ function RegisterForm() {
             inputMode="tel"
             autoComplete="tel"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13812345678"
+            placeholder="请输入手机号，例如 13352833702"
+          />
+        </span>
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-medium text-ink">密码</span>
+        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+          <LockKeyhole className="h-4 w-4 text-muted" />
+          <Input
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            type="password"
+            autoComplete="new-password"
+            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+            placeholder="至少 8 位"
+          />
+        </span>
+      </label>
+
+      <label className="block">
+        <span className="text-sm font-medium text-ink">确认密码</span>
+        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+          <LockKeyhole className="h-4 w-4 text-muted" />
+          <Input
+            value={confirmPassword}
+            onChange={(event) => setConfirmPassword(event.target.value)}
+            type="password"
+            autoComplete="new-password"
+            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+            placeholder="再次输入密码"
           />
         </span>
       </label>
@@ -77,15 +136,8 @@ function RegisterForm() {
         </div>
       ) : null}
 
-      {success ? (
-        <div className="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-700">
-          <CheckCircle2 className="h-4 w-4" />
-          {success}
-        </div>
-      ) : null}
-
       <Button type="submit" disabled={loading} className="h-11 w-full">
-        {loading ? "正在发送" : "发送验证码"}
+        {loading ? "正在注册" : "注册并登录"}
         <ArrowRight className="h-4 w-4" />
       </Button>
     </form>
@@ -110,13 +162,13 @@ export default function RegisterPage() {
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            SMS OTP
+            Phone Password
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            创建账号后，知识投喂、检索和问答都会绑定到你的身份。
+            注册后输入卡密，开启知识库工作台。
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            每个账号只访问自己的知识数据。
+            密码会哈希保存，卡密也只保存 hash，不保存明文。
           </p>
         </div>
       </section>
@@ -133,9 +185,7 @@ export default function RegisterPage() {
           <div>
             <p className="text-sm font-medium text-teal-700">创建账号</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">手机号注册</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">
-              使用短信验证码创建 Supabase Auth 账号。
-            </p>
+            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码创建账号。</p>
           </div>
 
           <RegisterForm />

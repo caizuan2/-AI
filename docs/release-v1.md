@@ -10,9 +10,11 @@ v1.0.0 是“对话式投喂型 AI 知识库”的第一个正式闭环版本。
 
 ### 用户与权限
 
-- Supabase Auth 登录、注册和退出登录。
-- localhost 本地开发登录 fallback，方便没有 Supabase 配置时调试。
+- 手机号 + 密码注册、登录和退出登录。
+- 密码使用 bcrypt hash，session 使用 HttpOnly Cookie。
+- 用户登录后必须输入卡密激活，卡密只保存 hash。
 - 未登录用户不能访问 `/ingest`、`/upload`、`/knowledge`、`/chat`、`/settings` 等核心页面。
+- 未激活卡密的用户不能访问核心页面和核心 API。
 - 核心 API 按当前用户校验权限。
 - 知识数据、检索结果、导入导出、标签、分类和复习数据均按 `userId` 隔离。
 
@@ -69,7 +71,7 @@ v1.0.0 是“对话式投喂型 AI 知识库”的第一个正式闭环版本。
 - 统一错误类型：`AppError`、`ValidationError`、`UnauthorizedError`、`NotFoundError`、`AIError`、`RateLimitError`。
 - 核心 API 已加 rate limit。
 - 后台任务支持过期检查、低质量补全建议刷新和孤立 chunks 清理。
-- 已提供 Vercel + Supabase 部署说明、生产检查清单和迁移命令。
+- 已提供 Netlify + Supabase PostgreSQL 部署说明、生产检查清单和迁移命令。
 
 ## 仍未完成的功能
 
@@ -106,18 +108,18 @@ pnpm exec prisma migrate status
 
 ## 部署前人工配置
 
-- Vercel Production 环境变量：
+- Netlify Production 环境变量：
   - `DATABASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_URL`
-  - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+  - `SESSION_SECRET`
   - `OPENAI_API_KEY`
   - `OPENAI_MODEL`
   - `OPENAI_EMBEDDING_MODEL`
   - `CRON_SECRET`
   - `JOBS_TIMEZONE`
+  - `ADMIN_PHONES` 或 `ADMIN_USER_IDS`
 - Supabase 启用 `vector` 扩展。
 - 执行 Prisma 生产迁移。
-- 配置 Supabase Auth Site URL 和 Redirect URLs。
+- 生成生产卡密并安全保存明文卡密。
 - 确认 OpenAI key 额度、模型权限和账单状态。
 - 确认备份策略和回滚方案。
 
