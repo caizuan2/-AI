@@ -100,12 +100,15 @@ pnpm build
 ```powershell
 cd D:\XT
 
-$env:DATABASE_URL="你的 Supabase PostgreSQL 生产连接串"
+$env:DATABASE_URL="你的 Supabase Pooler 完整 URI，端口 6543，包含 pgbouncer=true"
+$env:DIRECT_URL="你的 Supabase Direct 完整 URI，端口 5432"
 
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
 pnpm db:check
 ```
+
+`DATABASE_URL` 供 Prisma Client 运行时使用，Netlify Functions 必须填 Pooler URI；`DIRECT_URL` 供 Prisma CLI 迁移使用，必须填 Direct URI。不要只修改端口，务必从 Supabase Dashboard 复制对应类型的完整连接串。
 
 看到下面结果后再部署：
 

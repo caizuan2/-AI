@@ -16,6 +16,7 @@ Netlify Dashboard -> 你的站点 -> Site configuration -> Environment variables
 
 ```env
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
+DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="use-a-long-random-session-secret"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
@@ -33,7 +34,8 @@ NODE_VERSION="22"
 
 ## 3. 变量说明
 
-- `DATABASE_URL`：Supabase PostgreSQL 生产连接串，必须是生产库，不要使用本地地址。建议使用 Supabase pooler URI，并替换真实数据库密码。
+- `DATABASE_URL`：运行时数据库连接串，必须使用 Supabase Pooler 完整 URI，不要只把 direct connection 的端口改成 `6543`。
+- `DIRECT_URL`：Prisma CLI 迁移连接串，必须使用 Supabase Direct 完整 URI。`prisma migrate deploy` 会通过它执行 DDL。
 - `SESSION_SECRET`：用于 session token 和卡密 hash，生产环境必须配置为长随机字符串。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
 - `OPENAI_MODEL`：知识整理和 RAG 问答模型，建议 `gpt-4.1-mini`。
@@ -54,6 +56,7 @@ NODE_VERSION="22"
 
 ```text
 DATABASE_URL
+DIRECT_URL
 SESSION_SECRET
 OPENAI_API_KEY
 CRON_SECRET
@@ -85,7 +88,9 @@ Netlify Dashboard -> Site configuration -> Environment variables
 
 部署前确认：
 
-- `DATABASE_URL` 可以连接 Supabase 生产数据库，且不是 `localhost`。
+- `DATABASE_URL` 是 Supabase Pooler URI，host 形如 `aws-0-region.pooler.supabase.com`，端口为 `6543`，并包含 `pgbouncer=true`。
+- `DIRECT_URL` 是 Supabase Direct URI，host 形如 `db.your-project-ref.supabase.co`，端口为 `5432`。
+- `DATABASE_URL` / `DIRECT_URL` 都替换了真实数据库密码，且密码已 URL encode。
 - `SESSION_SECRET` 已配置，且不要和其他项目共用。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。

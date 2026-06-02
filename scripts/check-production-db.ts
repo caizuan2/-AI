@@ -3,6 +3,7 @@ import { getDatabaseUrl, getDatabaseUrlEnvName } from "@/lib/server-config-core"
 
 const databaseUrl = getDatabaseUrl();
 const databaseUrlEnvName = getDatabaseUrlEnvName();
+const directUrl = process.env.DIRECT_URL?.trim();
 
 if (!databaseUrl) {
   console.error("DATABASE_URL 未配置，或生产环境仍指向 localhost / 占位值。");
@@ -15,8 +16,40 @@ const prisma = new PrismaClient({
   log: ["error"]
 });
 
+function describeDatabaseUrl(value: string) {
+  try {
+    const url = new URL(value);
+    const hostname = url.hostname;
+    const port = url.port || "default";
+    const pooler = hostname.includes("pooler.supabase.com") || port === "6543";
+    const pgbouncer = url.searchParams.get("pgbouncer") === "true";
+
+    return {
+      hostname,
+      port,
+      pooler,
+      pgbouncer
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function main() {
+  const runtimeTarget = describeDatabaseUrl(databaseUrl);
+  const migrationTarget = directUrl ? describeDatabaseUrl(directUrl) : null;
+
   console.log(`Using database env: ${databaseUrlEnvName ?? "DATABASE_URL"}`);
+  console.log(`Runtime DATABASE_URL target: ${
+    runtimeTarget
+      ? `${runtimeTarget.hostname}:${runtimeTarget.port} (${runtimeTarget.pooler ? "pooler" : "direct-or-other"}, pgbouncer=${runtimeTarget.pgbouncer})`
+      : "invalid-url"
+  }`);
+  console.log(`Migration DIRECT_URL target: ${
+    migrationTarget
+      ? `${migrationTarget.hostname}:${migrationTarget.port}`
+      : "missing"
+  }`);
 
   await prisma.$queryRaw`SELECT 1`;
 
