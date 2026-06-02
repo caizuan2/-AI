@@ -60,14 +60,7 @@ DATABASE_URL="你的 Supabase PostgreSQL URI"
 
 确认不要填本地地址、不要保留 `[YOUR-PASSWORD]`，也不要把引号内换行。
 
-项目运行时也会识别以下常见别名，但推荐统一使用 `DATABASE_URL`：
-
-```text
-POSTGRES_PRISMA_URL
-POSTGRES_URL
-SUPABASE_DATABASE_URL
-SUPABASE_DB_URL
-```
+项目运行时只读取 `DATABASE_URL`。请不要只填写 `POSTGRES_URL`、`POSTGRES_PRISMA_URL`、`SUPABASE_DATABASE_URL` 或其他别名。
 
 ## 4. 启用 pgvector
 

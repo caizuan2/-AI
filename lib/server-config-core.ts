@@ -3,13 +3,7 @@ export const SEARCH_DEFAULT_TOP_K = 5;
 export const SEARCH_MAX_TOP_K = 20;
 export const CHAT_TOP_K = 5;
 export const CHAT_MIN_RELEVANT_SIMILARITY = 0.2;
-export const DATABASE_URL_ENV_NAMES = [
-  "DATABASE_URL",
-  "POSTGRES_PRISMA_URL",
-  "POSTGRES_URL",
-  "SUPABASE_DATABASE_URL",
-  "SUPABASE_DB_URL"
-] as const;
+export const DATABASE_URL_ENV_NAME = "DATABASE_URL" as const;
 
 export function hasUsableOpenAIKey() {
   const key = process.env.OPENAI_API_KEY?.trim();
@@ -48,27 +42,17 @@ function isUsableDatabaseUrl(value: string) {
 }
 
 export function getDatabaseUrl() {
-  for (const name of DATABASE_URL_ENV_NAMES) {
-    const value = process.env[name]?.trim();
+  const value = process.env.DATABASE_URL?.trim();
 
-    if (value && isUsableDatabaseUrl(value)) {
-      return value;
-    }
+  if (value && isUsableDatabaseUrl(value)) {
+    return value;
   }
 
   return "";
 }
 
 export function getDatabaseUrlEnvName() {
-  for (const name of DATABASE_URL_ENV_NAMES) {
-    const value = process.env[name]?.trim();
-
-    if (value && isUsableDatabaseUrl(value)) {
-      return name;
-    }
-  }
-
-  return null;
+  return getDatabaseUrl() ? DATABASE_URL_ENV_NAME : null;
 }
 
 export function hasDatabaseUrl() {

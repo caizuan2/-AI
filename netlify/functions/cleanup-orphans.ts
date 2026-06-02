@@ -1,5 +1,5 @@
 import type { Config, Context } from "@netlify/functions";
-import { prisma } from "../../lib/prisma-client";
+import { prisma } from "../../lib/prisma";
 import { cleanupOrphanChunksTask } from "../../lib/jobs/tasks";
 
 export const config: Config = {
@@ -19,4 +19,3 @@ export default async function handler(_request: Request, _context: Context) {
     await prisma.$disconnect();
   }
 }
-
