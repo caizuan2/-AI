@@ -2,13 +2,15 @@ import "server-only";
 
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { prisma } from "@/lib/prisma";
+import { getPhoneDisplay } from "@/lib/auth/phone";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 import { UnauthorizedError } from "@/lib/errors";
 
 export interface CurrentUser {
   id: string;
-  email: string;
+  email: string | null;
+  phone: string | null;
   name: string;
 }
 
@@ -30,17 +32,14 @@ function getDisplayName(user: SupabaseUser) {
     return metadataName;
   }
 
-  return user.email?.split("@")[0] || "知识库用户";
+  return getPhoneDisplay(user.phone, user.email);
 }
 
 function toCurrentUserIdentity(user: SupabaseUser): CurrentUser {
-  if (!user.email) {
-    throw new UnauthorizedError("当前账号缺少邮箱，无法继续。");
-  }
-
   return {
     id: user.id,
-    email: user.email,
+    email: user.email ?? null,
+    phone: user.phone ?? null,
     name: getDisplayName(user)
   };
 }
@@ -64,9 +63,12 @@ export async function getCurrentAuthUser(): Promise<CurrentUser> {
 }
 
 export async function ensureAppUser(user: CurrentUser): Promise<AppUser> {
+  const email = user.email?.trim() || null;
+  const phone = user.phone?.trim() || null;
   const select = {
     id: true,
     email: true,
+    phone: true,
     name: true,
     betaAccess: true,
     betaRequestedAt: true
@@ -80,23 +82,46 @@ export async function ensureAppUser(user: CurrentUser): Promise<AppUser> {
     return prisma.user.update({
       where: { id: user.id },
       data: {
-        email: user.email,
+        email,
+        phone,
         name: user.name
       },
       select
     });
   }
 
-  const existingByEmail = await prisma.user.findUnique({
-    where: { email: user.email },
-    select
-  });
+  const existingByEmail = email
+    ? await prisma.user.findUnique({
+      where: { email },
+      select
+    })
+    : null;
 
   if (existingByEmail) {
     return prisma.user.update({
-      where: { email: user.email },
+      where: { id: existingByEmail.id },
       data: {
         id: user.id,
+        phone,
+        name: user.name
+      },
+      select
+    });
+  }
+
+  const existingByPhone = phone
+    ? await prisma.user.findUnique({
+      where: { phone },
+      select
+    })
+    : null;
+
+  if (existingByPhone) {
+    return prisma.user.update({
+      where: { id: existingByPhone.id },
+      data: {
+        id: user.id,
+        email,
         name: user.name
       },
       select
@@ -106,7 +131,8 @@ export async function ensureAppUser(user: CurrentUser): Promise<AppUser> {
   const appUser = await prisma.user.create({
     data: {
       id: user.id,
-      email: user.email,
+      email,
+      phone,
       name: user.name
     },
     select

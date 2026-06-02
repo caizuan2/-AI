@@ -14,7 +14,9 @@ type FeedbackType = "ISSUE" | "SUGGESTION" | "BUG";
 type FeedbackFormProps = {
   backHref: string;
   user: {
-    email: string;
+    id: string;
+    email: string | null;
+    phone: string | null;
     name: string;
   };
 };
@@ -95,7 +97,7 @@ export function FeedbackForm({ backHref, user }: FeedbackFormProps) {
       <CardHeader>
         <CardTitle>反馈表单</CardTitle>
         <CardDescription>
-          当前账号：{user.name} · {user.email}
+          当前账号：{user.name} · {user.phone || user.email || user.id}
         </CardDescription>
       </CardHeader>
       <CardContent>

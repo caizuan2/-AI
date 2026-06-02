@@ -15,7 +15,7 @@ const protectedPagePrefixes = [
   "/feedback",
   "/admin"
 ];
-const authPagePrefixes = ["/login", "/register"];
+const authPagePrefixes = ["/login", "/register", "/verify"];
 
 function isPathUnder(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -94,7 +94,7 @@ export async function updateSupabaseSession(request: NextRequest, requestHeaders
   if (isAuthPage && user) {
     const url = request.nextUrl.clone();
 
-    url.pathname = "/knowledge";
+    url.pathname = "/";
     url.search = "";
 
     return NextResponse.redirect(url);

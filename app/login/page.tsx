@@ -3,23 +3,38 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Mail, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, Database, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+
+function getOtpErrorMessage(message: string) {
+  const normalized = message.toLowerCase();
+
+  if (normalized.includes("signups not allowed") || normalized.includes("user not found")) {
+    return "该手机号尚未注册，请先注册。";
+  }
+
+  if (normalized.includes("sms") || normalized.includes("phone")) {
+    return "短信验证码发送失败，请检查手机号或短信服务配置。";
+  }
+
+  return "发送验证码失败，请稍后重试。";
+}
 
 function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const normalizedPhone = normalizePhone(phone);
 
-    if (!email.trim() || !password) {
-      setError("请输入邮箱和密码。");
+    if (!validatePhone(normalizedPhone)) {
+      setError("请输入合法手机号，例如 13812345678 或 +8613812345678。");
       return;
     }
 
@@ -28,20 +43,21 @@ function LoginForm() {
 
     try {
       const supabase = createBrowserSupabaseClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password
+      const { error: signInError } = await supabase.auth.signInWithOtp({
+        phone: normalizedPhone,
+        options: {
+          shouldCreateUser: false
+        }
       });
 
       if (signInError) {
-        setError("邮箱或密码不正确。");
+        setError(getOtpErrorMessage(signInError.message));
         return;
       }
 
-      router.push("/");
-      router.refresh();
+      router.push(`/verify?phone=${encodeURIComponent(normalizedPhone)}&mode=login`);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "登录失败，请稍后重试。");
+      setError(caughtError instanceof Error ? caughtError.message : "发送验证码失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
@@ -50,31 +66,17 @@ function LoginForm() {
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
       <label className="block">
-        <span className="text-sm font-medium text-ink">邮箱</span>
+        <span className="text-sm font-medium text-ink">手机号</span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <Mail className="h-4 w-4 text-muted" />
+          <Phone className="h-4 w-4 text-muted" />
           <Input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            type="email"
-            autoComplete="email"
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="you@example.com"
-          />
-        </span>
-      </label>
-
-      <label className="block">
-        <span className="text-sm font-medium text-ink">密码</span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <LockKeyhole className="h-4 w-4 text-muted" />
-          <Input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            type="password"
-            autoComplete="current-password"
-            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="输入密码"
+            placeholder="请输入手机号，例如 13812345678"
           />
         </span>
       </label>
@@ -87,12 +89,12 @@ function LoginForm() {
       ) : null}
 
       <Button type="submit" disabled={loading} className="h-11 w-full">
-        {loading ? "正在登录" : "登录"}
+        {loading ? "正在发送" : "发送验证码"}
         <ArrowRight className="h-4 w-4" />
       </Button>
 
       <p className="text-center text-sm text-muted">
-        还没有账号？
+        没有账号？
         <Link href="/register" className="font-medium text-teal-700 hover:text-teal-800">
           去注册
         </Link>
@@ -119,10 +121,10 @@ export default function LoginPage() {
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            Supabase Auth
+            Phone OTP
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            把对话、工单和文档沉淀成可追溯的个人知识库。
+            用手机号进入你的可追溯 AI 知识库。
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
             登录后投喂、检索和问答都会按账号隔离。
@@ -141,9 +143,9 @@ export default function LoginPage() {
 
           <div>
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">登录工作台</h2>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号登录</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              使用 Supabase Auth 账号继续。
+              使用短信验证码继续。
             </p>
           </div>
 

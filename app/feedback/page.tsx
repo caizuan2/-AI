@@ -23,7 +23,9 @@ export default async function FeedbackPage() {
           <FeedbackForm
             backHref={backHref}
             user={{
+              id: user.id,
               email: user.email,
+              phone: user.phone,
               name: user.name
             }}
           />

@@ -171,9 +171,9 @@ API 请求日志示例：
 - summary
 - sourceUrl
 - email
+- phone
 - cookie
 - authorization header
-- password
 - API key
 - DATABASE_URL
 - secret
@@ -211,7 +211,7 @@ API 请求日志示例：
 - 最近错误日志
 - 系统健康状态
 
-访问控制使用 `ADMIN_EMAILS` / `ADMIN_USER_IDS` 环境变量。页面会做服务端校验，API 也会再次执行管理员权限校验。最近错误日志来自当前运行实例的内存窗口，仅用于快速排障；生产长期留存仍应依赖 Vercel Logs 或外部日志平台。
+访问控制使用 `ADMIN_PHONES` / `ADMIN_EMAILS` / `ADMIN_USER_IDS` 环境变量。页面会做服务端校验，API 也会再次执行管理员权限校验。最近错误日志来自当前运行实例的内存窗口，仅用于快速排障；生产长期留存仍应依赖平台日志或外部日志平台。
 
 ## 建议监控指标
 
@@ -256,7 +256,7 @@ API 请求日志示例：
 ## 排障流程
 
 1. 从前端报错或浏览器 Network 面板复制 `x-request-id`。
-2. 在 Vercel Logs 搜索该 requestId。
+2. 在 Netlify Logs 或外部日志平台搜索该 requestId。
 3. 查看同一 requestId 下的 `api.request`、`rag.retrieval`、`ai.call` 或 `api.error`。
 4. 如果是 AI 问题，检查 `operation`、`model`、`durationMs` 和 token 估算。
 5. 如果是 RAG 问题，检查 `hitCount`、`filteredCandidates`、`avgSimilarity` 和 `mode`。

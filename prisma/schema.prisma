@@ -55,7 +55,8 @@ enum AnalyticsEventType {
 model User {
   /// Supabase Auth user id. Keep this in sync with auth.users.id.
   id              String           @id
-  email           String           @unique
+  email           String?          @unique
+  phone           String?          @unique
   name            String
   betaAccess      Boolean          @default(false)
   betaRequestedAt DateTime?

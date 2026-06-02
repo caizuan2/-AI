@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { unwrapApiResponse } from "@/lib/api/client";
 
 type WaitlistUser = {
-  email: string;
+  id: string;
+  email: string | null;
+  phone: string | null;
   name: string;
   betaRequestedAt: string | null;
 };
@@ -85,7 +87,7 @@ export function WaitlistPanel({ user }: { user: WaitlistUser }) {
 
           <div className="mt-6 rounded-lg border border-line bg-canvas p-4">
             <p className="text-sm font-semibold text-ink">{user.name}</p>
-            <p className="mt-1 text-sm text-muted">{user.email}</p>
+            <p className="mt-1 text-sm text-muted">{user.phone || user.email || user.id}</p>
             {requestedAt ? (
               <div className="mt-4 flex items-center gap-2 text-sm text-teal-700">
                 <Clock3 className="h-4 w-4" />

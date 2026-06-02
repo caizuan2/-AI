@@ -13,7 +13,7 @@
 - [ ] `OPENAI_EMBEDDING_MODEL` 已配置，例如 `text-embedding-3-small`。
 - [ ] `CRON_SECRET` 已配置为强随机字符串。
 - [ ] `JOBS_TIMEZONE` 已配置，默认建议 `Asia/Shanghai`。
-- [ ] `ADMIN_EMAILS` 或 `ADMIN_USER_IDS` 已配置，且只包含可信管理员。
+- [ ] `ADMIN_PHONES`、`ADMIN_EMAILS` 或 `ADMIN_USER_IDS` 已配置，且只包含可信管理员。
 - [ ] 已区分 Production / Preview / Development 环境变量，避免测试环境误连生产数据。
 
 ## 2. Supabase 数据库检查

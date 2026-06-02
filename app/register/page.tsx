@@ -3,30 +3,25 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, CheckCircle2, Database, LockKeyhole, Mail, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, Database, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const normalizedPhone = normalizePhone(phone);
 
-    if (!name.trim() || !email.trim() || !password) {
-      setError("请输入姓名、邮箱和密码。");
-      return;
-    }
-
-    if (password.length < 6) {
-      setError("密码至少需要 6 位。");
+    if (!validatePhone(normalizedPhone)) {
+      setError("请输入合法手机号，例如 13812345678 或 +8613812345678。");
       return;
     }
 
@@ -36,31 +31,68 @@ export default function RegisterPage() {
 
     try {
       const supabase = createBrowserSupabaseClient();
-      const { error: signUpError } = await supabase.auth.signUp({
-        email: email.trim(),
-        password,
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        phone: normalizedPhone,
         options: {
-          data: {
-            name: name.trim()
-          }
+          shouldCreateUser: true
         }
       });
 
-      if (signUpError) {
-        setError(signUpError.message.includes("already") ? "该邮箱已注册，请直接登录。" : "注册失败，请稍后重试。");
+      if (otpError) {
+        setError("短信验证码发送失败，请检查手机号或短信服务配置。");
         return;
       }
 
-      setSuccess("注册成功，正在进入知识库。");
-      router.push("/knowledge");
-      router.refresh();
+      setSuccess("短信验证码已发送。");
+      router.push(`/verify?phone=${encodeURIComponent(normalizedPhone)}&mode=register`);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "注册失败，请稍后重试。");
+      setError(caughtError instanceof Error ? caughtError.message : "发送验证码失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
   }
 
+  return (
+    <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      <label className="block">
+        <span className="text-sm font-medium text-ink">手机号</span>
+        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+          <Phone className="h-4 w-4 text-muted" />
+          <Input
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
+            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+            placeholder="请输入手机号，例如 13812345678"
+          />
+        </span>
+      </label>
+
+      {error ? (
+        <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <TriangleAlert className="h-4 w-4" />
+          {error}
+        </div>
+      ) : null}
+
+      {success ? (
+        <div className="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-700">
+          <CheckCircle2 className="h-4 w-4" />
+          {success}
+        </div>
+      ) : null}
+
+      <Button type="submit" disabled={loading} className="h-11 w-full">
+        {loading ? "正在发送" : "发送验证码"}
+        <ArrowRight className="h-4 w-4" />
+      </Button>
+    </form>
+  );
+}
+
+export default function RegisterPage() {
   return (
     <main className="grid min-h-dvh bg-canvas lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-ink px-10 py-10 text-white lg:flex lg:flex-col">
@@ -78,7 +110,7 @@ export default function RegisterPage() {
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            Secure workspace
+            SMS OTP
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
             创建账号后，知识投喂、检索和问答都会绑定到你的身份。
@@ -100,76 +132,13 @@ export default function RegisterPage() {
 
           <div>
             <p className="text-sm font-medium text-teal-700">创建账号</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">注册工作台</h2>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号注册</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              使用邮箱密码创建 Supabase Auth 账号。
+              使用短信验证码创建 Supabase Auth 账号。
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-            <label className="block">
-              <span className="text-sm font-medium text-ink">姓名</span>
-              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-                <UserRound className="h-4 w-4 text-muted" />
-                <Input
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  autoComplete="name"
-                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-                  placeholder="你的姓名"
-                />
-              </span>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-medium text-ink">邮箱</span>
-              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-                <Mail className="h-4 w-4 text-muted" />
-                <Input
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
-                  type="email"
-                  autoComplete="email"
-                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-                  placeholder="you@example.com"
-                />
-              </span>
-            </label>
-
-            <label className="block">
-              <span className="text-sm font-medium text-ink">密码</span>
-              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-                <LockKeyhole className="h-4 w-4 text-muted" />
-                <Input
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  type="password"
-                  autoComplete="new-password"
-                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-                  placeholder="至少 6 位"
-                />
-              </span>
-            </label>
-
-            {error ? (
-              <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                <TriangleAlert className="h-4 w-4" />
-                {error}
-              </div>
-            ) : null}
-
-            {success ? (
-              <div className="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-700">
-                <CheckCircle2 className="h-4 w-4" />
-                {success}
-              </div>
-            ) : null}
-
-            <Button type="submit" disabled={loading} className="h-11 w-full">
-              {loading ? "正在注册" : "注册"}
-              <ArrowRight className="h-4 w-4" />
-            </Button>
-          </form>
+          <RegisterForm />
 
           <p className="mt-5 text-center text-sm text-muted">
             已有账号？
