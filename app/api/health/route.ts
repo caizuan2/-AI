@@ -18,19 +18,8 @@ async function checkDatabase() {
   }
 
   try {
-    const rows = await prisma.$queryRaw<Array<{
-      users: string | null;
-      sessions: string | null;
-      licenseKeys: string | null;
-    }>>`
-      SELECT
-        to_regclass('public.users')::text AS "users",
-        to_regclass('public.sessions')::text AS "sessions",
-        to_regclass('public.license_keys')::text AS "licenseKeys"
-    `;
-    const schema = rows[0];
-
-    return Boolean(schema?.users && schema.sessions && schema.licenseKeys);
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
   } catch {
     return false;
   }

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma-client";
+import { prisma } from "@/lib/prisma";
 import { refreshCompletionSuggestionsForItem } from "@/lib/knowledge/completion-suggestions";
 import { hasDatabaseUrl } from "@/lib/server-config-core";
 import { runLoggedTask, type TaskLogger } from "@/lib/jobs/logger";

@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma-client";
+import { prisma } from "@/lib/prisma";
 import type { KnowledgeCompletionSuggestion } from "@/lib/ai/knowledge-completion-core";
 import { AIError } from "@/lib/errors";
 import {
