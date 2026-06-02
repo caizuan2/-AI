@@ -13,21 +13,15 @@ class MainAppSyncError(RuntimeError):
 
 def get_main_app_sync_status() -> dict[str, object]:
     has_database_url = bool(current_app.config.get("MAIN_APP_DATABASE_URL", "").strip())
-    has_session_secret = bool(current_app.config.get("SESSION_SECRET", "").strip())
 
-    if has_database_url and has_session_secret:
+    if has_database_url:
         message = "已配置主项目同步，生成的卡密可用于 AI 知识库线上激活页。"
-    elif not has_database_url and not has_session_secret:
-        message = "未配置 MAIN_APP_DATABASE_URL 和 SESSION_SECRET，当前卡密只会保存到本地 SQLite，不能用于线上主站。"
-    elif not has_database_url:
-        message = "未配置 MAIN_APP_DATABASE_URL，当前卡密不能写入线上 Supabase。"
     else:
-        message = "未配置 SESSION_SECRET，无法生成与 AI 知识库主项目一致的卡密 hash。"
+        message = "未配置 MAIN_APP_DATABASE_URL，当前卡密不能写入线上 Supabase。"
 
     return {
-        "ready": has_database_url and has_session_secret,
+        "ready": has_database_url,
         "hasDatabaseUrl": has_database_url,
-        "hasSessionSecret": has_session_secret,
         "message": message,
     }
 

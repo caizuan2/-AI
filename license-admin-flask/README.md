@@ -83,7 +83,6 @@ http://127.0.0.1:5000/admin/login
 ```env
 SECRET_KEY=change-me-to-a-long-random-string
 LICENSE_HASH_SECRET=change-me-and-keep-it-stable
-SESSION_SECRET=same-as-your-nextjs-app-session-secret
 DATABASE_PATH=./data/licenses.sqlite3
 MAIN_APP_DATABASE_URL=postgresql://postgres.your-project-ref:password@aws-region.pooler.supabase.com:6543/postgres?sslmode=require
 ADMIN_USERNAME=admin
@@ -93,8 +92,7 @@ ADMIN_PASSWORD=admin123456
 说明：
 
 - `SECRET_KEY`：Flask Session 加密密钥。
-- `LICENSE_HASH_SECRET`：卡密 HMAC hash 密钥，必须长期保持不变；修改后旧卡密将无法验证。
-- `SESSION_SECRET`：AI 知识库 Next.js 主项目里的同名变量。要让 Flask 后台生成的卡密能在主站使用，必须和 Netlify 里的 `SESSION_SECRET` 完全一致。
+- `LICENSE_HASH_SECRET`：保留给本地扩展使用。当前主站同步使用稳定 hash，不再要求它与主站一致。
 - `DATABASE_PATH`：SQLite 数据库路径。
 - `MAIN_APP_DATABASE_URL`：AI 知识库主项目的 Supabase Pooler PostgreSQL 连接串。配置后，Flask 后台生成卡密时会同步写入主项目 `license_keys` 表。
 - `ADMIN_USERNAME`：默认管理员账号。
@@ -107,7 +105,6 @@ ADMIN_PASSWORD=admin123456
 要让卡密能在 AI 知识库线上项目使用，请在 `license-admin-flask/.env` 中配置：
 
 ```env
-SESSION_SECRET=这里填 Netlify 里 AI 知识库项目的 SESSION_SECRET
 MAIN_APP_DATABASE_URL=这里填 Supabase Pooler 连接串，建议使用 6543 端口
 ```
 
@@ -119,6 +116,8 @@ python run.py
 ```
 
 生成页如果显示“已同步到 AI 知识库主项目 Supabase”，这批卡密才可以在主站激活页使用。
+
+如果旧卡密已经生成出来，但主站提示“卡密不存在”，进入“同步已有明文卡密”，粘贴明文卡密并同步到主项目。
 
 Supabase Pooler 示例：
 

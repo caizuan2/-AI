@@ -1,7 +1,7 @@
 import csv
 import io
+import re
 from datetime import datetime, time, timezone
-from typing import Any
 
 from flask import (
     Blueprint,
@@ -187,6 +187,46 @@ def generate_licenses() -> str:
     )
 
 
+@bp.post("/admin/licenses/sync-existing")
+@admin_required
+def sync_existing_licenses() -> str:
+    raw_codes = request.form.get("codes", "")
+    codes = extract_license_codes(raw_codes)
+
+    if not codes:
+        flash("请粘贴至少一个格式正确的明文卡密。", "error")
+        return redirect(url_for("main.licenses"))
+
+    main_app_sync = get_main_app_sync_status()
+    if not main_app_sync["ready"]:
+        flash(str(main_app_sync["message"]), "error")
+        return redirect(url_for("main.licenses"))
+
+    try:
+        inserted = sync_license_keys_to_main_app(codes, None)
+    except MainAppSyncError as error:
+        current_app.logger.exception("Failed to sync existing license keys: %s", error)
+        flash(str(error), "error")
+        return redirect(url_for("main.licenses"))
+
+    db = get_db()
+    for code in codes:
+        try:
+            db.execute(
+                """
+                INSERT INTO licenses (code_hash, code_mask, status, expires_at, created_at)
+                VALUES (?, ?, 'unused', NULL, ?)
+                """,
+                (hash_license_code(code), mask_license_code(code), utc_now()),
+            )
+        except Exception:
+            continue
+    db.commit()
+
+    flash(f"已同步 {inserted} 条到 AI 知识库主项目 Supabase。", "success")
+    return redirect(url_for("main.licenses"))
+
+
 @bp.post("/admin/licenses/<int:license_id>/disable")
 @admin_required
 def disable_license(license_id: int) -> str:
@@ -356,6 +396,12 @@ def build_plaintext_csv(codes: list[str], expires_at: str | None) -> str:
     for code in codes:
         writer.writerow([code, expires_at or ""])
     return output.getvalue()
+
+
+def extract_license_codes(value: str) -> list[str]:
+    matches = re.findall(r"AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", value.upper())
+    normalized_codes = [normalize_code(match) for match in matches]
+    return list(dict.fromkeys(code for code in normalized_codes if is_valid_code_format(code)))
 
 
 def csv_response(content: str, filename: str) -> Response:
