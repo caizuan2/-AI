@@ -1,16 +1,12 @@
 import { prisma } from "@/lib/prisma";
-import { apiError, apiSuccess, databaseConfigError, sessionConfigError } from "@/lib/api-response";
+import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
-import { ensureRegistrationSchema } from "@/lib/db/registration-schema";
-import { AppError, ValidationError } from "@/lib/errors";
-import { getRequestIdFromHeaders, logger } from "@/lib/logger";
-import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
-import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
+import { ValidationError } from "@/lib/errors";
+import { hasDatabaseUrl } from "@/lib/server-config";
 
-export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 interface RegisterResponse {
@@ -20,132 +16,6 @@ interface RegisterResponse {
     name: string;
     licenseActivated: boolean;
   };
-}
-
-interface DatabaseErrorDetails {
-  name: string;
-  message: string;
-  code?: string;
-  clientVersion?: string;
-  stack?: string;
-}
-
-function serializeDatabaseError(error: unknown): DatabaseErrorDetails {
-  if (error instanceof Error) {
-    const details = error as Error & {
-      code?: unknown;
-      clientVersion?: unknown;
-    };
-
-    return {
-      name: error.name,
-      message: error.message,
-      code: typeof details.code === "string" ? details.code : undefined,
-      clientVersion: typeof details.clientVersion === "string" ? details.clientVersion : undefined,
-      stack: error.stack
-    };
-  }
-
-  return {
-    name: "UnknownError",
-    message: String(error)
-  };
-}
-
-function isPrismaLikeError(error: unknown) {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const details = error as Error & {
-    code?: unknown;
-    clientVersion?: unknown;
-  };
-
-  return (
-    error.name.startsWith("PrismaClient") ||
-    typeof details.clientVersion === "string" ||
-    typeof details.code === "string"
-  );
-}
-
-function toRegisterError(error: unknown, request: Request) {
-  if (!isPrismaLikeError(error)) {
-    return error;
-  }
-
-  const details = serializeDatabaseError(error);
-  const safeDatabase = getSafeDatabaseUrlInfo();
-  const requestId = getRequestIdFromHeaders(request.headers);
-
-  logger.error("auth.register.database_error", {
-    route: "/api/auth/register",
-    requestId,
-    errorName: details.name,
-    code: details.code,
-    message: details.message,
-    clientVersion: details.clientVersion,
-    database: safeDatabase
-  });
-  console.error("[api/auth/register] database error", {
-    route: "/api/auth/register",
-    requestId,
-    errorName: details.name,
-    code: details.code,
-    message: details.message,
-    clientVersion: details.clientVersion,
-    database: safeDatabase
-  });
-
-  if (details.code === "P2002") {
-    return new AppError("VALIDATION_ERROR", "该手机号已注册，请直接登录。", 409);
-  }
-
-  if (details.code === "P1000") {
-    return new AppError(
-      "DATABASE_ERROR",
-      "数据库认证失败，请检查 Supabase 数据库用户名和密码是否正确。",
-      500
-    );
-  }
-
-  if (details.code === "P2024") {
-    return new AppError(
-      "DATABASE_ERROR",
-      "数据库连接池超时，请检查 Supabase Pooler、connection_limit 和 pool_timeout 配置。",
-      500
-    );
-  }
-
-  if (
-    details.code === "P1001" ||
-    details.name === "PrismaClientInitializationError" ||
-    /can't reach database server|connect|connection|timeout/i.test(details.message)
-  ) {
-    return new AppError(
-      "DATABASE_ERROR",
-      "数据库连接失败，请检查 Netlify 的 DATABASE_URL 是否为 Supabase Pooler 完整连接串。",
-      500
-    );
-  }
-
-  if (
-    details.code === "P2021" ||
-    details.code === "P2022" ||
-    /does not exist|table|column|migration/i.test(details.message)
-  ) {
-    return new AppError(
-      "DATABASE_ERROR",
-      "数据库表结构未就绪，请使用 DIRECT_URL 执行 pnpm prisma:migrate:deploy。",
-      500
-    );
-  }
-
-  if (details.name === "PrismaClientValidationError") {
-    return new AppError("DATABASE_ERROR", "数据库查询验证失败，请检查 Prisma schema 与迁移状态。", 500);
-  }
-
-  return new AppError("DATABASE_ERROR", "数据库操作失败，请检查生产数据库连接和迁移状态。", 500);
 }
 
 function parseRegisterRequest(body: unknown) {
@@ -177,10 +47,6 @@ export async function POST(request: Request) {
     return apiError(databaseConfigError("注册账号"));
   }
 
-  if (!hasSessionSecret()) {
-    return apiError(sessionConfigError("注册账号"));
-  }
-
   let body: unknown;
 
   try {
@@ -198,23 +64,13 @@ export async function POST(request: Request) {
   }
 
   try {
-    const schema = await ensureRegistrationSchema();
-
-    if (!schema.ready) {
-      return apiError(new AppError(
-        "DATABASE_ERROR",
-        "数据库表结构自动补齐失败，请检查 Supabase SQL 权限或执行注册结构修复脚本。",
-        500
-      ));
-    }
-
     const existing = await prisma.user.findUnique({
       where: { phone: input.phone },
       select: { id: true }
     });
 
     if (existing) {
-      return apiError(new AppError("VALIDATION_ERROR", "该手机号已注册，请直接登录。", 409));
+      return apiError(new ValidationError("该手机号已注册，请直接登录。"));
     }
 
     const user = await prisma.user.create({
@@ -244,6 +100,6 @@ export async function POST(request: Request) {
       }
     }, { status: 201 });
   } catch (error) {
-    return apiError(toRegisterError(error, request));
+    return apiError(error);
   }
 }

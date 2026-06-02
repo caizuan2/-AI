@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import {
   isKnowledgeExportFormat,
@@ -12,10 +12,10 @@ import { hasDatabaseUrl } from "@/lib/server-config";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

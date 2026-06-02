@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { isKnowledgeLifecycleStatus } from "@/lib/knowledge/status";
 import { getRequestIdFromHeaders } from "@/lib/logger";
@@ -363,10 +363,10 @@ function buildPatchData(input: PatchKnowledgeInput): Prisma.KnowledgeItemUpdateI
 }
 
 export async function GET(_request: Request, context: RouteContext) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }
@@ -390,10 +390,10 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }
@@ -519,10 +519,10 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { AIError, NotFoundError, ValidationError } from "@/lib/errors";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
@@ -287,10 +287,10 @@ function serializeKnowledgeDetail(item: ExistingKnowledge & {
 
 export async function POST(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

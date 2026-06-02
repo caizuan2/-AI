@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import {
   addDuplicateTarget,
@@ -27,10 +27,10 @@ function validateImportContentLength(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    user = await requireBetaAccess();
+    user = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

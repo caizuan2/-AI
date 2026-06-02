@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { NotFoundError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -25,10 +25,10 @@ interface CompletionSuggestionsResponse {
 
 export async function POST(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

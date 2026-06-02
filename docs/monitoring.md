@@ -9,9 +9,9 @@
 - 哪个 API 请求出错了：通过 `requestId` 串联请求和错误。
 - AI 调用是否慢或失败：记录模型、耗时和 token 估算。
 - RAG 检索是否命中：记录候选数量、命中数量和相似度。
-- 是否存在异常流量：结合 rate limit 日志和 Vercel Functions 日志观察。
+- 是否存在异常流量：结合 rate limit 日志和 Netlify Functions 日志观察。
 
-日志默认输出为 JSON line，适合接入 Vercel Logs、Log Drains、Datadog、Axiom、Better Stack 或其他日志平台。
+日志默认输出为 JSON line，适合接入 Netlify Logs、Datadog、Axiom、Better Stack 或其他日志平台。
 
 ## API requestId
 
@@ -180,9 +180,9 @@ API 请求日志示例：
 
 错误日志只记录安全的错误类别、状态码和应用错误码。未知底层错误不会记录原始 message 或 stack，避免泄露数据库连接串、OpenAI key、用户内容或第三方响应细节。
 
-## Vercel 查看方式
+## Netlify 查看方式
 
-在 Vercel Dashboard：
+在 Netlify Dashboard：
 
 1. 打开项目。
 2. 进入 Logs。
@@ -211,7 +211,7 @@ API 请求日志示例：
 - 最近错误日志
 - 系统健康状态
 
-访问控制使用 `ADMIN_PHONES` / `ADMIN_EMAILS` / `ADMIN_USER_IDS` 环境变量。页面会做服务端校验，API 也会再次执行管理员权限校验。最近错误日志来自当前运行实例的内存窗口，仅用于快速排障；生产长期留存仍应依赖平台日志或外部日志平台。
+访问控制使用 `ADMIN_PHONES` / `ADMIN_USER_IDS` 环境变量。页面会做服务端校验，API 也会再次执行管理员权限校验。最近错误日志来自当前运行实例的内存窗口，仅用于快速排障；生产长期留存仍应依赖平台日志或外部日志平台。
 
 ## 建议监控指标
 
@@ -240,7 +240,7 @@ API 请求日志示例：
 
 ### 后台任务
 
-- Vercel Cron 是否按时触发。
+- Netlify Scheduled Functions 是否按时触发。
 - `/api/jobs/check-stale` 是否返回 200。
 - `/api/jobs/refresh-suggestions` 是否返回 200。
 - `/api/jobs/cleanup-orphans` 是否返回 200。
@@ -250,7 +250,7 @@ API 请求日志示例：
 - 5 分钟内出现连续 5 次 `ai.call_failed`。
 - 10 分钟内 `/api/chat` 5xx 错误率超过 2%。
 - 10 分钟内 `rag.retrieval` 的 `hitCount=0` 比例超过 50%。
-- Vercel Cron 连续两次失败。
+- Netlify Scheduled Functions 连续两次失败。
 - OpenAI usage 或账单接近预算上限。
 
 ## 排障流程

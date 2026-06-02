@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/prisma";
-import { apiError, apiSuccess, databaseConfigError, sessionConfigError } from "@/lib/api-response";
+import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
 import { ForbiddenError, UnauthorizedError, ValidationError } from "@/lib/errors";
-import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
+import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +41,6 @@ function parseLoginRequest(body: unknown) {
 export async function POST(request: Request) {
   if (!hasDatabaseUrl()) {
     return apiError(databaseConfigError("登录"));
-  }
-
-  if (!hasSessionSecret()) {
-    return apiError(sessionConfigError("登录"));
   }
 
   let body: unknown;

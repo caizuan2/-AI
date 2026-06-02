@@ -1,6 +1,6 @@
 # Netlify 正式部署指南
 
-本文档用于把当前 AI 知识库 APP 部署到 Netlify + Supabase。
+本文档用于把当前 AI 知识库 APP 部署到 Netlify，并使用 Supabase PostgreSQL 作为数据库。
 
 ## 1. Netlify 控制台配置
 
@@ -59,7 +59,7 @@ Netlify Dashboard -> Site configuration -> Environment variables
 
 按照 [Netlify 环境变量说明](./netlify-env.md) 填写所有变量。
 
-## 3. Supabase 配置
+## 3. 数据库配置
 
 进入 Supabase SQL Editor：
 
@@ -73,24 +73,7 @@ Supabase Dashboard -> 你的项目 -> SQL Editor -> New query
 create extension if not exists vector;
 ```
 
-进入 Auth URL 配置：
-
-```text
-Supabase Dashboard -> Authentication -> URL Configuration
-```
-
-填写：
-
-```text
-Site URL:
-https://你的-netlify-site.netlify.app
-
-Redirect URLs:
-https://你的-netlify-site.netlify.app/**
-http://localhost:3000/**
-```
-
-手机号验证码还需要启用 Supabase Phone provider 并配置短信服务商，详见 [Supabase 手机号 OTP 认证配置](./supabase-phone-auth.md)。
+当前认证使用手机号 + 密码 + HttpOnly Cookie，卡密激活后才能访问核心功能。
 
 ## 4. 本地预检查
 
@@ -178,13 +161,14 @@ https://你的-netlify-site.netlify.app
 
 1. 打开首页。
 2. 注册账号。
-3. 登录账号。
-4. 访问 `/ingest`。
-5. 输入测试知识并执行 AI 分析。
-6. 点击确认入库。
-7. 访问 `/knowledge`，确认知识存在。
-8. 访问 `/chat`，基于知识库提问。
-9. 确认回答包含引用来源。
-10. 测试 `/upload` 上传小于 4MB 的文件。
-11. 测试 `/settings` 导入导出。
-12. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
+3. 使用卡密激活账号。
+4. 登录账号。
+5. 访问 `/ingest`。
+6. 输入测试知识并执行 AI 分析。
+7. 点击确认入库。
+8. 访问 `/knowledge`，确认知识存在。
+9. 访问 `/chat`，基于知识库提问。
+10. 确认回答包含引用来源。
+11. 测试 `/upload` 上传小于 4MB 的文件。
+12. 测试 `/settings` 导入导出。
+13. 用管理员账号访问 `/admin` 和 `/admin/analytics`。

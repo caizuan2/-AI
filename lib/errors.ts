@@ -6,6 +6,7 @@ export type AppErrorCode =
   | "NOT_FOUND"
   | "AI_ERROR"
   | "DATABASE_ERROR"
+  | "LICENSE_REQUIRED"
   | "RATE_LIMITED";
 
 export class AppError extends Error {
@@ -37,6 +38,13 @@ export class ForbiddenError extends AppError {
   constructor(message = "当前账号没有权限访问该资源。") {
     super("FORBIDDEN", message, 403);
     this.name = "ForbiddenError";
+  }
+}
+
+export class LicenseRequiredError extends AppError {
+  constructor(message = "请先输入卡密激活知识库。") {
+    super("LICENSE_REQUIRED", message, 403);
+    this.name = "LicenseRequiredError";
   }
 }
 

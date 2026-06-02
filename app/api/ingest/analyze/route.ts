@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
 import {
   mockAnalyzeKnowledge,
@@ -42,12 +42,12 @@ function isRequestBody(value: unknown): value is IngestAnalyzeRequest {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
   let settings: Awaited<ReturnType<typeof getOrCreateUserSettings>>;
   let existingCategories: string[] = [];
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
     const rateLimit = checkRateLimit(request, {
       namespace: "api:ingest:analyze",
       userId: currentUser.id,

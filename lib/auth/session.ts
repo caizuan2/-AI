@@ -4,8 +4,7 @@ import { createHash, randomBytes } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
-import { ConfigError, ForbiddenError, UnauthorizedError } from "@/lib/errors";
-import { hasSessionSecret } from "@/lib/server-config-core";
+import { UnauthorizedError, ForbiddenError } from "@/lib/errors";
 
 export interface CurrentUser {
   id: string;
@@ -23,7 +22,7 @@ export function hashSessionToken(token: string) {
   const secret = process.env.SESSION_SECRET?.trim();
 
   if (!secret) {
-    throw new ConfigError("认证密钥未配置，请在 Netlify 设置 SESSION_SECRET。");
+    throw new Error("SESSION_SECRET is required for session auth.");
   }
 
   return createHash("sha256").update(`${secret}:${token}`).digest("hex");
@@ -122,7 +121,7 @@ export async function requireUser() {
 export async function destroySession() {
   const token = cookies().get(SESSION_COOKIE_NAME)?.value;
 
-  if (token && hasSessionSecret()) {
+  if (token) {
     await prisma.session.deleteMany({
       where: {
         tokenHash: hashSessionToken(token)

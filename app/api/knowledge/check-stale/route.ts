@@ -1,5 +1,5 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { prisma } from "@/lib/prisma";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -45,10 +45,10 @@ async function buildResponse(userId: string, checkedAt: Date, markedStale: numbe
 }
 
 export async function POST() {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }
@@ -79,10 +79,10 @@ export async function POST() {
 }
 
 export async function GET() {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
   } catch (error) {
     return apiError(error);
   }

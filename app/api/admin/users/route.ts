@@ -12,13 +12,13 @@ interface AdminUserResponse {
   email: string | null;
   phone: string | null;
   name: string;
-  betaAccess: boolean;
-  betaRequestedAt: string | null;
+  licenseActivated: boolean;
+  isActive: boolean;
   createdAt: string;
   updatedAt: string;
 }
 
-interface UpdateBetaAccessResponse {
+interface UpdateLicenseActivationResponse {
   user: AdminUserResponse;
 }
 
@@ -26,9 +26,9 @@ function serializeUser(user: {
   id: string;
   email: string | null;
   phone: string | null;
-  name: string;
-  betaAccess: boolean;
-  betaRequestedAt: Date | null;
+  name: string | null;
+  licenseActivated: boolean;
+  isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
 }): AdminUserResponse {
@@ -36,9 +36,9 @@ function serializeUser(user: {
     id: user.id,
     email: user.email,
     phone: user.phone,
-    name: user.name,
-    betaAccess: user.betaAccess,
-    betaRequestedAt: user.betaRequestedAt?.toISOString() ?? null,
+    name: user.name ?? user.phone ?? user.email ?? user.id,
+    licenseActivated: user.licenseActivated,
+    isActive: user.isActive,
     createdAt: user.createdAt.toISOString(),
     updatedAt: user.updatedAt.toISOString()
   };
@@ -50,17 +50,17 @@ function parsePatchRequest(body: unknown) {
   }
 
   const userId = typeof body.userId === "string" ? body.userId.trim() : "";
-  const betaAccess = typeof body.betaAccess === "boolean" ? body.betaAccess : null;
+  const licenseActivated = typeof body.licenseActivated === "boolean" ? body.licenseActivated : null;
 
   if (!userId) {
     throw new ValidationError("请选择要更新的用户。");
   }
 
-  if (betaAccess === null) {
-    throw new ValidationError("betaAccess 必须是布尔值。");
+  if (licenseActivated === null) {
+    throw new ValidationError("licenseActivated 必须是布尔值。");
   }
 
-  return { userId, betaAccess };
+  return { userId, licenseActivated };
 }
 
 export async function PATCH(request: Request) {
@@ -71,7 +71,7 @@ export async function PATCH(request: Request) {
   }
 
   if (!hasDatabaseUrl()) {
-    return apiError(databaseConfigError("更新 Beta 测试资格"));
+    return apiError(databaseConfigError("更新卡密激活状态"));
   }
 
   let body: unknown;
@@ -103,11 +103,11 @@ export async function PATCH(request: Request) {
     const user = await prisma.user.update({
       where: { id: input.userId },
       data: {
-        betaAccess: input.betaAccess
+        licenseActivated: input.licenseActivated
       }
     });
 
-    return apiSuccess<UpdateBetaAccessResponse>({
+    return apiSuccess<UpdateLicenseActivationResponse>({
       user: serializeUser(user)
     });
   } catch (error) {

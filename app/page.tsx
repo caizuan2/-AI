@@ -1,9 +1,15 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowRight, BotMessageSquare, Database, FilePlus2, Sparkles, UploadCloud } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { isAdminUser } from "@/lib/admin";
+import { getCurrentUser } from "@/lib/auth";
+import { UnauthorizedError } from "@/lib/errors";
+
+export const dynamic = "force-dynamic";
 
 const workflow = [
   {
@@ -32,9 +38,25 @@ const workflow = [
   }
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  let user: Awaited<ReturnType<typeof getCurrentUser>>;
+
+  try {
+    user = await getCurrentUser();
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      redirect("/login");
+    }
+
+    throw error;
+  }
+
+  if (!user.licenseActivated) {
+    redirect("/unlock");
+  }
+
   return (
-    <AppShell>
+    <AppShell user={{ ...user, isAdmin: isAdminUser(user) }}>
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
         <section className="rounded-lg border border-line bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">

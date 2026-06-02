@@ -5,13 +5,7 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Database, KeyRound, Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-
-type ActivateApiResponse = {
-  ok?: boolean;
-  message?: string;
-  code?: string;
-  licenseActivated?: boolean;
-};
+import { unwrapApiResponse } from "@/lib/api/client";
 
 export function UnlockPanel({ user }: { user: { phone: string; name: string } }) {
   const router = useRouter();
@@ -31,24 +25,15 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
     setError("");
 
     try {
-      const response = await fetch("/api/activate", {
+      const response = await fetch("/api/license/redeem", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-          code: licenseKey,
-          user_id: user.phone
-        })
+        body: JSON.stringify({ licenseKey })
       });
-      const data = await response.json().catch(() => null) as ActivateApiResponse | null;
 
-      if (!response.ok || !data?.ok) {
-        throw new Error(data?.message || "卡密激活失败。");
-      }
-
-      localStorage.setItem("aikb_license_activated", "true");
-      localStorage.setItem("aikb_license_code", data.code || licenseKey.trim());
+      await unwrapApiResponse<unknown>(response, "卡密激活失败。");
       router.push("/");
       router.refresh();
     } catch (caughtError) {

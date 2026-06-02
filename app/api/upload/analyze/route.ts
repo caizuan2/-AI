@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { AIError, ValidationError } from "@/lib/errors";
 import {
   buildUploadAnalysisText,
@@ -61,12 +61,12 @@ function validateUploadContentLength(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
   let settings: Awaited<ReturnType<typeof getOrCreateUserSettings>>;
   let existingCategories: string[] = [];
 
   try {
-    currentUser = await requireBetaAccess();
+    currentUser = await requireLicensedUser();
 
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("分析上传文件"));

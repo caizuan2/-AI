@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireBetaAccess } from "@/lib/beta";
+import { requireLicensedUser } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -126,14 +126,14 @@ async function parseJsonBody(request: Request) {
 
 async function getAuthUserOrResponse() {
   try {
-    return await requireBetaAccess();
+    return await requireLicensedUser();
   } catch (error) {
     throw error;
   }
 }
 
 export async function GET() {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -153,7 +153,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -202,7 +202,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -251,7 +251,7 @@ export async function DELETE(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
+  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
     currentUser = await getAuthUserOrResponse();

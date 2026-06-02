@@ -5,6 +5,7 @@ const friendlyMessages: Record<AppErrorCode, string> = {
   VALIDATION_ERROR: "输入内容有误，请检查后再试。",
   UNAUTHORIZED: "请先登录后再继续。",
   FORBIDDEN: "当前账号没有权限访问该功能。",
+  LICENSE_REQUIRED: "请先输入卡密激活知识库。",
   NOT_FOUND: "没有找到对应内容。",
   AI_ERROR: "AI 服务暂时不可用，请稍后重试。",
   DATABASE_ERROR: "数据库暂不可用，请检查本地数据库配置。",
