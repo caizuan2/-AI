@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkRegistrationSchema, type RegistrationSchemaStatus } from "@/lib/db/registration-schema";
 import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { getDatabasePoolerWarnings, getSafeDatabaseUrlInfo, type SafeDatabaseUrlInfo } from "@/lib/safe-db-url";
@@ -11,77 +12,11 @@ export interface DatabaseHealthResponse {
   ok: boolean;
   database: SafeDatabaseUrlInfo;
   warnings?: string[];
-  schema?: {
-    ready: boolean;
-    requiredTables: string[];
-    missingTables: string[];
-    missingColumns: Array<{
-      table: string;
-      column: string;
-    }>;
-    licenseKeyStatusEnum: boolean;
-  };
+  schema?: RegistrationSchemaStatus;
   error?: {
     name: string;
     code?: string;
     message: string;
-  };
-}
-
-const requiredSchema: Record<string, string[]> = {
-  users: [
-    "id",
-    "phone",
-    "passwordHash",
-    "name",
-    "isActive",
-    "licenseActivated",
-    "createdAt",
-    "updatedAt"
-  ],
-  sessions: ["id", "userId", "tokenHash", "expiresAt", "createdAt"],
-  license_keys: ["id", "keyHash", "status", "redeemedByUserId", "redeemedAt", "expiresAt", "createdAt"]
-};
-
-async function checkRequiredSchema() {
-  const requiredTables = Object.keys(requiredSchema);
-  const tableRows = await prisma.$queryRaw<Array<{ tableName: string }>>`
-    SELECT table_name AS "tableName"
-    FROM information_schema.tables
-    WHERE table_schema = 'public'
-      AND table_name IN ('users', 'sessions', 'license_keys')
-  `;
-  const existingTables = new Set(tableRows.map((row) => row.tableName));
-  const missingTables = requiredTables.filter((table) => !existingTables.has(table));
-
-  const columnRows = await prisma.$queryRaw<Array<{ tableName: string; columnName: string }>>`
-    SELECT table_name AS "tableName", column_name AS "columnName"
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name IN ('users', 'sessions', 'license_keys')
-  `;
-  const existingColumns = new Set(columnRows.map((row) => `${row.tableName}.${row.columnName}`));
-  const missingColumns = Object.entries(requiredSchema).flatMap(([table, columns]) =>
-    columns
-      .filter((column) => existingTables.has(table) && !existingColumns.has(`${table}.${column}`))
-      .map((column) => ({ table, column }))
-  );
-  const enumRows = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    SELECT EXISTS (
-      SELECT 1
-      FROM pg_type
-      WHERE typname = 'LicenseKeyStatus'
-    ) AS "exists"
-  `;
-  const licenseKeyStatusEnum = Boolean(enumRows[0]?.exists);
-  const ready = missingTables.length === 0 && missingColumns.length === 0 && licenseKeyStatusEnum;
-
-  return {
-    ready,
-    requiredTables,
-    missingTables,
-    missingColumns,
-    licenseKeyStatusEnum
   };
 }
 
@@ -122,7 +57,7 @@ export async function GET() {
 
   try {
     await prisma.$queryRaw`SELECT 1`;
-    const schema = await checkRequiredSchema();
+    const schema = await checkRegistrationSchema();
 
     return NextResponse.json<DatabaseHealthResponse>({
       ok: schema.ready,
