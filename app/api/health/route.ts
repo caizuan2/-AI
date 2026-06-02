@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { hasDatabaseUrl } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableOpenAIKey } from "@/lib/server-config";
 import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 export const dynamic = "force-dynamic";
 
 export interface HealthResponse {
-  auth: boolean;
-  database: boolean;
   status: "ok";
+  database: boolean;
+  openai: boolean;
+  supabase: boolean;
 }
 
 async function checkDatabase() {
@@ -26,9 +27,10 @@ async function checkDatabase() {
 
 export async function GET() {
   const response: HealthResponse = {
-    auth: hasSupabaseConfig(),
+    status: "ok",
     database: await checkDatabase(),
-    status: "ok"
+    openai: hasUsableOpenAIKey(),
+    supabase: hasSupabaseConfig()
   };
 
   return NextResponse.json(response);
