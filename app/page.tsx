@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, BotMessageSquare, Database, FilePlus2, Sparkles, UploadCloud } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { SystemStatusCard } from "@/components/system-status-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -99,6 +100,8 @@ export default function HomePage() {
             );
           })}
         </section>
+
+        <SystemStatusCard />
 
         <Card>
           <CardHeader>
