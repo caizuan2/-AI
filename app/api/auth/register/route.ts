@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { NextResponse } from "next/server";
 import { apiError, apiSuccess, databaseConfigError, sessionConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
@@ -16,6 +17,32 @@ interface RegisterResponse {
     name: string;
     licenseActivated: boolean;
   };
+}
+
+interface RegisterDebugErrorResponse {
+  error: string;
+  stack?: string;
+}
+
+function serializeDebugError(error: unknown): RegisterDebugErrorResponse {
+  if (error instanceof Error) {
+    return {
+      error: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    error: String(error)
+  };
+}
+
+function logRegisterError(error: unknown) {
+  const debugError = serializeDebugError(error);
+
+  console.error("[api/auth/register] failed", debugError);
+
+  return debugError;
 }
 
 function parseRegisterRequest(body: unknown) {
@@ -104,6 +131,10 @@ export async function POST(request: Request) {
       }
     }, { status: 201 });
   } catch (error) {
-    return apiError(error);
+    const debugError = logRegisterError(error);
+
+    return NextResponse.json<RegisterDebugErrorResponse>(debugError, {
+      status: 500
+    });
   }
 }

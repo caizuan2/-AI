@@ -61,7 +61,19 @@ function RegisterForm() {
       router.push(data.user.licenseActivated ? "/" : "/unlock");
       router.refresh();
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "注册失败，请稍后重试。");
+      const debugError = caughtError instanceof Error
+        ? {
+            error: caughtError.message,
+            stack: caughtError.stack
+          }
+        : {
+            error: String(caughtError)
+          };
+
+      console.error("[register/page] register failed", debugError);
+      setError(debugError.error || "注册失败，请稍后重试。");
+
+      return debugError;
     } finally {
       setLoading(false);
     }
