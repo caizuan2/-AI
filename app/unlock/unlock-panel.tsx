@@ -11,9 +11,7 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
   const router = useRouter();
   const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
-  const [bootstrapping, setBootstrapping] = useState(false);
   const [error, setError] = useState("");
-  const [issuedKey, setIssuedKey] = useState("");
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -42,25 +40,6 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
       setError(caughtError instanceof Error ? caughtError.message : "卡密激活失败，请稍后重试。");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function bootstrapLicense() {
-    setBootstrapping(true);
-    setError("");
-
-    try {
-      const response = await fetch("/api/license/bootstrap", {
-        method: "POST"
-      });
-      const data = await unwrapApiResponse<{ licenseKey: string }>(response, "领取卡密失败。");
-
-      setIssuedKey(data.licenseKey);
-      setLicenseKey(data.licenseKey);
-    } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "领取卡密失败，请联系管理员。");
-    } finally {
-      setBootstrapping(false);
     }
   }
 
@@ -108,32 +87,6 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
           </div>
 
           <form onSubmit={submit} className="mt-8 space-y-4">
-            <div className="rounded-lg border border-line bg-slate-50 px-3 py-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-sm font-medium text-ink">还没有卡密？</p>
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    系统没有任何卡密时，可以领取首张卡密用于激活。
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={bootstrapping || loading}
-                  onClick={bootstrapLicense}
-                >
-                  {bootstrapping ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
-                  领取首张卡密
-                </Button>
-              </div>
-              {issuedKey ? (
-                <p className="mt-3 break-all rounded-md bg-white px-3 py-2 font-mono text-xs text-teal-700">
-                  {issuedKey}
-                </p>
-              ) : null}
-            </div>
-
             <label className="block">
               <span className="text-sm font-medium text-ink">卡密</span>
               <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
