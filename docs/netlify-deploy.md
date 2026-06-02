@@ -20,7 +20,7 @@ Base directory / Root directory:
 .
 
 Build command:
-pnpm prisma:generate && pnpm build
+pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build
 
 Publish directory:
 .next
@@ -36,7 +36,7 @@ Node version:
 
 ```toml
 [build]
-command = "pnpm prisma:generate && pnpm build"
+command = "pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
@@ -95,7 +95,7 @@ pnpm build
 
 ## 5. 数据库迁移
 
-生产数据库迁移不要放进 Netlify build command。部署前在本机或 CI 手动执行：
+当前 Netlify build command 已包含 `pnpm prisma:migrate:deploy`，生产部署会先执行迁移再构建。也可以在本机手动预执行：
 
 ```powershell
 cd D:\XT
