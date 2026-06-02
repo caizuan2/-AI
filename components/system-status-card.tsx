@@ -1,27 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { Activity, AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 interface HealthResponse {
-  status: "ok" | "degraded";
+  status: "ok";
   database: boolean;
   openai: boolean;
-  auth: boolean;
-  license: boolean;
+  supabase: boolean;
 }
 
-type ServiceKey = "database" | "openai" | "auth" | "license";
+type ServiceKey = "database" | "openai" | "supabase";
 
 const services: Array<{ key: ServiceKey; label: string }> = [
   { key: "database", label: "Database" },
   { key: "openai", label: "OpenAI" },
-  { key: "auth", label: "Auth" },
-  { key: "license", label: "License" }
+  { key: "supabase", label: "Supabase" }
 ];
 
 const REFRESH_INTERVAL_MS = 30_000;
@@ -83,11 +80,7 @@ export function SystemStatusCard() {
               <Activity className="h-4 w-4 text-teal-700" />
               <CardTitle>系统状态</CardTitle>
             </div>
-            <CardDescription>
-              <Link href="/api/health" className="text-teal-700 hover:text-teal-800">
-                /api/health
-              </Link>
-            </CardDescription>
+            <CardDescription>生产依赖连接状态</CardDescription>
           </div>
           <Badge variant={allReady ? "default" : "warning"}>
             {isLoading ? "检测中" : allReady ? "可用" : "需配置"}
@@ -101,7 +94,7 @@ export function SystemStatusCard() {
             <span>{error}</span>
           </div>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-3">
             {services.map((service) => {
               const ready = Boolean(health?.[service.key]);
 
@@ -113,7 +106,7 @@ export function SystemStatusCard() {
                   <div>
                     <p className="text-sm font-medium text-ink">{service.label}</p>
                     <p className="mt-1 text-xs text-muted">
-                      {isLoading ? "检测中" : ready ? "正常" : "异常"}
+                      {isLoading ? "检测中" : ready ? "正常" : "未连接"}
                     </p>
                   </div>
                   {isLoading ? (
