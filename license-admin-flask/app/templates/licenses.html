@@ -32,6 +32,18 @@
   </section>
 
   <section class="panel">
+    <h2>同步已有明文卡密</h2>
+    <p class="muted small">如果你之前已经生成了明文卡密，但主站提示“卡密不存在”，把明文粘贴到这里同步到 Supabase。</p>
+    <form class="form" method="post" action="{{ url_for('main.sync_existing_licenses') }}">
+      <label>
+        明文卡密
+        <textarea class="textarea" name="codes" rows="4" placeholder="AIKB-XXXX-XXXX-XXXX&#10;AIKB-XXXX-XXXX-XXXX"></textarea>
+      </label>
+      <button class="primary-button" type="submit">同步到主项目</button>
+    </form>
+  </section>
+
+  <section class="panel">
     <div class="panel-title">
       <h2>卡密列表</h2>
       <form class="filter-form" method="get">

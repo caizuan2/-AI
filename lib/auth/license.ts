@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { ConfigError, ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
+import { ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -19,14 +19,26 @@ export function generatePlainLicenseKey() {
   return `AIKB-${randomLicenseGroup(4)}-${randomLicenseGroup(4)}-${randomLicenseGroup(4)}`;
 }
 
-export function hashLicenseKey(key: string) {
+function stableLicenseHash(key: string) {
+  return createHash("sha256").update(`aikb-license:${normalizeLicenseKey(key)}`).digest("hex");
+}
+
+function sessionSecretLicenseHash(key: string) {
   const secret = process.env.SESSION_SECRET?.trim();
 
   if (!secret) {
-    throw new ConfigError("认证密钥未配置，无法校验卡密。请在 Netlify 设置 SESSION_SECRET。");
+    return null;
   }
 
   return createHash("sha256").update(`${secret}:license:${normalizeLicenseKey(key)}`).digest("hex");
+}
+
+export function hashLicenseKey(key: string) {
+  return stableLicenseHash(key);
+}
+
+function getAcceptedLicenseHashes(key: string) {
+  return Array.from(new Set([stableLicenseHash(key), sessionSecretLicenseHash(key)].filter(Boolean) as string[]));
 }
 
 export async function checkUserLicense(userId: string) {
@@ -54,21 +66,34 @@ export async function checkUserLicense(userId: string) {
 }
 
 export async function redeemLicenseKey(userId: string, key: string) {
-  const keyHash = hashLicenseKey(key);
-  const license = await prisma.licenseKey.findUnique({
-    where: { keyHash }
+  const keyHashes = getAcceptedLicenseHashes(key);
+  const licenses = await prisma.licenseKey.findMany({
+    where: {
+      keyHash: {
+        in: keyHashes
+      }
+    },
+    orderBy: {
+      createdAt: "desc"
+    }
   });
 
-  if (!license) {
+  if (licenses.length === 0) {
     throw new NotFoundError("卡密不存在。");
   }
 
-  if (license.status === LicenseKeyStatus.DISABLED) {
+  if (licenses.some((license) => license.status === LicenseKeyStatus.USED)) {
+    throw new ForbiddenError("卡密已使用。");
+  }
+
+  if (licenses.every((license) => license.status === LicenseKeyStatus.DISABLED)) {
     throw new ForbiddenError("卡密已禁用。");
   }
 
-  if (license.status === LicenseKeyStatus.USED) {
-    throw new ForbiddenError("卡密已使用。");
+  const license = licenses.find((item) => item.status === LicenseKeyStatus.UNUSED) ?? licenses[0];
+
+  if (license.status === LicenseKeyStatus.DISABLED) {
+    throw new ForbiddenError("卡密已禁用。");
   }
 
   if (license.expiresAt && license.expiresAt <= new Date()) {
