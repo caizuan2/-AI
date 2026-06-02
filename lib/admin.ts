@@ -4,6 +4,8 @@ import { normalizePhone } from "@/lib/auth/phone";
 import { requireUser, type CurrentUser } from "@/lib/auth";
 import { ForbiddenError } from "@/lib/errors";
 
+const BOOTSTRAP_ADMIN_PHONES = ["+8613352833602"];
+
 function readCsvEnv(name: string) {
   return (process.env[name] ?? "")
     .split(",")
@@ -22,7 +24,7 @@ function readPhoneEnv(name: string) {
 export function getAdminConfig() {
   return {
     userIds: readCsvEnv("ADMIN_USER_IDS"),
-    phones: readPhoneEnv("ADMIN_PHONES")
+    phones: Array.from(new Set([...BOOTSTRAP_ADMIN_PHONES, ...readPhoneEnv("ADMIN_PHONES")]))
   };
 }
 
