@@ -36,10 +36,9 @@ def generate_license_code() -> str:
 
 
 def hash_license_code(code: str) -> str:
-    normalized = normalize_code(code)
-    secret = current_app.config.get("LICENSE_SECRET", "").strip() or "aikb-license-v1-default-secret"
-
-    return hmac.new(secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+    secret = current_app.config["LICENSE_HASH_SECRET"].encode("utf-8")
+    normalized = normalize_code(code).encode("utf-8")
+    return hmac.new(secret, normalized, hashlib.sha256).hexdigest()
 
 
 def mask_license_code(code: str) -> str:

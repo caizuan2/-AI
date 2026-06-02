@@ -12,10 +12,6 @@
   </section>
 
   <section class="panel">
-    <div class="sync-status {% if main_app_sync.ready %}sync-ready{% else %}sync-missing{% endif %}">
-      {{ main_app_sync.message }}
-    </div>
-
     <h2>批量生成</h2>
     <form class="inline-form" method="post" action="{{ url_for('main.generate_licenses') }}">
       <label>
@@ -29,18 +25,6 @@
       <button class="primary-button" type="submit">生成卡密</button>
     </form>
     <p class="muted small">明文卡密只会在生成后显示一次，数据库仅保存 hash 和脱敏展示值。</p>
-  </section>
-
-  <section class="panel">
-    <h2>同步已有明文卡密</h2>
-    <p class="muted small">如果你之前已经生成了明文卡密，但主站提示“卡密不存在”，把明文粘贴到这里同步到 Supabase。</p>
-    <form class="form" method="post" action="{{ url_for('main.sync_existing_licenses') }}">
-      <label>
-        明文卡密
-        <textarea class="textarea" name="codes" rows="4" placeholder="AIKB-XXXX-XXXX-XXXX&#10;AIKB-XXXX-XXXX-XXXX"></textarea>
-      </label>
-      <button class="primary-button" type="submit">同步到主项目</button>
-    </form>
   </section>
 
   <section class="panel">

@@ -2,7 +2,6 @@ import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { writeAuditLog } from "@/lib/audit-log";
 import { isPlainObject } from "@/lib/api/responses";
 import { generatePlainLicenseKey, hashLicenseKey } from "@/lib/auth/license";
 import { ValidationError } from "@/lib/errors";
@@ -73,11 +72,9 @@ function parseGenerateRequest(body: unknown) {
   return { count, expiresAt };
 }
 
-export async function GET(request: Request) {
-  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
-
+export async function GET() {
   try {
-    admin = await requireAdminUser(request);
+    await requireAdminUser();
   } catch (error) {
     return apiError(error);
   }
@@ -92,17 +89,6 @@ export async function GET(request: Request) {
       take: 500
     });
 
-    await writeAuditLog({
-      userId: admin.id,
-      role: admin.role,
-      action: "ADMIN_LICENSE_VIEW",
-      targetType: "license_key",
-      request,
-      metadata: {
-        resultCount: licenses.length
-      }
-    });
-
     return apiSuccess<ListAdminLicensesResponse>({
       licenses: licenses.map(serializeLicense)
     });
@@ -112,10 +98,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
-
   try {
-    admin = await requireAdminUser(request);
+    await requireAdminUser();
   } catch (error) {
     return apiError(error);
   }
@@ -154,18 +138,6 @@ export async function POST(request: Request) {
         expiresAt: input.expiresAt
       })),
       skipDuplicates: true
-    });
-
-    await writeAuditLog({
-      userId: admin.id,
-      role: admin.role,
-      action: "ADMIN_LICENSE_GENERATE",
-      targetType: "license_key",
-      request,
-      metadata: {
-        count: codes.size,
-        expiresAt: input.expiresAt?.toISOString() ?? null
-      }
     });
 
     return apiSuccess<GenerateAdminLicensesResponse>({

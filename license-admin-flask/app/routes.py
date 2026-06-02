@@ -1,7 +1,7 @@
 import csv
 import io
-import re
 from datetime import datetime, time, timezone
+from typing import Any
 
 from flask import (
     Blueprint,
@@ -17,11 +17,6 @@ from flask import (
 
 from .auth import admin_required
 from .db import get_db
-from .main_app_db import (
-    MainAppSyncError,
-    get_main_app_sync_status,
-    sync_license_keys_to_main_app,
-)
 from .security import (
     generate_license_code,
     hash_license_code,
@@ -112,7 +107,6 @@ def licenses() -> str:
         licenses=rows,
         status=status,
         status_labels=STATUS_LABELS,
-        main_app_sync=get_main_app_sync_status(),
     )
 
 
@@ -141,29 +135,13 @@ def generate_licenses() -> str:
     generated: list[str] = []
     attempts = 0
 
-    generated_set: set[str] = set()
-    while len(generated_set) < count:
+    while len(generated) < count:
         attempts += 1
         if attempts > count * 10:
             flash("生成卡密时遇到过多重复，请重新尝试。", "error")
             return redirect(url_for("main.licenses"))
 
         code = generate_license_code()
-        generated_set.add(code)
-
-    generated = list(generated_set)
-    main_app_sync = get_main_app_sync_status()
-    main_app_inserted: int | None = None
-
-    if main_app_sync["ready"]:
-        try:
-            main_app_inserted = sync_license_keys_to_main_app(generated, expires_at)
-        except MainAppSyncError as error:
-            current_app.logger.exception("Failed to sync license keys to main app: %s", error)
-            flash(str(error), "error")
-            return redirect(url_for("main.licenses"))
-
-    for code in generated:
         code_hash = hash_license_code(code)
         try:
             db.execute(
@@ -173,6 +151,7 @@ def generate_licenses() -> str:
                 """,
                 (code_hash, mask_license_code(code), expires_at, utc_now()),
             )
+            generated.append(code)
         except Exception:
             continue
 
@@ -182,49 +161,7 @@ def generate_licenses() -> str:
         codes=generated,
         expires_at=expires_at,
         csv_content=build_plaintext_csv(generated, expires_at),
-        main_app_sync=main_app_sync,
-        main_app_inserted=main_app_inserted,
     )
-
-
-@bp.post("/admin/licenses/sync-existing")
-@admin_required
-def sync_existing_licenses() -> str:
-    raw_codes = request.form.get("codes", "")
-    codes = extract_license_codes(raw_codes)
-
-    if not codes:
-        flash("请粘贴至少一个格式正确的明文卡密。", "error")
-        return redirect(url_for("main.licenses"))
-
-    main_app_sync = get_main_app_sync_status()
-    if not main_app_sync["ready"]:
-        flash(str(main_app_sync["message"]), "error")
-        return redirect(url_for("main.licenses"))
-
-    try:
-        inserted = sync_license_keys_to_main_app(codes, None)
-    except MainAppSyncError as error:
-        current_app.logger.exception("Failed to sync existing license keys: %s", error)
-        flash(str(error), "error")
-        return redirect(url_for("main.licenses"))
-
-    db = get_db()
-    for code in codes:
-        try:
-            db.execute(
-                """
-                INSERT INTO licenses (code_hash, code_mask, status, expires_at, created_at)
-                VALUES (?, ?, 'unused', NULL, ?)
-                """,
-                (hash_license_code(code), mask_license_code(code), utc_now()),
-            )
-        except Exception:
-            continue
-    db.commit()
-
-    flash(f"已同步 {inserted} 条到 AI 知识库主项目 Supabase。", "success")
-    return redirect(url_for("main.licenses"))
 
 
 @bp.post("/admin/licenses/<int:license_id>/disable")
@@ -396,12 +333,6 @@ def build_plaintext_csv(codes: list[str], expires_at: str | None) -> str:
     for code in codes:
         writer.writerow([code, expires_at or ""])
     return output.getvalue()
-
-
-def extract_license_codes(value: str) -> list[str]:
-    matches = re.findall(r"AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}", value.upper())
-    normalized_codes = [normalize_code(match) for match in matches]
-    return list(dict.fromkeys(code for code in normalized_codes if is_valid_code_format(code)))
 
 
 def csv_response(content: str, filename: str) -> Response:

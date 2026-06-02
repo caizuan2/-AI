@@ -8,6 +8,7 @@ import {
   Bot,
   CheckCircle2,
   Database,
+  KeyRound,
   Loader2,
   LineChart,
   MessageSquare,
@@ -522,6 +523,13 @@ export function AdminDashboard() {
         title="管理后台"
         description="查看系统运行状态、核心计数、AI 调用和最近错误。"
       >
+        <Link
+          href="/admin/licenses"
+          className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50"
+        >
+          <KeyRound className="h-4 w-4" />
+          卡密管理
+        </Link>
         <Link
           href="/admin/analytics"
           className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50"

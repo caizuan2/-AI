@@ -2,7 +2,6 @@ import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { writeAuditLog } from "@/lib/audit-log";
 import { ForbiddenError, NotFoundError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -14,10 +13,8 @@ interface DisableLicenseResponse {
 }
 
 export async function POST(_request: Request, { params }: { params: { id: string } }) {
-  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
-
   try {
-    admin = await requireAdminUser(_request);
+    await requireAdminUser();
   } catch (error) {
     return apiError(error);
   }
@@ -50,15 +47,6 @@ export async function POST(_request: Request, { params }: { params: { id: string
         id: true,
         status: true
       }
-    });
-
-    await writeAuditLog({
-      userId: admin.id,
-      role: admin.role,
-      action: "ADMIN_LICENSE_DISABLE",
-      targetType: "license_key",
-      targetId: updated.id,
-      request: _request
     });
 
     return apiSuccess<DisableLicenseResponse>(updated);
