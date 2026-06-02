@@ -4,6 +4,7 @@ import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
+import { ensureRegistrationSchema } from "@/lib/db/registration-schema";
 import { AppError, ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders, logger } from "@/lib/logger";
 import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
@@ -197,6 +198,16 @@ export async function POST(request: Request) {
   }
 
   try {
+    const schema = await ensureRegistrationSchema();
+
+    if (!schema.ready) {
+      return apiError(new AppError(
+        "DATABASE_ERROR",
+        "数据库表结构自动补齐失败，请检查 Supabase SQL 权限或执行注册结构修复脚本。",
+        500
+      ));
+    }
+
     const existing = await prisma.user.findUnique({
       where: { phone: input.phone },
       select: { id: true }

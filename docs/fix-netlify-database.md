@@ -93,7 +93,7 @@ pnpm db:check
 pnpm prisma:generate && pnpm build
 ```
 
-然后进入 Supabase SQL Editor，执行项目中的最小注册结构修复脚本：
+注册 API 会在发现生产库缺少注册结构时自动补齐 `users`、`sessions`、`license_keys` 的最小表结构。如果自动补齐失败，再进入 Supabase SQL Editor，执行项目中的备用修复脚本：
 
 ```text
 prisma/supabase-registration-bootstrap.sql
