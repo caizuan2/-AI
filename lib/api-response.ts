@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { headers } from "next/headers";
-import { AppError, toAppError } from "@/lib/errors";
+import { AppError, ConfigError, toAppError } from "@/lib/errors";
 import type { AppErrorCode } from "@/lib/errors";
 import { logger, REQUEST_ID_HEADER, toSafeErrorLog } from "@/lib/logger";
 
@@ -79,4 +79,8 @@ export function apiError(error: unknown, init?: ResponseInit) {
 
 export function databaseConfigError(action: string) {
   return new AppError("DATABASE_ERROR", `数据库未配置，无法${action}。`, 500);
+}
+
+export function sessionConfigError(action: string) {
+  return new ConfigError(`认证密钥未配置，无法${action}。请在 Netlify 设置 SESSION_SECRET。`);
 }

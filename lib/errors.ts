@@ -6,6 +6,7 @@ export type AppErrorCode =
   | "NOT_FOUND"
   | "AI_ERROR"
   | "DATABASE_ERROR"
+  | "CONFIG_ERROR"
   | "LICENSE_REQUIRED"
   | "RATE_LIMITED";
 
@@ -66,6 +67,13 @@ export class RateLimitError extends AppError {
   constructor(message = "请求过于频繁，请稍后再试。") {
     super("RATE_LIMITED", message, 429);
     this.name = "RateLimitError";
+  }
+}
+
+export class ConfigError extends AppError {
+  constructor(message = "系统配置未完成，请联系管理员。") {
+    super("CONFIG_ERROR", message, 500);
+    this.name = "ConfigError";
   }
 }
 
