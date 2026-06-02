@@ -1,10 +1,22 @@
-import { createHash } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ConfigError, ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
 
+const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
 function normalizeLicenseKey(key: string) {
   return key.trim().toUpperCase().replace(/\s+/g, "");
+}
+
+function randomLicenseGroup(length: number) {
+  const bytes = randomBytes(length);
+
+  return Array.from(bytes, (byte) => LICENSE_ALPHABET[byte % LICENSE_ALPHABET.length]).join("");
+}
+
+export function generatePlainLicenseKey() {
+  return `AIKB-${randomLicenseGroup(4)}-${randomLicenseGroup(4)}-${randomLicenseGroup(4)}`;
 }
 
 export function hashLicenseKey(key: string) {

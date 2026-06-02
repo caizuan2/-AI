@@ -1,9 +1,7 @@
-import { randomBytes } from "crypto";
 import { LicenseKeyStatus, PrismaClient } from "@prisma/client";
-import { hashLicenseKey } from "@/lib/auth/license";
+import { generatePlainLicenseKey, hashLicenseKey } from "@/lib/auth/license";
 
 const prisma = new PrismaClient();
-const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 function readCount() {
   const countArgIndex = process.argv.findIndex((arg) => arg === "--count");
@@ -17,22 +15,12 @@ function readCount() {
   return count;
 }
 
-function randomGroup(length: number) {
-  const bytes = randomBytes(length);
-
-  return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
-}
-
-function generateLicenseKey() {
-  return `AIKB-${randomGroup(4)}-${randomGroup(4)}-${randomGroup(4)}`;
-}
-
 async function main() {
   const count = readCount();
   const keys = new Set<string>();
 
   while (keys.size < count) {
-    keys.add(generateLicenseKey());
+    keys.add(generatePlainLicenseKey());
   }
 
   await prisma.licenseKey.createMany({
