@@ -16,10 +16,23 @@
       明文卡密只在当前页面显示一次。刷新或离开页面后，只能看到脱敏卡密，无法从数据库恢复明文。
     </div>
 
-    <form method="post" action="{{ url_for('main.download_generated_csv') }}">
-      <textarea name="csv_content" hidden>{{ csv_content }}</textarea>
-      <button class="primary-button" type="submit">下载本批明文 CSV</button>
-    </form>
+    {% if main_app_sync.ready %}
+      <div class="sync-status sync-ready">
+        已同步到 AI 知识库主项目 Supabase，成功写入 {{ main_app_inserted }} 条。这批卡密可以在主站激活页使用。
+      </div>
+    {% else %}
+      <div class="sync-status sync-missing">
+        {{ main_app_sync.message }} 这批卡密不能用于 AI 知识库线上激活页。
+      </div>
+    {% endif %}
+
+    <div class="action-row">
+      <form method="post" action="{{ url_for('main.download_generated_csv') }}">
+        <textarea name="csv_content" hidden>{{ csv_content }}</textarea>
+        <button class="primary-button" type="submit">下载本批明文 CSV</button>
+      </form>
+      <button class="secondary-button" type="button" data-copy-all="{{ codes | join('\n') }}">复制全部</button>
+    </div>
 
     <div class="table-wrap">
       <table>
@@ -27,6 +40,7 @@
           <tr>
             <th>卡密</th>
             <th>有效期</th>
+            <th class="action-cell">操作</th>
           </tr>
         </thead>
         <tbody>
@@ -34,10 +48,59 @@
             <tr>
               <td><code>{{ code }}</code></td>
               <td>{{ expires_at or "长期有效" }}</td>
+              <td class="action-cell">
+                <button class="copy-button" type="button" data-copy-code="{{ code }}">复制</button>
+              </td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
+{% endblock %}
+
+{% block scripts %}
+  <script>
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.left = "-9999px";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    function markCopied(button) {
+      const original = button.textContent;
+      button.textContent = "已复制";
+      button.classList.add("copied");
+
+      window.setTimeout(() => {
+        button.textContent = original;
+        button.classList.remove("copied");
+      }, 1600);
+    }
+
+    document.querySelectorAll("[data-copy-code]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await copyText(button.dataset.copyCode || "");
+        markCopied(button);
+      });
+    });
+
+    document.querySelectorAll("[data-copy-all]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await copyText(button.dataset.copyAll || "");
+        markCopied(button);
+      });
+    });
+  </script>
 {% endblock %}

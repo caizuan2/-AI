@@ -36,9 +36,14 @@ def generate_license_code() -> str:
 
 
 def hash_license_code(code: str) -> str:
+    normalized = normalize_code(code)
+    session_secret = current_app.config.get("SESSION_SECRET", "").strip()
+
+    if session_secret:
+        return hashlib.sha256(f"{session_secret}:license:{normalized}".encode("utf-8")).hexdigest()
+
     secret = current_app.config["LICENSE_HASH_SECRET"].encode("utf-8")
-    normalized = normalize_code(code).encode("utf-8")
-    return hmac.new(secret, normalized, hashlib.sha256).hexdigest()
+    return hmac.new(secret, normalized.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def mask_license_code(code: str) -> str:

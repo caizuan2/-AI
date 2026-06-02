@@ -17,6 +17,11 @@ from flask import (
 
 from .auth import admin_required
 from .db import get_db
+from .main_app_db import (
+    MainAppSyncError,
+    get_main_app_sync_status,
+    sync_license_keys_to_main_app,
+)
 from .security import (
     generate_license_code,
     hash_license_code,
@@ -107,6 +112,7 @@ def licenses() -> str:
         licenses=rows,
         status=status,
         status_labels=STATUS_LABELS,
+        main_app_sync=get_main_app_sync_status(),
     )
 
 
@@ -135,13 +141,29 @@ def generate_licenses() -> str:
     generated: list[str] = []
     attempts = 0
 
-    while len(generated) < count:
+    generated_set: set[str] = set()
+    while len(generated_set) < count:
         attempts += 1
         if attempts > count * 10:
             flash("生成卡密时遇到过多重复，请重新尝试。", "error")
             return redirect(url_for("main.licenses"))
 
         code = generate_license_code()
+        generated_set.add(code)
+
+    generated = list(generated_set)
+    main_app_sync = get_main_app_sync_status()
+    main_app_inserted: int | None = None
+
+    if main_app_sync["ready"]:
+        try:
+            main_app_inserted = sync_license_keys_to_main_app(generated, expires_at)
+        except MainAppSyncError as error:
+            current_app.logger.exception("Failed to sync license keys to main app: %s", error)
+            flash(str(error), "error")
+            return redirect(url_for("main.licenses"))
+
+    for code in generated:
         code_hash = hash_license_code(code)
         try:
             db.execute(
@@ -151,7 +173,6 @@ def generate_licenses() -> str:
                 """,
                 (code_hash, mask_license_code(code), expires_at, utc_now()),
             )
-            generated.append(code)
         except Exception:
             continue
 
@@ -161,6 +182,8 @@ def generate_licenses() -> str:
         codes=generated,
         expires_at=expires_at,
         csv_content=build_plaintext_csv(generated, expires_at),
+        main_app_sync=main_app_sync,
+        main_app_inserted=main_app_inserted,
     )
 
 

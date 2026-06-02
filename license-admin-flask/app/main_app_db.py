@@ -13,17 +13,21 @@ class MainAppSyncError(RuntimeError):
 
 def get_main_app_sync_status() -> dict[str, object]:
     has_database_url = bool(current_app.config.get("MAIN_APP_DATABASE_URL", "").strip())
-    has_license_secret = True
+    has_session_secret = bool(current_app.config.get("SESSION_SECRET", "").strip())
 
-    if has_database_url:
+    if has_database_url and has_session_secret:
         message = "已配置主项目同步，生成的卡密可用于 AI 知识库线上激活页。"
-    else:
+    elif not has_database_url and not has_session_secret:
+        message = "未配置 MAIN_APP_DATABASE_URL 和 SESSION_SECRET，当前卡密只会保存到本地 SQLite，不能用于线上主站。"
+    elif not has_database_url:
         message = "未配置 MAIN_APP_DATABASE_URL，当前卡密不能写入线上 Supabase。"
+    else:
+        message = "未配置 SESSION_SECRET，无法生成与 AI 知识库主项目一致的卡密 hash。"
 
     return {
-        "ready": has_database_url,
+        "ready": has_database_url and has_session_secret,
         "hasDatabaseUrl": has_database_url,
-        "hasLicenseSecret": has_license_secret,
+        "hasSessionSecret": has_session_secret,
         "message": message,
     }
 
@@ -88,9 +92,8 @@ def normalize_postgres_url(url: str) -> str:
     scheme = "postgresql" if parts.scheme == "postgres" else parts.scheme
     query = dict(parse_qsl(parts.query, keep_blank_values=True))
 
-    # Prisma accepts a few query params that psycopg/libpq doesn't.
-    for prisma_only_key in ("pgbouncer", "schema", "connection_limit", "pool_timeout"):
-        query.pop(prisma_only_key, None)
+    # Prisma uses pgbouncer=true, but psycopg does not accept that connection option.
+    query.pop("pgbouncer", None)
 
     hostname = parts.hostname or ""
     if "supabase" in hostname.lower():

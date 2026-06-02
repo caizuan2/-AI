@@ -185,7 +185,8 @@ select:focus {
 
 .primary-button,
 .secondary-button,
-.danger-button {
+.danger-button,
+.copy-button {
   display: inline-flex;
   min-height: 42px;
   align-items: center;
@@ -218,6 +219,38 @@ select:focus {
   background: var(--danger-bg);
   color: var(--danger);
   border-color: #fecaca;
+}
+
+.copy-button {
+  min-height: 34px;
+  min-width: 86px;
+  padding: 6px 12px;
+  background: #fff;
+  border-color: #99f6e4;
+  color: var(--primary-dark);
+}
+
+.copy-button:hover,
+.copy-button.copied,
+.secondary-button.copied {
+  background: #ccfbf1;
+  border-color: #5eead4;
+}
+
+.action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.action-row form {
+  margin: 0;
+}
+
+.action-cell {
+  width: 120px;
+  text-align: right;
 }
 
 .section-heading,
@@ -314,7 +347,8 @@ code {
 
 .flash,
 .notice,
-.result {
+.result,
+.sync-status {
   border-radius: 8px;
   padding: 12px 14px;
 }
@@ -338,6 +372,22 @@ code {
   background: var(--info-bg);
   border: 1px solid #bfdbfe;
   color: #1d4ed8;
+}
+
+.sync-status {
+  margin-bottom: 14px;
+}
+
+.sync-ready {
+  background: var(--success-bg);
+  border: 1px solid #bbf7d0;
+  color: #047857;
+}
+
+.sync-missing {
+  background: var(--danger-bg);
+  border: 1px solid #fecaca;
+  color: #b91c1c;
 }
 
 .empty-state {

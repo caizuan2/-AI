@@ -12,6 +12,10 @@
   </section>
 
   <section class="panel">
+    <div class="sync-status {% if main_app_sync.ready %}sync-ready{% else %}sync-missing{% endif %}">
+      {{ main_app_sync.message }}
+    </div>
+
     <h2>批量生成</h2>
     <form class="inline-form" method="post" action="{{ url_for('main.generate_licenses') }}">
       <label>
