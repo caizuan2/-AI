@@ -223,7 +223,7 @@ pnpm prisma:studio               # 打开 Prisma Studio
 Netlify 构建配置：
 
 ```text
-Build command: pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build
+Build command: pnpm prisma:generate && pnpm build
 Publish directory: .next
 Functions directory: netlify/functions
 Node version: 22

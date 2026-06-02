@@ -87,6 +87,20 @@ pnpm prisma:migrate:deploy
 pnpm db:check
 ```
 
+如果 `DIRECT_URL` 因 IPv6 或网络限制无法连接，不要把 `pnpm prisma:migrate:deploy` 放进 Netlify build command。先保持 Netlify build command 为：
+
+```bash
+pnpm prisma:generate && pnpm build
+```
+
+然后进入 Supabase SQL Editor，执行项目中的最小注册结构修复脚本：
+
+```text
+prisma/supabase-registration-bootstrap.sql
+```
+
+该脚本只补充注册、登录和卡密激活需要的 `users`、`sessions`、`license_keys` 表与字段，不会删除数据。
+
 `pnpm db:check` 应输出：
 
 ```text
