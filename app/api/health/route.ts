@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { hasDatabaseUrl, hasSessionSecret, hasUsableOpenAIKey } from "@/lib/server-config";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export interface HealthResponse {

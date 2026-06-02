@@ -5,9 +5,11 @@ import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
 import { AppError, ValidationError } from "@/lib/errors";
-import { logger } from "@/lib/logger";
+import { getRequestIdFromHeaders, logger } from "@/lib/logger";
+import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 interface RegisterResponse {
@@ -66,18 +68,52 @@ function isPrismaLikeError(error: unknown) {
   );
 }
 
-function toRegisterError(error: unknown) {
+function toRegisterError(error: unknown, request: Request) {
   if (!isPrismaLikeError(error)) {
     return error;
   }
 
   const details = serializeDatabaseError(error);
+  const safeDatabase = getSafeDatabaseUrlInfo();
+  const requestId = getRequestIdFromHeaders(request.headers);
 
-  logger.error("auth.register.database_error", { ...details });
-  console.error("[api/auth/register] database error", details);
+  logger.error("auth.register.database_error", {
+    route: "/api/auth/register",
+    requestId,
+    errorName: details.name,
+    code: details.code,
+    message: details.message,
+    clientVersion: details.clientVersion,
+    database: safeDatabase
+  });
+  console.error("[api/auth/register] database error", {
+    route: "/api/auth/register",
+    requestId,
+    errorName: details.name,
+    code: details.code,
+    message: details.message,
+    clientVersion: details.clientVersion,
+    database: safeDatabase
+  });
 
   if (details.code === "P2002") {
-    return new ValidationError("该手机号已注册，请直接登录。");
+    return new AppError("VALIDATION_ERROR", "该手机号已注册，请直接登录。", 409);
+  }
+
+  if (details.code === "P1000") {
+    return new AppError(
+      "DATABASE_ERROR",
+      "数据库认证失败，请检查 Supabase 数据库用户名和密码是否正确。",
+      500
+    );
+  }
+
+  if (details.code === "P2024") {
+    return new AppError(
+      "DATABASE_ERROR",
+      "数据库连接池超时，请检查 Supabase Pooler、connection_limit 和 pool_timeout 配置。",
+      500
+    );
   }
 
   if (
@@ -167,7 +203,7 @@ export async function POST(request: Request) {
     });
 
     if (existing) {
-      return apiError(new ValidationError("该手机号已注册，请直接登录。"));
+      return apiError(new AppError("VALIDATION_ERROR", "该手机号已注册，请直接登录。", 409));
     }
 
     const user = await prisma.user.create({
@@ -197,6 +233,6 @@ export async function POST(request: Request) {
       }
     }, { status: 201 });
   } catch (error) {
-    return apiError(toRegisterError(error));
+    return apiError(toRegisterError(error, request));
   }
 }
