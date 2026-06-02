@@ -77,6 +77,7 @@ http://localhost:3000
 
 ```env
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
+DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="replace-with-a-long-random-session-secret"
 OPENAI_API_KEY="sk-your-openai-api-key"
 OPENAI_MODEL="gpt-4.1-mini"
@@ -91,7 +92,8 @@ NODE_VERSION="22"
 
 说明：
 
-- `DATABASE_URL`：PostgreSQL 连接地址，生产环境必填。Netlify 生产环境不能使用 localhost。
+- `DATABASE_URL`：Prisma Client 运行时连接地址，Netlify 生产环境必须使用 Supabase Pooler 完整 URI。
+- `DIRECT_URL`：Prisma CLI 迁移连接地址，生产环境必须使用 Supabase Direct 完整 URI。
 - `SESSION_SECRET`：用于 session token 和卡密 hash，生产环境必须填写长随机字符串。
 - `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 fallback；生产环境必须配置真实 key。
 - `OPENAI_MODEL`：知识整理和问答模型。
@@ -126,8 +128,11 @@ pnpm prisma:generate
 生产环境执行：
 
 ```bash
+export DATABASE_URL="你的 Supabase Pooler 完整 URI"
+export DIRECT_URL="你的 Supabase Direct 完整 URI"
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
+pnpm db:check
 ```
 
 主要数据表：

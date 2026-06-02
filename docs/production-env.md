@@ -6,6 +6,7 @@ Netlify 生产环境需要在控制台填写以下变量。
 
 ```env
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&schema=public"
+DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="use-a-long-random-session-secret"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
@@ -35,6 +36,7 @@ ADMIN_USER_IDS
 
 ```text
 DATABASE_URL
+DIRECT_URL
 SESSION_SECRET
 OPENAI_API_KEY
 CRON_SECRET

@@ -5,7 +5,8 @@
 ## 1. 部署平台环境变量检查
 
 - [ ] 已在 Netlify Environment variables 中配置生产环境变量。
-- [ ] `DATABASE_URL` 指向生产 Supabase PostgreSQL，不是本地数据库。
+- [ ] `DATABASE_URL` 指向生产 Supabase Pooler 完整 URI，端口为 `6543`，不是本地数据库。
+- [ ] `DIRECT_URL` 指向生产 Supabase Direct 完整 URI，端口为 `5432`，用于 Prisma migrate。
 - [ ] `SESSION_SECRET` 已配置为长随机字符串。
 - [ ] `OPENAI_API_KEY` 已配置，且没有写入代码或提交到仓库。
 - [ ] `OPENAI_MODEL` 已配置，例如 `gpt-4.1-mini`。
@@ -18,7 +19,8 @@
 ## 2. Supabase 数据库检查
 
 - [ ] Supabase 项目处于可用状态，数据库连接正常。
-- [ ] 生产数据库连接串已使用合适的连接池配置。
+- [ ] 生产运行时连接串已使用 Supabase Pooler。
+- [ ] 生产迁移连接串已使用 Supabase Direct。
 - [ ] 数据库时区、区域和容量符合上线预期。
 - [ ] 已确认数据库 schema 为目标环境的生产 schema。
 - [ ] 已确认应用使用的数据库账号具备必要权限，但不授予多余管理权限。
