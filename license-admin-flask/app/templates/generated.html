@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}已生成卡密 - AI 知识库卡密后台{% endblock %}
+
+{% block content %}
+  <section class="section-heading">
+    <div>
+      <p class="eyebrow">生成完成</p>
+      <h1>请立即保存这批卡密</h1>
+    </div>
+    <a class="secondary-button" href="{{ url_for('main.licenses') }}">返回卡密列表</a>
+  </section>
+
+  <section class="panel">
+    <div class="notice">
+      明文卡密只在当前页面显示一次。刷新或离开页面后，只能看到脱敏卡密，无法从数据库恢复明文。
+    </div>
+
+    <form method="post" action="{{ url_for('main.download_generated_csv') }}">
+      <textarea name="csv_content" hidden>{{ csv_content }}</textarea>
+      <button class="primary-button" type="submit">下载本批明文 CSV</button>
+    </form>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>卡密</th>
+            <th>有效期</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for code in codes %}
+            <tr>
+              <td><code>{{ code }}</code></td>
+              <td>{{ expires_at or "长期有效" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+{% endblock %}

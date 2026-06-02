@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+
+{% block title %}激活 AI 知识库{% endblock %}
+
+{% block content %}
+  <section class="auth-shell">
+    <div class="panel auth-panel">
+      <p class="eyebrow">用户激活</p>
+      <h1>输入卡密激活 AI 知识库</h1>
+      <p class="muted">请输入管理员发放的卡密和你的手机号或账号ID。</p>
+
+      <form class="form" id="activateForm">
+        <label>
+          用户ID
+          <input id="userId" name="user_id" required placeholder="手机号或账号ID">
+        </label>
+        <label>
+          卡密
+          <input id="code" name="code" required placeholder="AIKB-XXXX-XXXX-XXXX">
+        </label>
+        <button class="primary-button" id="activateButton" type="submit">立即激活</button>
+      </form>
+
+      <div class="result" id="activateResult" hidden></div>
+    </div>
+  </section>
+  <script src="{{ url_for('static', filename='js/activate.js') }}"></script>
+{% endblock %}

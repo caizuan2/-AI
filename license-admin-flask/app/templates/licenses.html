@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}卡密管理 - AI 知识库卡密后台{% endblock %}
+
+{% block content %}
+  <section class="section-heading">
+    <div>
+      <p class="eyebrow">卡密管理</p>
+      <h1>生成、查看和禁用卡密</h1>
+    </div>
+    <a class="secondary-button" href="{{ url_for('main.export_licenses') }}">导出 CSV</a>
+  </section>
+
+  <section class="panel">
+    <h2>批量生成</h2>
+    <form class="inline-form" method="post" action="{{ url_for('main.generate_licenses') }}">
+      <label>
+        数量
+        <input name="count" type="number" min="1" max="5000" value="10" required>
+      </label>
+      <label>
+        有效期
+        <input name="expires_at" type="date">
+      </label>
+      <button class="primary-button" type="submit">生成卡密</button>
+    </form>
+    <p class="muted small">明文卡密只会在生成后显示一次，数据库仅保存 hash 和脱敏展示值。</p>
+  </section>
+
+  <section class="panel">
+    <div class="panel-title">
+      <h2>卡密列表</h2>
+      <form class="filter-form" method="get">
+        <select name="status" onchange="this.form.submit()">
+          <option value="">全部状态</option>
+          {% for key, label in status_labels.items() %}
+            <option value="{{ key }}" {% if status == key %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+      </form>
+    </div>
+
+    {% if licenses %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>卡密</th>
+              <th>状态</th>
+              <th>有效期</th>
+              <th>创建时间</th>
+              <th>使用者</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in licenses %}
+              <tr>
+                <td>{{ item.id }}</td>
+                <td>{{ item.code_mask }}</td>
+                <td><span class="badge badge-{{ item.status }}">{{ status_labels.get(item.status, item.status) }}</span></td>
+                <td>{{ item.expires_at or "长期有效" }}</td>
+                <td>{{ item.created_at }}</td>
+                <td>{{ item.used_by or "-" }}</td>
+                <td>
+                  {% if item.status == "unused" %}
+                    <form method="post" action="{{ url_for('main.disable_license', license_id=item.id) }}" onsubmit="return confirm('确认禁用这条卡密？')">
+                      <button class="danger-button" type="submit">禁用</button>
+                    </form>
+                  {% else %}
+                    <span class="muted">无</span>
+                  {% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-state">还没有卡密，先生成一批。</div>
+    {% endif %}
+  </section>
+{% endblock %}

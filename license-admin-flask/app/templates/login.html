@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}管理员登录 - AI 知识库卡密后台{% endblock %}
+
+{% block content %}
+  <section class="auth-shell">
+    <div class="panel auth-panel">
+      <p class="eyebrow">管理员入口</p>
+      <h1>登录卡密管理后台</h1>
+      <p class="muted">默认账号密码可在 .env 中通过 ADMIN_USERNAME 和 ADMIN_PASSWORD 修改。</p>
+
+      <form class="form" method="post">
+        <label>
+          账号
+          <input name="username" autocomplete="username" required placeholder="admin">
+        </label>
+        <label>
+          密码
+          <input name="password" type="password" autocomplete="current-password" required placeholder="请输入密码">
+        </label>
+        <button class="primary-button" type="submit">登录</button>
+      </form>
+    </div>
+  </section>
+{% endblock %}
