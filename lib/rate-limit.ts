@@ -1,13 +1,5 @@
 import "server-only";
 
-import { prisma } from "@/lib/prisma";
-import { logger, toSafeErrorLog } from "@/lib/logger";
-import {
-  RATE_LIMIT_GLOBAL_PER_MINUTE,
-  RATE_LIMIT_PER_USER_PER_MINUTE,
-  hasDatabaseUrl
-} from "@/lib/server-config";
-
 export interface RateLimitOptions {
   namespace: string;
   limit: number;
@@ -22,14 +14,6 @@ export interface RateLimitResult {
   resetAt: Date;
   retryAfterSeconds: number;
   scope: "user" | "ip";
-}
-
-export interface PersistentRateLimitOptions {
-  namespace: string;
-  userId?: string;
-  limit?: number;
-  windowMs?: number;
-  globalLimit?: number;
 }
 
 type RateLimitBucket = {
@@ -109,103 +93,6 @@ export function checkRateLimit(request: Request, options: RateLimitOptions): Rat
     retryAfterSeconds,
     scope
   };
-}
-
-function buildPersistentSubject(request: Request, userId?: string) {
-  return userId?.trim() ? `user:${userId}` : `ip:${getClientIp(request)}`;
-}
-
-function buildWindowBucket(namespace: string, windowMs: number, now: number) {
-  const windowStart = Math.floor(now / windowMs) * windowMs;
-
-  return `${namespace}:${windowStart}`;
-}
-
-async function incrementPersistentBucket(
-  client: Pick<typeof prisma, "rateLimitEvent">,
-  subject: string,
-  bucket: string,
-  resetAt: Date
-) {
-  return client.rateLimitEvent.upsert({
-    where: {
-      subject_bucket: {
-        subject,
-        bucket
-      }
-    },
-    create: {
-      subject,
-      bucket,
-      count: 1,
-      resetAt
-    },
-    update: {
-      count: {
-        increment: 1
-      },
-      resetAt
-    }
-  });
-}
-
-export async function checkPersistentRateLimit(
-  request: Request,
-  options: PersistentRateLimitOptions
-): Promise<RateLimitResult> {
-  const limit = options.limit ?? RATE_LIMIT_PER_USER_PER_MINUTE;
-  const windowMs = options.windowMs ?? 60_000;
-  const now = Date.now();
-  const resetAt = new Date(Math.floor(now / windowMs) * windowMs + windowMs);
-  const subject = buildPersistentSubject(request, options.userId);
-  const scope = options.userId ? "user" : "ip";
-  const bucket = buildWindowBucket(options.namespace, windowMs, now);
-
-  if (!hasDatabaseUrl()) {
-    return checkRateLimit(request, {
-      namespace: options.namespace,
-      userId: options.userId,
-      limit,
-      windowMs
-    });
-  }
-
-  try {
-    const { subjectBucket, globalBucket } = await prisma.$transaction(async (tx) => {
-      const nextSubjectBucket = await incrementPersistentBucket(tx, subject, bucket, resetAt);
-      const nextGlobalBucket = await incrementPersistentBucket(tx, "global", bucket, resetAt);
-
-      return {
-        subjectBucket: nextSubjectBucket,
-        globalBucket: nextGlobalBucket
-      };
-    });
-    const globalLimit = options.globalLimit ?? RATE_LIMIT_GLOBAL_PER_MINUTE;
-    const retryAfterSeconds = Math.max(1, Math.ceil((resetAt.getTime() - now) / 1000));
-    const allowed = subjectBucket.count <= limit && globalBucket.count <= globalLimit;
-    const remaining = Math.max(0, Math.min(limit - subjectBucket.count, globalLimit - globalBucket.count));
-
-    return {
-      allowed,
-      limit,
-      remaining,
-      resetAt,
-      retryAfterSeconds: allowed ? 0 : retryAfterSeconds,
-      scope
-    };
-  } catch (error) {
-    logger.warn("rate_limit.persistent_failed", {
-      namespace: options.namespace,
-      error: toSafeErrorLog(error)
-    });
-
-    return checkRateLimit(request, {
-      namespace: options.namespace,
-      userId: options.userId,
-      limit,
-      windowMs
-    });
-  }
 }
 
 export function rateLimitHeaders(result: RateLimitResult): HeadersInit {

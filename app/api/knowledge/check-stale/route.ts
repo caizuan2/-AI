@@ -1,5 +1,5 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireKbAdmin } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { prisma } from "@/lib/prisma";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -18,22 +18,19 @@ async function buildResponse(userId: string, checkedAt: Date, markedStale: numbe
     prisma.knowledgeItem.count({
       where: {
         userId,
-        status: "active",
-        deletedAt: null
+        status: "active"
       }
     }),
     prisma.knowledgeItem.count({
       where: {
         userId,
-        status: "stale",
-        deletedAt: null
+        status: "stale"
       }
     }),
     prisma.knowledgeItem.count({
       where: {
         userId,
-        status: "archived",
-        deletedAt: null
+        status: "archived"
       }
     })
   ]);
@@ -48,12 +45,10 @@ async function buildResponse(userId: string, checkedAt: Date, markedStale: numbe
 }
 
 export async function POST() {
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(undefined, {
-      targetType: "knowledge_item"
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -68,7 +63,6 @@ export async function POST() {
       where: {
         userId: currentUser.id,
         status: "active",
-        deletedAt: null,
         expiresAt: {
           lte: checkedAt
         }
@@ -85,12 +79,10 @@ export async function POST() {
 }
 
 export async function GET() {
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(undefined, {
-      targetType: "knowledge_item"
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }

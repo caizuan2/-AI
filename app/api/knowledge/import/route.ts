@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireKbAdmin } from "@/lib/auth/guards";
-import { writeAuditLog } from "@/lib/audit-log";
+import { requireBetaAccess } from "@/lib/beta";
 import { ValidationError } from "@/lib/errors";
 import {
   addDuplicateTarget,
@@ -28,16 +27,10 @@ function validateImportContentLength(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let user: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    user = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item",
-      metadata: {
-        operation: "knowledge_import"
-      }
-    });
+    user = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -67,7 +60,7 @@ export async function POST(request: Request) {
     const settings = await getOrCreateUserSettings(user.id);
     const fallbackExpiresAt = calculateExpiresAt(settings.defaultExpireDays);
     const existingItems = await prisma.knowledgeItem.findMany({
-      where: { userId: user.id, deletedAt: null },
+      where: { userId: user.id },
       select: {
         id: true,
         title: true,
@@ -128,21 +121,6 @@ export async function POST(request: Request) {
         });
       }
     }
-
-    await writeAuditLog({
-      userId: user.id,
-      role: user.role,
-      action: "INGEST_CREATE",
-      targetType: "knowledge_item",
-      request,
-      metadata: {
-        operation: "knowledge_import",
-        imported: result.imported,
-        skippedDuplicates: result.skippedDuplicates,
-        failed: result.failed,
-        requestedItems: importItems.length
-      }
-    });
 
     return apiSuccess<KnowledgeImportResult>(result, {
       status: result.imported > 0 ? 201 : 200

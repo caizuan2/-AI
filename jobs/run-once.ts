@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma-client";
 import { createTaskLogger } from "@/lib/jobs/logger";
 import { runAllBackgroundTasksOnce } from "@/lib/jobs/tasks";
 

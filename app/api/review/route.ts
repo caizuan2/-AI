@@ -1,7 +1,7 @@
 import type { KnowledgeReviewStatus as PrismaKnowledgeReviewStatus } from "@prisma/client";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import {
   calculateNextReviewAt,
@@ -103,7 +103,6 @@ async function getReviewStats(userId: string, now = new Date()): Promise<ReviewS
     prisma.knowledgeItem.count({
       where: {
         userId,
-        deletedAt: null,
         reviewStatus: { not: "EXPIRED" },
         OR: [
           { nextReviewAt: null },
@@ -114,21 +113,18 @@ async function getReviewStats(userId: string, now = new Date()): Promise<ReviewS
     prisma.knowledgeItem.count({
       where: {
         userId,
-        deletedAt: null,
         reviewStatus: "NEEDS_REVIEW"
       }
     }),
     prisma.knowledgeItem.count({
       where: {
         userId,
-        deletedAt: null,
         reviewStatus: "MASTERED"
       }
     }),
     prisma.knowledgeItem.count({
       where: {
         userId,
-        deletedAt: null,
         reviewStatus: "EXPIRED"
       }
     })
@@ -159,7 +155,6 @@ async function getReviewRecommendations(userId: string, now = new Date()) {
   const dueItems = await prisma.knowledgeItem.findMany({
     where: {
       userId,
-      deletedAt: null,
       reviewStatus: { not: "EXPIRED" },
       OR: [
         { nextReviewAt: null },
@@ -184,7 +179,6 @@ async function getReviewRecommendations(userId: string, now = new Date()) {
   const fillItems = await prisma.knowledgeItem.findMany({
     where: {
       userId,
-      deletedAt: null,
       reviewStatus: { not: "EXPIRED" },
       id: {
         notIn: Array.from(seenIds)
@@ -203,12 +197,10 @@ async function getReviewRecommendations(userId: string, now = new Date()) {
 }
 
 export async function GET() {
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(undefined, {
-      targetType: "knowledge_review"
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -236,13 +228,10 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_review"
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -271,8 +260,7 @@ export async function PATCH(request: Request) {
     const existing = await prisma.knowledgeItem.findFirst({
       where: {
         id: input.knowledgeItemId,
-        userId: currentUser.id,
-        deletedAt: null
+        userId: currentUser.id
       },
       select: {
         id: true,

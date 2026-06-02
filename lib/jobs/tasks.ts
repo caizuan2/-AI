@@ -1,4 +1,4 @@
-import { prisma } from "@/lib/prisma";
+import { prisma } from "@/lib/prisma-client";
 import { refreshCompletionSuggestionsForItem } from "@/lib/knowledge/completion-suggestions";
 import { hasDatabaseUrl } from "@/lib/server-config-core";
 import { runLoggedTask, type TaskLogger } from "@/lib/jobs/logger";
@@ -20,7 +20,6 @@ export interface RefreshLowQualitySuggestionsTaskResult {
 
 export interface CleanupOrphanChunksTaskResult {
   deletedChunks: number;
-  orphanChunks: number;
   skipped: boolean;
 }
 
@@ -51,7 +50,6 @@ export async function checkStaleKnowledgeTask(): Promise<CheckStaleKnowledgeTask
     const result = await prisma.knowledgeItem.updateMany({
       where: {
         status: "active",
-        deletedAt: null,
         expiresAt: {
           lte: new Date()
         }
@@ -91,7 +89,6 @@ export async function refreshLowQualitySuggestionsTask(
         status: {
           not: "archived"
         },
-        deletedAt: null,
         AND: [
           {
             OR: [
@@ -179,29 +176,25 @@ export async function cleanupOrphanChunksTask(): Promise<CleanupOrphanChunksTask
     if (skipWhenDatabaseMissing(logger, "orphan chunk cleanup")) {
       return {
         deletedChunks: 0,
-        orphanChunks: 0,
         skipped: true
       };
     }
 
-    const rows = await prisma.$queryRaw<Array<{ count: number }>>`
-      SELECT COUNT(*)::int AS "count"
-      FROM "knowledge_chunks" AS chunk
+    const deletedChunks = await prisma.$executeRaw`
+      DELETE FROM "knowledge_chunks" AS chunk
       WHERE NOT EXISTS (
         SELECT 1
         FROM "knowledge_items" AS item
         WHERE item."id" = chunk."knowledgeItemId"
       )
     `;
-    const orphanChunks = rows[0]?.count ?? 0;
 
-    logger.info("orphan chunk cleanup is disabled by deletion protection", {
-      count: orphanChunks
+    logger.info("removed orphan chunks", {
+      count: deletedChunks
     });
 
     return {
-      deletedChunks: 0,
-      orphanChunks,
+      deletedChunks,
       skipped: false
     };
   });

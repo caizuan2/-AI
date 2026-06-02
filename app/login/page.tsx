@@ -1,93 +1,31 @@
 "use client";
 
-import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, Database, LockKeyhole, Mail, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
-
-interface LoginResponse {
-  success: true;
-  licenseActivated: boolean;
-}
-
-interface MeResponse {
-  user: {
-    licenseActivated: boolean;
-  };
-}
+import { LOCAL_AUTH_DEFAULT_EMAIL, LOCAL_AUTH_DEFAULT_PASSWORD } from "@/lib/auth/local";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { hasSupabaseConfig } from "@/lib/supabase/config";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
+  const useSupabase = hasSupabaseConfig();
+  const [email, setEmail] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_EMAIL);
+  const [password, setPassword] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_PASSWORD);
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState("");
-
-  const getSafeNextPath = useCallback(() => {
-    const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
-
-    if (!candidate.startsWith("/") || candidate.startsWith("//")) {
-      return "";
-    }
-
-    const pathname = candidate.split("?")[0] || candidate;
-
-    if (pathname === "/login" || pathname.startsWith("/login/") || pathname === "/register" || pathname.startsWith("/register/")) {
-      return "";
-    }
-
-    return candidate;
-  }, [searchParams]);
-
-  useEffect(() => {
-    let active = true;
-
-    async function checkExistingSession() {
-      try {
-        const response = await fetch("/api/auth/me", {
-          method: "GET",
-          cache: "no-store"
-        });
-
-        if (!active) {
-          return;
-        }
-
-        if (response.ok) {
-          const payload = await response.json().catch(() => null) as {
-            data?: MeResponse;
-          } | null;
-          const nextPath = getSafeNextPath();
-
-          router.replace(nextPath || (payload?.data?.user.licenseActivated ? "/ingest" : "/unlock"));
-          return;
-        }
-
-        setCheckingSession(false);
-      } catch {
-        if (active) {
-          setCheckingSession(false);
-        }
-      }
-    }
-
-    void checkExistingSession();
-
-    return () => {
-      active = false;
-    };
-  }, [getSafeNextPath, router]);
+  const redirectTo = searchParams.get("redirectTo") || "/knowledge";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!phone.trim() || !password) {
-      setError("请输入手机号和密码。");
+    if (!email.trim() || !password) {
+      setError("请输入邮箱和密码。");
       return;
     }
 
@@ -95,50 +33,57 @@ function LoginForm() {
     setError("");
 
     try {
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          phone,
-          password
-        })
-      });
-      const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
-      const nextPath = getSafeNextPath();
+      if (!useSupabase) {
+        const response = await fetch("/api/auth/local-login", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            email: email.trim(),
+            password
+          })
+        });
 
-      router.replace(nextPath || (data.licenseActivated ? "/ingest" : "/unlock"));
+        await unwrapApiResponse<unknown>(response, "本地登录失败，请稍后重试。");
+        router.push(redirectTo);
+        router.refresh();
+        return;
+      }
+
+      const supabase = createBrowserSupabaseClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password
+      });
+
+      if (signInError) {
+        setError("邮箱或密码不正确。");
+        return;
+      }
+
+      router.push(redirectTo);
       router.refresh();
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
+      setError(caughtError instanceof Error ? caughtError.message : "登录失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
   }
 
-  if (checkingSession) {
-    return (
-      <div className="mt-8 rounded-lg border border-line bg-slate-50 px-4 py-5 text-center text-sm text-muted">
-        正在检查登录状态...
-      </div>
-    );
-  }
-
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
       <label className="block">
-        <span className="text-sm font-medium text-ink">手机号</span>
+        <span className="text-sm font-medium text-ink">邮箱</span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <Phone className="h-4 w-4 text-muted" />
+          <Mail className="h-4 w-4 text-muted" />
           <Input
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            type="email"
+            autoComplete="email"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13352833702"
+            placeholder="you@example.com"
           />
         </span>
       </label>
@@ -153,7 +98,7 @@ function LoginForm() {
             type="password"
             autoComplete="current-password"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入密码"
+            placeholder="输入密码"
           />
         </span>
       </label>
@@ -171,7 +116,7 @@ function LoginForm() {
       </Button>
 
       <p className="text-center text-sm text-muted">
-        没有账号？
+        还没有账号？
         <Link href="/register" className="font-medium text-teal-700 hover:text-teal-800">
           去注册
         </Link>
@@ -198,13 +143,13 @@ export default function LoginPage() {
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            License Gate
+            Supabase Auth
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            用手机号和密码进入你的 AI 知识库。
+            把对话、工单和文档沉淀成可追溯的个人知识库。
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            登录后输入卡密激活，即可使用投喂、检索和问答功能。
+            登录后投喂、检索和问答都会按账号隔离。
           </p>
         </div>
       </section>
@@ -220,11 +165,13 @@ export default function LoginPage() {
 
           <div>
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号登录</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码继续。</p>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">登录工作台</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              {hasSupabaseConfig() ? "使用 Supabase Auth 账号继续。" : "当前为本地开发登录，不需要 Supabase key。"}
+            </p>
           </div>
 
-          <Suspense fallback={<div className="mt-8 text-sm text-muted">正在加载登录表单...</div>}>
+          <Suspense fallback={<div className="mt-8 text-sm text-muted">加载登录表单...</div>}>
             <LoginForm />
           </Suspense>
         </div>

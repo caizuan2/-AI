@@ -5,15 +5,12 @@ import {
   MessageRole,
   PrismaClient
 } from "@prisma/client";
-import { hashPassword } from "../lib/auth/password";
 
 const prisma = new PrismaClient();
-const demoPassword = "demo-password-123";
 
 const demoUser = {
   id: "local-demo-example-com",
-  email: null,
-  phone: "+8613812345678",
+  email: "demo@example.com",
   name: "Demo 用户"
 };
 
@@ -399,23 +396,18 @@ async function resetDemoUserData() {
 }
 
 async function seedDemoUser() {
-  const passwordHash = await hashPassword(demoPassword);
-
   await prisma.user.upsert({
     where: { id: demoUser.id },
     update: {
       email: demoUser.email,
-      phone: demoUser.phone,
       name: demoUser.name,
-      passwordHash,
-      isActive: true,
-      licenseActivated: true
+      betaAccess: true,
+      betaRequestedAt: null
     },
     create: {
       ...demoUser,
-      passwordHash,
-      isActive: true,
-      licenseActivated: true
+      betaAccess: true,
+      betaRequestedAt: null
     }
   });
 
@@ -543,9 +535,8 @@ async function main() {
   console.info(
     [
       "Seed completed.",
-      `Demo user phone: ${demoUser.phone}`,
-      `Demo user password: ${demoPassword}`,
-      "Demo user license: activated",
+      `Demo user: ${demoUser.email}`,
+      "Local password: local-password",
       `Knowledge items: ${knowledgeSeeds.length}`,
       `QA conversations: ${qaSeeds.length}`
     ].join("\n")

@@ -5,15 +5,12 @@ import {
   CheckCircle2,
   FileText,
   Loader2,
-  MoreHorizontal,
-  RefreshCw,
   SendHorizontal,
   Sparkles,
   TriangleAlert,
   UploadCloud
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { DocumentStatusBadge } from "@/components/product/document-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +22,6 @@ import {
   knowledgeQualityScoreLabels,
   type KnowledgeQualityScores
 } from "@/lib/knowledge/quality";
-import { documentRows } from "@/lib/mock/product-ui";
 
 type SubmitState = "idle" | "loading" | "success" | "error";
 type SaveStrategy = "MANUAL_CONFIRM" | "AUTO_SAVE_AFTER_AI" | "ANALYZE_ONLY";
@@ -190,82 +186,6 @@ export default function UploadPage() {
         title="文件上传投喂"
         description="上传 txt、md、pdf 或 docx 文件，提取文本后由 AI 整理为知识。"
       />
-
-      <section className="grid gap-4 lg:grid-cols-[1fr_320px]">
-        <Card>
-          <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <div className="flex items-center gap-2">
-                <FileText className="h-4 w-4 text-indigo-600" />
-                <CardTitle>文档管理</CardTitle>
-              </div>
-              <CardDescription>查看上传文档、所属知识库和索引状态。</CardDescription>
-            </div>
-            <Button variant="outline" size="sm">
-              <RefreshCw className="h-4 w-4" />
-              同步状态
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-hidden rounded-lg border border-line dark:border-slate-700">
-              <div className="hidden grid-cols-[1.4fr_0.8fr_0.8fr_0.7fr_0.6fr] gap-3 border-b border-line bg-canvas px-4 py-3 text-xs font-semibold text-muted dark:border-slate-700 dark:bg-slate-900 md:grid">
-                <span>文档</span>
-                <span>所属知识库</span>
-                <span>更新时间</span>
-                <span>索引状态</span>
-                <span className="text-right">操作</span>
-              </div>
-              <div className="divide-y divide-line dark:divide-slate-700">
-                {documentRows.map((document) => {
-                  const Icon = document.icon;
-
-                  return (
-                    <article
-                      key={document.id}
-                      className="grid gap-3 bg-white px-4 py-4 text-sm dark:bg-slate-950 md:grid-cols-[1.4fr_0.8fr_0.8fr_0.7fr_0.6fr] md:items-center"
-                    >
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">
-                            <Icon className="h-4 w-4" />
-                          </span>
-                          <div className="min-w-0">
-                            <p className="truncate font-semibold text-ink dark:text-slate-100">{document.title}</p>
-                            <p className="mt-1 text-xs text-muted dark:text-slate-400">{document.type} · {document.size}</p>
-                          </div>
-                        </div>
-                      </div>
-                      <p className="text-muted dark:text-slate-400">{document.knowledgeBase}</p>
-                      <p className="text-muted dark:text-slate-400">{document.updatedAt}</p>
-                      <DocumentStatusBadge status={document.status} />
-                      <div className="flex justify-end">
-                        <Button variant="ghost" size="icon" aria-label={`打开 ${document.title} 的更多操作`}>
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>上传入口</CardTitle>
-            <CardDescription>移动端和桌面端都保持同一条投喂流程。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-muted dark:text-slate-400">
-            <div className="rounded-lg border border-line bg-canvas p-3 dark:border-slate-700 dark:bg-slate-900">
-              支持 txt、md、pdf、docx。文件过长会自动分段，确认后写入 document 来源。
-            </div>
-            <div className="rounded-lg border border-line bg-canvas p-3 dark:border-slate-700 dark:bg-slate-900">
-              索引完成后，问答页会把命中的文档片段展示为引用来源。
-            </div>
-          </CardContent>
-        </Card>
-      </section>
 
       <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px]">
         <Card>

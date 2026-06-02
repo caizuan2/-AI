@@ -1,7 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
-import { requireKbAdmin } from "@/lib/auth/guards";
-import { writeAuditLog } from "@/lib/audit-log";
+import { requireBetaAccess } from "@/lib/beta";
 import { AIError, ValidationError } from "@/lib/errors";
 import {
   buildUploadAnalysisText,
@@ -19,7 +18,7 @@ import {
 } from "@/lib/knowledge/analyze";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { getRequestIdFromHeaders } from "@/lib/logger";
-import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
 import { getOrCreateUserSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -62,18 +61,12 @@ function validateUploadContentLength(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
   let settings: Awaited<ReturnType<typeof getOrCreateUserSettings>>;
   let existingCategories: string[] = [];
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_file",
-      metadata: {
-        operation: "upload_analyze"
-      }
-    });
+    currentUser = await requireBetaAccess();
 
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("分析上传文件"));
@@ -109,13 +102,13 @@ export async function POST(request: Request) {
       return matchedCategory ? { ...draft, category: matchedCategory } : draft;
     };
 
-    if (!hasUsableChatProvider() && !isAIFallbackAllowed()) {
-      return apiError(new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地文件整理 fallback。"));
+    if (!hasUsableOpenAIKey() && !isAIFallbackAllowed()) {
+      return apiError(new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地文件整理 fallback。"));
     }
 
     let analysis = preferExistingCategory(mockAnalyzeKnowledge(analysisText));
 
-    if (hasUsableChatProvider()) {
+    if (hasUsableOpenAIKey()) {
       try {
         const { structureKnowledge } = await import("@/lib/ai/knowledge-structurer");
         const result = await structureKnowledge({
@@ -144,21 +137,6 @@ export async function POST(request: Request) {
       userId: currentUser.id,
       type: AnalyticsEventType.FILE_UPLOAD,
       numericValue: 1,
-      metadata: {
-        requestId,
-        extension: extracted.extension,
-        size: extracted.size,
-        charLength: extracted.charLength,
-        segmentCount: extracted.segments.length
-      }
-    });
-    await writeAuditLog({
-      userId: currentUser.id,
-      role: currentUser.role,
-      action: "FILE_UPLOAD",
-      targetType: "knowledge_file",
-      targetId: extracted.fileName,
-      request,
       metadata: {
         requestId,
         extension: extracted.extension,

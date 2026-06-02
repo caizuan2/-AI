@@ -13,7 +13,6 @@ import {
   TriangleAlert,
   UserRound
 } from "lucide-react";
-import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -37,7 +36,6 @@ import {
   type KnowledgeSourceType
 } from "@/lib/knowledge/source-types";
 import { feedRecords } from "@/lib/mock-data";
-import { ADMIN_APP_KIND } from "@/lib/app-version";
 import type { FeedRecord } from "@/types";
 
 type SubmitState = "idle" | "loading" | "success" | "error";
@@ -64,11 +62,6 @@ interface AnalyzeResult extends KnowledgeQualityScores {
   sourceTitle?: string | null;
   sourceUrl?: string | null;
   fetchedFromUrl?: boolean;
-  providerUsed?: string;
-  modelUsed?: string;
-  fallbackUsed?: boolean;
-  originalProviderErrorCode?: string;
-  requestId?: string;
 }
 
 interface KnowledgeSavePayload extends KnowledgeQualityScores {
@@ -636,7 +629,6 @@ export default function IngestPage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
-      <AppUpdateNotice appKind={ADMIN_APP_KIND} />
       <PageHeader
         eyebrow="Ingest"
         title="对话式投喂"
@@ -740,8 +732,8 @@ export default function IngestPage() {
               </div>
 
               {state === "error" ? (
-                <div className="flex items-start gap-2 whitespace-pre-line rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-                  <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  <TriangleAlert className="h-4 w-4" />
                   {error}
                 </div>
               ) : null}
@@ -863,22 +855,6 @@ export default function IngestPage() {
                     <p className="text-xs text-muted">当前保存策略</p>
                     <p className="mt-1 text-sm font-medium text-ink">{saveStrategyLabels[aiDraft.saveStrategy]}</p>
                     <p className="mt-1 text-xs leading-5 text-muted">{aiDraft.saveRecommendation}</p>
-                  </div>
-                  <div className="rounded-lg border border-line bg-canvas p-3">
-                    <p className="text-xs text-muted">模型调用</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <Badge variant="outline">Provider：{aiDraft.providerUsed ?? "local"}</Badge>
-                      <Badge variant="outline">Model：{aiDraft.modelUsed ?? "local"}</Badge>
-                      <Badge variant={aiDraft.fallbackUsed ? "warning" : "secondary"}>
-                        {aiDraft.fallbackUsed ? "已 fallback" : "未 fallback"}
-                      </Badge>
-                    </div>
-                    {aiDraft.originalProviderErrorCode ? (
-                      <p className="mt-2 text-xs text-muted">主 provider 错误码：{aiDraft.originalProviderErrorCode}</p>
-                    ) : null}
-                    {aiDraft.requestId ? (
-                      <p className="mt-2 break-all text-xs text-muted">Request ID：{aiDraft.requestId}</p>
-                    ) : null}
                   </div>
                   {pendingSave && similarCandidates.length > 0 ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">

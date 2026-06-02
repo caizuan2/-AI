@@ -2,15 +2,14 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
-import { writeAuditLog } from "@/lib/audit-log";
+import { requireBetaAccess } from "@/lib/beta";
 import { AIError, NotFoundError, ValidationError } from "@/lib/errors";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { normalizeQualityScores, type KnowledgeQualityScores } from "@/lib/knowledge/quality";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
-import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
 
 export const dynamic = "force-dynamic";
 
@@ -175,9 +174,9 @@ async function structureSupplementedKnowledge(
   requestId?: string,
   userId?: string
 ): Promise<StructuredSupplement> {
-  if (!hasUsableChatProvider()) {
+  if (!hasUsableOpenAIKey()) {
     if (!isAIFallbackAllowed()) {
-      throw new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地知识补充 fallback。");
+      throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地知识补充 fallback。");
     }
 
     return buildLocalSupplementDraft(existing, input);
@@ -288,17 +287,10 @@ function serializeKnowledgeDetail(item: ExistingKnowledge & {
 
 export async function POST(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item",
-      targetId: context.params.id,
-      metadata: {
-        operation: "knowledge_supplement"
-      }
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -327,8 +319,7 @@ export async function POST(request: Request, context: RouteContext) {
     const existing = await prisma.knowledgeItem.findFirst({
       where: {
         id: context.params.id,
-        userId: currentUser.id,
-        deletedAt: null
+        userId: currentUser.id
       }
     });
 
@@ -346,15 +337,7 @@ export async function POST(request: Request, context: RouteContext) {
       requestId,
       currentUser.id
     );
-    const chunks = splitContentIntoChunks(supplementedContent, {
-      title: structured.title,
-      category: structured.category,
-      tags: structured.tags,
-      summary: structured.summary,
-      sourceType: existing.sourceType,
-      sourceTitle: existing.sourceTitle,
-      sourceUrl: existing.sourceUrl
-    });
+    const chunks = splitContentIntoChunks(supplementedContent);
     const embeddings = await createChunkEmbeddings(chunks, {
       requestId,
       operation: "knowledge_supplement_chunk_embedding",
@@ -388,12 +371,10 @@ export async function POST(request: Request, context: RouteContext) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
-                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
                   embeddingError: embedding?.errorMessage ?? null,
-                  embeddingStatus: embedding?.embedding ? "indexed" : "missing",
                   regeneratedBy: "knowledge_supplement"
                 }
               };
@@ -425,20 +406,6 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       return item;
-    });
-
-    await writeAuditLog({
-      userId: currentUser.id,
-      role: currentUser.role,
-      action: "INGEST_CREATE",
-      targetType: "knowledge_item",
-      targetId: updated.id,
-      request,
-      metadata: {
-        requestId,
-        operation: "knowledge_supplement",
-        chunkCount: updated.chunks.length
-      }
     });
 
     return apiSuccess<SupplementKnowledgeResponse>(serializeKnowledgeDetail(updated));

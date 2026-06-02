@@ -2,12 +2,7 @@
   "name": "ai-knowledge-base-app",
   "version": "1.0.0",
   "private": true,
-  "main": "electron/main.cjs",
-  "packageManager": "pnpm@10.12.4",
-  "engines": {
-    "node": ">=22.13.0",
-    "pnpm": "10.12.4"
-  },
+  "packageManager": "pnpm@11.3.0",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -15,51 +10,24 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
-    "test:answer-sanitizer": "node scripts/test_answer_sanitizer.js",
-    "test:copy-utils": "node scripts/test_copy_utils.js",
-    "test:answer-render-utils": "node scripts/test_answer_render_utils.js",
-    "test:chatgpt-style": "node scripts/test_chatgpt_style_report.js",
-    "test:license": "tsx scripts/license-smoke-test.ts",
-    "test:production-license": "node scripts/production-smoke-test.js",
-    "debug:health": "node scripts/debug-health.js",
     "postinstall": "prisma generate",
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",
-    "db:check": "tsx scripts/debug-ingest-health.ts",
-    "ingest:schema:check": "tsx scripts/check-ingest-schema.ts",
-    "rag:check": "tsx scripts/check-rag-system.ts",
-    "rag:reindex": "node --conditions=react-server --import tsx scripts/rebuild-knowledge-index.ts",
-    "rag:test:advanced": "node scripts/test_rag_advanced.js",
-    "db:production-check": "tsx scripts/check-production-db.ts",
-    "license:generate": "tsx scripts/generate-license-keys.ts",
     "prisma:seed": "tsx prisma/seed.ts",
     "prisma:generate": "prisma generate",
     "prisma:format": "prisma format",
     "prisma:migrate:create": "prisma migrate dev --create-only",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "prisma:studio": "prisma studio",
-    "app:android": "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1",
-    "app:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1",
-    "app:ios": "node scripts/run-macos-packaging-script.cjs ios scripts/build-ios-user-ipa.sh",
-    "app:macos": "node scripts/run-macos-packaging-script.cjs macos scripts/build-user-macos-dmg.sh",
-    "admin:android": "powershell -ExecutionPolicy Bypass -File scripts/build-admin-android-apk.ps1",
-    "admin:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1",
-    "admin:ios": "node scripts/run-macos-packaging-script.cjs ios scripts/build-ios-admin-ipa.sh",
-    "admin:macos": "node scripts/run-macos-packaging-script.cjs macos scripts/build-admin-macos-dmg.sh",
-    "installers:copy": "powershell -ExecutionPolicy Bypass -File scripts/copy-mobile-desktop-installers-to-public.ps1",
-    "admin:copy-installers": "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1"
+    "prisma:studio": "prisma studio"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
-    "@capacitor/android": "^8.4.0",
-    "@capacitor/core": "^8.4.0",
-    "@capgo/capacitor-updater": "^8.48.0",
-    "@netlify/blobs": "^10.7.9",
     "@prisma/client": "^6.0.0",
+    "@supabase/ssr": "^0.10.3",
+    "@supabase/supabase-js": "^2.106.2",
     "@types/pdf-parse": "^1.1.5",
-    "bcryptjs": "^3.0.3",
     "cheerio": "^1.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -69,25 +37,17 @@
     "node-cron": "^4.2.1",
     "openai": "^6.39.1",
     "pdf-parse": "^1.1.1",
-    "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-markdown": "^10.1.0",
-    "remark-gfm": "^4.0.1",
-    "server-only": "0.0.1",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {
-    "@capacitor/cli": "^8.4.0",
-    "@capacitor/ios": "^8.4.0",
     "@netlify/functions": "^5.3.0",
     "@types/node": "^20.17.10",
     "@types/node-cron": "^3.0.11",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
-    "electron": "^42.3.3",
-    "electron-builder": "^26.15.0",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.15",
     "postcss": "^8.4.49",
@@ -95,23 +55,5 @@
     "tailwindcss": "^3.4.16",
     "tsx": "^4.22.4",
     "typescript": "^5.7.2"
-  },
-  "build": {
-    "appId": "com.aiknowledge.chat.desktop",
-    "productName": "AIKnowledgeAssistant",
-    "directories": {
-      "output": "dist-app/windows"
-    },
-    "files": [
-      "electron/**",
-      "package.json"
-    ],
-    "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "artifactName": "AIKnowledgeAssistant.${ext}"
-    }
   }
 }

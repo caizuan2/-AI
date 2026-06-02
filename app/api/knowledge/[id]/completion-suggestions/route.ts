@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireKbAdmin } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { NotFoundError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -25,17 +25,10 @@ interface CompletionSuggestionsResponse {
 
 export async function POST(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item",
-      targetId: context.params.id,
-      metadata: {
-        operation: "completion_suggestions"
-      }
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -48,8 +41,7 @@ export async function POST(request: Request, context: RouteContext) {
     const item = await prisma.knowledgeItem.findFirst({
       where: {
         id: context.params.id,
-        userId: currentUser.id,
-        deletedAt: null
+        userId: currentUser.id
       },
       select: {
         id: true,

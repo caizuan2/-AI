@@ -8,7 +8,6 @@ import {
   Bot,
   CheckCircle2,
   Database,
-  KeyRound,
   Loader2,
   LineChart,
   MessageSquare,
@@ -30,7 +29,7 @@ type AdminOverviewResponse = {
     knowledgeCount: number | null;
     aiCallsToday: number;
     recentErrorCount: number;
-    inactiveLicenseCount: number | null;
+    betaPendingCount: number | null;
     openFeedbackCount: number | null;
   };
   health: {
@@ -63,11 +62,10 @@ type AdminOverviewResponse = {
   }>;
   users: Array<{
     id: string;
-    email: string | null;
-    phone: string | null;
+    email: string;
     name: string;
-    licenseActivated: boolean;
-    isActive: boolean;
+    betaAccess: boolean;
+    betaRequestedAt: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -80,8 +78,7 @@ type AdminOverviewResponse = {
     updatedAt: string;
     user: {
       id: string;
-      email: string | null;
-      phone: string | null;
+      email: string;
       name: string;
     };
   }>;
@@ -151,10 +148,6 @@ function stringifySafe(value: unknown) {
   } catch {
     return "-";
   }
-}
-
-function getUserIdentity(user: { id: string; phone?: string | null; email?: string | null }) {
-  return user.phone || user.email || user.id;
 }
 
 function getPathOrOperation(entry: AdminOverviewResponse["recentErrors"][number]) {
@@ -286,20 +279,20 @@ function RecentErrors({ overview }: { overview: AdminOverviewResponse }) {
   );
 }
 
-function LicenseUsersPanel({
+function BetaUsersPanel({
   overview,
   updatingUserId,
-  onUpdateLicenseActivation
+  onUpdateBetaAccess
 }: {
   overview: AdminOverviewResponse;
   updatingUserId: string | null;
-  onUpdateLicenseActivation: (userId: string, licenseActivated: boolean) => void;
+  onUpdateBetaAccess: (userId: string, betaAccess: boolean) => void;
 }) {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>卡密激活状态</CardTitle>
-        <CardDescription>查看用户是否已激活，并可手动开启或关闭知识库访问。</CardDescription>
+        <CardTitle>Beta 测试资格</CardTitle>
+        <CardDescription>审核等待名单，并为用户开启或关闭 betaAccess。</CardDescription>
       </CardHeader>
       <CardContent>
         {overview.users.length === 0 ? (
@@ -313,7 +306,7 @@ function LicenseUsersPanel({
                 <tr>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">用户</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">状态</th>
-                  <th className="whitespace-nowrap px-3 py-3 font-semibold">账号状态</th>
+                  <th className="whitespace-nowrap px-3 py-3 font-semibold">申请时间</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">创建时间</th>
                   <th className="whitespace-nowrap px-3 py-3 font-semibold">操作</th>
                 </tr>
@@ -323,22 +316,22 @@ function LicenseUsersPanel({
                   <tr key={user.id}>
                     <td className="px-3 py-3">
                       <p className="font-medium text-ink">{user.name}</p>
-                      <p className="mt-1 text-xs text-muted">{getUserIdentity(user)}</p>
+                      <p className="mt-1 text-xs text-muted">{user.email}</p>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3">
-                      <Badge variant={user.licenseActivated ? "default" : "warning"}>
-                        {user.licenseActivated ? "已激活" : "未激活"}
+                      <Badge variant={user.betaAccess ? "default" : user.betaRequestedAt ? "warning" : "secondary"}>
+                        {user.betaAccess ? "已开通" : user.betaRequestedAt ? "待审核" : "未申请"}
                       </Badge>
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">
-                      {user.isActive ? "正常" : "已禁用"}
+                      {user.betaRequestedAt ? formatTime(user.betaRequestedAt) : "-"}
                     </td>
                     <td className="whitespace-nowrap px-3 py-3 text-muted">{formatTime(user.createdAt)}</td>
                     <td className="whitespace-nowrap px-3 py-3">
                       <Button
                         size="sm"
-                        variant={user.licenseActivated ? "outline" : "secondary"}
-                        onClick={() => onUpdateLicenseActivation(user.id, !user.licenseActivated)}
+                        variant={user.betaAccess ? "outline" : "secondary"}
+                        onClick={() => onUpdateBetaAccess(user.id, !user.betaAccess)}
                         disabled={updatingUserId === user.id}
                       >
                         {updatingUserId === user.id ? (
@@ -346,7 +339,7 @@ function LicenseUsersPanel({
                         ) : (
                           <ShieldCheck className="h-4 w-4" />
                         )}
-                        {user.licenseActivated ? "关闭激活" : "开启激活"}
+                        {user.betaAccess ? "关闭" : "开通"}
                       </Button>
                     </td>
                   </tr>
@@ -399,7 +392,7 @@ function FeedbackPanel({ overview }: { overview: AdminOverviewResponse }) {
                     </td>
                     <td className="px-3 py-3">
                       <p className="font-medium text-ink">{item.user.name}</p>
-                      <p className="mt-1 text-xs text-muted">{getUserIdentity(item.user)}</p>
+                      <p className="mt-1 text-xs text-muted">{item.user.email}</p>
                     </td>
                     <td className="max-w-[440px] px-3 py-3">
                       <p className="line-clamp-3 whitespace-pre-wrap text-muted">{item.content}</p>
@@ -454,9 +447,9 @@ export function AdminDashboard() {
         icon: AlertTriangle
       },
       {
-        title: "未激活用户",
-        value: formatCount(overview.metrics.inactiveLicenseCount),
-        description: "尚未完成卡密激活的账号数量。",
+        title: "Beta 待审核",
+        value: formatCount(overview.metrics.betaPendingCount),
+        description: "已申请但尚未开通 betaAccess 的用户。",
         icon: ShieldCheck
       },
       {
@@ -494,7 +487,7 @@ export function AdminDashboard() {
     void loadOverview();
   }, []);
 
-  async function updateLicenseActivation(userId: string, licenseActivated: boolean) {
+  async function updateBetaAccess(userId: string, betaAccess: boolean) {
     setUpdatingUserId(userId);
     setError("");
 
@@ -504,13 +497,13 @@ export function AdminDashboard() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ userId, licenseActivated })
+        body: JSON.stringify({ userId, betaAccess })
       });
 
-      await unwrapApiResponse<unknown>(response, "更新卡密激活状态失败。");
+      await unwrapApiResponse<unknown>(response, "更新 Beta 测试资格失败。");
       await loadOverview({ refresh: true });
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "更新卡密激活状态失败。");
+      setError(caughtError instanceof Error ? caughtError.message : "更新 Beta 测试资格失败。");
     } finally {
       setUpdatingUserId(null);
     }
@@ -523,13 +516,6 @@ export function AdminDashboard() {
         title="管理后台"
         description="查看系统运行状态、核心计数、AI 调用和最近错误。"
       >
-        <Link
-          href="/admin/licenses"
-          className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50"
-        >
-          <KeyRound className="h-4 w-4" />
-          卡密管理
-        </Link>
         <Link
           href="/admin/analytics"
           className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50"
@@ -566,10 +552,10 @@ export function AdminDashboard() {
 
           <HealthPanel overview={overview} />
           <FeedbackPanel overview={overview} />
-          <LicenseUsersPanel
+          <BetaUsersPanel
             overview={overview}
             updatingUserId={updatingUserId}
-            onUpdateLicenseActivation={updateLicenseActivation}
+            onUpdateBetaAccess={updateBetaAccess}
           />
           <RecentErrors overview={overview} />
         </>

@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { defaultKnowledgeCategory, listKnowledgeCategories, normalizeCategoryName } from "@/lib/knowledge/categories";
 import type { KnowledgeCategoriesResponse } from "@/lib/knowledge/categories";
 import { prisma } from "@/lib/prisma";
@@ -22,9 +22,7 @@ async function parseJsonBody(request: Request) {
 }
 
 async function getCurrentUserOrThrow() {
-  return requireKbAdmin(undefined, {
-    targetType: "knowledge_category"
-  });
+  return requireBetaAccess();
 }
 
 async function getCategoriesResponse(userId: string) {
@@ -81,8 +79,7 @@ export async function PATCH(request: Request) {
     const result = await prisma.knowledgeItem.updateMany({
       where: {
         userId: currentUser.id,
-        category: from,
-        deletedAt: null
+        category: from
       },
       data: {
         category: to
@@ -133,8 +130,7 @@ export async function DELETE(request: Request) {
     const result = await prisma.knowledgeItem.updateMany({
       where: {
         userId: currentUser.id,
-        category,
-        deletedAt: null
+        category
       },
       data: {
         category: defaultKnowledgeCategory
@@ -188,8 +184,7 @@ export async function POST(request: Request) {
         userId: currentUser.id,
         category: {
           in: sourceCategories
-        },
-        deletedAt: null
+        }
       },
       data: {
         category: targetCategory

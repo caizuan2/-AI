@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { retrieveKnowledge, type RetrieveKnowledgeResponse } from "@/lib/rag/retriever";
@@ -40,10 +40,10 @@ function parseSearchRequest(body: unknown): SearchRequest {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }

@@ -3,160 +3,91 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowRight, CheckCircle2, Database, LockKeyhole, Mail, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import { LOCAL_AUTH_DEFAULT_EMAIL, LOCAL_AUTH_DEFAULT_NAME, LOCAL_AUTH_DEFAULT_PASSWORD } from "@/lib/auth/local";
+import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { hasSupabaseConfig } from "@/lib/supabase/config";
 
-interface RegisterResponse {
-  user: {
-    licenseActivated: boolean;
-  };
-}
-
-function RegisterForm() {
+export default function RegisterPage() {
   const router = useRouter();
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const useSupabase = hasSupabaseConfig();
+  const [name, setName] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_NAME);
+  const [email, setEmail] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_EMAIL);
+  const [password, setPassword] = useState(useSupabase ? "" : LOCAL_AUTH_DEFAULT_PASSWORD);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!name.trim() || !phone.trim() || !password || !confirmPassword) {
-      setError("请输入姓名、手机号、密码和确认密码。");
+    if (!name.trim() || !email.trim() || !password) {
+      setError("请输入姓名、邮箱和密码。");
       return;
     }
 
-    if (password.length < 8) {
-      setError("密码至少需要 8 位。");
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError("两次输入的密码不一致。");
+    if (password.length < 6) {
+      setError("密码至少需要 6 位。");
       return;
     }
 
     setLoading(true);
     setError("");
+    setSuccess("");
 
     try {
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          name,
-          phone,
-          password
-        })
-      });
-      const data = await unwrapApiResponse<RegisterResponse>(response, "注册失败，请稍后重试。");
+      if (!useSupabase) {
+        const response = await fetch("/api/auth/local-register", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            name: name.trim(),
+            email: email.trim(),
+            password
+          })
+        });
 
-      router.push(data.user.licenseActivated ? "/" : "/unlock");
-      router.refresh();
-    } catch (caughtError) {
-      const debugError = caughtError instanceof Error
-        ? {
-            error: caughtError.message,
-            stack: caughtError.stack
+        await unwrapApiResponse<unknown>(response, "本地注册失败，请稍后重试。");
+        router.push("/knowledge");
+        router.refresh();
+        return;
+      }
+
+      const supabase = createBrowserSupabaseClient();
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            name: name.trim()
           }
-        : {
-            error: String(caughtError)
-          };
+        }
+      });
 
-      console.error("[register/page] register failed", debugError);
-      setError(debugError.error || "注册失败，请稍后重试。");
+      if (signUpError) {
+        setError(signUpError.message.includes("already") ? "该邮箱已注册，请直接登录。" : "注册失败，请稍后重试。");
+        return;
+      }
 
-      return debugError;
+      if (data.session) {
+        router.push("/knowledge");
+        router.refresh();
+        return;
+      }
+
+      setSuccess("注册成功，请检查邮箱完成验证。");
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "注册失败，请稍后重试。");
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <form onSubmit={handleSubmit} className="mt-8 space-y-4">
-      <label className="block">
-        <span className="text-sm font-medium text-ink">姓名</span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <UserRound className="h-4 w-4 text-muted" />
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            autoComplete="name"
-            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="你的姓名"
-          />
-        </span>
-      </label>
-
-      <label className="block">
-        <span className="text-sm font-medium text-ink">手机号</span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <Phone className="h-4 w-4 text-muted" />
-          <Input
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            type="tel"
-            inputMode="tel"
-            autoComplete="tel"
-            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13352833702"
-          />
-        </span>
-      </label>
-
-      <label className="block">
-        <span className="text-sm font-medium text-ink">密码</span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <LockKeyhole className="h-4 w-4 text-muted" />
-          <Input
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            type="password"
-            autoComplete="new-password"
-            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="至少 8 位"
-          />
-        </span>
-      </label>
-
-      <label className="block">
-        <span className="text-sm font-medium text-ink">确认密码</span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
-          <LockKeyhole className="h-4 w-4 text-muted" />
-          <Input
-            value={confirmPassword}
-            onChange={(event) => setConfirmPassword(event.target.value)}
-            type="password"
-            autoComplete="new-password"
-            className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="再次输入密码"
-          />
-        </span>
-      </label>
-
-      {error ? (
-        <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          <TriangleAlert className="h-4 w-4" />
-          {error}
-        </div>
-      ) : null}
-
-      <Button type="submit" disabled={loading} className="h-11 w-full">
-        {loading ? "正在注册" : "注册并登录"}
-        <ArrowRight className="h-4 w-4" />
-      </Button>
-    </form>
-  );
-}
-
-export default function RegisterPage() {
   return (
     <main className="grid min-h-dvh bg-canvas lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-ink px-10 py-10 text-white lg:flex lg:flex-col">
@@ -174,13 +105,13 @@ export default function RegisterPage() {
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            Phone Password
+            Secure workspace
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            注册后输入卡密，开启知识库工作台。
+            创建账号后，知识投喂、检索和问答都会绑定到你的身份。
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            密码会哈希保存，卡密也只保存 hash，不保存明文。
+            每个账号只访问自己的知识数据。
           </p>
         </div>
       </section>
@@ -196,11 +127,76 @@ export default function RegisterPage() {
 
           <div>
             <p className="text-sm font-medium text-teal-700">创建账号</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号注册</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码创建账号。</p>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">注册工作台</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              {useSupabase ? "使用邮箱密码创建 Supabase Auth 账号。" : "当前为本地开发注册，会创建本地开发会话。"}
+            </p>
           </div>
 
-          <RegisterForm />
+          <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+            <label className="block">
+              <span className="text-sm font-medium text-ink">姓名</span>
+              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+                <UserRound className="h-4 w-4 text-muted" />
+                <Input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  autoComplete="name"
+                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+                  placeholder="你的姓名"
+                />
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-ink">邮箱</span>
+              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+                <Mail className="h-4 w-4 text-muted" />
+                <Input
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  type="email"
+                  autoComplete="email"
+                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+                  placeholder="you@example.com"
+                />
+              </span>
+            </label>
+
+            <label className="block">
+              <span className="text-sm font-medium text-ink">密码</span>
+              <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+                <LockKeyhole className="h-4 w-4 text-muted" />
+                <Input
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+                  placeholder="至少 6 位"
+                />
+              </span>
+            </label>
+
+            {error ? (
+              <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <TriangleAlert className="h-4 w-4" />
+                {error}
+              </div>
+            ) : null}
+
+            {success ? (
+              <div className="flex items-center gap-2 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2 text-sm text-teal-700">
+                <CheckCircle2 className="h-4 w-4" />
+                {success}
+              </div>
+            ) : null}
+
+            <Button type="submit" disabled={loading} className="h-11 w-full">
+              {loading ? "正在注册" : "注册"}
+              <ArrowRight className="h-4 w-4" />
+            </Button>
+          </form>
 
           <p className="mt-5 text-center text-sm text-muted">
             已有账号？

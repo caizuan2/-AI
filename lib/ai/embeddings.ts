@@ -1,20 +1,13 @@
 import "server-only";
 
-import { getEmbeddingProvider } from "@/lib/ai/providers";
+import { normalizeOpenAIError, openai, openaiConfig } from "@/lib/openai";
 import { recordAiUsage } from "@/lib/analytics";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
 export interface CreateEmbeddingResult {
   embedding: number[];
-  provider: string;
   model: string;
   dimensions: number;
-}
-
-export interface CreateEmbeddingsResult {
-  embeddings: CreateEmbeddingResult[];
-  provider: string;
-  model: string;
 }
 
 export interface CreateEmbeddingOptions {
@@ -23,85 +16,71 @@ export interface CreateEmbeddingOptions {
   userId?: string;
 }
 
-export async function createEmbeddings(texts: string[], options: CreateEmbeddingOptions = {}): Promise<CreateEmbeddingsResult> {
-  const inputs = texts.map((text) => text.trim()).filter(Boolean);
+export async function createEmbedding(text: string, options: CreateEmbeddingOptions = {}): Promise<CreateEmbeddingResult> {
+  const input = text.trim();
 
-  if (inputs.length === 0) {
-    throw new Error("createEmbeddings failed: texts are required.");
+  if (!input) {
+    throw new Error("createEmbedding failed: text is required.");
   }
 
   const startedAt = Date.now();
-  const estimatedInputTokens = estimateTokenCount(inputs.join("\n"));
+  const estimatedInputTokens = estimateTokenCount(input);
   const operation = options.operation ?? "embedding";
 
   try {
-    const provider = getEmbeddingProvider();
-    const response = await provider.embed({
-      texts: inputs,
-      requestId: options.requestId
+    const response = await openai.embeddings.create({
+      model: openaiConfig.embeddingModel,
+      input
     });
-    const embeddings = response.vectors.map((embedding) => ({
+    const embedding = response.data[0]?.embedding;
+
+    if (!embedding || embedding.length === 0) {
+      throw new Error("OpenAI returned an empty embedding.");
+    }
+
+    const result = {
       embedding,
-      provider: response.provider,
       model: response.model,
       dimensions: embedding.length
-    }));
-
+    };
     const durationMs = Date.now() - startedAt;
 
     logger.info("ai.call", {
       requestId: options.requestId,
       operation,
-      provider: response.provider,
-      model: response.model,
+      provider: "openai",
+      model: result.model,
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens: 0,
       estimatedTotalTokens: estimatedInputTokens,
-      textCount: inputs.length,
-      dimensions: embeddings[0]?.dimensions ?? 0
+      dimensions: result.dimensions
     });
     await recordAiUsage({
       requestId: options.requestId,
       userId: options.userId,
       operation,
-      model: response.model,
+      model: result.model,
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens: 0,
       metadata: {
-        provider: response.provider,
-        textCount: inputs.length,
-        dimensions: embeddings[0]?.dimensions ?? 0
+        dimensions: result.dimensions
       }
     });
 
-    return {
-      embeddings,
-      provider: response.provider,
-      model: response.model
-    };
+    return result;
   } catch (error) {
     logger.error("ai.call_failed", {
       requestId: options.requestId,
       operation,
       provider: "openai",
+      model: openaiConfig.embeddingModel,
       durationMs: Date.now() - startedAt,
       estimatedInputTokens,
       error: toSafeErrorLog(error)
     });
 
-    throw error;
+    throw normalizeOpenAIError(error, "createEmbedding failed");
   }
-}
-
-export async function createEmbedding(text: string, options: CreateEmbeddingOptions = {}): Promise<CreateEmbeddingResult> {
-  const result = await createEmbeddings([text], options);
-  const first = result.embeddings[0];
-
-  if (!first) {
-    throw new Error("createEmbedding failed: embedding provider returned no vectors.");
-  }
-
-  return first;
 }

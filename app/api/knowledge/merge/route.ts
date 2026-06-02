@@ -1,8 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
-import { writeAuditLog } from "@/lib/audit-log";
+import { requireBetaAccess } from "@/lib/beta";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { normalizeQualityScores, type KnowledgeQualityScores } from "@/lib/knowledge/quality";
@@ -13,7 +12,7 @@ import {
 } from "@/lib/knowledge/source-types";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { getRequestIdFromHeaders } from "@/lib/logger";
-import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
 import { AIError, NotFoundError, ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -200,9 +199,9 @@ async function generateMergedDraft(
   requestId?: string,
   userId?: string
 ): Promise<MergedKnowledgeDraft> {
-  if (!hasUsableChatProvider()) {
+  if (!hasUsableOpenAIKey()) {
     if (!isAIFallbackAllowed()) {
-      throw new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地合并整理 fallback。");
+      throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地合并整理 fallback。");
     }
 
     return buildLocalMergedDraft(existing, incoming);
@@ -270,16 +269,10 @@ function toMergeHistoryResponse(history: {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item",
-      metadata: {
-        operation: "knowledge_merge"
-      }
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -308,8 +301,7 @@ export async function POST(request: Request) {
     const existing = await prisma.knowledgeItem.findFirst({
       where: {
         id: input.targetKnowledgeItemId,
-        userId: currentUser.id,
-        deletedAt: null
+        userId: currentUser.id
       },
       select: {
         id: true,
@@ -340,15 +332,7 @@ export async function POST(request: Request) {
       requestId,
       currentUser.id
     );
-    const chunks = splitContentIntoChunks(mergedContent, {
-      title: mergedDraft.title,
-      category: mergedDraft.category,
-      tags: mergedDraft.tags,
-      summary: mergedDraft.summary,
-      sourceType: input.sourceType,
-      sourceTitle: input.sourceTitle,
-      sourceUrl: input.sourceUrl
-    });
+    const chunks = splitContentIntoChunks(mergedContent);
     const embeddings = await createChunkEmbeddings(chunks, {
       requestId,
       operation: "knowledge_merge_chunk_embedding",
@@ -382,12 +366,10 @@ export async function POST(request: Request) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
-                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
                   embeddingError: embedding?.errorMessage ?? null,
-                  embeddingStatus: embedding?.embedding ? "indexed" : "missing",
                   regeneratedBy: "knowledge_merge"
                 }
               };
@@ -432,21 +414,6 @@ export async function POST(request: Request) {
       });
 
       return { updated, history };
-    });
-
-    await writeAuditLog({
-      userId: currentUser.id,
-      role: currentUser.role,
-      action: "INGEST_CREATE",
-      targetType: "knowledge_item",
-      targetId: result.updated.id,
-      request,
-      metadata: {
-        requestId,
-        operation: "knowledge_merge",
-        sourceType: input.sourceType,
-        chunkCount: result.updated.chunks.length
-      }
     });
 
     return apiSuccess<MergeKnowledgeResponse>({

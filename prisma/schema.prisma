@@ -3,9 +3,8 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 enum ConversationType {
@@ -53,108 +52,24 @@ enum AnalyticsEventType {
   FILE_UPLOAD
 }
 
-enum LicenseKeyStatus {
-  UNUSED
-  USED
-  DISABLED
-}
-
-enum UserRole {
-  user
-  kb_admin
-  super_admin
-}
-
 model User {
-  id               String           @id @default(cuid())
-  email            String?          @unique
-  phone            String           @unique
-  passwordHash     String           @default("")
-  name             String?
-  isActive         Boolean          @default(true)
-  licenseActivated Boolean          @default(false)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  sessions         Session[]
-  redeemedLicenses LicenseKey[]     @relation("LicenseRedeemer")
-  conversations    Conversation[]
-  messages         Message[]
-  knowledgeItems   KnowledgeItem[]
-  settings         UserSettings?
-  feedback         Feedback[]
-  analyticsEvents  AnalyticsEvent[]
-  roleAssignments  UserRoleAssignment[]
-  auditLogs        AuditLog[]
-  uploadedFiles    KnowledgeFile[]
-  ingestionJobs    IngestionJob[]
+  /// Supabase Auth user id. Keep this in sync with auth.users.id.
+  id              String           @id
+  email           String           @unique
+  name            String
+  betaAccess      Boolean          @default(false)
+  betaRequestedAt DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  conversations   Conversation[]
+  knowledgeItems  KnowledgeItem[]
+  settings        UserSettings?
+  feedback        Feedback[]
+  analyticsEvents AnalyticsEvent[]
 
-  @@index([licenseActivated])
-  @@index([isActive])
+  @@index([betaAccess])
+  @@index([betaRequestedAt])
   @@map("users")
-}
-
-model UserRoleAssignment {
-  id               String    @id @default(cuid())
-  userId           String    @map("user_id")
-  role             UserRole  @default(user)
-  assignedByUserId String?   @map("assigned_by_user_id")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-  revokedAt        DateTime? @map("revoked_at")
-  expiresAt        DateTime? @map("expires_at")
-  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-
-  @@index([userId], map: "user_role_assignments_user_id_idx")
-  @@index([role])
-  @@index([revokedAt], map: "user_role_assignments_revoked_at_idx")
-  @@index([expiresAt], map: "user_role_assignments_expires_at_idx")
-  @@map("user_role_assignments")
-}
-
-model Session {
-  id        String   @id @default(cuid())
-  userId    String
-  tokenHash String   @unique
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@index([expiresAt])
-  @@map("sessions")
-}
-
-model LicenseKey {
-  id               String           @id @default(cuid())
-  keyHash          String           @unique
-  status           LicenseKeyStatus @default(UNUSED)
-  redeemedByUserId String?
-  redeemedAt       DateTime?
-  expiresAt        DateTime?
-  createdAt        DateTime         @default(now())
-  redeemedByUser   User?            @relation("LicenseRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  @@index([status])
-  @@index([redeemedByUserId])
-  @@index([expiresAt])
-  @@map("license_keys")
-}
-
-model ActivationLog {
-  id        String   @id @default(cuid())
-  codeHash  String
-  userId    String
-  success   Boolean
-  message   String
-  ip        String?
-  userAgent String?
-  createdAt DateTime @default(now())
-
-  @@index([codeHash])
-  @@index([userId])
-  @@index([success])
-  @@index([createdAt])
-  @@map("activation_logs")
 }
 
 model UserSettings {
@@ -162,10 +77,6 @@ model UserSettings {
   userId            String                @unique
   saveStrategy      KnowledgeSaveStrategy @default(MANUAL_CONFIRM)
   defaultExpireDays Int                   @default(90)
-  preferredProvider String?
-  preferredModel    String?
-  ragTopK           Int?
-  ragMinScore       Float?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -179,8 +90,6 @@ model Conversation {
   userId    String
   title     String
   type      ConversationType
-  mode      String           @default("fast")
-  metadata  Json?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -195,18 +104,13 @@ model Conversation {
 model Message {
   id             String       @id @default(cuid())
   conversationId String
-  userId         String?      @map("user_id")
   role           MessageRole
   content        String       @db.Text
-  attachments    Json?
-  sources        Json?
   metadata       Json?
   createdAt      DateTime     @default(now())
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  user           User?        @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([conversationId])
-  @@index([userId], map: "messages_user_id_idx")
   @@index([createdAt])
   @@map("messages")
 }
@@ -234,14 +138,10 @@ model KnowledgeItem {
   reviewStatus          KnowledgeReviewStatus           @default(NEEDS_REVIEW)
   lastReviewedAt        DateTime?
   nextReviewAt          DateTime?                       @default(now())
-  deletedAt             DateTime?                       @map("deleted_at")
-  deletedByUserId       String?                         @map("deleted_by")
-  deleteReason          String?                         @map("delete_reason") @db.Text
   createdAt             DateTime                        @default(now())
   updatedAt             DateTime                        @updatedAt
   user                  User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
   chunks                KnowledgeChunk[]
-  ingestionJobs         IngestionJob[]
   mergeHistories        KnowledgeMergeHistory[]
   completionSuggestions KnowledgeCompletionSuggestion[]
 
@@ -257,87 +157,8 @@ model KnowledgeItem {
   @@index([clarityScore, completenessScore, usefulnessScore, confidenceScore])
   @@index([sourceType, sourceId])
   @@index([sourceType, sourceMessageId])
-  @@index([deletedAt], map: "knowledge_items_deleted_at_idx")
-  @@index([deletedByUserId], map: "knowledge_items_deleted_by_idx")
   @@index([updatedAt])
   @@map("knowledge_items")
-}
-
-model AuditLog {
-  id         String    @id @default(cuid())
-  userId     String?   @map("user_id")
-  role       UserRole?
-  action     String
-  targetType String    @map("target_type")
-  targetId   String?   @map("target_id")
-  ip         String?
-  userAgent  String?   @map("user_agent")
-  metadata   Json?
-  createdAt  DateTime  @default(now()) @map("created_at")
-  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  @@index([userId], map: "audit_logs_user_id_idx")
-  @@index([role])
-  @@index([action])
-  @@index([targetType, targetId], map: "audit_logs_target_type_target_id_idx")
-  @@index([createdAt], map: "audit_logs_created_at_idx")
-  @@map("audit_logs")
-}
-
-model KnowledgeFile {
-  id              String           @id @default(cuid())
-  originalName    String           @map("original_name")
-  fileType        String           @map("file_type")
-  fileSize        Int              @map("file_size")
-  storagePath     String           @map("storage_path")
-  uploaderId      String           @map("uploader_id")
-  status          String           @default("uploaded")
-  categoryId      String?          @map("category_id")
-  tags            String[]         @default([])
-  metadata        Json?
-  createdAt       DateTime         @default(now()) @map("created_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-  deletedAt       DateTime?        @map("deleted_at")
-  deletedByUserId String?          @map("deleted_by")
-  deleteReason    String?          @map("delete_reason") @db.Text
-  uploader        User             @relation(fields: [uploaderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  chunks          KnowledgeChunk[]
-  ingestionJobs   IngestionJob[]
-
-  @@index([uploaderId], map: "knowledge_files_uploader_id_idx")
-  @@index([status])
-  @@index([fileType], map: "knowledge_files_file_type_idx")
-  @@index([deletedAt], map: "knowledge_files_deleted_at_idx")
-  @@index([createdAt], map: "knowledge_files_created_at_idx")
-  @@map("knowledge_files")
-}
-
-model IngestionJob {
-  id                String         @id @default(cuid())
-  sourceType        String         @map("source_type")
-  sourceId          String?        @map("source_id")
-  status            String         @default("pending")
-  progress          Int            @default(0)
-  errorMessage      String?        @map("error_message") @db.Text
-  createdByUserId   String         @map("created_by")
-  fileId            String?        @map("file_id")
-  knowledgeItemId   String?        @map("knowledge_item_id")
-  metadata          Json?
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  finishedAt        DateTime?      @map("finished_at")
-  createdBy         User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  file              KnowledgeFile? @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  knowledgeItem     KnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-
-  @@index([createdByUserId], map: "ingestion_jobs_created_by_idx")
-  @@index([sourceType], map: "ingestion_jobs_source_type_idx")
-  @@index([sourceId], map: "ingestion_jobs_source_id_idx")
-  @@index([status])
-  @@index([fileId], map: "ingestion_jobs_file_id_idx")
-  @@index([knowledgeItemId], map: "ingestion_jobs_knowledge_item_id_idx")
-  @@index([createdAt], map: "ingestion_jobs_created_at_idx")
-  @@map("ingestion_jobs")
 }
 
 model KnowledgeMergeHistory {
@@ -416,90 +237,19 @@ model AnalyticsEvent {
   @@map("analytics_events")
 }
 
-model KnowledgeQueryLog {
-  id           String   @id @default(cuid())
-  userId       String
-  query        String   @db.Text
-  providerUsed String
-  modelUsed    String
-  topK         Int
-  latencyMs    Int
-  tokenUsage   Json?
-  cached       Boolean  @default(false)
-  createdAt    DateTime @default(now())
-
-  @@index([userId])
-  @@index([createdAt])
-  @@index([cached])
-  @@map("knowledge_query_logs")
-}
-
-model QuickActionCategory {
-  id          String   @id @default(cuid())
-  name        String   @unique
-  description String?  @db.Text
-  icon        String?
-  type        String?
-  action      String?
-  prompt      String?  @db.Text
-  enabled     Boolean  @default(true)
-  sortOrder   Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  @@index([enabled])
-  @@index([sortOrder])
-  @@map("quick_action_categories")
-}
-
-model AiCache {
-  id        String   @id @default(cuid())
-  cacheKey  String   @unique
-  value     Json
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-
-  @@index([expiresAt])
-  @@map("ai_cache")
-}
-
-model RateLimitEvent {
-  id        String   @id @default(cuid())
-  subject   String
-  bucket    String
-  count     Int      @default(0)
-  resetAt   DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([subject, bucket])
-  @@index([resetAt])
-  @@map("rate_limit_events")
-}
-
 model KnowledgeChunk {
   id              String                       @id @default(cuid())
   knowledgeItemId String
-  fileId          String?                      @map("file_id")
   chunkText       String                       @db.Text
   chunkIndex      Int
-  summary         String?                      @db.Text
-  tokenCount      Int?
-  charCount       Int?
-  contentHash     String?                      @map("content_hash")
-  embeddingId     String?                      @map("embedding_id")
-  embeddingModel  String?
   metadata        Json?
   /// pgvector is represented as Unsupported because Prisma Client does not natively support VECTOR.
   /// Write and search embeddings with raw SQL, for example via prisma.$queryRaw.
   embedding       Unsupported("vector(1536)")?
   createdAt       DateTime                     @default(now())
   knowledgeItem   KnowledgeItem                @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
-  file            KnowledgeFile?               @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@unique([knowledgeItemId, chunkIndex])
   @@index([knowledgeItemId])
-  @@index([fileId], map: "knowledge_chunks_file_id_idx")
-  @@index([contentHash], map: "knowledge_chunks_content_hash_idx")
   @@map("knowledge_chunks")
 }

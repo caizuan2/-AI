@@ -4,30 +4,33 @@
 
 AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议纪要、网页资料、文档、客服对话、销售话术或个人笔记投喂给系统，系统会自动整理为标题、摘要、标签、分类、重要度和质量评分。入库后，你可以直接向知识库提问，并获得带引用来源的中文回答。
 
-## 已支持功能
+## 适合谁使用
 
-- 手机号 + 密码注册、登录、退出登录。
-- 登录后通过卡密激活，未激活用户不能访问核心知识库功能。
+- 个人或小团队想把零散资料整理成可搜索、可问答的知识库。
+- 产品、运营、销售、客服等角色需要沉淀 FAQ、话术、流程和复盘材料。
+- 开发者想要一个 Next.js + Prisma + pgvector + OpenAI 的 RAG MVP 起点。
+
+## v1.0.0 已支持
+
+- 登录、注册、退出登录。
 - 文本投喂、网页 URL 投喂、文件上传投喂。
 - AI 自动整理标题、摘要、标签、分类、重要度和质量评分。
 - 手动确认入库、AI 判断后自动入库、仅分析不入库三种保存策略。
-- 相似知识检测、知识合并、合并历史。
+- 相似知识检测、合并到已有知识、合并历史。
 - 知识列表搜索、标签筛选、分类筛选、状态筛选、质量排序。
 - 知识详情查看、编辑、删除、来源追踪、质量提示、AI 补全建议。
 - 基于知识库的 RAG 问答，回答包含引用编号和来源卡片。
 - 标签管理、分类管理、知识复习、过期检测。
 - JSON、Markdown、CSV 导出，以及 JSON 导入和重复检测。
 - 统一 API 错误处理、用户数据隔离、rate limit、RAG prompt injection 防护。
-- Netlify + PostgreSQL + pgvector 部署配置。
+- Vercel / Netlify + Supabase 部署配置和生产上线检查清单。
 
 ## 主要页面
 
-- `/login`：手机号登录。
-- `/register`：手机号注册。
-- `/unlock`：输入卡密激活知识库。
+- `/login`：登录。
+- `/register`：注册。
 - `/ingest`：投喂文本或网页链接。
 - `/upload`：上传 `txt`、`md`、`pdf`、`docx` 文件。
-- `/sources`：查看 Notion、Google Drive、Slack、GitHub、Confluence、Website Crawler 和 Local Files 等数据源连接状态。
 - `/knowledge`：查看、搜索和筛选知识。
 - `/knowledge/[id]`：查看详情、编辑、删除、补全知识。
 - `/chat`：基于知识库提问。
@@ -36,6 +39,7 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 - `/categories`：分类管理。
 - `/review`：知识复习。
 - `/admin`：管理后台，仅管理员可访问。
+- `/waitlist`：Beta 灰度等待页，未开通用户登录后会进入这里。
 
 ## 技术栈
 
@@ -46,20 +50,13 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 - Prisma
 - PostgreSQL
 - pgvector
+- Supabase Auth
 - OpenAI API
-- node-cron / Netlify Scheduled Functions
-
-## 产品 UI 与跨平台
-
-当前 UI 按企业级 SaaS 工作台设计：桌面端为左侧导航、中间工作区、右侧上下文面板；移动端为单栏工作流和底部导航。问答页突出引用来源、检索过程、模型信息、后续问题和反馈动作，方便追溯答案依据。
-
-现有项目是 Next.js Web 应用，Android、iOS、macOS 和 Windows 不建议重写为独立客户端。最小可维护方案是保留 Netlify + Supabase 后端，把线上 Web 应用用 Capacitor、Tauri 或 Electron 封装为原生安装包。
-
-详细打包说明见 [docs/cross-platform-packaging.md](docs/cross-platform-packaging.md)。
+- node-cron / Vercel Cron / Netlify Scheduled Functions
 
 ## 本地启动
 
-项目使用 `pnpm@10.12.4` 和 Node.js 22。
+项目使用 pnpm。
 
 ```bash
 pnpm install
@@ -80,86 +77,44 @@ pnpm dev
 http://localhost:3000
 ```
 
+如果本地没有配置 Supabase，`localhost` 会启用开发登录 fallback：
+
+```text
+邮箱：local-dev@ai-knowledge-base.local
+密码：local-password
+```
+
+也可以在登录页输入任意邮箱和密码进入本地开发会话。配置真实 Supabase 后，本地 fallback 会自动停用。
+
 ## 环境变量
 
 复制 `.env.example` 到 `.env` 后填写：
 
 ```env
-DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&schema=public"
-DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
-SESSION_SECRET="replace-with-a-long-random-session-secret"
-LICENSE_SECRET="replace-with-a-long-random-license-secret"
-ADMIN_TOKEN="replace-with-a-long-random-admin-token"
-QWEN_API_KEY="sk-your-qwen-api-key"
-QWEN_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
-QWEN_MODEL="qwen-plus"
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/ai_knowledge_base?schema=public"
+NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
 OPENAI_API_KEY="sk-your-openai-api-key"
-OPENAI_BASE_URL="https://api.openai.com/v1"
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-DEEPSEEK_API_KEY=""
-DEEPSEEK_BASE_URL="https://api.deepseek.com"
-DEEPSEEK_MODEL="deepseek-chat"
-AI_PROVIDER="qwen"
-AI_FALLBACK_PROVIDER="openai"
-AI_SECONDARY_FALLBACK_PROVIDER="deepseek"
-LLM_PROVIDER=""
-LLM_MODEL=""
-EMBEDDING_PROVIDER="openai"
-EMBEDDING_MODEL=""
-RAG_TOP_K="10"
-RAG_MIN_SCORE="0.35"
-RAG_SIMILARITY_THRESHOLD="0.35"
-RAG_MAX_CONTEXT_CHUNKS="12"
-RAG_MAX_CONTEXT_CHARS="12000"
-RAG_ENABLE_RERANK="true"
-RAG_CACHE_TTL_SECONDS="3600"
-RATE_LIMIT_PER_USER_PER_MINUTE="20"
-RATE_LIMIT_GLOBAL_PER_MINUTE="500"
-INGEST_MAX_CHUNK_CHARS="1200"
-INGEST_CHUNK_OVERLAP_CHARS="150"
-INGEST_BATCH_SIZE="20"
 JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="replace-with-a-random-string"
-ADMIN_PHONES="+8613812345678"
+ADMIN_EMAILS="admin@example.com"
 ADMIN_USER_IDS=""
-NODE_ENV="production"
-NODE_VERSION="22"
 ```
 
 说明：
 
-- `DATABASE_URL`：Prisma Client 运行时连接地址，Netlify 生产环境必须使用 Supabase Pooler 完整 URI。
-- `DIRECT_URL`：Prisma CLI 迁移连接地址，生产环境必须使用 Supabase Direct 完整 URI。
-- `SESSION_SECRET`：用于 session token，生产环境必须填写长随机字符串。
-- `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须填写 32 位以上随机字符串。
-- `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 Netlify 卡密管理接口，生产环境必须填写长随机 token。
-- `QWEN_API_KEY`：Qwen / 千问 API key，默认生成 provider 使用它。
-- `QWEN_BASE_URL`：Qwen OpenAI-compatible base URL，默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
-- `QWEN_MODEL`：Qwen 生成模型，建议 `qwen-plus`，低成本场景可改 `qwen-flash`。
-- `OPENAI_API_KEY`：OpenAI API key。用于高质量生成兜底和默认 embedding；生产环境必须配置真实 key。
-- `OPENAI_BASE_URL`：OpenAI-compatible base URL，默认 `https://api.openai.com/v1`。
-- `OPENAI_MODEL`：高质量兜底生成模型，建议 `gpt-4.1-mini`。
-- `OPENAI_EMBEDDING_MODEL`：默认 embedding 模型，建议 `text-embedding-3-small`。DeepSeek 不作为 embedding provider。
-- `DEEPSEEK_API_KEY`：DeepSeek chat provider key，可作为低成本生成/分析模型。
-- `DEEPSEEK_BASE_URL`：DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`。
-- `DEEPSEEK_MODEL`：DeepSeek 生成模型，建议 `deepseek-chat`。
-- `AI_PROVIDER`：主生成 provider，可选 `qwen`、`openai` 或 `deepseek`，默认 `qwen`。
-- `AI_FALLBACK_PROVIDER`：主 provider 失败时的第一兜底 provider，建议 `openai`。
-- `AI_SECONDARY_FALLBACK_PROVIDER`：第二兜底 provider，建议 `deepseek`。
-- `LLM_PROVIDER` / `LLM_MODEL`：兼容别名；当 `AI_PROVIDER` 或具体 provider 模型变量未设置时生效，项目原生变量优先。
-- `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL`：embedding 兼容别名；当前 provider 固定为 `openai`，`OPENAI_EMBEDDING_MODEL` 优先。
-- `RAG_TOP_K`：RAG 初次召回条数，建议 10。
-- `RAG_MIN_SCORE` / `RAG_SIMILARITY_THRESHOLD`：最低相似度阈值，二者兼容；推荐 0.25-0.45，默认 0.35。
-- `RAG_MAX_CONTEXT_CHUNKS`、`RAG_MAX_CONTEXT_CHARS`：最终传给大模型的片段数量和上下文长度上限，默认 12 条 / 12000 字符。
-- `RAG_ENABLE_RERANK`：是否启用本地重排序，默认 true。
-- `RAG_CACHE_TTL_SECONDS`：RAG 答案缓存时间，默认 3600 秒。
-- `RATE_LIMIT_PER_USER_PER_MINUTE`、`RATE_LIMIT_GLOBAL_PER_MINUTE`：用户级和全局限流。
-- `INGEST_MAX_CHUNK_CHARS`、`INGEST_CHUNK_OVERLAP_CHARS`、`INGEST_BATCH_SIZE`：投喂 chunk 切分和 embedding 批处理参数。
+- `DATABASE_URL`：PostgreSQL 连接地址，生产环境必填。
+- `NEXT_PUBLIC_SUPABASE_URL`：Supabase 项目 URL。
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`：Supabase anon key，不要使用 service role key。
+- `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 mock / fallback；生产环境必须配置真实 key。
+- `OPENAI_MODEL`：知识整理和问答模型。
+- `OPENAI_EMBEDDING_MODEL`：embedding 模型。
 - `JOBS_TIMEZONE`：后台任务时区，默认建议 `Asia/Shanghai`。
-- `CRON_SECRET`：后台任务 HTTP 接口密钥，生产环境必须配置。
-- `ADMIN_PHONES`：允许访问 `/admin` 的管理员手机号，建议使用 E.164 格式，多个手机号用英文逗号分隔。
-- `ADMIN_USER_IDS`：允许访问 `/admin` 的用户 id，多个 ID 用英文逗号分隔。
+- `CRON_SECRET`：Vercel Cron 调用后台任务 API 的密钥，生产环境必须配置。
+- `ADMIN_EMAILS`：允许访问 `/admin` 的管理员邮箱，多个邮箱用英文逗号分隔。
+- `ADMIN_USER_IDS`：允许访问 `/admin` 的 Supabase user id，多个 ID 用英文逗号分隔。
 
 不要把真实 key 写进代码或提交到仓库。
 
@@ -183,46 +138,7 @@ pnpm exec prisma migrate dev
 pnpm prisma:generate
 ```
 
-生产环境执行：
-
-```bash
-export DATABASE_URL="你的 Supabase Pooler 完整 URI"
-export DIRECT_URL="你的 Supabase Direct 完整 URI"
-pnpm prisma:migrate:deploy
-pnpm exec prisma migrate status
-pnpm db:check
-```
-
-主要数据表：
-
-- `users`
-- `sessions`
-- `license_keys`
-- `conversations`
-- `messages`
-- `user_settings`
-- `knowledge_items`
-- `knowledge_chunks`
-- `knowledge_merge_histories`
-- `knowledge_completion_suggestions`
-
-## 卡密生成与激活
-
-生产环境卡密闭环使用同一个 Netlify 站点内的 Functions + Netlify Blobs：
-
-```text
-后台页面: /admin/licenses
-健康检查: /api/admin/health
-生成卡密: /api/admin/generate
-查询卡密: /api/admin/check-code
-激活卡密: /api/activate
-```
-
-在 Netlify 后台设置 `LICENSE_SECRET` 和 `ADMIN_TOKEN` 后重新部署。打开 `/admin/licenses`，输入 `ADMIN_TOKEN`，点击“检查连接”，然后生成新卡密。生成的新卡密会写入 Netlify Blobs，同站点 `/unlock` 激活页可以立即使用。
-
-旧的 `pnpm license:generate` 仍保留给本地 Prisma 表测试，不再作为线上生产卡密生成入口。
-
-## 演示数据
+### 演示数据
 
 项目提供 Prisma seed 脚本：
 
@@ -230,14 +146,40 @@ pnpm db:check
 pnpm prisma:seed
 ```
 
-seed 会创建一个已激活的本地 demo 用户，并生成 20 条示例知识和 5 条示例问答记录。
+或使用 Prisma 原生命令：
 
-```text
-Demo user phone: +8613812345678
-Demo user password: demo-password-123
+```bash
+pnpm exec prisma db seed
 ```
 
-seed 可以重复执行。每次执行会先清理 demo 用户名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。
+seed 会创建一个本地 demo 用户，并生成 20 条示例知识和 5 条示例问答记录。示例知识覆盖客户成功、销售赋能、客服支持、产品资料、研发流程、AI 使用规范、市场运营、内部流程、数据分析、安全合规、知识库运营等分类和标签。
+
+本地无 Supabase 配置时，可以用下面账号登录查看 demo 数据：
+
+```text
+邮箱：demo@example.com
+密码：local-password
+```
+
+seed 可以重复执行。每次执行会先清理 `demo@example.com` 名下旧的示例知识和问答，再重建演示数据，不会清理其他用户的数据。
+
+生产环境执行：
+
+```bash
+pnpm prisma:migrate:deploy
+pnpm exec prisma migrate status
+```
+
+主要数据表：
+
+- `users`
+- `conversations`
+- `messages`
+- `user_settings`
+- `knowledge_items`
+- `knowledge_chunks`
+- `knowledge_merge_histories`
+- `knowledge_completion_suggestions`
 
 ## pgvector
 
@@ -253,9 +195,16 @@ embedding Unsupported("vector(1536)")?
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-没有 OpenAI key 或 embedding 不可用时，本地开发会降级为关键词检索；生产环境需要配置真实 OpenAI key。
+并创建 HNSW cosine 索引：
 
-Qwen、OpenAI、DeepSeek 仅用于生成能力，默认不用于 embedding。大规模生产检索建议继续使用 OpenAI `text-embedding-3-small` + pgvector HNSW/IVFFlat 索引。
+```sql
+CREATE INDEX "knowledge_chunks_embedding_hnsw_idx"
+ON "knowledge_chunks"
+USING hnsw ("embedding" vector_cosine_ops)
+WHERE "embedding" IS NOT NULL;
+```
+
+没有 OpenAI key 或 embedding 不可用时，系统会降级为关键词检索。
 
 ## 常用命令
 
@@ -266,54 +215,111 @@ pnpm start                       # 启动生产服务
 pnpm lint                        # ESLint 检查
 pnpm typecheck                   # TypeScript 类型检查
 pnpm test:security               # RAG prompt injection 防护测试
-pnpm test:production-license -- https://your-site.netlify.app YOUR_ADMIN_TOKEN
 pnpm jobs                        # 启动本地后台任务 worker
 pnpm jobs:once                   # 手动执行一次后台任务
 pnpm prisma:seed                 # 创建演示数据
-pnpm license:generate --count 10 # 仅本地 Prisma 表测试卡密
 pnpm prisma:generate             # 生成 Prisma Client
 pnpm prisma:format               # 格式化 Prisma schema
-pnpm db:check                    # 检查生产数据库、pgvector 和关键数据表
-pnpm ingest:schema:check         # 检查投喂依赖表和字段
-pnpm rag:check                   # dry-run 检查 RAG env/database/schema/vector/provider 配置
-pnpm rag:reindex                 # 重建已有知识 chunks 与 embedding 索引
 pnpm prisma:migrate:create -- --name change-name
 pnpm prisma:migrate:deploy       # 部署迁移
 pnpm prisma:studio               # 打开 Prisma Studio
 ```
 
-## Netlify 部署
+## 后台任务
 
-详细步骤见：
-
-- [Netlify 部署指南](./docs/netlify-deploy.md)
-- [Netlify 环境变量](./docs/netlify-env.md)
-- [Netlify 数据库修复指南](./docs/fix-netlify-database.md)
-
-Netlify 构建配置：
-
-```text
-Build command: pnpm prisma:generate && pnpm build
-Publish directory: .next
-Functions directory: netlify/functions
-Node version: 22
-```
-
-生产数据库迁移不要阻塞 Netlify Build。优先在本机或 CI 对生产数据库执行：
+本地或自托管环境可以运行：
 
 ```bash
+pnpm jobs
+```
+
+后台任务包括：
+
+- 检查过期知识，将到期的 `active` 知识标记为 `stale`。
+- 为低质量知识刷新补全建议。
+- 清理孤立的 `knowledge_chunks`。
+- 输出带任务名、时间和执行结果的日志。
+
+Vercel 不运行长驻 worker，改用 `vercel.json` 中的 Cron 配置调用：
+
+- `GET /api/jobs/check-stale`
+- `GET /api/jobs/refresh-suggestions`
+- `GET /api/jobs/cleanup-orphans`
+
+这些接口会校验：
+
+```text
+Authorization: Bearer <CRON_SECRET>
+```
+
+## 部署到 Vercel + Supabase
+
+部署前请先阅读：
+
+- [生产上线检查清单](./docs/production-checklist.md)
+- [v1.0.0 发布说明](./docs/release-v1.md)
+- [生产日志与监控](./docs/monitoring.md)
+
+基本步骤：
+
+1. 在 Supabase 创建项目。
+2. 启用 `vector` 扩展。
+3. 配置 Supabase Auth 的 Site URL 和 Redirect URLs。
+4. 在 Vercel 配置生产环境变量。
+5. 执行 Prisma 生产迁移。
+6. 部署到 Vercel。
+7. 做登录、投喂、入库、检索、问答、引用、编辑、删除、导入导出冒烟测试。
+
+Vercel 环境变量至少包括：
+
+```env
+DATABASE_URL="postgresql://..."
+NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+OPENAI_API_KEY="sk-..."
+OPENAI_MODEL="gpt-4.1-mini"
+OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+CRON_SECRET="use-a-long-random-secret"
+JOBS_TIMEZONE="Asia/Shanghai"
+ADMIN_EMAILS="admin@example.com"
+ADMIN_USER_IDS=""
+```
+
+推荐部署前命令：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm typecheck
+pnpm build
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
 ```
 
-如果生产库出现 `DATABASE_SCHEMA_MISSING`，可以用管理员 token 调用 Netlify Function 幂等补齐缺失表结构：
+## 部署到 Netlify + Supabase
 
-```bash
-curl -X POST "https://你的站点/api/admin/db-repair" \
-  -H "x-admin-token: 你的_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"confirm\":\"REPAIR_DATABASE_SCHEMA\"}"
+项目已包含 [netlify.toml](./netlify.toml) 和 Netlify Scheduled Functions。
+
+详细步骤见：
+
+- [Netlify 部署指南](./docs/netlify-deploy.md)
+
+Netlify 环境变量与 Vercel 基本一致，至少包括：
+
+```env
+DATABASE_URL="postgresql://..."
+NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="your-supabase-anon-key"
+OPENAI_API_KEY="sk-..."
+OPENAI_MODEL="gpt-4.1-mini"
+OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+CRON_SECRET="use-a-long-random-secret"
+JOBS_TIMEZONE="Asia/Shanghai"
+ADMIN_EMAILS="admin@example.com"
+ADMIN_USER_IDS=""
 ```
+
+Netlify Functions 的请求体限制比本地开发更严格，当前文件上传限制为 `4MB`。
 
 ## API 行为
 
@@ -338,14 +344,29 @@ curl -X POST "https://你的站点/api/admin/db-repair" \
 }
 ```
 
-核心 API 会先校验登录用户，再检查卡密激活状态。未登录返回 401，未激活返回“请先输入卡密激活知识库。”
+核心 API 会先校验登录用户，再按用户或 IP 限流。当前主要限流：
+
+- `/api/ingest/analyze`：每用户每分钟 10 次。
+- `/api/chat`：每用户每分钟 20 次。
+- `/api/knowledge`：列表每用户每分钟 60 次，创建每用户每分钟 20 次。
+
+生产多实例环境下，建议将限流存储迁移到 Redis / Upstash。
+
+## Beta 灰度测试
+
+v1.0.0 支持 Beta 灰度模式。`users.betaAccess` 控制用户是否能进入核心工作台。
+
+- 未登录用户访问核心页面会先进入登录页。
+- 已登录但没有 `betaAccess` 的普通用户会进入 `/waitlist`。
+- 用户可以在 `/waitlist` 申请测试资格，系统会记录 `betaRequestedAt`。
+- 管理员可以在 `/admin` 的“Beta 测试资格”区域为用户开启或关闭 `betaAccess`。
+- 管理员由 `ADMIN_EMAILS` 或 `ADMIN_USER_IDS` 控制，admin API 会二次校验权限。
+
+本地演示账号 `demo@example.com` 通过 seed 默认拥有 `betaAccess`，可以直接进入知识库。
 
 ## 安全说明
 
-- 不保存明文密码，密码使用 bcrypt hash。
-- 不保存明文卡密，卡密使用 hash 校验。
-- Session 使用 HttpOnly Cookie，数据库只保存 token hash。
-- 核心页面和 API 都需要登录并激活卡密。
+- 核心页面和 API 都需要登录。
 - 知识数据按 `userId` 隔离。
 - pgvector raw SQL 使用 Prisma 参数化查询。
 - 文件上传限制类型和大小。
@@ -360,7 +381,8 @@ curl -X POST "https://你的站点/api/admin/db-repair" \
 - 知识图谱、语音导入、微信导入、浏览器插件。
 - Redis / Upstash 分布式限流。
 - 长文档和批量任务的完整异步队列。
-- 生产级监控告警和完整端到端自动化测试套件。
+- 生产级监控、告警和自动备份恢复演练。
+- 完整端到端自动化测试套件。
 
 ## 发布文档
 

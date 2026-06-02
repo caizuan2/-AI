@@ -1,6 +1,6 @@
 # Netlify 正式部署指南
 
-本文档用于把当前 AI 知识库 APP 部署到 Netlify，并使用 Supabase PostgreSQL 作为数据库。
+本文档用于把当前 AI 知识库 APP 部署到 Netlify + Supabase。
 
 ## 1. Netlify 控制台配置
 
@@ -29,7 +29,7 @@ Functions directory:
 netlify/functions
 
 Node version:
-22
+20
 ```
 
 项目根目录已提供 [netlify.toml](../netlify.toml)，Netlify 会优先读取其中的配置：
@@ -40,18 +40,13 @@ command = "pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
-NODE_VERSION = "22"
-PNPM_VERSION = "10.12.4"
+NODE_VERSION = "20"
+PNPM_VERSION = "11.3.0"
 
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
 included_files = ["prisma/**"]
-
-[[redirects]]
-from = "/api/activate"
-to = "/.netlify/functions/activate"
-status = 200
 ```
 
 ## 2. 生产环境变量
@@ -64,7 +59,7 @@ Netlify Dashboard -> Site configuration -> Environment variables
 
 按照 [Netlify 环境变量说明](./netlify-env.md) 填写所有变量。
 
-## 3. 数据库配置
+## 3. Supabase 配置
 
 进入 Supabase SQL Editor：
 
@@ -78,7 +73,22 @@ Supabase Dashboard -> 你的项目 -> SQL Editor -> New query
 create extension if not exists vector;
 ```
 
-当前认证使用手机号 + 密码 + HttpOnly Cookie，卡密激活后才能访问核心功能。
+进入 Auth URL 配置：
+
+```text
+Supabase Dashboard -> Authentication -> URL Configuration
+```
+
+填写：
+
+```text
+Site URL:
+https://你的-netlify-site.netlify.app
+
+Redirect URLs:
+https://你的-netlify-site.netlify.app/**
+http://localhost:3000/**
+```
 
 ## 4. 本地预检查
 
@@ -88,7 +98,7 @@ create extension if not exists vector;
 cd D:\XT
 
 corepack enable
-corepack prepare pnpm@10.12.4 --activate
+corepack prepare pnpm@11.3.0 --activate
 
 pnpm install --frozen-lockfile
 pnpm prisma:generate
@@ -100,44 +110,22 @@ pnpm build
 
 ## 5. 数据库迁移
 
-不要把 `pnpm prisma:migrate:deploy` 放进 Netlify Build command。Build 阶段应该保持可部署，数据库迁移在本机、CI 或管理员修复接口单独执行。
-
-生产环境变量里仍然建议同时存在：
-
-- `DATABASE_URL`：Supabase Transaction Pooler，端口 `6543`，包含 `pgbouncer=true`
-- `DIRECT_URL`：Supabase Direct connection，端口 `5432`
-
-本机或 CI 安全迁移命令：
+生产数据库迁移不要放进 Netlify build command。部署前在本机或 CI 手动执行：
 
 ```powershell
 cd D:\XT
 
-$env:DATABASE_URL="你的 Supabase Pooler 完整 URI，端口 6543，包含 pgbouncer=true"
-$env:DIRECT_URL="你的 Supabase Direct 完整 URI，端口 5432"
+$env:DATABASE_URL="你的 Supabase PostgreSQL 生产连接串"
 
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
-pnpm db:check
 ```
-
-`DATABASE_URL` 供 Prisma Client 运行时使用，Netlify Functions 必须填 Pooler URI；`DIRECT_URL` 供 Prisma CLI 迁移使用，必须填 Direct URI。不要只修改端口，务必从 Supabase Dashboard 复制对应类型的完整连接串。
 
 看到下面结果后再部署：
 
 ```text
 Database schema is up to date!
 ```
-
-如果生产库出现 `DATABASE_SCHEMA_MISSING`，也可以用管理员 token 调用应急修复接口。这个接口只会补齐缺失表、字段、索引和迁移记录，不会清空生产数据：
-
-```bash
-curl -X POST "https://你的站点/api/admin/db-repair" \
-  -H "x-admin-token: 你的_ADMIN_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "{\"confirm\":\"REPAIR_DATABASE_SCHEMA\"}"
-```
-
-如果部署后 `/api/health` 返回 `database:false`，不要继续测试投喂和问答，先按 [Netlify 数据库修复指南](./fix-netlify-database.md) 修复生产数据库连接。
 
 ## 6. Git 部署
 
@@ -185,24 +173,14 @@ https://你的-netlify-site.netlify.app
 
 1. 打开首页。
 2. 注册账号。
-3. 打开 `/admin/licenses`，输入 `ADMIN_TOKEN`，确认健康检查显示 `netlify-blobs`。
-4. 在 `/admin/licenses` 生成 3 个全新卡密。
-5. 使用其中 1 个卡密激活账号。
-6. 登录账号。
-7. 访问 `/ingest`。
-8. 输入测试知识并执行 AI 分析。
-9. 点击确认入库。
-10. 访问 `/knowledge`，确认知识存在。
-11. 访问 `/chat`，基于知识库提问。
-12. 确认回答包含引用来源。
-13. 测试 `/upload` 上传小于 4MB 的文件。
-14. 测试 `/settings` 导入导出。
-15. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
+3. 登录账号。
+4. 访问 `/ingest`。
+5. 输入测试知识并执行 AI 分析。
+6. 点击确认入库。
+7. 访问 `/knowledge`，确认知识存在。
+8. 访问 `/chat`，基于知识库提问。
+9. 确认回答包含引用来源。
+10. 测试 `/upload` 上传小于 4MB 的文件。
+11. 测试 `/settings` 导入导出。
+12. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
 
-卡密生产链路可以用真实 Netlify 域名跑 smoke test：
-
-```powershell
-pnpm test:production-license -- https://你的-netlify-site.netlify.app 你的_ADMIN_TOKEN
-```
-
-该脚本会依次验证：健康检查、生成卡密、查询卡密、首次激活、重复激活、随机不存在卡密。

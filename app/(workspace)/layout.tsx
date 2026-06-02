@@ -12,8 +12,8 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     const user = await getCurrentUser();
     const isAdmin = isAdminUser(user);
 
-    if (!user.licenseActivated) {
-      redirect("/unlock");
+    if (!user.betaAccess && !isAdmin) {
+      redirect("/waitlist");
     }
 
     return <AppShell user={{ ...user, isAdmin }}>{children}</AppShell>;

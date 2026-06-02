@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
+import { updateSupabaseSession } from "@/lib/supabase/middleware";
 
 type RateLimitBucket = {
   count: number;
@@ -12,8 +12,6 @@ const apiRateLimitBuckets = new Map<string, RateLimitBucket>();
 
 const apiRateLimitRules = [
   { prefix: "/api/auth", limit: 20, windowMs: 60_000 },
-  { prefix: "/api/admin/kb", limit: 30, windowMs: 60_000 },
-  { prefix: "/api/admin", limit: 40, windowMs: 60_000 },
   { prefix: "/api/upload", limit: 8, windowMs: 60_000 },
   { prefix: "/api/knowledge/import", limit: 6, windowMs: 60_000 },
   { prefix: "/api/knowledge/export", limit: 20, windowMs: 60_000 },
@@ -24,14 +22,11 @@ const apiRateLimitRules = [
   { prefix: "/api", limit: 120, windowMs: 60_000 }
 ];
 
-function withSecurityHeaders(response: NextResponse, pathname = "") {
+function withSecurityHeaders(response: NextResponse) {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "same-origin");
   response.headers.set("X-Frame-Options", "DENY");
-  response.headers.set(
-    "Permissions-Policy",
-    pathname === "/chat-ui" ? "camera=(self), microphone=(self), geolocation=()" : "camera=(), microphone=(), geolocation=()"
-  );
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
   response.headers.set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
 
   return response;
@@ -61,7 +56,7 @@ function pruneExpiredBuckets(now: number) {
   });
 }
 
-function rateLimitApiRequest(request: NextRequest, requestId: string) {
+function rateLimitApiRequest(request: NextRequest) {
   const rule = getRateLimitRule(request.nextUrl.pathname);
 
   if (!rule) {
@@ -92,15 +87,10 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
   const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
   const response = NextResponse.json(
     {
-      ok: false,
-      code: "RATE_LIMITED",
-      message: "请求过于频繁，请稍后再试。",
-      requestId,
       success: false,
       error: {
         code: "RATE_LIMITED",
-        message: "请求过于频繁，请稍后再试。",
-        requestId
+        message: "请求过于频繁，请稍后再试。"
       }
     },
     {
@@ -112,152 +102,6 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
   );
 
   return withSecurityHeaders(response);
-}
-
-const protectedPagePrefixes = [
-  "/",
-  "/dashboard",
-  "/ingest",
-  "/upload",
-  "/sources",
-  "/knowledge",
-  "/chat",
-  "/review",
-  "/tags",
-  "/categories",
-  "/settings",
-  "/feedback",
-  "/admin"
-];
-const sessionOnlyPagePrefixes = ["/unlock"];
-const publicExactPaths = [
-  "/login",
-  "/register",
-  "/api/health",
-  "/favicon.ico",
-  "/robots.txt",
-  "/sitemap.xml"
-];
-const publicPathPrefixes = [
-  "/api/auth",
-  "/_next",
-  "/static"
-];
-const staticAssetPattern = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml)$/i;
-
-function isPathUnder(pathname: string, prefixes: string[]) {
-  return prefixes.some((prefix) => {
-    if (prefix === "/") {
-      return pathname === "/";
-    }
-
-    return pathname === prefix || pathname.startsWith(`${prefix}/`);
-  });
-}
-
-function nextWithRequestHeaders(requestHeaders?: Headers) {
-  if (requestHeaders) {
-    return NextResponse.next({
-      request: {
-        headers: requestHeaders
-      }
-    });
-  }
-
-  return NextResponse.next();
-}
-
-function isPublicPath(pathname: string) {
-  return publicExactPaths.includes(pathname) || publicPathPrefixes.some((prefix) => {
-    return pathname === prefix || pathname.startsWith(`${prefix}/`);
-  });
-}
-
-function isStaticAsset(pathname: string) {
-  return staticAssetPattern.test(pathname);
-}
-
-function isSafeNextPath(value: string) {
-  if (!value.startsWith("/") || value.startsWith("//")) {
-    return false;
-  }
-
-  return !isPathUnder(value.split("?")[0] ?? value, ["/login", "/register"]);
-}
-
-function redirectToLogin(request: NextRequest) {
-  const loginUrl = request.nextUrl.clone();
-  const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-
-  loginUrl.pathname = "/login";
-  loginUrl.search = "";
-
-  if (isSafeNextPath(currentTarget)) {
-    loginUrl.searchParams.set("next", currentTarget);
-  }
-
-  return NextResponse.redirect(loginUrl);
-}
-
-function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
-  const pathname = request.nextUrl.pathname;
-
-  if (isPublicPath(pathname)) {
-    logger.info("auth.redirect_check", {
-      requestId,
-      pathname,
-      hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
-      sessionValid: null,
-      redirectTarget: null,
-      reason: "public_path"
-    });
-    return nextWithRequestHeaders(requestHeaders);
-  }
-
-  if (isStaticAsset(pathname)) {
-    logger.info("auth.redirect_check", {
-      requestId,
-      pathname,
-      hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
-      sessionValid: null,
-      redirectTarget: null,
-      reason: "static_asset"
-    });
-    return nextWithRequestHeaders(requestHeaders);
-  }
-
-  if (pathname.startsWith("/api/")) {
-    return nextWithRequestHeaders(requestHeaders);
-  }
-
-  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  const needsSession = isPathUnder(pathname, protectedPagePrefixes) || isPathUnder(pathname, sessionOnlyPagePrefixes);
-
-  if (needsSession && !hasSession) {
-    const redirectResponse = redirectToLogin(request);
-
-    logger.warn("auth.redirect_check", {
-      requestId,
-      pathname,
-      hasSessionCookie: false,
-      sessionValid: false,
-      redirectTarget: redirectResponse.headers.get("location"),
-      reason: "unauthenticated"
-    });
-
-    return redirectResponse;
-  }
-
-  logger.info("auth.redirect_check", {
-    requestId,
-    pathname,
-    hasSessionCookie: hasSession,
-    sessionValid: hasSession ? null : false,
-    redirectTarget: null,
-    reason: hasSession ? "session_cookie_present" : "public_or_unprotected"
-  });
-
-  return nextWithRequestHeaders(requestHeaders);
 }
 
 export async function middleware(request: NextRequest) {
@@ -279,7 +123,7 @@ export async function middleware(request: NextRequest) {
       )
     });
 
-    const limitedResponse = rateLimitApiRequest(request, requestId);
+    const limitedResponse = rateLimitApiRequest(request);
 
     if (limitedResponse) {
       limitedResponse.headers.set(REQUEST_ID_HEADER, requestId);
@@ -294,7 +138,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders, requestId), request.nextUrl.pathname);
+  const response = withSecurityHeaders(await updateSupabaseSession(request, requestHeaders));
 
   response.headers.set(REQUEST_ID_HEADER, requestId);
 

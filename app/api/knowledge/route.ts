@@ -2,8 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
-import { writeAuditLog } from "@/lib/audit-log";
+import { requireBetaAccess } from "@/lib/beta";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { normalizeQualityScores } from "@/lib/knowledge/quality";
 import { calculateExpiresAt } from "@/lib/knowledge/status";
@@ -14,7 +13,7 @@ import {
 } from "@/lib/knowledge/source-types";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
-import { estimateTokenCount, getRequestIdFromHeaders } from "@/lib/logger";
+import { getRequestIdFromHeaders } from "@/lib/logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import { RateLimitError, ValidationError } from "@/lib/errors";
@@ -218,7 +217,7 @@ function buildKnowledgeWhere(searchParams: URLSearchParams, userId: string): Pri
   const tag = searchParams.get("tag")?.trim();
   const category = searchParams.get("category")?.trim();
   const status = searchParams.get("status")?.trim();
-  const filters: Prisma.KnowledgeItemWhereInput[] = [{ userId, deletedAt: null }];
+  const filters: Prisma.KnowledgeItemWhereInput[] = [{ userId }];
 
   if (q) {
     filters.push({
@@ -340,13 +339,10 @@ function serializeKnowledgeItem(item: {
 }
 
 export async function GET(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let currentUser: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    currentUser = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item"
-    });
+    currentUser = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -384,20 +380,6 @@ export async function GET(request: Request) {
     ]);
     const totalPages = Math.ceil(total / pageSize);
 
-    await writeAuditLog({
-      userId: currentUser.id,
-      role: currentUser.role,
-      action: "KNOWLEDGE_VIEW",
-      targetType: "knowledge_item",
-      request,
-      metadata: {
-        scope: "list",
-        page,
-        pageSize,
-        total
-      }
-    });
-
     return apiSuccess<KnowledgeListResponse>({
       items: items.map(serializeKnowledgeItem),
       pagination: {
@@ -416,16 +398,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let user: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    user = await requireKbAdmin(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "knowledge_item",
-      metadata: {
-        operation: "knowledge_create"
-      }
-    });
+    user = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -452,15 +428,7 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 
-  const chunks = splitContentIntoChunks(input.content, {
-    title: input.title,
-    category: input.category,
-    tags: input.tags,
-    summary: input.summary,
-    sourceType: input.sourceType,
-    sourceTitle: input.sourceTitle,
-    sourceUrl: input.sourceUrl
-  });
+  const chunks = splitContentIntoChunks(input.content);
 
   if (!hasDatabaseUrl()) {
     return apiError(databaseConfigError("创建知识"));
@@ -504,16 +472,11 @@ export async function POST(request: Request) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
-                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
-                  embeddingError: embedding?.errorMessage ?? null,
-                  embeddingStatus: embedding?.embedding ? "indexed" : "missing"
-                },
-                charCount: chunk.chunkText.length,
-                tokenCount: estimateTokenCount(chunk.chunkText),
-                embeddingModel: embedding?.model ?? null
+                  embeddingError: embedding?.errorMessage ?? null
+                }
               };
             })
           }
@@ -540,22 +503,6 @@ export async function POST(request: Request) {
       }
 
       return created;
-    });
-
-    await writeAuditLog({
-      userId: user.id,
-      role: user.role,
-      action: "INGEST_CREATE",
-      targetType: "knowledge_item",
-      targetId: knowledgeItem.id,
-      request,
-      metadata: {
-        requestId,
-        sourceType: input.sourceType,
-        category: input.category,
-        tagCount: input.tags.length,
-        chunkCount: knowledgeItem.chunks.length
-      }
     });
 
     return apiSuccess<CreateKnowledgeResponse>(

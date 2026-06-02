@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { writeAuditLog } from "@/lib/audit-log";
 import {
   countRecentLogEntries,
   getRecentLogEntries,
@@ -19,7 +18,7 @@ interface AdminOverviewResponse {
     knowledgeCount: number | null;
     aiCallsToday: number;
     recentErrorCount: number;
-    inactiveLicenseCount: number | null;
+    betaPendingCount: number | null;
     openFeedbackCount: number | null;
   };
   health: {
@@ -52,11 +51,10 @@ interface AdminOverviewResponse {
   }>;
   users: Array<{
     id: string;
-    email: string | null;
-    phone: string | null;
+    email: string;
     name: string;
-    licenseActivated: boolean;
-    isActive: boolean;
+    betaAccess: boolean;
+    betaRequestedAt: string | null;
     createdAt: string;
     updatedAt: string;
   }>;
@@ -69,8 +67,7 @@ interface AdminOverviewResponse {
     updatedAt: string;
     user: {
       id: string;
-      email: string | null;
-      phone: string | null;
+      email: string;
       name: string;
     };
   }>;
@@ -108,7 +105,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount: null,
       knowledgeCount: null,
-      inactiveLicenseCount: null,
+      betaPendingCount: null,
       users: [],
       openFeedbackCount: null,
       feedback: [],
@@ -125,16 +122,13 @@ async function collectDatabaseMetrics() {
   try {
     await prisma.$queryRaw`SELECT 1`;
 
-    const [userCount, knowledgeCount, inactiveLicenseCount, openFeedbackCount, users, feedback] = await prisma.$transaction([
+    const [userCount, knowledgeCount, betaPendingCount, openFeedbackCount, users, feedback] = await prisma.$transaction([
       prisma.user.count(),
-      prisma.knowledgeItem.count({
-        where: {
-          deletedAt: null
-        }
-      }),
+      prisma.knowledgeItem.count(),
       prisma.user.count({
         where: {
-          licenseActivated: false
+          betaAccess: false,
+          betaRequestedAt: { not: null }
         }
       }),
       prisma.feedback.count({
@@ -144,17 +138,17 @@ async function collectDatabaseMetrics() {
       }),
       prisma.user.findMany({
         orderBy: [
-          { licenseActivated: "asc" },
+          { betaAccess: "asc" },
+          { betaRequestedAt: "desc" },
           { createdAt: "desc" }
         ],
         take: 50,
         select: {
           id: true,
           email: true,
-          phone: true,
           name: true,
-          licenseActivated: true,
-          isActive: true,
+          betaAccess: true,
+          betaRequestedAt: true,
           createdAt: true,
           updatedAt: true
         }
@@ -175,7 +169,6 @@ async function collectDatabaseMetrics() {
             select: {
               id: true,
               email: true,
-              phone: true,
               name: true
             }
           }
@@ -186,7 +179,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount,
       knowledgeCount,
-      inactiveLicenseCount,
+      betaPendingCount,
       users,
       openFeedbackCount,
       feedback,
@@ -200,7 +193,7 @@ async function collectDatabaseMetrics() {
     return {
       userCount: null,
       knowledgeCount: null,
-      inactiveLicenseCount: null,
+      betaPendingCount: null,
       users: [],
       openFeedbackCount: null,
       feedback: [],
@@ -229,11 +222,9 @@ function deriveHealthStatus(input: {
   return "healthy";
 }
 
-export async function GET(request: Request) {
-  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
-
+export async function GET() {
   try {
-    admin = await requireAdminUser(request);
+    await requireAdminUser();
   } catch (error) {
     return apiError(error);
   }
@@ -259,24 +250,13 @@ export async function GET(request: Request) {
       recentErrorCount
     });
 
-    await writeAuditLog({
-      userId: admin.id,
-      role: admin.role,
-      action: "ADMIN_OVERVIEW_VIEW",
-      targetType: "admin",
-      request,
-      metadata: {
-        healthStatus: status
-      }
-    });
-
     return apiSuccess<AdminOverviewResponse>({
       metrics: {
         userCount: databaseMetrics.userCount,
         knowledgeCount: databaseMetrics.knowledgeCount,
         aiCallsToday,
         recentErrorCount,
-        inactiveLicenseCount: databaseMetrics.inactiveLicenseCount,
+        betaPendingCount: databaseMetrics.betaPendingCount,
         openFeedbackCount: databaseMetrics.openFeedbackCount
       },
       health: {
@@ -294,16 +274,12 @@ export async function GET(request: Request) {
       recentErrors: recentErrors.map(serializeErrorEntry),
       users: databaseMetrics.users.map((user) => ({
         ...user,
-        name: user.name ?? user.phone ?? user.email ?? user.id,
+        betaRequestedAt: user.betaRequestedAt?.toISOString() ?? null,
         createdAt: user.createdAt.toISOString(),
         updatedAt: user.updatedAt.toISOString()
       })),
       feedback: databaseMetrics.feedback.map((item) => ({
         ...item,
-        user: {
-          ...item.user,
-          name: item.user.name ?? item.user.phone ?? item.user.email ?? item.user.id
-        },
         createdAt: item.createdAt.toISOString(),
         updatedAt: item.updatedAt.toISOString()
       }))

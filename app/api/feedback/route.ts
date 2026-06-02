@@ -2,7 +2,7 @@ import { FeedbackType, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { ensureAppUser, getCurrentAuthUser } from "@/lib/auth";
 import { RateLimitError, ValidationError } from "@/lib/errors";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -113,10 +113,10 @@ function parseCreateFeedbackRequest(body: unknown): CreateFeedbackRequest {
 }
 
 export async function POST(request: Request) {
-  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let authUser: Awaited<ReturnType<typeof getCurrentAuthUser>>;
 
   try {
-    user = await requireLicensedUser();
+    authUser = await getCurrentAuthUser();
   } catch (error) {
     return apiError(error);
   }
@@ -125,7 +125,10 @@ export async function POST(request: Request) {
     return apiError(databaseConfigError("提交反馈"));
   }
 
+  let user: Awaited<ReturnType<typeof ensureAppUser>>;
+
   try {
+    user = await ensureAppUser(authUser);
     const rateLimit = checkRateLimit(request, {
       namespace: "api:feedback:create",
       userId: user.id,

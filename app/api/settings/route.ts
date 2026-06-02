@@ -1,6 +1,6 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireBetaAccess } from "@/lib/beta";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
@@ -24,14 +24,6 @@ function parseSettingsPatch(body: unknown) {
   const defaultExpireDays = typeof body.defaultExpireDays === "number"
     ? Math.round(body.defaultExpireDays)
     : Number.NaN;
-  const preferredProvider = body.preferredProvider === "qwen" || body.preferredProvider === "openai" || body.preferredProvider === "deepseek"
-    ? body.preferredProvider
-    : null;
-  const preferredModel = typeof body.preferredModel === "string" && body.preferredModel.trim()
-    ? body.preferredModel.trim().slice(0, 80)
-    : null;
-  const ragTopK = typeof body.ragTopK === "number" ? Math.round(body.ragTopK) : null;
-  const ragMinScore = typeof body.ragMinScore === "number" ? body.ragMinScore : null;
 
   if (!Number.isInteger(defaultExpireDays) || defaultExpireDays < 1 || defaultExpireDays > 3650) {
     throw new ValidationError("默认过期提醒周期必须是 1 到 3650 天。");
@@ -39,19 +31,15 @@ function parseSettingsPatch(body: unknown) {
 
   return {
     saveStrategy: body.saveStrategy,
-    defaultExpireDays,
-    preferredProvider,
-    preferredModel,
-    ragTopK: ragTopK !== null && ragTopK >= 1 && ragTopK <= 20 ? ragTopK : null,
-    ragMinScore: ragMinScore !== null && ragMinScore >= 0 && ragMinScore <= 1 ? ragMinScore : null
+    defaultExpireDays
   };
 }
 
 export async function GET() {
-  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    user = await requireLicensedUser();
+    user = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }
@@ -68,10 +56,10 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let user: Awaited<ReturnType<typeof requireBetaAccess>>;
 
   try {
-    user = await requireLicensedUser();
+    user = await requireBetaAccess();
   } catch (error) {
     return apiError(error);
   }

@@ -1,6 +1,4 @@
-/** @type {() => import('next').NextConfig} */
-export default function nextConfig() {
-  return {
-    distDir: ".next"
-  };
-}
+/** @type {import('next').NextConfig} */
+const nextConfig = {};
+
+export default nextConfig;

@@ -1,4 +1,4 @@
-import { chatWithFallback } from "@/lib/ai/providers";
+import { normalizeOpenAIError, openai, openaiConfig } from "@/lib/openai-core";
 import { recordAiUsage } from "@/lib/analytics";
 import type { KnowledgeQualityScores } from "@/lib/knowledge/quality";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
@@ -23,9 +23,6 @@ export interface KnowledgeCompletionSuggestion {
 export interface KnowledgeCompletionResult {
   suggestions: KnowledgeCompletionSuggestion[];
   model: string;
-  providerUsed: string;
-  fallbackUsed: boolean;
-  originalProviderErrorCode?: string;
 }
 
 export interface SuggestKnowledgeCompletionsOptions {
@@ -91,8 +88,10 @@ export async function suggestKnowledgeCompletions(
   const estimatedInputTokens = estimateTokenCount(input) + 350;
 
   try {
-    const response = await chatWithFallback({
+    const response = await openai.chat.completions.create({
+      model: openaiConfig.chatModel,
       temperature: 0.2,
+      response_format: { type: "json_object" },
       messages: [
         {
           role: "system",
@@ -120,13 +119,12 @@ export async function suggestKnowledgeCompletions(
           role: "user",
           content: JSON.stringify(input)
         }
-      ],
-      requestId: options.requestId
+      ]
     });
-    const rawContent = response.text;
+    const rawContent = response.choices[0]?.message.content;
 
     if (!rawContent) {
-      throw new Error("AI provider returned an empty completion suggestions response.");
+      throw new Error("OpenAI returned an empty completion suggestions response.");
     }
 
     const suggestions = parseCompletionSuggestions(rawContent);
@@ -136,13 +134,15 @@ export async function suggestKnowledgeCompletions(
     logger.info("ai.call", {
       requestId: options.requestId,
       operation: "knowledge_completion_suggestions",
-      provider: response.provider,
+      provider: "openai",
       model: response.model,
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens,
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
-      fallbackUsed: response.fallbackUsed,
+      actualInputTokens: response.usage?.prompt_tokens,
+      actualOutputTokens: response.usage?.completion_tokens,
+      actualTotalTokens: response.usage?.total_tokens,
       suggestionCount: suggestions.length
     });
     await recordAiUsage({
@@ -153,30 +153,29 @@ export async function suggestKnowledgeCompletions(
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens,
+      actualInputTokens: response.usage?.prompt_tokens,
+      actualOutputTokens: response.usage?.completion_tokens,
+      actualTotalTokens: response.usage?.total_tokens,
       metadata: {
-        provider: response.provider,
-        fallbackUsed: response.fallbackUsed,
-        originalProviderErrorCode: response.originalProviderErrorCode,
         suggestionCount: suggestions.length
       }
     });
 
     return {
       suggestions,
-      model: response.model,
-      providerUsed: response.provider,
-      fallbackUsed: response.fallbackUsed,
-      originalProviderErrorCode: response.originalProviderErrorCode
+      model: response.model
     };
   } catch (error) {
     logger.error("ai.call_failed", {
       requestId: options.requestId,
       operation: "knowledge_completion_suggestions",
+      provider: "openai",
+      model: openaiConfig.chatModel,
       durationMs: Date.now() - startedAt,
       estimatedInputTokens,
       error: toSafeErrorLog(error)
     });
 
-    throw error;
+    throw normalizeOpenAIError(error, "suggestKnowledgeCompletions failed");
   }
 }
