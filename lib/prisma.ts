@@ -1,4 +1,5 @@
 import { PrismaClient } from "@prisma/client";
+import { getDatabaseUrlWithPoolerParams } from "@/lib/safe-db-url";
 
 const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined;
@@ -6,7 +7,18 @@ const globalForPrisma = globalThis as unknown as {
 
 function getPrismaClient() {
   if (!globalForPrisma.prisma) {
+    const runtimeDatabaseUrl = getDatabaseUrlWithPoolerParams();
+
     globalForPrisma.prisma = new PrismaClient({
+      ...(runtimeDatabaseUrl
+        ? {
+            datasources: {
+              db: {
+                url: runtimeDatabaseUrl
+              }
+            }
+          }
+        : {}),
       log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"]
     });
   }
