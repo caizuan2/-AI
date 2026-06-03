@@ -15,6 +15,40 @@ function getPrisma() {
   return prismaClient;
 }
 
+function normalizePhone(input) {
+  const value = String(input ?? "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/[\s-]+/g, "");
+
+  if (/^1[3-9]\d{9}$/.test(value)) {
+    return `+86${value}`;
+  }
+
+  if (/^861[3-9]\d{9}$/.test(value)) {
+    return `+${value}`;
+  }
+
+  return value;
+}
+
+function buildUserWhere(value) {
+  const normalized = normalizePhone(value);
+  const candidates = Array.from(new Set([
+    value,
+    normalized,
+    normalized.startsWith("+") ? normalized.slice(1) : normalized,
+    normalized.startsWith("+86") ? normalized.slice(3) : normalized
+  ].filter(Boolean)));
+
+  return {
+    OR: [
+      ...candidates.map((candidate) => ({ id: candidate })),
+      ...candidates.map((candidate) => ({ phone: candidate }))
+    ]
+  };
+}
+
 async function markUserLicenseActivated(userId) {
   const value = String(userId ?? "").trim();
 
@@ -35,12 +69,7 @@ async function markUserLicenseActivated(userId) {
   }
 
   const result = await prisma.user.updateMany({
-    where: {
-      OR: [
-        { id: value },
-        { phone: value }
-      ]
-    },
+    where: buildUserWhere(value),
     data: {
       licenseActivated: true
     }
