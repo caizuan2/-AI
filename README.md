@@ -234,17 +234,26 @@ pnpm prisma:studio               # 打开 Prisma Studio
 Netlify 构建配置：
 
 ```text
-Build command: pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build
+Build command: pnpm prisma:generate && pnpm build
 Publish directory: .next
 Functions directory: netlify/functions
 Node version: 22
 ```
 
-如果在 Netlify 构建阶段执行迁移，必须同时配置 `DATABASE_URL` 和 `DIRECT_URL`。也可以在本机或 CI 先对生产数据库执行：
+生产数据库迁移不要阻塞 Netlify Build。优先在本机或 CI 对生产数据库执行：
 
 ```bash
 pnpm prisma:migrate:deploy
 pnpm exec prisma migrate status
+```
+
+如果生产库出现 `DATABASE_SCHEMA_MISSING`，可以用管理员 token 调用 Netlify Function 幂等补齐缺失表结构：
+
+```bash
+curl -X POST "https://你的站点/api/admin/db-repair" \
+  -H "x-admin-token: 你的_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"confirm\":\"REPAIR_DATABASE_SCHEMA\"}"
 ```
 
 ## API 行为
