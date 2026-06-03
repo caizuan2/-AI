@@ -10,3 +10,28 @@ PNPM_VERSION = "10.12.4"
 directory = "netlify/functions"
 node_bundler = "esbuild"
 included_files = ["prisma/**"]
+
+[[redirects]]
+from = "/api/activate"
+to = "/.netlify/functions/activate"
+status = 200
+
+[[redirects]]
+from = "/api/admin/generate"
+to = "/.netlify/functions/admin-generate"
+status = 200
+
+[[redirects]]
+from = "/api/admin/check-code"
+to = "/.netlify/functions/admin-check-code"
+status = 200
+
+[[redirects]]
+from = "/api/admin/list"
+to = "/.netlify/functions/admin-list"
+status = 200
+
+[[redirects]]
+from = "/api/admin/health"
+to = "/.netlify/functions/admin-health"
+status = 200

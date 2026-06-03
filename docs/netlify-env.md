@@ -19,6 +19,7 @@ DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-passwor
 DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="use-a-long-random-session-secret"
 LICENSE_SECRET="use-a-long-random-license-secret"
+ADMIN_TOKEN="use-a-long-random-admin-token"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -38,7 +39,8 @@ NODE_VERSION="22"
 - `DATABASE_URL`：运行时数据库连接串，必须使用 Supabase Pooler 完整 URI，不要只把 direct connection 的端口改成 `6543`。
 - `DIRECT_URL`：Prisma CLI 迁移连接串，必须使用 Supabase Direct 完整 URI。`prisma migrate deploy` 会通过它执行 DDL。
 - `SESSION_SECRET`：用于 session token，生产环境必须配置为长随机字符串。
-- `LICENSE_SECRET`：用于卡密 HMAC-SHA256 hash，生产环境建议单独配置；未配置时会兼容使用 `SESSION_SECRET`。
+- `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须单独配置。
+- `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 `/api/admin/*` 卡密管理接口，生产环境必须配置。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
 - `OPENAI_MODEL`：知识整理和 RAG 问答模型，建议 `gpt-4.1-mini`。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型，建议 `text-embedding-3-small`。
@@ -62,6 +64,8 @@ DIRECT_URL
 SESSION_SECRET
 OPENAI_API_KEY
 CRON_SECRET
+LICENSE_SECRET
+ADMIN_TOKEN
 ```
 
 可以用 Node.js 生成 `SESSION_SECRET`：
@@ -94,10 +98,12 @@ Netlify Dashboard -> Site configuration -> Environment variables
 - `DIRECT_URL` 是 Supabase Direct URI，host 形如 `db.your-project-ref.supabase.co`，端口为 `5432`。
 - `DATABASE_URL` / `DIRECT_URL` 都替换了真实数据库密码，且密码已 URL encode。
 - `SESSION_SECRET` 已配置，且不要和其他项目共用。
+- `LICENSE_SECRET` 已配置，且后续不要随意更换，否则旧卡密 hash 会不匹配。
+- `ADMIN_TOKEN` 已配置，用于登录 `/admin/licenses` 页面后操作卡密。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
 - `ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
-- 使用 `pnpm license:generate --count 100` 生成卡密前，确认 `SESSION_SECRET` 与生产环境一致。
+- 线上卡密必须在 `/admin/licenses` 生成，或用 `/api/admin/generate` 生成，不再使用本地 Flask/SQLite 或 Prisma 脚本作为生产卡密来源。
 - 执行过 `pnpm prisma:migrate:deploy`，并用 `pnpm db:check` 确认 `users`、`sessions`、`license_keys`、`knowledge_chunks` 表存在。
 
 如果线上 `/api/health` 返回 `database:false`，说明 `DATABASE_URL` 缺失、连接失败，或生产 migration 尚未应用，按 [Netlify 数据库修复指南](./fix-netlify-database.md) 排查。

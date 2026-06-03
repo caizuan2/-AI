@@ -2,49 +2,13 @@ const {
   getLicenseByCode,
   json,
   logFunctionError,
+  markUserLicenseActivated,
   readJson,
   requireMethod,
   setLicenseRecord,
   toPublicLicense,
   writeActivationLog
 } = require("./_license-utils");
-const { markUserLicenseActivated } = require("./_user-sync");
-
-function normalizeUserId(value) {
-  return String(value ?? "")
-    .normalize("NFKC")
-    .trim()
-    .replace(/[\s-]+/g, "");
-}
-
-function isSameUser(left, right) {
-  const normalizedLeft = normalizeUserId(left);
-  const normalizedRight = normalizeUserId(right);
-
-  if (!normalizedLeft || !normalizedRight) {
-    return false;
-  }
-
-  return normalizedLeft === normalizedRight ||
-    normalizedLeft.replace(/^\+/, "") === normalizedRight.replace(/^\+/, "") ||
-    normalizedLeft.replace(/^\+?86/, "") === normalizedRight.replace(/^\+?86/, "");
-}
-
-async function syncUserForActivation(userId, codeHashPrefix) {
-  try {
-    return await markUserLicenseActivated(userId);
-  } catch (activationError) {
-    logFunctionError("activate-user-sync", activationError, {
-      code_hash_prefix: codeHashPrefix,
-      user_id: userId || null
-    });
-
-    return {
-      updated: false,
-      reason: "database_sync_failed"
-    };
-  }
-}
 
 exports.handler = async (event) => {
   try {
@@ -70,36 +34,6 @@ exports.handler = async (event) => {
     }
 
     if (record.status === "used") {
-      if (isSameUser(record.used_by, userId)) {
-        const userActivation = await syncUserForActivation(userId, codeHashPrefix);
-
-        if (userActivation.updated) {
-          await writeActivationLog({
-            result: "reactivated_existing_user",
-            user_id: userId,
-            code_hash_prefix: codeHashPrefix,
-            used_at: record.used_at ?? null
-          });
-
-          return json(200, {
-            ok: true,
-            message: "激活成功。",
-            code: normalized,
-            licenseActivated: true,
-            user_license_updated: true,
-            license: toPublicLicense(record)
-          });
-        }
-
-        return json(500, {
-          ok: false,
-          message: "卡密已使用在当前账号，但账号激活状态同步失败，请稍后重试。",
-          error: "USER_LICENSE_SYNC_FAILED",
-          user_sync_reason: userActivation.reason,
-          user_sync_message: userActivation.message
-        });
-      }
-
       return json(409, {
         ok: false,
         message: "卡密已使用。"
@@ -120,16 +54,22 @@ exports.handler = async (event) => {
       });
     }
 
-    const userActivation = await syncUserForActivation(userId, codeHashPrefix);
+    let userActivation = {
+      updated: false,
+      reason: "not_checked"
+    };
 
-    if (!userActivation.updated) {
-      return json(500, {
-        ok: false,
-        message: "账号激活状态同步失败，卡密尚未消耗，请稍后重试。",
-        error: "USER_LICENSE_SYNC_FAILED",
-        user_sync_reason: userActivation.reason,
-        user_sync_message: userActivation.message
+    try {
+      userActivation = await markUserLicenseActivated(userId);
+    } catch (activationError) {
+      logFunctionError("activate-user-sync", activationError, {
+        code_hash_prefix: codeHashPrefix,
+        user_id: userId || null
       });
+      userActivation = {
+        updated: false,
+        reason: "database_sync_failed"
+      };
     }
 
     const usedAt = new Date().toISOString();

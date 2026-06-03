@@ -47,6 +47,11 @@ PNPM_VERSION = "10.12.4"
 directory = "netlify/functions"
 node_bundler = "esbuild"
 included_files = ["prisma/**"]
+
+[[redirects]]
+from = "/api/activate"
+to = "/.netlify/functions/activate"
+status = 200
 ```
 
 ## 2. 生产环境变量
@@ -164,14 +169,24 @@ https://你的-netlify-site.netlify.app
 
 1. 打开首页。
 2. 注册账号。
-3. 使用卡密激活账号。
-4. 登录账号。
-5. 访问 `/ingest`。
-6. 输入测试知识并执行 AI 分析。
-7. 点击确认入库。
-8. 访问 `/knowledge`，确认知识存在。
-9. 访问 `/chat`，基于知识库提问。
-10. 确认回答包含引用来源。
-11. 测试 `/upload` 上传小于 4MB 的文件。
-12. 测试 `/settings` 导入导出。
-13. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
+3. 打开 `/admin/licenses`，输入 `ADMIN_TOKEN`，确认健康检查显示 `netlify-blobs`。
+4. 在 `/admin/licenses` 生成 3 个全新卡密。
+5. 使用其中 1 个卡密激活账号。
+6. 登录账号。
+7. 访问 `/ingest`。
+8. 输入测试知识并执行 AI 分析。
+9. 点击确认入库。
+10. 访问 `/knowledge`，确认知识存在。
+11. 访问 `/chat`，基于知识库提问。
+12. 确认回答包含引用来源。
+13. 测试 `/upload` 上传小于 4MB 的文件。
+14. 测试 `/settings` 导入导出。
+15. 用管理员账号访问 `/admin` 和 `/admin/analytics`。
+
+卡密生产链路可以用真实 Netlify 域名跑 smoke test：
+
+```powershell
+pnpm test:production-license -- https://你的-netlify-site.netlify.app 你的_ADMIN_TOKEN
+```
+
+该脚本会依次验证：健康检查、生成卡密、查询卡密、首次激活、重复激活、随机不存在卡密。
