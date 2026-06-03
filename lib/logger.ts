@@ -13,6 +13,9 @@ const MAX_STRING_LENGTH = 240;
 const MAX_ARRAY_ITEMS = 20;
 const MAX_OBJECT_KEYS = 40;
 const MAX_RECENT_LOG_ENTRIES = 500;
+const DATABASE_URL_WITH_PASSWORD_PATTERN = /postgres(?:ql)?:\/\/([^:\s/@]+):([^@\s]+)@/gi;
+const OPENAI_KEY_PATTERN = /sk-[A-Za-z0-9_-]{20,}/g;
+const NAMED_SECRET_PATTERN = /(OPENAI_API_KEY|DEEPSEEK_API_KEY|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|DATABASE_URL|DIRECT_URL|SESSION_SECRET|LICENSE_SECRET|ADMIN_TOKEN)=([^&\s]+)/gi;
 
 const sensitiveKeys = new Set([
   "authorization",
@@ -54,11 +57,16 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function sanitizeString(value: string) {
-  if (value.length <= MAX_STRING_LENGTH) {
-    return value;
+  const redacted = value
+    .replace(DATABASE_URL_WITH_PASSWORD_PATTERN, (match) => match.replace(/:([^:@\s]+)@/, ":***@"))
+    .replace(OPENAI_KEY_PATTERN, "[redacted-openai-key]")
+    .replace(NAMED_SECRET_PATTERN, (_match, name) => `${name}=[redacted]`);
+
+  if (redacted.length <= MAX_STRING_LENGTH) {
+    return redacted;
   }
 
-  return `${value.slice(0, MAX_STRING_LENGTH)}...`;
+  return `${redacted.slice(0, MAX_STRING_LENGTH)}...`;
 }
 
 function sanitizeValue(value: unknown, key = "", depth = 0): unknown {
@@ -149,7 +157,8 @@ export function toSafeErrorLog(error: unknown) {
       errorName: error.name,
       code: typeof maybeAppError.code === "string" ? maybeAppError.code : undefined,
       statusCode: typeof maybeAppError.statusCode === "number" ? maybeAppError.statusCode : undefined,
-      message: typeof maybeAppError.code === "string" ? sanitizeString(error.message) : undefined
+      message: sanitizeString(error.message),
+      stack: error.stack ? sanitizeString(error.stack) : undefined
     };
   }
 

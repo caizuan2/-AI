@@ -3,17 +3,24 @@ import { headers } from "next/headers";
 import { AppError, ConfigError, toAppError } from "@/lib/errors";
 import type { AppErrorCode } from "@/lib/errors";
 import { logger, REQUEST_ID_HEADER, toSafeErrorLog } from "@/lib/logger";
+import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 
 export type ApiSuccessResponse<T> = {
+  ok: true;
   success: true;
   data: T;
 };
 
 export type ApiErrorResponse = {
+  ok: false;
+  code: AppErrorCode;
+  message: string;
+  requestId?: string;
   success: false;
   error: {
     code: AppErrorCode;
     message: string;
+    requestId?: string;
   };
 };
 
@@ -47,7 +54,18 @@ function withRequestIdHeader(init?: ResponseInit) {
 export function apiSuccess<T>(data: T, init?: ResponseInit) {
   const responseInit = withRequestIdHeader(init);
 
-  return NextResponse.json<ApiSuccessResponse<T>>({ success: true, data }, responseInit.init);
+  return NextResponse.json<ApiSuccessResponse<T>>({ ok: true, success: true, data }, responseInit.init);
+}
+
+function isDatabaseErrorCode(code: AppErrorCode) {
+  return [
+    "DATABASE_ERROR",
+    "MISSING_DATABASE_URL",
+    "INVALID_DATABASE_URL",
+    "DATABASE_CONNECTION_FAILED",
+    "DATABASE_SCHEMA_MISSING",
+    "INGEST_WRITE_FAILED"
+  ].includes(code);
 }
 
 export function apiError(error: unknown, init?: ResponseInit) {
@@ -59,15 +77,21 @@ export function apiError(error: unknown, init?: ResponseInit) {
     requestId: responseInit.requestId,
     code: appError.code,
     statusCode: appError.statusCode,
+    ...(isDatabaseErrorCode(appError.code) ? { database: getSafeDatabaseUrlInfo() } : {}),
     error: toSafeErrorLog(error)
   });
 
   return NextResponse.json<ApiErrorResponse>(
     {
+      ok: false,
+      code: appError.code,
+      message: appError.message,
+      requestId: responseInit.requestId,
       success: false,
       error: {
         code: appError.code,
-        message: appError.message
+        message: appError.message,
+        requestId: responseInit.requestId
       }
     },
     {
@@ -78,7 +102,13 @@ export function apiError(error: unknown, init?: ResponseInit) {
 }
 
 export function databaseConfigError(action: string) {
-  return new AppError("DATABASE_ERROR", `数据库未配置，无法${action}。`, 500);
+  const info = getSafeDatabaseUrlInfo();
+
+  if (!info.present) {
+    return new AppError("MISSING_DATABASE_URL", `DATABASE_URL 未配置，无法${action}。`, 500);
+  }
+
+  return new AppError("INVALID_DATABASE_URL", `DATABASE_URL 配置无效，无法${action}。`, 500);
 }
 
 export function sessionConfigError(action: string) {

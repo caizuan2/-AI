@@ -56,7 +56,7 @@ function pruneExpiredBuckets(now: number) {
   });
 }
 
-function rateLimitApiRequest(request: NextRequest) {
+function rateLimitApiRequest(request: NextRequest, requestId: string) {
   const rule = getRateLimitRule(request.nextUrl.pathname);
 
   if (!rule) {
@@ -87,10 +87,15 @@ function rateLimitApiRequest(request: NextRequest) {
   const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - now) / 1000));
   const response = NextResponse.json(
     {
+      ok: false,
+      code: "RATE_LIMITED",
+      message: "请求过于频繁，请稍后再试。",
+      requestId,
       success: false,
       error: {
         code: "RATE_LIMITED",
-        message: "请求过于频繁，请稍后再试。"
+        message: "请求过于频繁，请稍后再试。",
+        requestId
       }
     },
     {
@@ -194,7 +199,7 @@ export async function middleware(request: NextRequest) {
       )
     });
 
-    const limitedResponse = rateLimitApiRequest(request);
+    const limitedResponse = rateLimitApiRequest(request, requestId);
 
     if (limitedResponse) {
       limitedResponse.headers.set(REQUEST_ID_HEADER, requestId);
