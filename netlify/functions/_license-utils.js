@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { PrismaClient } = require("@prisma/client");
 const { getStore } = require("@netlify/blobs");
 
-const STORE_NAME = "aikb-license-store";
+const STORE_NAME = "aikb-licenses";
 const LICENSE_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const DASH_PATTERN = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g;
 const LOCAL_LICENSE_SECRET = "local-dev-aikb-license-secret-do-not-use-in-production";
