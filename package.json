@@ -15,6 +15,7 @@
     "typecheck": "tsc --noEmit",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
     "test:license": "tsx scripts/license-smoke-test.ts",
+    "test:production-license": "node scripts/production-smoke-test.js",
     "postinstall": "prisma generate",
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",
@@ -31,6 +32,7 @@
     "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
+    "@netlify/blobs": "^10.7.9",
     "@prisma/client": "^6.0.0",
     "@types/pdf-parse": "^1.1.5",
     "bcryptjs": "^3.0.3",

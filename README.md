@@ -80,6 +80,7 @@ DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-passwor
 DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="replace-with-a-long-random-session-secret"
 LICENSE_SECRET="replace-with-a-long-random-license-secret"
+ADMIN_TOKEN="replace-with-a-long-random-admin-token"
 OPENAI_API_KEY="sk-your-openai-api-key"
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -96,7 +97,8 @@ NODE_VERSION="22"
 - `DATABASE_URL`：Prisma Client 运行时连接地址，Netlify 生产环境必须使用 Supabase Pooler 完整 URI。
 - `DIRECT_URL`：Prisma CLI 迁移连接地址，生产环境必须使用 Supabase Direct 完整 URI。
 - `SESSION_SECRET`：用于 session token，生产环境必须填写长随机字符串。
-- `LICENSE_SECRET`：用于卡密 HMAC-SHA256 hash，生产环境建议单独填写；未配置时会兼容使用 `SESSION_SECRET`。
+- `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须填写 32 位以上随机字符串。
+- `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 Netlify 卡密管理接口，生产环境必须填写长随机 token。
 - `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 fallback；生产环境必须配置真实 key。
 - `OPENAI_MODEL`：知识整理和问答模型。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型。
@@ -150,15 +152,21 @@ pnpm db:check
 - `knowledge_merge_histories`
 - `knowledge_completion_suggestions`
 
-## 卡密生成
+## 卡密生成与激活
 
-先确保 `DATABASE_URL` 和 `SESSION_SECRET` 已配置，然后运行：
+生产环境卡密闭环使用同一个 Netlify 站点内的 Functions + Netlify Blobs：
 
-```bash
-pnpm license:generate --count 100
+```text
+后台页面: /admin/licenses
+健康检查: /api/admin/health
+生成卡密: /api/admin/generate
+查询卡密: /api/admin/check-code
+激活卡密: /api/activate
 ```
 
-脚本会生成 `AIKB-XXXX-XXXX-XXXX` 格式卡密，并只把 `keyHash` 写入数据库。终端输出的明文卡密只显示一次，请在安全位置保存。
+在 Netlify 后台设置 `LICENSE_SECRET` 和 `ADMIN_TOKEN` 后重新部署。打开 `/admin/licenses`，输入 `ADMIN_TOKEN`，点击“检查连接”，然后生成新卡密。生成的新卡密会写入 Netlify Blobs，同站点 `/unlock` 激活页可以立即使用。
+
+旧的 `pnpm license:generate` 仍保留给本地 Prisma 表测试，不再作为线上生产卡密生成入口。
 
 ## 演示数据
 
@@ -202,10 +210,11 @@ pnpm start                       # 启动生产服务
 pnpm lint                        # ESLint 检查
 pnpm typecheck                   # TypeScript 类型检查
 pnpm test:security               # RAG prompt injection 防护测试
+pnpm test:production-license -- https://your-site.netlify.app YOUR_ADMIN_TOKEN
 pnpm jobs                        # 启动本地后台任务 worker
 pnpm jobs:once                   # 手动执行一次后台任务
 pnpm prisma:seed                 # 创建演示数据
-pnpm license:generate --count 10 # 生成卡密
+pnpm license:generate --count 10 # 仅本地 Prisma 表测试卡密
 pnpm prisma:generate             # 生成 Prisma Client
 pnpm prisma:format               # 格式化 Prisma schema
 pnpm db:check                    # 检查生产数据库、pgvector 和关键数据表

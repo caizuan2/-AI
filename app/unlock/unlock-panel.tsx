@@ -5,7 +5,13 @@ import { useRouter } from "next/navigation";
 import { ArrowRight, Database, KeyRound, Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { unwrapApiResponse } from "@/lib/api/client";
+
+type ActivateApiResponse = {
+  ok?: boolean;
+  message?: string;
+  code?: string;
+  licenseActivated?: boolean;
+};
 
 export function UnlockPanel({ user }: { user: { phone: string; name: string } }) {
   const router = useRouter();
@@ -35,8 +41,14 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
           user_id: user.phone
         })
       });
+      const data = await response.json().catch(() => null) as ActivateApiResponse | null;
 
-      await unwrapApiResponse<unknown>(response, "卡密激活失败。");
+      if (!response.ok || !data?.ok) {
+        throw new Error(data?.message || "卡密激活失败。");
+      }
+
+      localStorage.setItem("aikb_license_activated", "true");
+      localStorage.setItem("aikb_license_code", data.code || licenseKey.trim());
       router.push("/");
       router.refresh();
     } catch (caughtError) {
