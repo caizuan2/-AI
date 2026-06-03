@@ -1,7 +1,7 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireLicensedUser } from "@/lib/auth/guards";
-import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
+import { AIError, RateLimitError, ValidationError, toAppError } from "@/lib/errors";
 import {
   mockAnalyzeKnowledge,
   toAnalyzeDraft,
@@ -12,7 +12,7 @@ import {
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
-import { getRequestIdFromHeaders } from "@/lib/logger";
+import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import { fetchWebPageContent, isProbablyUrl } from "@/lib/web/page-fetcher";
 
@@ -65,8 +65,27 @@ export async function POST(request: Request) {
       return apiError(databaseConfigError("读取知识保存策略"));
     }
 
-    settings = await getOrCreateUserSettings(currentUser.id);
-    existingCategories = await getExistingCategoryNames(currentUser.id);
+    try {
+      settings = await getOrCreateUserSettings(currentUser.id);
+    } catch (error) {
+      logger.error("ingest.settings_failed", {
+        requestId,
+        userId: currentUser.id,
+        error: toSafeErrorLog(error)
+      });
+      return apiError(databaseConfigError("读取知识保存策略"));
+    }
+
+    try {
+      existingCategories = await getExistingCategoryNames(currentUser.id);
+    } catch (error) {
+      logger.warn("ingest.categories_failed", {
+        requestId,
+        userId: currentUser.id,
+        error: toSafeErrorLog(error)
+      });
+      existingCategories = [];
+    }
   } catch (error) {
     return apiError(error);
   }
@@ -176,7 +195,13 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     if (!isAIFallbackAllowed()) {
-      return apiError(error);
+      const appError = toAppError(error);
+
+      return apiError(
+        appError.code === "APP_ERROR"
+          ? new AIError("AI 知识整理失败，请检查 OpenAI 配置或稍后重试。")
+          : appError
+      );
     }
 
     const fallback = preferExistingCategory(buildFallbackDraft());

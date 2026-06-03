@@ -62,6 +62,22 @@ export function normalizeOpenAIError(error: unknown, fallbackMessage: string) {
   }
 
   if (error instanceof OpenAI.APIError) {
+    if (error.status === 401) {
+      return new OpenAIServiceError("OpenAI API Key 无效，请检查生产环境 OPENAI_API_KEY。", error);
+    }
+
+    if (error.status === 403) {
+      return new OpenAIServiceError("当前 OpenAI API Key 无权使用配置的模型，请检查 OPENAI_MODEL。", error);
+    }
+
+    if (error.status === 429) {
+      return new OpenAIServiceError("OpenAI 调用额度或频率已达上限，请稍后重试或检查账号额度。", error);
+    }
+
+    if (error.status && error.status >= 500) {
+      return new OpenAIServiceError("OpenAI 服务暂时不可用，请稍后重试。", error);
+    }
+
     return new OpenAIServiceError(fallbackMessage, error);
   }
 
