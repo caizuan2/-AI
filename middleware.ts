@@ -111,6 +111,7 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
 
 const protectedPagePrefixes = [
   "/",
+  "/dashboard",
   "/ingest",
   "/upload",
   "/knowledge",
@@ -122,8 +123,21 @@ const protectedPagePrefixes = [
   "/feedback",
   "/admin"
 ];
-const authPagePrefixes = ["/login", "/register"];
 const sessionOnlyPagePrefixes = ["/unlock"];
+const publicExactPaths = [
+  "/login",
+  "/register",
+  "/api/health",
+  "/favicon.ico",
+  "/robots.txt",
+  "/sitemap.xml"
+];
+const publicPathPrefixes = [
+  "/api/auth",
+  "/_next",
+  "/static"
+];
+const staticAssetPattern = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml)$/i;
 
 function isPathUnder(pathname: string, prefixes: string[]) {
   return prefixes.some((prefix) => {
@@ -147,35 +161,95 @@ function nextWithRequestHeaders(requestHeaders?: Headers) {
   return NextResponse.next();
 }
 
+function isPublicPath(pathname: string) {
+  return publicExactPaths.includes(pathname) || publicPathPrefixes.some((prefix) => {
+    return pathname === prefix || pathname.startsWith(`${prefix}/`);
+  });
+}
+
+function isStaticAsset(pathname: string) {
+  return staticAssetPattern.test(pathname);
+}
+
+function isSafeNextPath(value: string) {
+  if (!value.startsWith("/") || value.startsWith("//")) {
+    return false;
+  }
+
+  return !isPathUnder(value.split("?")[0] ?? value, ["/login", "/register"]);
+}
+
 function redirectToLogin(request: NextRequest) {
   const loginUrl = request.nextUrl.clone();
+  const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
 
   loginUrl.pathname = "/login";
-  loginUrl.searchParams.set("redirectTo", `${request.nextUrl.pathname}${request.nextUrl.search}`);
+  loginUrl.search = "";
+
+  if (isSafeNextPath(currentTarget)) {
+    loginUrl.searchParams.set("next", currentTarget);
+  }
 
   return NextResponse.redirect(loginUrl);
 }
 
-function applyPageAuth(request: NextRequest, requestHeaders: Headers) {
-  if (request.nextUrl.pathname.startsWith("/api/")) {
+function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
+  const pathname = request.nextUrl.pathname;
+
+  if (isPublicPath(pathname)) {
+    logger.info("auth.redirect_check", {
+      requestId,
+      pathname,
+      hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
+      sessionValid: null,
+      redirectTarget: null,
+      reason: "public_path"
+    });
     return nextWithRequestHeaders(requestHeaders);
   }
 
-  const pathname = request.nextUrl.pathname;
+  if (isStaticAsset(pathname)) {
+    logger.info("auth.redirect_check", {
+      requestId,
+      pathname,
+      hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
+      sessionValid: null,
+      redirectTarget: null,
+      reason: "static_asset"
+    });
+    return nextWithRequestHeaders(requestHeaders);
+  }
+
+  if (pathname.startsWith("/api/")) {
+    return nextWithRequestHeaders(requestHeaders);
+  }
+
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+  const needsSession = isPathUnder(pathname, protectedPagePrefixes) || isPathUnder(pathname, sessionOnlyPagePrefixes);
 
-  if ((isPathUnder(pathname, protectedPagePrefixes) || isPathUnder(pathname, sessionOnlyPagePrefixes)) && !hasSession) {
-    return redirectToLogin(request);
+  if (needsSession && !hasSession) {
+    const redirectResponse = redirectToLogin(request);
+
+    logger.warn("auth.redirect_check", {
+      requestId,
+      pathname,
+      hasSessionCookie: false,
+      sessionValid: false,
+      redirectTarget: redirectResponse.headers.get("location"),
+      reason: "unauthenticated"
+    });
+
+    return redirectResponse;
   }
 
-  if (isPathUnder(pathname, authPagePrefixes) && hasSession) {
-    const url = request.nextUrl.clone();
-
-    url.pathname = "/";
-    url.search = "";
-
-    return NextResponse.redirect(url);
-  }
+  logger.info("auth.redirect_check", {
+    requestId,
+    pathname,
+    hasSessionCookie: hasSession,
+    sessionValid: hasSession ? null : false,
+    redirectTarget: null,
+    reason: hasSession ? "session_cookie_present" : "public_or_unprotected"
+  });
 
   return nextWithRequestHeaders(requestHeaders);
 }
@@ -214,7 +288,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders));
+  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders, requestId));
 
   response.headers.set(REQUEST_ID_HEADER, requestId);
 
