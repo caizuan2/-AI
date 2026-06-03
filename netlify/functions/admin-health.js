@@ -1,6 +1,7 @@
-const { getStore } = require("@netlify/blobs");
 const {
   STORE_NAME,
+  getLicenseStore,
+  getManualBlobsConfig,
   json,
   logFunctionError
 } = require("./_license-utils");
@@ -72,7 +73,8 @@ exports.handler = async (event) => {
   }
 
   try {
-    const store = getStore(STORE_NAME);
+    const manualBlobsConfig = getManualBlobsConfig();
+    const store = getLicenseStore();
     const healthKey = `health-test:${Date.now()}`;
     const healthValue = {
       checked_at: new Date().toISOString(),
@@ -90,6 +92,9 @@ exports.handler = async (event) => {
         message: "Netlify Blobs 写入后读取结果不一致",
         runtime: "netlify-functions",
         storage: "netlify-blobs",
+        store_name: STORE_NAME,
+        has_NETLIFY_BLOBS_SITE_ID: manualBlobsConfig.hasSiteID,
+        has_NETLIFY_BLOBS_TOKEN: manualBlobsConfig.hasToken,
         store_test_write_read: false
       });
     }
@@ -98,8 +103,11 @@ exports.handler = async (event) => {
       ok: true,
       runtime: "netlify-functions",
       storage: "netlify-blobs",
+      store_name: STORE_NAME,
       has_LICENSE_SECRET: true,
       has_ADMIN_TOKEN: true,
+      has_NETLIFY_BLOBS_SITE_ID: manualBlobsConfig.hasSiteID,
+      has_NETLIFY_BLOBS_TOKEN: manualBlobsConfig.hasToken,
       store_test_write_read: true,
       deploy_id: process.env.DEPLOY_ID || null,
       site_name: process.env.SITE_NAME || null
@@ -113,6 +121,9 @@ exports.handler = async (event) => {
       message: error instanceof Error ? error.message : "Netlify Blobs 写读测试失败",
       runtime: "netlify-functions",
       storage: "netlify-blobs",
+      store_name: STORE_NAME,
+      has_NETLIFY_BLOBS_SITE_ID: getManualBlobsConfig().hasSiteID,
+      has_NETLIFY_BLOBS_TOKEN: getManualBlobsConfig().hasToken,
       store_test_write_read: false
     });
   }

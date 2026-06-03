@@ -20,6 +20,8 @@ DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-r
 SESSION_SECRET="use-a-long-random-session-secret"
 LICENSE_SECRET="use-a-long-random-license-secret"
 ADMIN_TOKEN="use-a-long-random-admin-token"
+NETLIFY_BLOBS_SITE_ID="your-netlify-site-id"
+NETLIFY_BLOBS_TOKEN="your-netlify-personal-access-token"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -41,6 +43,8 @@ NODE_VERSION="22"
 - `SESSION_SECRET`：用于 session token，生产环境必须配置为长随机字符串。
 - `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须单独配置。
 - `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 `/api/admin/*` 卡密管理接口，生产环境必须配置。
+- `NETLIFY_BLOBS_SITE_ID`：Netlify Site ID。若 Functions 未自动注入 Blobs 上下文，则必须配置。
+- `NETLIFY_BLOBS_TOKEN`：Netlify Personal Access Token。若 Functions 未自动注入 Blobs 上下文，则必须配置。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
 - `OPENAI_MODEL`：知识整理和 RAG 问答模型，建议 `gpt-4.1-mini`。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型，建议 `text-embedding-3-small`。
@@ -66,6 +70,7 @@ OPENAI_API_KEY
 CRON_SECRET
 LICENSE_SECRET
 ADMIN_TOKEN
+NETLIFY_BLOBS_TOKEN
 ```
 
 可以用 Node.js 生成 `SESSION_SECRET`：
@@ -100,6 +105,7 @@ Netlify Dashboard -> Site configuration -> Environment variables
 - `SESSION_SECRET` 已配置，且不要和其他项目共用。
 - `LICENSE_SECRET` 已配置，且后续不要随意更换，否则旧卡密 hash 会不匹配。
 - `ADMIN_TOKEN` 已配置，用于登录 `/admin/licenses` 页面后操作卡密。
+- 如果 `/api/admin/health` 返回 `BLOBS_TEST_FAILED` 且 message 提到 `siteID, token`，请配置 `NETLIFY_BLOBS_SITE_ID` 和 `NETLIFY_BLOBS_TOKEN`。
 - `OPENAI_API_KEY` 具备调用 chat model 和 embedding model 的权限。
 - `CRON_SECRET` 是随机长字符串。
 - `ADMIN_PHONES` 或 `ADMIN_USER_IDS` 至少配置一种管理员身份。
