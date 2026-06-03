@@ -9,7 +9,7 @@ PNPM_VERSION = "10.12.4"
 [functions]
 directory = "netlify/functions"
 node_bundler = "esbuild"
-included_files = ["prisma/**"]
+included_files = ["prisma/**", "node_modules/.prisma/client/**"]
 
 [[redirects]]
 from = "/api/activate"

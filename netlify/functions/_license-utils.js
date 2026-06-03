@@ -1,5 +1,4 @@
 const crypto = require("crypto");
-const { PrismaClient } = require("@prisma/client");
 const { getStore } = require("@netlify/blobs");
 
 const STORE_NAME = "aikb-licenses";
@@ -150,6 +149,7 @@ function getPrisma() {
     return null;
   }
 
+  const { PrismaClient } = require("@prisma/client");
   prismaClient ??= new PrismaClient();
   return prismaClient;
 }
