@@ -37,12 +37,8 @@ function buildDatabaseUrl() {
 
   const url = new URL(raw);
 
-  for (const key of ["pgbouncer", "connection_limit", "pool_timeout", "schema"]) {
+  for (const key of ["pgbouncer", "connection_limit", "pool_timeout", "schema", "sslmode"]) {
     url.searchParams.delete(key);
-  }
-
-  if (!url.searchParams.has("sslmode")) {
-    url.searchParams.set("sslmode", "require");
   }
 
   return url.toString();
