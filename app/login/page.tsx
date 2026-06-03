@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,10 +15,27 @@ interface LoginResponse {
 
 function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  function getSafeNextPath() {
+    const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
+
+    if (!candidate.startsWith("/") || candidate.startsWith("//")) {
+      return "";
+    }
+
+    const pathname = candidate.split("?")[0] || candidate;
+
+    if (pathname === "/login" || pathname.startsWith("/login/") || pathname === "/register" || pathname.startsWith("/register/")) {
+      return "";
+    }
+
+    return candidate;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -43,8 +60,9 @@ function LoginForm() {
         })
       });
       const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
+      const nextPath = getSafeNextPath();
 
-      router.push(data.licenseActivated ? "/" : "/unlock");
+      router.replace(nextPath || (data.licenseActivated ? "/ingest" : "/unlock"));
       router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
@@ -152,7 +170,9 @@ export default function LoginPage() {
             <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码继续。</p>
           </div>
 
-          <LoginForm />
+          <Suspense fallback={<div className="mt-8 text-sm text-muted">正在加载登录表单...</div>}>
+            <LoginForm />
+          </Suspense>
         </div>
       </section>
     </main>
