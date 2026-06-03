@@ -111,6 +111,23 @@ model LicenseKey {
   @@map("license_keys")
 }
 
+model ActivationLog {
+  id        String   @id @default(cuid())
+  codeHash  String
+  userId    String
+  success   Boolean
+  message   String
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([codeHash])
+  @@index([userId])
+  @@index([success])
+  @@index([createdAt])
+  @@map("activation_logs")
+}
+
 model UserSettings {
   id                String                @id @default(cuid())
   userId            String                @unique

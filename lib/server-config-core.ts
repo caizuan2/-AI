@@ -62,3 +62,7 @@ export function hasDatabaseUrl() {
 export function hasSessionSecret() {
   return Boolean(process.env.SESSION_SECRET?.trim());
 }
+
+export function hasLicenseSecret() {
+  return Boolean(process.env.LICENSE_SECRET?.trim() || process.env.SESSION_SECRET?.trim());
+}

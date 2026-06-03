@@ -14,6 +14,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
+    "test:license": "tsx scripts/license-smoke-test.ts",
     "postinstall": "prisma generate",
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",

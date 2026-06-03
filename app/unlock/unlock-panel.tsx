@@ -25,12 +25,15 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
     setError("");
 
     try {
-      const response = await fetch("/api/license/redeem", {
+      const response = await fetch("/api/activate", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ licenseKey })
+        body: JSON.stringify({
+          code: licenseKey,
+          user_id: user.phone
+        })
       });
 
       await unwrapApiResponse<unknown>(response, "卡密激活失败。");

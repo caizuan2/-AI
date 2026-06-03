@@ -13,6 +13,7 @@ class MainAppSyncError(RuntimeError):
 
 def get_main_app_sync_status() -> dict[str, object]:
     has_database_url = bool(current_app.config.get("MAIN_APP_DATABASE_URL", "").strip())
+    has_license_secret = True
 
     if has_database_url:
         message = "已配置主项目同步，生成的卡密可用于 AI 知识库线上激活页。"
@@ -22,6 +23,7 @@ def get_main_app_sync_status() -> dict[str, object]:
     return {
         "ready": has_database_url,
         "hasDatabaseUrl": has_database_url,
+        "hasLicenseSecret": has_license_secret,
         "message": message,
     }
 

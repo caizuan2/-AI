@@ -18,6 +18,7 @@ Netlify Dashboard -> 你的站点 -> Site configuration -> Environment variables
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&schema=public"
 DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="use-a-long-random-session-secret"
+LICENSE_SECRET="use-a-long-random-license-secret"
 OPENAI_API_KEY="sk-..."
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -36,7 +37,8 @@ NODE_VERSION="22"
 
 - `DATABASE_URL`：运行时数据库连接串，必须使用 Supabase Pooler 完整 URI，不要只把 direct connection 的端口改成 `6543`。
 - `DIRECT_URL`：Prisma CLI 迁移连接串，必须使用 Supabase Direct 完整 URI。`prisma migrate deploy` 会通过它执行 DDL。
-- `SESSION_SECRET`：用于 session token 和卡密 hash，生产环境必须配置为长随机字符串。
+- `SESSION_SECRET`：用于 session token，生产环境必须配置为长随机字符串。
+- `LICENSE_SECRET`：用于卡密 HMAC-SHA256 hash，生产环境建议单独配置；未配置时会兼容使用 `SESSION_SECRET`。
 - `OPENAI_API_KEY`：真实 OpenAI API key，生产环境必须配置。
 - `OPENAI_MODEL`：知识整理和 RAG 问答模型，建议 `gpt-4.1-mini`。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型，建议 `text-embedding-3-small`。

@@ -25,7 +25,8 @@ const requiredSchema: Record<string, string[]> = {
     "updatedAt"
   ],
   sessions: ["id", "userId", "tokenHash", "expiresAt", "createdAt"],
-  license_keys: ["id", "keyHash", "status", "redeemedByUserId", "redeemedAt", "expiresAt", "createdAt"]
+  license_keys: ["id", "keyHash", "status", "redeemedByUserId", "redeemedAt", "expiresAt", "createdAt"],
+  activation_logs: ["id", "codeHash", "userId", "success", "message", "ip", "userAgent", "createdAt"]
 };
 
 const registrationBootstrapStatements = [
@@ -135,7 +136,33 @@ const registrationBootstrapStatements = [
       FOREIGN KEY ("redeemedByUserId") REFERENCES "users"("id")
       ON DELETE SET NULL ON UPDATE CASCADE;
     END IF;
-  END $$`
+  END $$`,
+  `CREATE TABLE IF NOT EXISTS "activation_logs" (
+    "id" TEXT NOT NULL,
+    "codeHash" TEXT NOT NULL,
+    "userId" TEXT NOT NULL,
+    "success" BOOLEAN NOT NULL,
+    "message" TEXT NOT NULL,
+    "ip" TEXT,
+    "userAgent" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "activation_logs_pkey" PRIMARY KEY ("id")
+  )`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "codeHash" TEXT`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "userId" TEXT`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "success" BOOLEAN`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "message" TEXT`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "ip" TEXT`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "userAgent" TEXT`,
+  `ALTER TABLE "activation_logs" ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP`,
+  `ALTER TABLE "activation_logs" ALTER COLUMN "codeHash" SET NOT NULL`,
+  `ALTER TABLE "activation_logs" ALTER COLUMN "userId" SET NOT NULL`,
+  `ALTER TABLE "activation_logs" ALTER COLUMN "success" SET NOT NULL`,
+  `ALTER TABLE "activation_logs" ALTER COLUMN "message" SET NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS "activation_logs_codeHash_idx" ON "activation_logs"("codeHash")`,
+  `CREATE INDEX IF NOT EXISTS "activation_logs_userId_idx" ON "activation_logs"("userId")`,
+  `CREATE INDEX IF NOT EXISTS "activation_logs_success_idx" ON "activation_logs"("success")`,
+  `CREATE INDEX IF NOT EXISTS "activation_logs_createdAt_idx" ON "activation_logs"("createdAt")`
 ];
 
 let registrationSchemaReady = false;
@@ -147,7 +174,7 @@ export async function checkRegistrationSchema(): Promise<RegistrationSchemaStatu
     SELECT table_name AS "tableName"
     FROM information_schema.tables
     WHERE table_schema = 'public'
-      AND table_name IN ('users', 'sessions', 'license_keys')
+      AND table_name IN ('users', 'sessions', 'license_keys', 'activation_logs')
   `;
   const existingTables = new Set(tableRows.map((row) => row.tableName));
   const missingTables = requiredTables.filter((table) => !existingTables.has(table));
@@ -156,7 +183,7 @@ export async function checkRegistrationSchema(): Promise<RegistrationSchemaStatu
     SELECT table_name AS "tableName", column_name AS "columnName"
     FROM information_schema.columns
     WHERE table_schema = 'public'
-      AND table_name IN ('users', 'sessions', 'license_keys')
+      AND table_name IN ('users', 'sessions', 'license_keys', 'activation_logs')
   `;
   const existingColumns = new Set(columnRows.map((row) => `${row.tableName}.${row.columnName}`));
   const missingColumns = Object.entries(requiredSchema).flatMap(([table, columns]) =>

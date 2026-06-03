@@ -79,6 +79,7 @@ http://localhost:3000
 DATABASE_URL="postgresql://postgres.your-project-ref:your-url-encoded-db-password@aws-0-region.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1&pool_timeout=20&schema=public"
 DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-ref.supabase.co:5432/postgres?schema=public"
 SESSION_SECRET="replace-with-a-long-random-session-secret"
+LICENSE_SECRET="replace-with-a-long-random-license-secret"
 OPENAI_API_KEY="sk-your-openai-api-key"
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
@@ -94,7 +95,8 @@ NODE_VERSION="22"
 
 - `DATABASE_URL`：Prisma Client 运行时连接地址，Netlify 生产环境必须使用 Supabase Pooler 完整 URI。
 - `DIRECT_URL`：Prisma CLI 迁移连接地址，生产环境必须使用 Supabase Direct 完整 URI。
-- `SESSION_SECRET`：用于 session token 和卡密 hash，生产环境必须填写长随机字符串。
+- `SESSION_SECRET`：用于 session token，生产环境必须填写长随机字符串。
+- `LICENSE_SECRET`：用于卡密 HMAC-SHA256 hash，生产环境建议单独填写；未配置时会兼容使用 `SESSION_SECRET`。
 - `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 fallback；生产环境必须配置真实 key。
 - `OPENAI_MODEL`：知识整理和问答模型。
 - `OPENAI_EMBEDDING_MODEL`：embedding 模型。
