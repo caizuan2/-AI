@@ -1,7 +1,7 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireLicensedUser } from "@/lib/auth/guards";
-import { AIError, RateLimitError, ValidationError, toAppError } from "@/lib/errors";
+import { AppError, InvalidInputError, RateLimitError, ValidationError, toAppError } from "@/lib/errors";
 import {
   mockAnalyzeKnowledge,
   toAnalyzeDraft,
@@ -16,6 +16,7 @@ import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import { fetchWebPageContent, isProbablyUrl } from "@/lib/web/page-fetcher";
 
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 interface IngestAnalyzeRequest {
@@ -73,7 +74,7 @@ export async function POST(request: Request) {
         userId: currentUser.id,
         error: toSafeErrorLog(error)
       });
-      return apiError(databaseConfigError("读取知识保存策略"));
+      return apiError(error);
     }
 
     try {
@@ -95,14 +96,18 @@ export async function POST(request: Request) {
   try {
     body = await request.json();
   } catch {
-    return apiError(new ValidationError("请求体必须是合法 JSON。"));
+    return apiError(new InvalidInputError("请求体必须是合法 JSON。"));
   }
 
   if (!isRequestBody(body) || typeof body.content !== "string" || body.content.trim().length === 0) {
-    return apiError(new ValidationError("请输入要投喂的内容。"));
+    return apiError(new InvalidInputError("请输入要投喂的内容。"));
   }
 
   const rawContent = body.content.trim();
+
+  if (rawContent.length < 2) {
+    return apiError(new InvalidInputError("投喂内容太短，请补充更完整的知识内容。"));
+  }
 
   if (rawContent.length > MAX_INGEST_CONTENT_CHARS) {
     return apiError(new ValidationError(`投喂内容过长，请控制在 ${MAX_INGEST_CONTENT_CHARS} 字以内。`));
@@ -173,7 +178,11 @@ export async function POST(request: Request) {
 
   if (!hasUsableOpenAIKey()) {
     if (!isAIFallbackAllowed()) {
-      return apiError(new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地知识整理 fallback。"));
+      return apiError(new AppError(
+        "MISSING_AI_API_KEY",
+        "Netlify 环境变量缺失：OPENAI_API_KEY。请配置后重新部署。",
+        500
+      ));
     }
 
     return apiSuccess<IngestAnalyzeResponse>(
@@ -198,8 +207,8 @@ export async function POST(request: Request) {
       const appError = toAppError(error);
 
       return apiError(
-        appError.code === "APP_ERROR"
-          ? new AIError("AI 知识整理失败，请检查 OpenAI 配置或稍后重试。")
+        appError.code === "APP_ERROR" || appError.code === "UNKNOWN_ERROR"
+          ? new AppError("AI_REQUEST_FAILED", "AI 知识整理失败，请检查 OpenAI 配置或稍后重试。", 502)
           : appError
       );
     }

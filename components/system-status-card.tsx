@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { cn } from "@/lib/utils";
 
 interface HealthResponse {
-  status: "ok";
+  status: "ok" | "degraded";
   database: boolean;
   openai: boolean;
   auth: boolean;
