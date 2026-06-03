@@ -61,7 +61,38 @@ function hashCode(code) {
   return crypto.createHmac("sha256", getLicenseSecret()).update(normalizeCode(code)).digest("hex");
 }
 
+function getManualBlobsConfig() {
+  const siteID = (
+    process.env.NETLIFY_BLOBS_SITE_ID ||
+    process.env.NETLIFY_SITE_ID ||
+    process.env.SITE_ID ||
+    ""
+  ).trim();
+  const token = (
+    process.env.NETLIFY_BLOBS_TOKEN ||
+    process.env.NETLIFY_AUTH_TOKEN ||
+    ""
+  ).trim();
+
+  return {
+    siteID,
+    token,
+    hasSiteID: Boolean(siteID),
+    hasToken: Boolean(token)
+  };
+}
+
 function getLicenseStore() {
+  const manualConfig = getManualBlobsConfig();
+
+  if (manualConfig.hasSiteID && manualConfig.hasToken) {
+    return getStore({
+      name: STORE_NAME,
+      siteID: manualConfig.siteID,
+      token: manualConfig.token
+    });
+  }
+
   return getStore(STORE_NAME);
 }
 
@@ -166,6 +197,7 @@ module.exports = {
   generateCode,
   getLicenseByCode,
   getLicenseStore,
+  getManualBlobsConfig,
   hashCode,
   isProduction,
   json,
