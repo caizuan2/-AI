@@ -31,7 +31,10 @@ export async function POST(request: Request) {
     const body = await request.json().catch(() => null);
     const input = parseRedeemRequest(body);
 
-    await redeemLicenseKey(user.id, input.licenseKey);
+    await redeemLicenseKey(user.id, input.licenseKey, {
+      ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
+      userAgent: request.headers.get("user-agent") ?? undefined
+    });
 
     return apiSuccess<RedeemLicenseResponse>({
       success: true,

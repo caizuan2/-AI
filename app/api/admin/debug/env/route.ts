@@ -1,6 +1,5 @@
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess } from "@/lib/api-response";
-import { writeAuditLog } from "@/lib/audit-log";
 
 export const dynamic = "force-dynamic";
 
@@ -32,24 +31,14 @@ function maskDatabaseUrl(value?: string) {
   }
 }
 
-export async function GET(request: Request) {
-  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
-
+export async function GET() {
   try {
-    admin = await requireAdminUser(request);
+    await requireAdminUser();
   } catch (error) {
     return apiError(error);
   }
 
   const databaseUrl = process.env.DATABASE_URL?.trim();
-
-  await writeAuditLog({
-    userId: admin.id,
-    role: admin.role,
-    action: "ADMIN_DEBUG_ENV_VIEW",
-    targetType: "admin_debug",
-    request
-  });
 
   return apiSuccess<DebugEnvResponse>({
     database_type: databaseUrl ? "postgresql" : "missing",

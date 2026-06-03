@@ -1,7 +1,10 @@
 import hashlib
+import hmac
 import re
 import secrets
 from datetime import datetime, timezone
+
+from flask import current_app
 
 
 LICENSE_PREFIX = "AIKB"
@@ -34,7 +37,9 @@ def generate_license_code() -> str:
 
 def hash_license_code(code: str) -> str:
     normalized = normalize_code(code)
-    return hashlib.sha256(f"aikb-license:{normalized}".encode("utf-8")).hexdigest()
+    secret = current_app.config.get("LICENSE_SECRET", "").strip() or "aikb-license-v1-default-secret"
+
+    return hmac.new(secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def mask_license_code(code: str) -> str:

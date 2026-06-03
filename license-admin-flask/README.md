@@ -83,6 +83,8 @@ http://127.0.0.1:5000/admin/login
 ```env
 SECRET_KEY=change-me-to-a-long-random-string
 LICENSE_HASH_SECRET=change-me-and-keep-it-stable
+LICENSE_SECRET=same-as-main-app-license-secret
+SESSION_SECRET=same-as-main-app-session-secret
 DATABASE_PATH=./data/licenses.sqlite3
 MAIN_APP_DATABASE_URL=postgresql://postgres.your-project-ref:password@aws-region.pooler.supabase.com:6543/postgres?sslmode=require
 ADMIN_USERNAME=admin
@@ -92,7 +94,9 @@ ADMIN_PASSWORD=admin123456
 说明：
 
 - `SECRET_KEY`：Flask Session 加密密钥。
-- `LICENSE_HASH_SECRET`：保留给本地扩展使用。当前主站同步使用稳定 hash，不再要求它与主站一致。
+- `LICENSE_HASH_SECRET`：保留给本地扩展使用。
+- `LICENSE_SECRET`：AI 知识库主项目的卡密 HMAC 密钥。要让 Flask 后台生成的卡密能在主站使用，建议与 Netlify 的 `LICENSE_SECRET` 完全一致。
+- `SESSION_SECRET`：兼容兜底。如果主项目尚未配置 `LICENSE_SECRET`，Flask 会用 `SESSION_SECRET` 计算卡密 hash。
 - `DATABASE_PATH`：SQLite 数据库路径。
 - `MAIN_APP_DATABASE_URL`：AI 知识库主项目的 Supabase Pooler PostgreSQL 连接串。配置后，Flask 后台生成卡密时会同步写入主项目 `license_keys` 表。
 - `ADMIN_USERNAME`：默认管理员账号。
@@ -105,6 +109,7 @@ ADMIN_PASSWORD=admin123456
 要让卡密能在 AI 知识库线上项目使用，请在 `license-admin-flask/.env` 中配置：
 
 ```env
+LICENSE_SECRET=这里填 Netlify 里 AI 知识库项目的 LICENSE_SECRET
 MAIN_APP_DATABASE_URL=这里填 Supabase Pooler 连接串，建议使用 6543 端口
 ```
 

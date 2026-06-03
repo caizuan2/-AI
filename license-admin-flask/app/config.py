@@ -8,6 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Config:
     SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
     SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
+    LICENSE_SECRET = os.environ.get("LICENSE_SECRET", "").strip()
     LICENSE_HASH_SECRET = os.environ.get(
         "LICENSE_HASH_SECRET",
         "dev-license-hash-secret-change-me",

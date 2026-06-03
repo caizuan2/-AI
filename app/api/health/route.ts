@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { hasDatabaseUrl, hasSessionSecret, hasUsableOpenAIKey } from "@/lib/server-config";
+import { hasDatabaseUrl, hasLicenseSecret, hasSessionSecret, hasUsableOpenAIKey } from "@/lib/server-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +32,7 @@ export async function GET() {
     database: await checkDatabase(),
     openai: hasUsableOpenAIKey(),
     auth: hasSessionSecret(),
-    license: hasSessionSecret()
+    license: hasLicenseSecret()
   };
 
   return NextResponse.json(response);
