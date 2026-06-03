@@ -16,6 +16,7 @@
     "test:security": "tsx tests/rag-prompt-security.test.ts",
     "test:license": "tsx scripts/license-smoke-test.ts",
     "test:production-license": "node scripts/production-smoke-test.js",
+    "debug:health": "node scripts/debug-health.js",
     "postinstall": "prisma generate",
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",

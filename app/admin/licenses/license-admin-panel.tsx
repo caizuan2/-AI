@@ -23,6 +23,7 @@ type AdminLicense = {
 
 type HealthResponse = {
   ok: boolean;
+  error?: string;
   runtime?: string;
   storage?: string;
   has_LICENSE_SECRET?: boolean;
@@ -30,7 +31,17 @@ type HealthResponse = {
   deploy_id?: string | null;
   site_name?: string | null;
   store_test_write_read?: boolean;
+  token_length?: number;
+  has_server_admin_token?: boolean;
   message?: string;
+};
+
+type HealthAttempt = {
+  url: string;
+  method: "GET" | "POST";
+  status: number | null;
+  body: unknown;
+  error?: string;
 };
 
 type GenerateResponse = {
@@ -114,6 +125,61 @@ function adminHeaders(adminToken: string) {
   };
 }
 
+function stringifyBody(value: unknown) {
+  if (value === null || value === undefined) {
+    return "-";
+  }
+
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+async function callHealth(method: "GET" | "POST", adminToken: string) {
+  const url = "/api/admin/health";
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers: adminHeaders(adminToken),
+      body: method === "POST" ? "{}" : undefined
+    });
+    const body = await response.json().catch(async () => response.text().catch(() => null)) as HealthResponse | string | null;
+    const attempt: HealthAttempt = {
+      url,
+      method,
+      status: response.status,
+      body
+    };
+
+    return {
+      success: response.ok && typeof body === "object" && body !== null && body.ok === true,
+      data: typeof body === "object" && body !== null ? body : null,
+      attempt
+    };
+  } catch (caughtError) {
+    const attempt: HealthAttempt = {
+      url,
+      method,
+      status: null,
+      body: null,
+      error: caughtError instanceof Error ? caughtError.message : "请求发送失败"
+    };
+
+    return {
+      success: false,
+      data: null,
+      attempt
+    };
+  }
+}
+
 export function LicenseAdminPanel() {
   const [adminToken, setAdminToken] = useState("");
   const [licenses, setLicenses] = useState<AdminLicense[]>([]);
@@ -124,6 +190,7 @@ export function LicenseAdminPanel() {
   const [checkCode, setCheckCode] = useState("");
   const [checkResult, setCheckResult] = useState<CheckCodeResponse | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthAttempts, setHealthAttempts] = useState<HealthAttempt[]>([]);
   const [loading, setLoading] = useState(false);
   const [checkingHealth, setCheckingHealth] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -172,16 +239,38 @@ export function LicenseAdminPanel() {
 
     try {
       const token = requireToken(explicitToken);
-      const response = await fetch("/api/admin/health", {
-        method: "POST",
-        headers: adminHeaders(token),
-        body: "{}"
-      });
-      const data = await readFunctionResponse<HealthResponse>(response, "健康检查失败。");
-      setHealth(data);
+      const attempts: HealthAttempt[] = [];
+      const getResult = await callHealth("GET", token);
+      attempts.push(getResult.attempt);
+
+      if (getResult.success && getResult.data) {
+        setHealthAttempts(attempts);
+        setHealth(getResult.data);
+        setSuccess("健康检查通过。");
+        return;
+      }
+
+      const postResult = await callHealth("POST", token);
+      attempts.push(postResult.attempt);
+      setHealthAttempts(attempts);
+
+      if (postResult.success && postResult.data) {
+        setHealth(postResult.data);
+        setSuccess("健康检查通过。");
+        return;
+      }
+
+      const latest = postResult.data ?? getResult.data;
+      setHealth(null);
+      setError([
+        latest?.message || postResult.attempt.error || getResult.attempt.error || "健康检查失败。",
+        latest?.error ? `错误码：${latest.error}` : "",
+        `HTTP 状态：${postResult.attempt.status ?? getResult.attempt.status ?? "-"}`
+      ].filter(Boolean).join(" "));
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "健康检查失败。");
       setHealth(null);
+      setHealthAttempts([]);
     } finally {
       setCheckingHealth(false);
     }
@@ -349,6 +438,27 @@ export function LicenseAdminPanel() {
               </div>
             </div>
           ) : null}
+          {healthAttempts.length > 0 ? (
+            <div className="space-y-3 rounded-lg border border-line bg-slate-950 p-4 text-xs text-slate-100">
+              <p className="text-sm font-semibold text-white">健康检查请求详情</p>
+              {healthAttempts.map((attempt) => {
+                const body = attempt.body as HealthResponse | null;
+
+                return (
+                  <div key={`${attempt.method}-${attempt.status ?? "network"}`} className="rounded-md border border-white/10 bg-white/5 p-3">
+                    <div className="grid gap-2 md:grid-cols-2">
+                      <p><span className="text-slate-400">URL：</span>{attempt.url}</p>
+                      <p><span className="text-slate-400">Method：</span>{attempt.method}</p>
+                      <p><span className="text-slate-400">HTTP status：</span>{attempt.status ?? "-"}</p>
+                      <p><span className="text-slate-400">Error code：</span>{body?.error ?? "-"}</p>
+                      <p className="md:col-span-2"><span className="text-slate-400">Message：</span>{body?.message ?? attempt.error ?? "-"}</p>
+                    </div>
+                    <pre className="mt-3 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-3">{stringifyBody(attempt.body)}</pre>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -394,11 +504,14 @@ export function LicenseAdminPanel() {
               有效期
               <Input type="date" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} />
             </label>
-            <Button onClick={generateLicenses} disabled={generating}>
+            <Button onClick={generateLicenses} disabled={generating || !health?.ok}>
               {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
               生成卡密
             </Button>
           </div>
+          {!health?.ok ? (
+            <p className="mt-3 text-sm text-amber-700">健康检查通过后才能生成卡密。</p>
+          ) : null}
         </CardContent>
       </Card>
 
