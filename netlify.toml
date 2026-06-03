@@ -1,5 +1,5 @@
 [build]
-command = "pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build"
+command = "pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
@@ -34,4 +34,9 @@ status = 200
 [[redirects]]
 from = "/api/admin/health"
 to = "/.netlify/functions/admin-health"
+status = 200
+
+[[redirects]]
+from = "/api/admin/db-repair"
+to = "/.netlify/functions/admin-db-repair"
 status = 200

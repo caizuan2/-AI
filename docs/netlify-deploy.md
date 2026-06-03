@@ -20,7 +20,7 @@ Base directory / Root directory:
 .
 
 Build command:
-pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build
+pnpm prisma:generate && pnpm build
 
 Publish directory:
 .next
@@ -36,7 +36,7 @@ Node version:
 
 ```toml
 [build]
-command = "pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build"
+command = "pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
@@ -100,12 +100,14 @@ pnpm build
 
 ## 5. 数据库迁移
 
-当前 `netlify.toml` 会在构建阶段先执行 `pnpm prisma:migrate:deploy`。这要求 Netlify Production 环境变量里同时存在：
+不要把 `pnpm prisma:migrate:deploy` 放进 Netlify Build command。Build 阶段应该保持可部署，数据库迁移在本机、CI 或管理员修复接口单独执行。
+
+生产环境变量里仍然建议同时存在：
 
 - `DATABASE_URL`：Supabase Transaction Pooler，端口 `6543`，包含 `pgbouncer=true`
 - `DIRECT_URL`：Supabase Direct connection，端口 `5432`
 
-如果 Netlify 构建阶段因为 Direct connection 网络限制无法连接，也可以在本机或 CI 单独执行同一条安全迁移命令：
+本机或 CI 安全迁移命令：
 
 ```powershell
 cd D:\XT
@@ -124,6 +126,15 @@ pnpm db:check
 
 ```text
 Database schema is up to date!
+```
+
+如果生产库出现 `DATABASE_SCHEMA_MISSING`，也可以用管理员 token 调用应急修复接口。这个接口只会补齐缺失表、字段、索引和迁移记录，不会清空生产数据：
+
+```bash
+curl -X POST "https://你的站点/api/admin/db-repair" \
+  -H "x-admin-token: 你的_ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"confirm\":\"REPAIR_DATABASE_SCHEMA\"}"
 ```
 
 如果部署后 `/api/health` 返回 `database:false`，不要继续测试投喂和问答，先按 [Netlify 数据库修复指南](./fix-netlify-database.md) 修复生产数据库连接。
