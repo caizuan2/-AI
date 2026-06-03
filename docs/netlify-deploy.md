@@ -20,7 +20,7 @@ Base directory / Root directory:
 .
 
 Build command:
-pnpm prisma:generate && pnpm build
+pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build
 
 Publish directory:
 .next
@@ -36,7 +36,7 @@ Node version:
 
 ```toml
 [build]
-command = "pnpm prisma:generate && pnpm build"
+command = "pnpm prisma:migrate:deploy && pnpm prisma:generate && pnpm build"
 publish = ".next"
 
 [build.environment]
@@ -100,7 +100,12 @@ pnpm build
 
 ## 5. 数据库迁移
 
-不要把 `pnpm prisma:migrate:deploy` 放进 Netlify build command。Supabase Direct connection 可能依赖 IPv6，Netlify build 阶段可能连不上。生产数据库迁移应在本机、CI、或 Supabase SQL Editor 单独执行：
+当前 `netlify.toml` 会在构建阶段先执行 `pnpm prisma:migrate:deploy`。这要求 Netlify Production 环境变量里同时存在：
+
+- `DATABASE_URL`：Supabase Transaction Pooler，端口 `6543`，包含 `pgbouncer=true`
+- `DIRECT_URL`：Supabase Direct connection，端口 `5432`
+
+如果 Netlify 构建阶段因为 Direct connection 网络限制无法连接，也可以在本机或 CI 单独执行同一条安全迁移命令：
 
 ```powershell
 cd D:\XT
