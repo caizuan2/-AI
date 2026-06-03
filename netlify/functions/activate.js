@@ -95,7 +95,8 @@ exports.handler = async (event) => {
           ok: false,
           message: "卡密已使用在当前账号，但账号激活状态同步失败，请稍后重试。",
           error: "USER_LICENSE_SYNC_FAILED",
-          user_sync_reason: userActivation.reason
+          user_sync_reason: userActivation.reason,
+          user_sync_message: userActivation.message
         });
       }
 
@@ -126,7 +127,8 @@ exports.handler = async (event) => {
         ok: false,
         message: "账号激活状态同步失败，卡密尚未消耗，请稍后重试。",
         error: "USER_LICENSE_SYNC_FAILED",
-        user_sync_reason: userActivation.reason
+        user_sync_reason: userActivation.reason,
+        user_sync_message: userActivation.message
       });
     }
 
