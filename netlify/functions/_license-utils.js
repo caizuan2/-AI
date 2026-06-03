@@ -6,8 +6,6 @@ const LICENSE_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const DASH_PATTERN = /[\u2010\u2011\u2012\u2013\u2014\u2015\u2212\uFE58\uFE63\uFF0D]/g;
 const LOCAL_LICENSE_SECRET = "local-dev-aikb-license-secret-do-not-use-in-production";
 
-let prismaClient;
-
 function isProduction() {
   return process.env.NODE_ENV === "production" || process.env.CONTEXT === "production";
 }
@@ -144,54 +142,6 @@ async function writeActivationLog(entry) {
   });
 }
 
-function getPrisma() {
-  if (!process.env.DATABASE_URL?.trim()) {
-    return null;
-  }
-
-  const { PrismaClient } = require("@prisma/client");
-  prismaClient ??= new PrismaClient();
-  return prismaClient;
-}
-
-async function markUserLicenseActivated(userId) {
-  const value = String(userId ?? "").trim();
-
-  if (!value) {
-    return {
-      updated: false,
-      reason: "missing_user_id"
-    };
-  }
-
-  const prisma = getPrisma();
-
-  if (!prisma) {
-    return {
-      updated: false,
-      reason: "missing_database_url"
-    };
-  }
-
-  const result = await prisma.user.updateMany({
-    where: {
-      OR: [
-        { id: value },
-        { phone: value }
-      ]
-    },
-    data: {
-      licenseActivated: true
-    }
-  });
-
-  return {
-    updated: result.count > 0,
-    count: result.count,
-    reason: result.count > 0 ? null : "user_not_found"
-  };
-}
-
 function toPublicLicense(record) {
   return {
     display_code: record.display_code,
@@ -220,7 +170,6 @@ module.exports = {
   isProduction,
   json,
   logFunctionError,
-  markUserLicenseActivated,
   normalizeCode,
   readJson,
   requireAdmin,

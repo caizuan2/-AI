@@ -2,13 +2,13 @@ const {
   getLicenseByCode,
   json,
   logFunctionError,
-  markUserLicenseActivated,
   readJson,
   requireMethod,
   setLicenseRecord,
   toPublicLicense,
   writeActivationLog
 } = require("./_license-utils");
+const { markUserLicenseActivated } = require("./_user-sync");
 
 exports.handler = async (event) => {
   try {
