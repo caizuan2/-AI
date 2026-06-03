@@ -64,8 +64,6 @@ function sanitizeMessage(message: string | null) {
     .replace(/DIRECT_URL=([^&\s]+)/gi, "DIRECT_URL=[redacted]")
     .replace(/SESSION_SECRET=([^&\s]+)/gi, "SESSION_SECRET=[redacted]")
     .replace(/OPENAI_API_KEY=([^&\s]+)/gi, "OPENAI_API_KEY=[redacted]")
-    .replace(/QWEN_API_KEY=([^&\s]+)/gi, "QWEN_API_KEY=[redacted]")
-    .replace(/DEEPSEEK_API_KEY=([^&\s]+)/gi, "DEEPSEEK_API_KEY=[redacted]")
     .slice(0, 500);
 }
 

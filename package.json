@@ -21,6 +21,7 @@
     "jobs": "tsx jobs/worker.ts",
     "jobs:once": "tsx jobs/run-once.ts",
     "db:check": "tsx scripts/debug-ingest-health.ts",
+    "ingest:schema:check": "tsx scripts/check-ingest-schema.ts",
     "db:production-check": "tsx scripts/check-production-db.ts",
     "license:generate": "tsx scripts/generate-license-keys.ts",
     "prisma:seed": "tsx prisma/seed.ts",

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { checkIngestSchema, type IngestSchemaCheckResult } from "@/lib/db/ingest-schema";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 import {
@@ -27,6 +28,11 @@ interface HealthResponse {
     database?: {
       checked: boolean;
       connected: boolean;
+      schemaChecked?: boolean;
+      schemaReady?: boolean;
+      missingTables?: string[];
+      missingColumns?: IngestSchemaCheckResult["missingColumns"];
+      prismaModelsUsedByIngest?: string[];
       error?: string;
       message?: string;
       target: ReturnType<typeof getSafeDatabaseUrlInfo>;
@@ -63,13 +69,17 @@ function getAiCheck() {
   };
 }
 
-async function getDatabaseCheck(requestId: string) {
+async function getDatabaseCheck(requestId: string, shouldCheckSchema: boolean) {
   const target = getSafeDatabaseUrlInfo();
 
   if (!hasDatabaseUrl()) {
     return {
       checked: true,
       connected: false,
+      schemaChecked: shouldCheckSchema,
+      schemaReady: false,
+      missingTables: shouldCheckSchema ? [] : undefined,
+      missingColumns: shouldCheckSchema ? [] : undefined,
       error: target.present ? "INVALID_DATABASE_URL" : "MISSING_DATABASE_URL",
       message: target.present ? "DATABASE_URL 配置无效。" : "DATABASE_URL 未配置。",
       target
@@ -78,10 +88,16 @@ async function getDatabaseCheck(requestId: string) {
 
   try {
     await prisma.$queryRaw`SELECT 1`;
+    const schema = shouldCheckSchema ? await checkIngestSchema(prisma) : null;
 
     return {
       checked: true,
       connected: true,
+      schemaChecked: shouldCheckSchema,
+      schemaReady: schema?.schemaReady,
+      missingTables: schema?.missingTables,
+      missingColumns: schema?.missingColumns,
+      prismaModelsUsedByIngest: schema?.prismaModelsUsedByIngest,
       target
     };
   } catch (error) {
@@ -94,6 +110,10 @@ async function getDatabaseCheck(requestId: string) {
     return {
       checked: true,
       connected: false,
+      schemaChecked: shouldCheckSchema,
+      schemaReady: false,
+      missingTables: shouldCheckSchema ? [] : undefined,
+      missingColumns: shouldCheckSchema ? [] : undefined,
       error: "DATABASE_CONNECTION_FAILED",
       message: "数据库连接失败。",
       target
@@ -107,17 +127,20 @@ export async function GET(request: Request) {
   const hasExplicitChecks = url.searchParams.has("database") || url.searchParams.has("ai");
   const shouldCheckDatabase = !hasExplicitChecks || parseBooleanParam(url.searchParams.get("database"));
   const shouldCheckAi = !hasExplicitChecks || parseBooleanParam(url.searchParams.get("ai"));
+  const shouldCheckSchema = shouldCheckDatabase && parseBooleanParam(url.searchParams.get("schema"));
   const checks: HealthResponse["checks"] = {};
 
   if (shouldCheckDatabase) {
-    checks.database = await getDatabaseCheck(requestId);
+    checks.database = await getDatabaseCheck(requestId, shouldCheckSchema);
   }
 
   if (shouldCheckAi) {
     checks.ai = getAiCheck();
   }
 
-  const database = checks.database ? checks.database.connected : hasDatabaseUrl();
+  const database = checks.database
+    ? checks.database.connected && (checks.database.schemaChecked ? Boolean(checks.database.schemaReady) : true)
+    : hasDatabaseUrl();
   const openai = checks.ai ? checks.ai.aiConfigured : hasUsableOpenAIKey();
   const auth = hasSessionSecret();
   const license = hasLicenseSecret();

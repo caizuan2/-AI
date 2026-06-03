@@ -1,7 +1,9 @@
+import { NextResponse } from "next/server";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireLicensedUser } from "@/lib/auth/guards";
 import { AppError, InvalidInputError, RateLimitError, ValidationError, toAppError } from "@/lib/errors";
+import { getPrismaErrorDiagnostics } from "@/lib/db/prisma-error-diagnostics";
 import {
   mockAnalyzeKnowledge,
   toAnalyzeDraft,
@@ -12,7 +14,7 @@ import {
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
-import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
+import { getRequestIdFromHeaders, logger, REQUEST_ID_HEADER, toSafeErrorLog } from "@/lib/logger";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import { fetchWebPageContent, isProbablyUrl } from "@/lib/web/page-fetcher";
 
@@ -36,6 +38,59 @@ const INGEST_RATE_LIMIT = {
   limit: 10,
   windowMs: 60_000
 };
+
+function ingestApiError(error: unknown, requestId: string, operation: string) {
+  const appError = toAppError(error);
+  const diagnostics = getPrismaErrorDiagnostics(error, operation);
+  const message = appError.code === "DATABASE_SCHEMA_MISSING"
+    ? "数据库表结构未就绪"
+    : appError.message;
+
+  logger[appError.statusCode >= 500 ? "error" : "warn"]("ingest.api_error", {
+    requestId,
+    code: appError.code,
+    statusCode: appError.statusCode,
+    prismaCode: diagnostics.prismaCode,
+    missingTable: diagnostics.missingTable,
+    missingColumn: diagnostics.missingColumn,
+    model: diagnostics.model,
+    operation,
+    error: toSafeErrorLog(error)
+  });
+
+  return NextResponse.json(
+    {
+      ok: false,
+      code: appError.code,
+      message,
+      requestId,
+      prismaCode: diagnostics.prismaCode,
+      safeErrorMessage: diagnostics.safeErrorMessage,
+      missingTable: diagnostics.missingTable,
+      missingColumn: diagnostics.missingColumn,
+      model: diagnostics.model,
+      operation: diagnostics.operation,
+      success: false,
+      error: {
+        code: appError.code,
+        message,
+        requestId,
+        prismaCode: diagnostics.prismaCode,
+        safeErrorMessage: diagnostics.safeErrorMessage,
+        missingTable: diagnostics.missingTable,
+        missingColumn: diagnostics.missingColumn,
+        model: diagnostics.model,
+        operation: diagnostics.operation
+      }
+    },
+    {
+      status: appError.statusCode,
+      headers: {
+        [REQUEST_ID_HEADER]: requestId
+      }
+    }
+  );
+}
 
 function isRequestBody(value: unknown): value is IngestAnalyzeRequest {
   return isPlainObject(value) && "content" in value;
@@ -72,9 +127,10 @@ export async function POST(request: Request) {
       logger.error("ingest.settings_failed", {
         requestId,
         userId: currentUser.id,
+        diagnostics: getPrismaErrorDiagnostics(error, "UserSettings.upsert"),
         error: toSafeErrorLog(error)
       });
-      return apiError(error);
+      return ingestApiError(error, requestId, "UserSettings.upsert");
     }
 
     try {
@@ -83,12 +139,13 @@ export async function POST(request: Request) {
       logger.warn("ingest.categories_failed", {
         requestId,
         userId: currentUser.id,
+        diagnostics: getPrismaErrorDiagnostics(error, "KnowledgeItem.groupBy"),
         error: toSafeErrorLog(error)
       });
       existingCategories = [];
     }
   } catch (error) {
-    return apiError(error);
+    return ingestApiError(error, requestId, "Session.findUnique/User.findUnique");
   }
 
   let body: unknown;
