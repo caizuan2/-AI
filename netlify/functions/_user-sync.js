@@ -1,19 +1,4 @@
-let prismaClient;
-
-function loadPrismaClient() {
-  const packageName = "@prisma/client";
-  return require(packageName).PrismaClient;
-}
-
-function getPrisma() {
-  if (!process.env.DATABASE_URL?.trim()) {
-    return null;
-  }
-
-  const PrismaClient = loadPrismaClient();
-  prismaClient ??= new PrismaClient();
-  return prismaClient;
-}
+const { Client } = require("pg");
 
 function normalizePhone(input) {
   const value = String(input ?? "")
@@ -32,21 +17,35 @@ function normalizePhone(input) {
   return value;
 }
 
-function buildUserWhere(value) {
+function buildUserCandidates(value) {
   const normalized = normalizePhone(value);
-  const candidates = Array.from(new Set([
+
+  return Array.from(new Set([
     value,
     normalized,
     normalized.startsWith("+") ? normalized.slice(1) : normalized,
     normalized.startsWith("+86") ? normalized.slice(3) : normalized
   ].filter(Boolean)));
+}
 
-  return {
-    OR: [
-      ...candidates.map((candidate) => ({ id: candidate })),
-      ...candidates.map((candidate) => ({ phone: candidate }))
-    ]
-  };
+function buildDatabaseUrl() {
+  const raw = process.env.DATABASE_URL?.trim();
+
+  if (!raw) {
+    return null;
+  }
+
+  const url = new URL(raw);
+
+  for (const key of ["pgbouncer", "connection_limit", "pool_timeout", "schema"]) {
+    url.searchParams.delete(key);
+  }
+
+  if (!url.searchParams.has("sslmode")) {
+    url.searchParams.set("sslmode", "require");
+  }
+
+  return url.toString();
 }
 
 async function markUserLicenseActivated(userId) {
@@ -59,27 +58,50 @@ async function markUserLicenseActivated(userId) {
     };
   }
 
-  const prisma = getPrisma();
+  const connectionString = buildDatabaseUrl();
 
-  if (!prisma) {
+  if (!connectionString) {
     return {
       updated: false,
       reason: "missing_database_url"
     };
   }
 
-  const result = await prisma.user.updateMany({
-    where: buildUserWhere(value),
-    data: {
-      licenseActivated: true
+  const candidates = buildUserCandidates(value);
+  const client = new Client({
+    connectionString,
+    ssl: {
+      rejectUnauthorized: false
     }
   });
 
-  return {
-    updated: result.count > 0,
-    count: result.count,
-    reason: result.count > 0 ? null : "user_not_found"
-  };
+  try {
+    await client.connect();
+    const result = await client.query(
+      `
+      UPDATE "users"
+      SET "licenseActivated" = true
+      WHERE "id" = ANY($1::text[])
+         OR "phone" = ANY($1::text[])
+      RETURNING "id"
+      `,
+      [candidates]
+    );
+
+    return {
+      updated: result.rowCount > 0,
+      count: result.rowCount,
+      reason: result.rowCount > 0 ? null : "user_not_found"
+    };
+  } catch (error) {
+    return {
+      updated: false,
+      reason: "database_sync_failed",
+      message: error instanceof Error ? error.message : String(error)
+    };
+  } finally {
+    await client.end().catch(() => undefined);
+  }
 }
 
 module.exports = {
