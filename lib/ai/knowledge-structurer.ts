@@ -198,6 +198,6 @@ export async function structureKnowledge(input: StructureKnowledgeInput): Promis
       error: toSafeErrorLog(error)
     });
 
-    throw normalizeOpenAIError(error, "structureKnowledge failed");
+    throw normalizeOpenAIError(error, "AI 知识整理失败，请检查 OpenAI 配置或稍后重试。");
   }
 }

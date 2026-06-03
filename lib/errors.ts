@@ -77,9 +77,49 @@ export class ConfigError extends AppError {
   }
 }
 
+const appErrorCodes = new Set<AppErrorCode>([
+  "APP_ERROR",
+  "VALIDATION_ERROR",
+  "UNAUTHORIZED",
+  "FORBIDDEN",
+  "NOT_FOUND",
+  "AI_ERROR",
+  "DATABASE_ERROR",
+  "CONFIG_ERROR",
+  "LICENSE_REQUIRED",
+  "RATE_LIMITED"
+]);
+
+function isAppErrorLike(error: unknown): error is {
+  code: AppErrorCode;
+  message: string;
+  statusCode: number;
+} {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const value = error as {
+    code?: unknown;
+    message?: unknown;
+    statusCode?: unknown;
+  };
+
+  return (
+    typeof value.code === "string" &&
+    appErrorCodes.has(value.code as AppErrorCode) &&
+    typeof value.message === "string" &&
+    typeof value.statusCode === "number"
+  );
+}
+
 export function toAppError(error: unknown) {
   if (error instanceof AppError) {
     return error;
+  }
+
+  if (isAppErrorLike(error)) {
+    return new AppError(error.code, error.message, error.statusCode);
   }
 
   return new AppError();
