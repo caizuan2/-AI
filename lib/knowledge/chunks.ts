@@ -1,11 +1,17 @@
 import "server-only";
 
-import { AIError } from "@/lib/errors";
-import { hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
+import { AppError } from "@/lib/errors";
+import {
+  INGEST_BATCH_SIZE,
+  INGEST_CHUNK_OVERLAP_CHARS,
+  INGEST_MAX_CHUNK_CHARS,
+  hasUsableOpenAIKey,
+  isAIFallbackAllowed
+} from "@/lib/server-config";
 
-const MIN_CHUNK_SIZE = 800;
-const TARGET_CHUNK_SIZE = 1000;
-const MAX_CHUNK_SIZE = 1200;
+const MIN_CHUNK_SIZE = Math.min(800, Math.max(400, INGEST_MAX_CHUNK_CHARS - INGEST_CHUNK_OVERLAP_CHARS));
+const TARGET_CHUNK_SIZE = Math.max(400, Math.min(1000, INGEST_MAX_CHUNK_CHARS));
+const MAX_CHUNK_SIZE = INGEST_MAX_CHUNK_CHARS;
 
 export type ChunkDraft = {
   chunkText: string;
@@ -27,8 +33,9 @@ export interface CreateChunkEmbeddingsOptions {
 
 function splitLongText(text: string, size = TARGET_CHUNK_SIZE) {
   const chunks: string[] = [];
+  const step = Math.max(1, size - INGEST_CHUNK_OVERLAP_CHARS);
 
-  for (let start = 0; start < text.length; start += size) {
+  for (let start = 0; start < text.length; start += step) {
     chunks.push(text.slice(start, start + size));
   }
 
@@ -94,7 +101,7 @@ export async function createChunkEmbeddings(
 ): Promise<ChunkEmbedding[]> {
   if (!hasUsableOpenAIKey()) {
     if (!isAIFallbackAllowed()) {
-      throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能跳过 embedding 生成。");
+      throw new AppError("MISSING_EMBEDDING_API_KEY", "生产环境必须配置 OPENAI_API_KEY 生成 embedding。", 500);
     }
 
     return chunks.map((chunk) => ({
@@ -104,29 +111,40 @@ export async function createChunkEmbeddings(
     }));
   }
 
-  const { createEmbedding } = await import("@/lib/ai/embeddings");
+  const { createEmbeddings } = await import("@/lib/ai/embeddings");
   const embeddings: ChunkEmbedding[] = [];
 
-  for (const chunk of chunks) {
+  for (let start = 0; start < chunks.length; start += INGEST_BATCH_SIZE) {
+    const batch = chunks.slice(start, start + INGEST_BATCH_SIZE);
+
     try {
-      const result = await createEmbedding(chunk.chunkText, {
+      const result = await createEmbeddings(batch.map((chunk) => chunk.chunkText), {
         requestId: options.requestId,
         operation: options.operation ?? "knowledge_chunk_embedding",
         userId: options.userId
       });
 
-      embeddings.push({
-        chunkIndex: chunk.chunkIndex,
-        embedding: result.embedding,
-        model: result.model
-      });
+      for (let index = 0; index < result.embeddings.length; index += 1) {
+        const embeddingResult = result.embeddings[index];
+        const chunk = batch[index];
+
+        if (!chunk || !embeddingResult) {
+          continue;
+        }
+
+        embeddings.push({
+          chunkIndex: chunk.chunkIndex,
+          embedding: embeddingResult.embedding,
+          model: embeddingResult.model
+        });
+      }
     } catch (error) {
-      embeddings.push({
+      embeddings.push(...batch.map((chunk) => ({
         chunkIndex: chunk.chunkIndex,
         embedding: null,
         model: null,
         errorMessage: error instanceof Error ? error.message : "Embedding generation failed."
-      });
+      })));
     }
   }
 

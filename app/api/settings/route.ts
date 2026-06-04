@@ -24,6 +24,14 @@ function parseSettingsPatch(body: unknown) {
   const defaultExpireDays = typeof body.defaultExpireDays === "number"
     ? Math.round(body.defaultExpireDays)
     : Number.NaN;
+  const preferredProvider = body.preferredProvider === "openai" || body.preferredProvider === "deepseek"
+    ? body.preferredProvider
+    : null;
+  const preferredModel = typeof body.preferredModel === "string" && body.preferredModel.trim()
+    ? body.preferredModel.trim().slice(0, 80)
+    : null;
+  const ragTopK = typeof body.ragTopK === "number" ? Math.round(body.ragTopK) : null;
+  const ragMinScore = typeof body.ragMinScore === "number" ? body.ragMinScore : null;
 
   if (!Number.isInteger(defaultExpireDays) || defaultExpireDays < 1 || defaultExpireDays > 3650) {
     throw new ValidationError("默认过期提醒周期必须是 1 到 3650 天。");
@@ -31,7 +39,11 @@ function parseSettingsPatch(body: unknown) {
 
   return {
     saveStrategy: body.saveStrategy,
-    defaultExpireDays
+    defaultExpireDays,
+    preferredProvider,
+    preferredModel,
+    ragTopK: ragTopK !== null && ragTopK >= 1 && ragTopK <= 20 ? ragTopK : null,
+    ragMinScore: ragMinScore !== null && ragMinScore >= 0 && ragMinScore <= 1 ? ragMinScore : null
   };
 }
 

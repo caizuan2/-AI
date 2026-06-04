@@ -29,6 +29,10 @@ type ExportFormat = "json" | "markdown" | "csv";
 type UserSettingsResponse = {
   saveStrategy: SaveStrategy;
   defaultExpireDays: number;
+  preferredProvider: string | null;
+  preferredModel: string | null;
+  ragTopK: number | null;
+  ragMinScore: number | null;
   updatedAt: string;
 };
 
@@ -128,6 +132,10 @@ function downloadTextFile(file: KnowledgeExportResponse) {
 export default function SettingsPage() {
   const [saveStrategy, setSaveStrategy] = useState<SaveStrategy>("MANUAL_CONFIRM");
   const [defaultExpireDays, setDefaultExpireDays] = useState(90);
+  const [preferredProvider, setPreferredProvider] = useState("openai");
+  const [preferredModel, setPreferredModel] = useState("gpt-4.1-mini");
+  const [ragTopK, setRagTopK] = useState(8);
+  const [ragMinScore, setRagMinScore] = useState(0.72);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -153,6 +161,10 @@ export default function SettingsPage() {
         if (!cancelled) {
           setSaveStrategy(data.saveStrategy);
           setDefaultExpireDays(data.defaultExpireDays);
+          setPreferredProvider(data.preferredProvider ?? "openai");
+          setPreferredModel(data.preferredModel ?? "gpt-4.1-mini");
+          setRagTopK(data.ragTopK ?? 8);
+          setRagMinScore(data.ragMinScore ?? 0.72);
         }
       } catch (caughtError) {
         if (!cancelled) {
@@ -183,7 +195,14 @@ export default function SettingsPage() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ saveStrategy, defaultExpireDays })
+        body: JSON.stringify({
+          saveStrategy,
+          defaultExpireDays,
+          preferredProvider,
+          preferredModel,
+          ragTopK,
+          ragMinScore
+        })
       });
       const data = await unwrapApiResponse<UserSettingsResponse>(response, "保存设置失败。");
 
@@ -467,11 +486,29 @@ export default function SettingsPage() {
                 <Input className="mt-2" value="由 OPENAI_API_KEY 提供" readOnly />
               </label>
               <label className="block">
-                <span className="text-sm font-medium text-ink">问答模型</span>
-                <select className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink shadow-sm">
-                  <option>OPENAI_MODEL</option>
-                  <option>gpt-4.1-mini</option>
+                <span className="text-sm font-medium text-ink">默认生成 Provider</span>
+                <select
+                  value={preferredProvider}
+                  onChange={(event) => {
+                    const provider = event.target.value;
+
+                    setPreferredProvider(provider);
+                    setPreferredModel(provider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini");
+                  }}
+                  className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink shadow-sm"
+                >
+                  <option value="openai">OpenAI</option>
+                  <option value="deepseek">DeepSeek</option>
                 </select>
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-ink">默认生成模型</span>
+                <Input
+                  className="mt-2"
+                  value={preferredModel}
+                  onChange={(event) => setPreferredModel(event.target.value)}
+                  placeholder={preferredProvider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini"}
+                />
               </label>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
                 <span>
@@ -512,11 +549,26 @@ export default function SettingsPage() {
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="block">
                   <span className="text-sm font-medium text-ink">Top K</span>
-                  <Input className="mt-2" type="number" min={1} max={10} defaultValue={4} />
+                  <Input
+                    className="mt-2"
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={ragTopK}
+                    onChange={(event) => setRagTopK(Number(event.target.value))}
+                  />
                 </label>
                 <label className="block">
                   <span className="text-sm font-medium text-ink">最低置信度</span>
-                  <Input className="mt-2" type="number" min={0} max={1} step={0.05} defaultValue={0.72} />
+                  <Input
+                    className="mt-2"
+                    type="number"
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    value={ragMinScore}
+                    onChange={(event) => setRagMinScore(Number(event.target.value))}
+                  />
                 </label>
               </div>
             </CardContent>

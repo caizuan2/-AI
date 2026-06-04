@@ -12,7 +12,7 @@ import {
   type AnalyzeResponse
 } from "@/lib/knowledge/analyze";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
-import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
+import { getPrimaryAIProvider, hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { getRequestIdFromHeaders, logger, REQUEST_ID_HEADER, toSafeErrorLog } from "@/lib/logger";
 import { getOrCreateUserSettings } from "@/lib/settings";
@@ -31,6 +31,11 @@ interface IngestAnalyzeResponse extends AnalyzeResponse {
   sourceTitle: string | null;
   sourceUrl: string | null;
   fetchedFromUrl: boolean;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  originalProviderErrorCode?: string;
+  requestId?: string;
 }
 
 const MAX_INGEST_CONTENT_CHARS = 50_000;
@@ -233,18 +238,25 @@ export async function POST(request: Request) {
     return matchedCategory ? { ...draft, category: matchedCategory } : draft;
   }
 
-  if (!hasUsableOpenAIKey()) {
+  if (!hasUsableChatProvider()) {
     if (!isAIFallbackAllowed()) {
+      const provider = getPrimaryAIProvider();
+      const envName = provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
+
       return apiError(new AppError(
         "MISSING_AI_API_KEY",
-        "Netlify 环境变量缺失：OPENAI_API_KEY。请配置后重新部署。",
+        `Netlify 环境变量缺失：${envName}。请配置后重新部署。`,
         500
       ));
     }
 
-    return apiSuccess<IngestAnalyzeResponse>(
-      withSourceMetadata(withSaveStrategy(preferExistingCategory(buildFallbackDraft()), settings.saveStrategy))
-    );
+    return apiSuccess<IngestAnalyzeResponse>({
+      ...withSourceMetadata(withSaveStrategy(preferExistingCategory(buildFallbackDraft()), settings.saveStrategy)),
+      providerUsed: "local",
+      modelUsed: "mock-fallback",
+      fallbackUsed: true,
+      requestId
+    });
   }
 
   try {
@@ -255,10 +267,16 @@ export async function POST(request: Request) {
       requestId,
       userId: currentUser.id
     });
+    const response = withSourceMetadata(withSaveStrategy(preferExistingCategory(toAnalyzeDraft(result.knowledge)), settings.saveStrategy));
 
-    return apiSuccess<IngestAnalyzeResponse>(
-      withSourceMetadata(withSaveStrategy(preferExistingCategory(toAnalyzeDraft(result.knowledge)), settings.saveStrategy))
-    );
+    return apiSuccess<IngestAnalyzeResponse>({
+      ...response,
+      providerUsed: result.providerUsed,
+      modelUsed: result.model,
+      fallbackUsed: result.fallbackUsed,
+      originalProviderErrorCode: result.originalProviderErrorCode,
+      requestId
+    });
   } catch (error) {
     if (!isAIFallbackAllowed()) {
       const appError = toAppError(error);
@@ -273,10 +291,16 @@ export async function POST(request: Request) {
     const fallback = preferExistingCategory(buildFallbackDraft());
 
     return apiSuccess<IngestAnalyzeResponse>(
-      withSourceMetadata(withSaveStrategy({
+      {
+        ...withSourceMetadata(withSaveStrategy({
         ...fallback,
         reason: `${fallback.reason} AI 分析暂不可用，已返回本地整理结果。`
-      }, settings.saveStrategy))
+      }, settings.saveStrategy)),
+        providerUsed: "local",
+        modelUsed: "mock-fallback",
+        fallbackUsed: true,
+        requestId
+      }
     );
   }
 }

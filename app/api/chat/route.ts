@@ -1,15 +1,22 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
+import { prisma } from "@/lib/prisma";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
 import { requireLicensedUser } from "@/lib/auth/guards";
 import type { RagContext } from "@/lib/ai/rag-answer";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
-import { getRequestIdFromHeaders } from "@/lib/logger";
-import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
+import { buildAiCacheKey, getAiCacheValue, getCorpusVersion, setAiCacheValue } from "@/lib/cache/ai-cache";
+import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
+import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { retrieveKnowledge, type RetrievedKnowledgeChunk } from "@/lib/rag/retriever";
+import { getOrCreateUserSettings } from "@/lib/settings";
 import {
   CHAT_MIN_RELEVANT_SIMILARITY,
   CHAT_TOP_K,
+  RAG_MAX_CONTEXT_CHARS,
+  getDeepSeekModel,
+  getOpenAIModel,
+  getPrimaryAIProvider,
   hasDatabaseUrl,
   hasUsableOpenAIKey,
   isAIFallbackAllowed
@@ -30,12 +37,20 @@ interface ChatSource {
   chunkText: string;
   sourceType: string;
   createdAt: string;
+  similarity: number;
 }
 
 interface ChatResponse {
   answer: string;
   sources: ChatSource[];
   retrievalMessage: string | null;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  originalProviderErrorCode?: string;
+  cached?: boolean;
+  latencyMs?: number;
+  requestId?: string;
 }
 
 const MAX_CHAT_QUESTION_CHARS = 2000;
@@ -43,6 +58,10 @@ const CHAT_RATE_LIMIT = {
   limit: 20,
   windowMs: 60_000
 };
+
+function toProviderName(value: string | null | undefined) {
+  return value === "openai" || value === "deepseek" ? value : getPrimaryAIProvider();
+}
 
 function parseChatRequest(body: unknown): ChatRequest {
   if (!isPlainObject(body)) {
@@ -82,7 +101,8 @@ function toSources(results: RetrievedKnowledgeChunk[]): ChatSource[] {
       summary: result.summary,
       chunkText: result.chunkText,
       sourceType: result.sourceType,
-      createdAt: result.createdAt
+      createdAt: result.createdAt,
+      similarity: result.similarity
     });
   }
 
@@ -90,13 +110,29 @@ function toSources(results: RetrievedKnowledgeChunk[]): ChatSource[] {
 }
 
 function toRagContexts(sources: ChatSource[]): RagContext[] {
-  return sources.map((source) => ({
-    id: source.knowledgeItemId,
-    title: source.title,
-    content: source.chunkText,
-    sourceType: source.sourceType,
-    sourceId: source.chunkId
-  }));
+  let usedChars = 0;
+  const contexts: RagContext[] = [];
+
+  for (const source of sources) {
+    const remaining = RAG_MAX_CONTEXT_CHARS - usedChars;
+
+    if (remaining <= 0) {
+      break;
+    }
+
+    const content = source.chunkText.slice(0, remaining);
+
+    usedChars += content.length;
+    contexts.push({
+      id: source.knowledgeItemId,
+      title: source.title,
+      content,
+      sourceType: source.sourceType,
+      sourceId: source.chunkId
+    });
+  }
+
+  return contexts;
 }
 
 function buildFallbackAnswer(question: string, sources: ChatSource[]) {
@@ -136,14 +172,16 @@ function withRetrievalMessage(answer: string, message: string | null) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
+  const requestStartedAt = Date.now();
   let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
 
   try {
     currentUser = await requireLicensedUser();
-    const rateLimit = checkRateLimit(request, {
+    const rateLimit = await checkPersistentRateLimit(request, {
       namespace: "api:chat",
       userId: currentUser.id,
-      ...CHAT_RATE_LIMIT
+      limit: CHAT_RATE_LIMIT.limit,
+      windowMs: CHAT_RATE_LIMIT.windowMs
     });
 
     if (!rateLimit.allowed) {
@@ -177,11 +215,58 @@ export async function POST(request: Request) {
   }
 
   try {
+    const userSettings = await getOrCreateUserSettings(currentUser.id);
+    const effectiveTopK = userSettings.ragTopK ?? CHAT_TOP_K;
+    const effectiveMinScore = userSettings.ragMinScore ?? CHAT_MIN_RELEVANT_SIMILARITY;
+    const providerForCache = toProviderName(userSettings.preferredProvider);
+    const modelForCache = providerForCache === "deepseek" ? getDeepSeekModel() : getOpenAIModel();
+    const corpusVersion = await getCorpusVersion(currentUser.id);
+    const cacheKey = buildAiCacheKey({
+      namespace: "rag-answer",
+      userId: currentUser.id,
+      provider: providerForCache,
+      model: modelForCache,
+      topK: effectiveTopK,
+      corpusVersion,
+      input: input.question
+    });
+    const cached = await getAiCacheValue<ChatResponse>(cacheKey, requestId);
+
+    if (cached) {
+      await prisma.knowledgeQueryLog.create({
+        data: {
+          userId: currentUser.id,
+          query: input.question,
+          providerUsed: cached.providerUsed ?? providerForCache,
+          modelUsed: cached.modelUsed ?? modelForCache,
+          topK: effectiveTopK,
+          latencyMs: Date.now() - requestStartedAt,
+          tokenUsage: {
+            requestId,
+            cacheHit: true
+          },
+          cached: true
+        }
+      }).catch((error) => {
+        logger.warn("rag.query_log_failed", {
+          requestId,
+          error: toSafeErrorLog(error)
+        });
+      });
+
+      return apiSuccess<ChatResponse>({
+        ...cached,
+        cached: true,
+        latencyMs: Date.now() - requestStartedAt,
+        requestId
+      });
+    }
+
     const searchResult = await retrieveKnowledge({
       query: input.question,
-      topK: CHAT_TOP_K,
+      topK: effectiveTopK,
       userId: currentUser.id,
-      minSimilarity: CHAT_MIN_RELEVANT_SIMILARITY,
+      minSimilarity: effectiveMinScore,
       minResults: 1,
       requestId
     });
@@ -202,11 +287,38 @@ export async function POST(request: Request) {
     });
 
     if (searchResult.insufficient) {
-      return apiSuccess<ChatResponse>({
+      const insufficientResponse: ChatResponse = {
         answer: searchResult.message ?? "知识库中没有找到足够依据。",
         sources: [],
-        retrievalMessage: searchResult.message
+        retrievalMessage: searchResult.message,
+        cached: false,
+        latencyMs: Date.now() - requestStartedAt,
+        requestId
+      };
+
+      await prisma.knowledgeQueryLog.create({
+        data: {
+          userId: currentUser.id,
+          query: input.question,
+          providerUsed: "none",
+          modelUsed: "none",
+          topK: effectiveTopK,
+          latencyMs: insufficientResponse.latencyMs ?? 0,
+          tokenUsage: {
+            requestId,
+            retrievalMode: searchResult.mode,
+            sourceCount: 0
+          },
+          cached: false
+        }
+      }).catch((error) => {
+        logger.warn("rag.query_log_failed", {
+          requestId,
+          error: toSafeErrorLog(error)
+        });
       });
+
+      return apiSuccess<ChatResponse>(insufficientResponse);
     }
 
     if (hasUsableOpenAIKey()) {
@@ -214,14 +326,48 @@ export async function POST(request: Request) {
         const { generateRagAnswer } = await import("@/lib/ai/rag-answer");
         const ragAnswer = await generateRagAnswer(input.question, toRagContexts(sources), {
           requestId,
-          userId: currentUser.id
+          userId: currentUser.id,
+          provider: providerForCache
         });
-
-        return apiSuccess<ChatResponse>({
+        const responsePayload: ChatResponse = {
           answer: withRetrievalMessage(ensureAnswerHasCitation(ragAnswer.answer, sources), searchResult.message),
           sources,
-          retrievalMessage: searchResult.message
+          retrievalMessage: searchResult.message,
+          providerUsed: ragAnswer.providerUsed,
+          modelUsed: ragAnswer.model,
+          fallbackUsed: ragAnswer.fallbackUsed,
+          originalProviderErrorCode: ragAnswer.originalProviderErrorCode,
+          cached: false,
+          latencyMs: Date.now() - requestStartedAt,
+          requestId
+        };
+
+        await prisma.knowledgeQueryLog.create({
+          data: {
+            userId: currentUser.id,
+            query: input.question,
+            providerUsed: ragAnswer.providerUsed,
+            modelUsed: ragAnswer.model,
+            topK: effectiveTopK,
+            latencyMs: responsePayload.latencyMs ?? 0,
+            tokenUsage: {
+              requestId,
+              fallbackUsed: ragAnswer.fallbackUsed,
+              originalProviderErrorCode: ragAnswer.originalProviderErrorCode,
+              sourceCount: sources.length,
+              retrievalMode: searchResult.mode
+            },
+            cached: false
+          }
+        }).catch((logError) => {
+          logger.warn("rag.query_log_failed", {
+            requestId,
+            error: toSafeErrorLog(logError)
+          });
         });
+        await setAiCacheValue(cacheKey, responsePayload, { requestId });
+
+        return apiSuccess<ChatResponse>(responsePayload);
       } catch (error) {
         if (!isAIFallbackAllowed()) {
           return apiError(error);
@@ -236,7 +382,13 @@ export async function POST(request: Request) {
     return apiSuccess<ChatResponse>({
       answer: withRetrievalMessage(ensureAnswerHasCitation(buildFallbackAnswer(input.question, sources), sources), searchResult.message),
       sources,
-      retrievalMessage: searchResult.message
+      retrievalMessage: searchResult.message,
+      providerUsed: "local",
+      modelUsed: "local-fallback",
+      fallbackUsed: true,
+      cached: false,
+      latencyMs: Date.now() - requestStartedAt,
+      requestId
     });
   } catch (error) {
     return apiError(error);

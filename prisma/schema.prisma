@@ -133,6 +133,10 @@ model UserSettings {
   userId            String                @unique
   saveStrategy      KnowledgeSaveStrategy @default(MANUAL_CONFIRM)
   defaultExpireDays Int                   @default(90)
+  preferredProvider String?
+  preferredModel    String?
+  ragTopK           Int?
+  ragMinScore       Float?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
@@ -293,11 +297,57 @@ model AnalyticsEvent {
   @@map("analytics_events")
 }
 
+model KnowledgeQueryLog {
+  id           String   @id @default(cuid())
+  userId       String
+  query        String   @db.Text
+  providerUsed String
+  modelUsed    String
+  topK         Int
+  latencyMs    Int
+  tokenUsage   Json?
+  cached       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([createdAt])
+  @@index([cached])
+  @@map("knowledge_query_logs")
+}
+
+model AiCache {
+  id        String   @id @default(cuid())
+  cacheKey  String   @unique
+  value     Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("ai_cache")
+}
+
+model RateLimitEvent {
+  id        String   @id @default(cuid())
+  subject   String
+  bucket    String
+  count     Int      @default(0)
+  resetAt   DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subject, bucket])
+  @@index([resetAt])
+  @@map("rate_limit_events")
+}
+
 model KnowledgeChunk {
   id              String                       @id @default(cuid())
   knowledgeItemId String
   chunkText       String                       @db.Text
   chunkIndex      Int
+  tokenCount      Int?
+  charCount       Int?
+  embeddingModel  String?
   metadata        Json?
   /// pgvector is represented as Unsupported because Prisma Client does not natively support VECTOR.
   /// Write and search embeddings with raw SQL, for example via prisma.$queryRaw.
