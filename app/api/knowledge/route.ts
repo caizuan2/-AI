@@ -13,7 +13,7 @@ import {
 } from "@/lib/knowledge/source-types";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { checkRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
-import { getRequestIdFromHeaders } from "@/lib/logger";
+import { estimateTokenCount, getRequestIdFromHeaders } from "@/lib/logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import { RateLimitError, ValidationError } from "@/lib/errors";
@@ -476,7 +476,10 @@ export async function POST(request: Request) {
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
                   embeddingError: embedding?.errorMessage ?? null
-                }
+                },
+                charCount: chunk.chunkText.length,
+                tokenCount: estimateTokenCount(chunk.chunkText),
+                embeddingModel: embedding?.model ?? null
               };
             })
           }

@@ -82,8 +82,23 @@ SESSION_SECRET="replace-with-a-long-random-session-secret"
 LICENSE_SECRET="replace-with-a-long-random-license-secret"
 ADMIN_TOKEN="replace-with-a-long-random-admin-token"
 OPENAI_API_KEY="sk-your-openai-api-key"
+OPENAI_BASE_URL="https://api.openai.com/v1"
 OPENAI_MODEL="gpt-4.1-mini"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+DEEPSEEK_API_KEY=""
+DEEPSEEK_BASE_URL="https://api.deepseek.com"
+DEEPSEEK_MODEL="deepseek-chat"
+AI_PROVIDER="openai"
+AI_FALLBACK_PROVIDER="deepseek"
+RAG_TOP_K="8"
+RAG_MIN_SCORE="0.72"
+RAG_MAX_CONTEXT_CHARS="12000"
+RAG_CACHE_TTL_SECONDS="3600"
+RATE_LIMIT_PER_USER_PER_MINUTE="20"
+RATE_LIMIT_GLOBAL_PER_MINUTE="500"
+INGEST_MAX_CHUNK_CHARS="1200"
+INGEST_CHUNK_OVERLAP_CHARS="150"
+INGEST_BATCH_SIZE="20"
 JOBS_TIMEZONE="Asia/Shanghai"
 CRON_SECRET="replace-with-a-random-string"
 ADMIN_PHONES="+8613812345678"
@@ -100,8 +115,18 @@ NODE_VERSION="22"
 - `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须填写 32 位以上随机字符串。
 - `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 Netlify 卡密管理接口，生产环境必须填写长随机 token。
 - `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 fallback；生产环境必须配置真实 key。
-- `OPENAI_MODEL`：知识整理和问答模型。
-- `OPENAI_EMBEDDING_MODEL`：embedding 模型。
+- `OPENAI_BASE_URL`：OpenAI-compatible base URL，默认 `https://api.openai.com/v1`。
+- `OPENAI_MODEL`：默认高质量生成模型，建议 `gpt-4.1-mini`。
+- `OPENAI_EMBEDDING_MODEL`：默认 embedding 模型，建议 `text-embedding-3-small`。DeepSeek 不作为 embedding provider。
+- `DEEPSEEK_API_KEY`：DeepSeek chat provider key，可作为低成本生成/分析模型。
+- `DEEPSEEK_BASE_URL`：DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`。
+- `DEEPSEEK_MODEL`：DeepSeek 生成模型，建议 `deepseek-chat`。
+- `AI_PROVIDER`：主生成 provider，可选 `openai` 或 `deepseek`，默认 `openai`。
+- `AI_FALLBACK_PROVIDER`：主 provider 失败时的生成 fallback provider。
+- `RAG_TOP_K`、`RAG_MIN_SCORE`、`RAG_MAX_CONTEXT_CHARS`：RAG 检索条数、最低分数和上下文长度上限。
+- `RAG_CACHE_TTL_SECONDS`：RAG 答案缓存时间，默认 3600 秒。
+- `RATE_LIMIT_PER_USER_PER_MINUTE`、`RATE_LIMIT_GLOBAL_PER_MINUTE`：用户级和全局限流。
+- `INGEST_MAX_CHUNK_CHARS`、`INGEST_CHUNK_OVERLAP_CHARS`、`INGEST_BATCH_SIZE`：投喂 chunk 切分和 embedding 批处理参数。
 - `JOBS_TIMEZONE`：后台任务时区，默认建议 `Asia/Shanghai`。
 - `CRON_SECRET`：后台任务 HTTP 接口密钥，生产环境必须配置。
 - `ADMIN_PHONES`：允许访问 `/admin` 的管理员手机号，建议使用 E.164 格式，多个手机号用英文逗号分隔。
@@ -201,6 +226,8 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 没有 OpenAI key 或 embedding 不可用时，本地开发会降级为关键词检索；生产环境需要配置真实 OpenAI key。
 
+DeepSeek 仅用于 chat/reasoner 生成能力，默认不用于 embedding。大规模生产检索建议继续使用 OpenAI `text-embedding-3-small` + pgvector HNSW/IVFFlat 索引。
+
 ## 常用命令
 
 ```bash
@@ -218,6 +245,8 @@ pnpm license:generate --count 10 # 仅本地 Prisma 表测试卡密
 pnpm prisma:generate             # 生成 Prisma Client
 pnpm prisma:format               # 格式化 Prisma schema
 pnpm db:check                    # 检查生产数据库、pgvector 和关键数据表
+pnpm ingest:schema:check         # 检查投喂依赖表和字段
+pnpm rag:check                   # dry-run 检查 RAG env/database/schema/vector/provider 配置
 pnpm prisma:migrate:create -- --name change-name
 pnpm prisma:migrate:deploy       # 部署迁移
 pnpm prisma:studio               # 打开 Prisma Studio

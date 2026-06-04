@@ -2,13 +2,14 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
-import { AIError } from "@/lib/errors";
+import { AIError, AppError } from "@/lib/errors";
 import { getEffectiveKnowledgeStatus } from "@/lib/knowledge/status";
 import {
   hasUsableOpenAIKey,
   isAIFallbackAllowed,
   SEARCH_DEFAULT_TOP_K,
-  SEARCH_MAX_TOP_K
+  SEARCH_MAX_TOP_K,
+  CHAT_MIN_RELEVANT_SIMILARITY
 } from "@/lib/server-config";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { logger } from "@/lib/logger";
@@ -31,7 +32,7 @@ const STOP_TERMS = new Set([
   "有哪些"
 ]);
 
-const DEFAULT_MIN_SIMILARITY = 0.12;
+const DEFAULT_MIN_SIMILARITY = CHAT_MIN_RELEVANT_SIMILARITY;
 const CANDIDATE_MULTIPLIER = 4;
 const SIMILARITY_WEIGHT = 0.78;
 const IMPORTANCE_WEIGHT = 0.12;
@@ -496,7 +497,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       vectorCandidates = [];
     }
   } else if (!isAIFallbackAllowed()) {
-    throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能降级为关键词检索。");
+    throw new AppError("MISSING_EMBEDDING_API_KEY", "生产环境必须配置 OPENAI_API_KEY 生成 query embedding。", 500);
   }
 
   if (vectorSearchFailed && !isAIFallbackAllowed()) {

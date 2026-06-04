@@ -64,10 +64,10 @@ function getProviderErrorCode(error: unknown) {
       return type.includes("quota") ? "AI_QUOTA_EXCEEDED" : "AI_RATE_LIMITED";
     }
 
-    return "OPENAI_REQUEST_FAILED";
+    return "AI_PROVIDER_FAILED";
   }
 
-  return "OPENAI_REQUEST_FAILED";
+  return "AI_PROVIDER_FAILED";
 }
 
 function normalizeChatError(error: unknown) {
@@ -128,12 +128,11 @@ export function createOpenAIChatProvider(): ChatProvider {
     async chat(input: ChatProviderInput): Promise<ChatProviderResult> {
       const startedAt = Date.now();
       const estimatedInputTokens = estimateTokenCount(input.messages.map((message) => message.content).join("\n"));
-      const model = input.model?.trim() || getOpenAIModel();
 
       try {
         const response = await withRetry(
           () => getOpenAIClient().chat.completions.create({
-            model,
+            model: getOpenAIModel(),
             temperature: input.temperature ?? 0.2,
             max_tokens: input.maxTokens,
             messages: toOpenAIChatMessages(input)
@@ -142,7 +141,7 @@ export function createOpenAIChatProvider(): ChatProvider {
             logger.warn("ai.provider_retry", {
               requestId: input.requestId,
               provider: "openai",
-              model,
+              model: getOpenAIModel(),
               attempt,
               error: toSafeErrorLog(error)
             });
@@ -151,7 +150,7 @@ export function createOpenAIChatProvider(): ChatProvider {
         const text = response.choices[0]?.message.content?.trim();
 
         if (!text) {
-          throw new AppError("OPENAI_REQUEST_FAILED", "OpenAI 返回了空内容。", 502);
+          throw new AppError("AI_PROVIDER_FAILED", "OpenAI 返回了空内容。", 502);
         }
 
         logger.info("ai.provider_call", {
@@ -175,7 +174,7 @@ export function createOpenAIChatProvider(): ChatProvider {
         logger.error("ai.provider_failed", {
           requestId: input.requestId,
           provider: "openai",
-          model,
+          model: getOpenAIModel(),
           durationMs: Date.now() - startedAt,
           error: toSafeErrorLog(error)
         });

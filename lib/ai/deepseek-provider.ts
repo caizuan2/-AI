@@ -65,7 +65,7 @@ function normalizeDeepSeekError(error: unknown) {
     }
   }
 
-  return new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek provider 调用失败。", 502);
+  return new AppError("AI_PROVIDER_FAILED", "DeepSeek provider 调用失败。", 502);
 }
 
 async function withRetry<T>(operation: () => Promise<T>, onRetry: (attempt: number, error: unknown) => void) {
@@ -93,12 +93,11 @@ export function createDeepSeekChatProvider(): ChatProvider {
     async chat(input: ChatProviderInput): Promise<ChatProviderResult> {
       const startedAt = Date.now();
       const estimatedInputTokens = estimateTokenCount(input.messages.map((message) => message.content).join("\n"));
-      const model = input.model?.trim() || getDeepSeekModel();
 
       try {
         const response = await withRetry(
           () => getDeepSeekClient().chat.completions.create({
-            model,
+            model: getDeepSeekModel(),
             temperature: input.temperature ?? 0.2,
             max_tokens: input.maxTokens,
             messages: toOpenAIChatMessages(input)
@@ -107,7 +106,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
             logger.warn("ai.provider_retry", {
               requestId: input.requestId,
               provider: "deepseek",
-              model,
+              model: getDeepSeekModel(),
               attempt,
               error: toSafeErrorLog(error)
             });
@@ -116,7 +115,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
         const text = response.choices[0]?.message.content?.trim();
 
         if (!text) {
-          throw new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek 返回了空内容。", 502);
+          throw new AppError("AI_PROVIDER_FAILED", "DeepSeek 返回了空内容。", 502);
         }
 
         logger.info("ai.provider_call", {
@@ -140,7 +139,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
         logger.error("ai.provider_failed", {
           requestId: input.requestId,
           provider: "deepseek",
-          model,
+          model: getDeepSeekModel(),
           durationMs: Date.now() - startedAt,
           error: toSafeErrorLog(error)
         });

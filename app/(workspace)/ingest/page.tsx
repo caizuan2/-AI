@@ -62,6 +62,11 @@ interface AnalyzeResult extends KnowledgeQualityScores {
   sourceTitle?: string | null;
   sourceUrl?: string | null;
   fetchedFromUrl?: boolean;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  originalProviderErrorCode?: string;
+  requestId?: string;
 }
 
 interface KnowledgeSavePayload extends KnowledgeQualityScores {
@@ -855,6 +860,22 @@ export default function IngestPage() {
                     <p className="text-xs text-muted">当前保存策略</p>
                     <p className="mt-1 text-sm font-medium text-ink">{saveStrategyLabels[aiDraft.saveStrategy]}</p>
                     <p className="mt-1 text-xs leading-5 text-muted">{aiDraft.saveRecommendation}</p>
+                  </div>
+                  <div className="rounded-lg border border-line bg-canvas p-3">
+                    <p className="text-xs text-muted">模型调用</p>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <Badge variant="outline">Provider：{aiDraft.providerUsed ?? "local"}</Badge>
+                      <Badge variant="outline">Model：{aiDraft.modelUsed ?? "local"}</Badge>
+                      <Badge variant={aiDraft.fallbackUsed ? "warning" : "secondary"}>
+                        {aiDraft.fallbackUsed ? "已 fallback" : "未 fallback"}
+                      </Badge>
+                    </div>
+                    {aiDraft.originalProviderErrorCode ? (
+                      <p className="mt-2 text-xs text-muted">主 provider 错误码：{aiDraft.originalProviderErrorCode}</p>
+                    ) : null}
+                    {aiDraft.requestId ? (
+                      <p className="mt-2 break-all text-xs text-muted">Request ID：{aiDraft.requestId}</p>
+                    ) : null}
                   </div>
                   {pendingSave && similarCandidates.length > 0 ? (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">

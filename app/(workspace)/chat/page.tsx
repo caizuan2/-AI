@@ -35,12 +35,19 @@ type ChatSource = {
   chunkText: string;
   sourceType: string;
   createdAt: string;
+  similarity?: number;
 };
 
 type ChatApiResponse = {
   answer: string;
   sources: ChatSource[];
   retrievalMessage: string | null;
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  cached?: boolean;
+  latencyMs?: number;
+  requestId?: string;
 };
 
 type ChatMessage = {
@@ -50,6 +57,12 @@ type ChatMessage = {
   createdAt: string;
   question?: string;
   sources?: ChatSource[];
+  providerUsed?: string;
+  modelUsed?: string;
+  fallbackUsed?: boolean;
+  cached?: boolean;
+  latencyMs?: number;
+  requestId?: string;
 };
 type FeedbackChoice = "helpful" | "not_helpful";
 type AnswerFeedbackState = {
@@ -243,6 +256,7 @@ function ChatBubble({
                 </span>
                 <span className="mt-1 block font-normal leading-5 text-teal-700">
                   {getKnowledgeSourceTypeLabel(source.sourceType)} · {new Date(source.createdAt).toLocaleString("zh-CN")}
+                  {typeof source.similarity === "number" ? ` · 相似度 ${Math.round(source.similarity * 100)}%` : ""}
                 </span>
                 <span className="mt-1 block line-clamp-2 font-normal leading-5 text-teal-700">
                   {source.summary}
@@ -304,6 +318,7 @@ function SourceCard({
           </div>
           <p className="mt-2 text-xs text-muted">
             {getKnowledgeSourceTypeLabel(source.sourceType)} · {new Date(source.createdAt).toLocaleString("zh-CN")}
+            {typeof source.similarity === "number" ? ` · 相似度 ${Math.round(source.similarity * 100)}%` : ""}
           </p>
         </div>
         <Link href={`/knowledge/${source.knowledgeItemId}`} className="focus-ring rounded text-muted hover:text-teal-700" aria-label="打开知识详情">
@@ -480,7 +495,13 @@ function ChatWorkspace() {
         content: data.answer,
         createdAt: getNowLabel(),
         question,
-        sources: data.sources
+        sources: data.sources,
+        providerUsed: data.providerUsed,
+        modelUsed: data.modelUsed,
+        fallbackUsed: data.fallbackUsed,
+        cached: data.cached,
+        latencyMs: data.latencyMs,
+        requestId: data.requestId
       };
 
       setHighlightedSourceIndex(null);
@@ -515,6 +536,30 @@ function ChatWorkspace() {
                   onCitationClick={handleCitationClick}
                   className="mt-3 text-sm leading-6 text-slate-700"
                 />
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3 text-xs text-muted">
+                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
+                    Provider：{latestAnswer.providerUsed ?? "unknown"}
+                  </span>
+                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
+                    Model：{latestAnswer.modelUsed ?? "unknown"}
+                  </span>
+                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
+                    {latestAnswer.fallbackUsed ? "已 fallback" : "未 fallback"}
+                  </span>
+                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
+                    {latestAnswer.cached ? "缓存命中" : "实时生成"}
+                  </span>
+                  {typeof latestAnswer.latencyMs === "number" ? (
+                    <span className="rounded-md border border-line bg-canvas px-2 py-1">
+                      {latestAnswer.latencyMs}ms
+                    </span>
+                  ) : null}
+                  {latestAnswer.requestId ? (
+                    <span className="break-all rounded-md border border-line bg-canvas px-2 py-1">
+                      {latestAnswer.requestId}
+                    </span>
+                  ) : null}
+                </div>
               </section>
             ) : null}
 

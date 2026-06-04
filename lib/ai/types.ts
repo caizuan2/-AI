@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions";
 
-export type ChatProviderName = "qwen" | "openai" | "deepseek";
+export type ChatProviderName = "openai" | "deepseek";
 export type EmbeddingProviderName = "openai";
 export type ProviderUsage = Record<string, unknown>;
 
@@ -12,7 +12,6 @@ export type ChatMessage = {
 export type ChatProviderInput = {
   system?: string;
   messages: ChatMessage[];
-  model?: string;
   temperature?: number;
   maxTokens?: number;
   requestId?: string;

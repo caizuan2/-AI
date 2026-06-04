@@ -1,7 +1,8 @@
 import "server-only";
 
-import { normalizeOpenAIError, openai, openaiConfig } from "@/lib/openai";
+import { chatWithFallback } from "@/lib/ai/providers";
 import { buildRagPromptMessages, type RagContext } from "@/lib/ai/rag-prompt";
+import type { ChatProviderName } from "@/lib/ai/types";
 import { recordAiUsage } from "@/lib/analytics";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
@@ -18,11 +19,15 @@ export interface RagAnswerResult {
   answer: string;
   citations: RagCitation[];
   model: string;
+  providerUsed: string;
+  fallbackUsed: boolean;
+  originalProviderErrorCode?: string;
 }
 
 export interface GenerateRagAnswerOptions {
   requestId?: string;
   userId?: string;
+  provider?: ChatProviderName;
 }
 
 export async function generateRagAnswer(
@@ -45,15 +50,16 @@ export async function generateRagAnswer(
   const estimatedInputTokens = estimateTokenCount(messages.map((message) => message.content).join("\n\n"));
 
   try {
-    const response = await openai.chat.completions.create({
-      model: openaiConfig.chatModel,
+    const response = await chatWithFallback({
       temperature: 0.2,
-      messages
+      messages,
+      requestId: options.requestId,
+      provider: options.provider
     });
-    const answer = response.choices[0]?.message.content?.trim();
+    const answer = response.text.trim();
 
     if (!answer) {
-      throw new Error("OpenAI returned an empty RAG answer.");
+      throw new Error("AI provider returned an empty RAG answer.");
     }
 
     const estimatedOutputTokens = estimateTokenCount(answer);
@@ -62,15 +68,13 @@ export async function generateRagAnswer(
     logger.info("ai.call", {
       requestId: options.requestId,
       operation: "rag_answer",
-      provider: "openai",
+      provider: response.provider,
       model: response.model,
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens,
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
-      actualInputTokens: response.usage?.prompt_tokens,
-      actualOutputTokens: response.usage?.completion_tokens,
-      actualTotalTokens: response.usage?.total_tokens,
+      fallbackUsed: response.fallbackUsed,
       contextCount: contexts.length
     });
     await recordAiUsage({
@@ -81,10 +85,10 @@ export async function generateRagAnswer(
       durationMs,
       estimatedInputTokens,
       estimatedOutputTokens,
-      actualInputTokens: response.usage?.prompt_tokens,
-      actualOutputTokens: response.usage?.completion_tokens,
-      actualTotalTokens: response.usage?.total_tokens,
       metadata: {
+        provider: response.provider,
+        fallbackUsed: response.fallbackUsed,
+        originalProviderErrorCode: response.originalProviderErrorCode,
         contextCount: contexts.length
       }
     });
@@ -97,20 +101,21 @@ export async function generateRagAnswer(
         sourceType: context.sourceType,
         sourceId: context.sourceId
       })),
-      model: response.model
+      model: response.model,
+      providerUsed: response.provider,
+      fallbackUsed: response.fallbackUsed,
+      originalProviderErrorCode: response.originalProviderErrorCode
     };
   } catch (error) {
     logger.error("ai.call_failed", {
       requestId: options.requestId,
       operation: "rag_answer",
-      provider: "openai",
-      model: openaiConfig.chatModel,
       durationMs: Date.now() - startedAt,
       estimatedInputTokens,
       contextCount: contexts.length,
       error: toSafeErrorLog(error)
     });
 
-    throw normalizeOpenAIError(error, "generateRagAnswer failed");
+    throw error;
   }
 }

@@ -3,18 +3,14 @@ import "server-only";
 import { AppError, toAppError } from "@/lib/errors";
 import { logger, toSafeErrorLog } from "@/lib/logger";
 import {
-  getAIProviderFallbackChain,
   getFallbackAIProvider,
   getPrimaryAIProvider,
-  getSecondaryFallbackAIProvider,
   hasUsableDeepSeekKey,
   hasUsableOpenAIKey,
-  hasUsableQwenKey,
   type ChatProviderName
 } from "@/lib/server-config";
 import { createDeepSeekChatProvider } from "@/lib/ai/deepseek-provider";
 import { createOpenAIChatProvider, createOpenAIEmbeddingProvider } from "@/lib/ai/openai-provider";
-import { createQwenChatProvider } from "@/lib/ai/qwen-provider";
 import type {
   ChatProvider,
   ChatProviderInput,
@@ -23,10 +19,6 @@ import type {
 } from "@/lib/ai/types";
 
 function getChatProvider(name: ChatProviderName): ChatProvider {
-  if (name === "qwen") {
-    return createQwenChatProvider();
-  }
-
   if (name === "deepseek") {
     return createDeepSeekChatProvider();
   }
@@ -35,18 +27,10 @@ function getChatProvider(name: ChatProviderName): ChatProvider {
 }
 
 function isProviderConfigured(name: ChatProviderName) {
-  if (name === "qwen") {
-    return hasUsableQwenKey();
-  }
-
   return name === "deepseek" ? hasUsableDeepSeekKey() : hasUsableOpenAIKey();
 }
 
 function getProviderMissingError(name: ChatProviderName) {
-  if (name === "qwen") {
-    return new AppError("MISSING_QWEN_API_KEY", "QWEN_API_KEY 未配置，无法使用 qwen provider。", 500);
-  }
-
   const label = name === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
 
   return new AppError("MISSING_AI_API_KEY", `${label} 未配置，无法使用 ${name} provider。`, 500);
@@ -60,72 +44,70 @@ export async function chatWithFallback(
   input: ChatProviderInput & { provider?: ChatProviderName }
 ): Promise<ChatWithFallbackResult> {
   const primaryName = input.provider ?? getPrimaryAIProvider();
-  const providerChain = getAIProviderFallbackChain(primaryName);
+  const fallbackName = getFallbackAIProvider();
+  const primaryProvider = getChatProvider(primaryName);
   const requestId = input.requestId;
-  let firstError: AppError | null = null;
-  let lastError: unknown = null;
 
-  for (let index = 0; index < providerChain.length; index += 1) {
-    const providerName = providerChain[index];
+  try {
+    if (!isProviderConfigured(primaryName)) {
+      throw getProviderMissingError(primaryName);
+    }
 
-    if (!providerName) {
-      continue;
+    const result = await primaryProvider.chat(input);
+
+    return {
+      ...result,
+      fallbackUsed: false
+    };
+  } catch (error) {
+    const appError = toAppError(error);
+
+    logger.warn("ai.primary_provider_failed", {
+      requestId,
+      provider: primaryName,
+      fallbackProvider: fallbackName,
+      code: appError.code,
+      error: toSafeErrorLog(error)
+    });
+
+    if (!fallbackName || fallbackName === primaryName) {
+      throw error;
+    }
+
+    if (!isProviderConfigured(fallbackName)) {
+      throw error;
     }
 
     try {
-      if (!isProviderConfigured(providerName)) {
-        throw getProviderMissingError(providerName);
-      }
-
-      const provider = getChatProvider(providerName);
-      const result = await provider.chat(
-        providerName === primaryName
-          ? input
-          : { ...input, model: undefined }
-      );
+      const fallbackProvider = getChatProvider(fallbackName);
+      const result = await fallbackProvider.chat(input);
 
       return {
         ...result,
-        fallbackUsed: index > 0,
-        originalProviderErrorCode: index > 0 ? firstError?.code : undefined
+        fallbackUsed: true,
+        originalProviderErrorCode: appError.code
       };
-    } catch (error) {
-      const appError = toAppError(error);
-
-      firstError ??= appError;
-      lastError = error;
-
-      logger.warn(index === 0 ? "ai.primary_provider_failed" : "ai.fallback_provider_failed", {
+    } catch (fallbackError) {
+      logger.error("ai.fallback_provider_failed", {
         requestId,
-        provider: providerName,
-        nextProvider: providerChain[index + 1] ?? null,
-        code: appError.code,
-        error: toSafeErrorLog(error)
+        primaryProvider: primaryName,
+        fallbackProvider: fallbackName,
+        primaryErrorCode: appError.code,
+        error: toSafeErrorLog(fallbackError)
       });
+
+      throw fallbackError;
     }
   }
-
-  logger.error("ai.provider_chain_failed", {
-    requestId,
-    providerChain,
-    firstErrorCode: firstError?.code,
-    error: toSafeErrorLog(lastError)
-  });
-
-  throw lastError ?? new AppError("AI_PROVIDER_FAILED", "所有 AI provider 都调用失败。", 502);
 }
 
 export function getProviderReadiness() {
   const primaryProvider = getPrimaryAIProvider();
   const fallbackProvider = getFallbackAIProvider();
-  const secondaryFallbackProvider = getSecondaryFallbackAIProvider();
 
   return {
     primaryProvider,
     fallbackProvider,
-    secondaryFallbackProvider,
-    providerChain: getAIProviderFallbackChain(),
-    qwenConfigured: hasUsableQwenKey(),
     openaiConfigured: hasUsableOpenAIKey(),
     deepseekConfigured: hasUsableDeepSeekKey()
   };

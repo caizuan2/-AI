@@ -106,7 +106,7 @@ export async function getCorpusVersion(userId: string) {
   }
 
   const latest = await prisma.knowledgeItem.findFirst({
-    where: { userId, deletedAt: null },
+    where: { userId },
     orderBy: { updatedAt: "desc" },
     select: { updatedAt: true }
   });

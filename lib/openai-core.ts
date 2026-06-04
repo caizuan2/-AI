@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { AIError } from "@/lib/errors";
+import { getEmbeddingModel, getOpenAIBaseUrl, getOpenAIModel } from "@/lib/server-config";
 
 export interface OpenAIClientConfig {
   chatModel: string;
@@ -33,17 +34,18 @@ function readOpenAIKey() {
 
 export const openaiConfig: OpenAIClientConfig = {
   get chatModel() {
-    return process.env.OPENAI_MODEL?.trim() || DEFAULT_OPENAI_MODEL;
+    return getOpenAIModel() || DEFAULT_OPENAI_MODEL;
   },
   get embeddingModel() {
-    return process.env.OPENAI_EMBEDDING_MODEL?.trim() || DEFAULT_OPENAI_EMBEDDING_MODEL;
+    return getEmbeddingModel() || DEFAULT_OPENAI_EMBEDDING_MODEL;
   }
 };
 
 function getOpenAIClient() {
   if (!cachedOpenAI) {
     cachedOpenAI = new OpenAI({
-      apiKey: readOpenAIKey()
+      apiKey: readOpenAIKey(),
+      baseURL: getOpenAIBaseUrl()
     });
   }
 

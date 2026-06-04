@@ -15,6 +15,10 @@ export const saveStrategies = [
 export interface UserSettingsResponse {
   saveStrategy: KnowledgeSaveStrategy;
   defaultExpireDays: number;
+  preferredProvider: string | null;
+  preferredModel: string | null;
+  ragTopK: number | null;
+  ragMinScore: number | null;
   updatedAt: string;
 }
 
@@ -34,6 +38,10 @@ export async function getOrCreateUserSettings(userId: string): Promise<UserSetti
     select: {
       saveStrategy: true,
       defaultExpireDays: true,
+      preferredProvider: true,
+      preferredModel: true,
+      ragTopK: true,
+      ragMinScore: true,
       updatedAt: true
     }
   });
@@ -41,6 +49,10 @@ export async function getOrCreateUserSettings(userId: string): Promise<UserSetti
   return {
     saveStrategy: settings.saveStrategy,
     defaultExpireDays: settings.defaultExpireDays,
+    preferredProvider: settings.preferredProvider,
+    preferredModel: settings.preferredModel,
+    ragTopK: settings.ragTopK,
+    ragMinScore: settings.ragMinScore,
     updatedAt: settings.updatedAt.toISOString()
   };
 }
@@ -50,22 +62,38 @@ export async function updateUserSettings(
   input: {
     saveStrategy: KnowledgeSaveStrategy;
     defaultExpireDays: number;
+    preferredProvider?: string | null;
+    preferredModel?: string | null;
+    ragTopK?: number | null;
+    ragMinScore?: number | null;
   }
 ): Promise<UserSettingsResponse> {
   const settings = await prisma.userSettings.upsert({
     where: { userId },
     update: {
       saveStrategy: input.saveStrategy,
-      defaultExpireDays: input.defaultExpireDays
+      defaultExpireDays: input.defaultExpireDays,
+      preferredProvider: input.preferredProvider,
+      preferredModel: input.preferredModel,
+      ragTopK: input.ragTopK,
+      ragMinScore: input.ragMinScore
     },
     create: {
       userId,
       saveStrategy: input.saveStrategy,
-      defaultExpireDays: input.defaultExpireDays
+      defaultExpireDays: input.defaultExpireDays,
+      preferredProvider: input.preferredProvider,
+      preferredModel: input.preferredModel,
+      ragTopK: input.ragTopK,
+      ragMinScore: input.ragMinScore
     },
     select: {
       saveStrategy: true,
       defaultExpireDays: true,
+      preferredProvider: true,
+      preferredModel: true,
+      ragTopK: true,
+      ragMinScore: true,
       updatedAt: true
     }
   });
@@ -73,6 +101,10 @@ export async function updateUserSettings(
   return {
     saveStrategy: settings.saveStrategy,
     defaultExpireDays: settings.defaultExpireDays,
+    preferredProvider: settings.preferredProvider,
+    preferredModel: settings.preferredModel,
+    ragTopK: settings.ragTopK,
+    ragMinScore: settings.ragMinScore,
     updatedAt: settings.updatedAt.toISOString()
   };
 }
