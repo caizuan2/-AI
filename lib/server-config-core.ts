@@ -2,13 +2,16 @@ export const OPENAI_PLACEHOLDER_API_KEY = "sk-your-openai-api-key";
 export const DEEPSEEK_PLACEHOLDER_API_KEY = "sk-your-deepseek-api-key";
 export const QWEN_PLACEHOLDER_API_KEY = "sk-your-qwen-api-key";
 export type ChatProviderName = "qwen" | "openai" | "deepseek";
+export type EmbeddingProviderName = "openai";
 
-export const SEARCH_DEFAULT_TOP_K = readIntEnv("RAG_TOP_K", 8, 1, 20);
+export const SEARCH_DEFAULT_TOP_K = readIntEnv("RAG_TOP_K", 10, 1, 20);
 export const SEARCH_MAX_TOP_K = 20;
-export const CHAT_TOP_K = readIntEnv("RAG_TOP_K", 8, 1, 20);
-export const CHAT_MIN_RELEVANT_SIMILARITY = readFloatEnv("RAG_MIN_SCORE", 0.72, 0, 1);
+export const CHAT_TOP_K = readIntEnv("RAG_TOP_K", 10, 1, 20);
+export const CHAT_MIN_RELEVANT_SIMILARITY = readSimilarityThreshold();
+export const RAG_MAX_CONTEXT_CHUNKS = readIntEnv("RAG_MAX_CONTEXT_CHUNKS", 12, 1, 20);
 export const RAG_MAX_CONTEXT_CHARS = readIntEnv("RAG_MAX_CONTEXT_CHARS", 12_000, 1_000, 60_000);
 export const RAG_CACHE_TTL_SECONDS = readIntEnv("RAG_CACHE_TTL_SECONDS", 3_600, 60, 86_400);
+export const RAG_ENABLE_RERANK = readBooleanEnv("RAG_ENABLE_RERANK", true);
 export const RATE_LIMIT_PER_USER_PER_MINUTE = readIntEnv("RATE_LIMIT_PER_USER_PER_MINUTE", 20, 1, 1_000);
 export const RATE_LIMIT_GLOBAL_PER_MINUTE = readIntEnv("RATE_LIMIT_GLOBAL_PER_MINUTE", 500, 1, 20_000);
 export const INGEST_MAX_CHUNK_CHARS = readIntEnv("INGEST_MAX_CHUNK_CHARS", 1_200, 400, 4_000);
@@ -36,10 +39,72 @@ function readFloatEnv(name: string, fallback: number, min: number, max: number) 
   return Math.max(min, Math.min(max, value));
 }
 
+function readSimilarityThreshold() {
+  const explicit = process.env.RAG_SIMILARITY_THRESHOLD?.trim();
+
+  if (explicit) {
+    return readFloatEnv("RAG_SIMILARITY_THRESHOLD", 0.35, 0, 1);
+  }
+
+  return readFloatEnv("RAG_MIN_SCORE", 0.35, 0, 1);
+}
+
+function readBooleanEnv(name: string, fallback: boolean) {
+  const value = process.env[name]?.trim().toLowerCase();
+
+  if (!value) {
+    return fallback;
+  }
+
+  if (["1", "true", "yes", "on"].includes(value)) {
+    return true;
+  }
+
+  if (["0", "false", "no", "off"].includes(value)) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function readFirstEnv(...names: string[]) {
+  for (const name of names) {
+    const value = process.env[name]?.trim();
+
+    if (value) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
 function normalizeProviderName(value: string | undefined, fallback: ChatProviderName): ChatProviderName {
   const normalized = value?.trim().toLowerCase();
 
   return normalized === "qwen" || normalized === "deepseek" || normalized === "openai" ? normalized : fallback;
+}
+
+function normalizeEmbeddingProviderName(value: string | undefined): EmbeddingProviderName {
+  const normalized = value?.trim().toLowerCase();
+
+  return normalized === "openai" ? "openai" : "openai";
+}
+
+function getConfiguredPrimaryProvider() {
+  return normalizeProviderName(readFirstEnv("AI_PROVIDER", "LLM_PROVIDER"), "qwen");
+}
+
+function readProviderScopedLLMModel(provider: ChatProviderName) {
+  const model = process.env.LLM_MODEL?.trim();
+
+  if (!model) {
+    return "";
+  }
+
+  const configuredProvider = normalizeProviderName(readFirstEnv("AI_PROVIDER", "LLM_PROVIDER"), "qwen");
+
+  return configuredProvider === provider ? model : "";
 }
 
 export function hasUsableOpenAIKey() {
@@ -61,7 +126,7 @@ export function hasUsableDeepSeekKey() {
 }
 
 export function getPrimaryAIProvider(): ChatProviderName {
-  return normalizeProviderName(process.env.AI_PROVIDER, "qwen");
+  return getConfiguredPrimaryProvider();
 }
 
 export function getFallbackAIProvider(): ChatProviderName | null {
@@ -124,19 +189,35 @@ export function getDeepSeekBaseUrl() {
 }
 
 export function getOpenAIModel() {
-  return process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+  return process.env.OPENAI_MODEL?.trim() || readProviderScopedLLMModel("openai") || "gpt-4.1-mini";
 }
 
 export function getQwenModel() {
-  return process.env.QWEN_MODEL?.trim() || "qwen-plus";
+  return process.env.QWEN_MODEL?.trim() || readProviderScopedLLMModel("qwen") || "qwen-plus";
 }
 
 export function getDeepSeekModel() {
-  return process.env.DEEPSEEK_MODEL?.trim() || "deepseek-chat";
+  return process.env.DEEPSEEK_MODEL?.trim() || readProviderScopedLLMModel("deepseek") || "deepseek-chat";
+}
+
+export function getChatModelForProvider(provider = getPrimaryAIProvider()) {
+  if (provider === "qwen") {
+    return getQwenModel();
+  }
+
+  if (provider === "deepseek") {
+    return getDeepSeekModel();
+  }
+
+  return getOpenAIModel();
+}
+
+export function getEmbeddingProviderName(): EmbeddingProviderName {
+  return normalizeEmbeddingProviderName(process.env.EMBEDDING_PROVIDER);
 }
 
 export function getEmbeddingModel() {
-  return process.env.OPENAI_EMBEDDING_MODEL?.trim() || "text-embedding-3-small";
+  return readFirstEnv("OPENAI_EMBEDDING_MODEL", "EMBEDDING_MODEL") || "text-embedding-3-small";
 }
 
 export function isProductionRuntime() {

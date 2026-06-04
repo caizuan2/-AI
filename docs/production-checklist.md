@@ -8,7 +8,8 @@
 - [ ] `DATABASE_URL` 指向生产 Supabase Pooler 完整 URI，端口为 `6543`，不是本地数据库。
 - [ ] `DIRECT_URL` 指向生产 Supabase Direct 完整 URI，端口为 `5432`，用于 Prisma migrate。
 - [ ] `SESSION_SECRET` 已配置为长随机字符串。
-- [ ] `OPENAI_API_KEY` 已配置，且没有写入代码或提交到仓库。
+- [ ] 至少一个生成 provider key 已配置，且没有写入代码或提交到仓库。
+- [ ] `OPENAI_API_KEY` 已配置用于 embedding / 向量检索。
 - [ ] `OPENAI_MODEL` 已配置，例如 `gpt-4.1-mini`。
 - [ ] `OPENAI_EMBEDDING_MODEL` 已配置，例如 `text-embedding-3-small`。
 - [ ] `CRON_SECRET` 已配置为强随机字符串。
@@ -63,7 +64,8 @@ pnpm prisma:generate
 
 ## 5. OpenAI API Key 是否配置
 
-- [ ] `OPENAI_API_KEY` 已配置在部署平台环境变量中。
+- [ ] `QWEN_API_KEY`、`OPENAI_API_KEY` 或 `DEEPSEEK_API_KEY` 至少有一个可用于生成模型。
+- [ ] `OPENAI_API_KEY` 已配置在部署平台环境变量中用于 embedding。
 - [ ] API key 具备调用所选 chat model 的权限。
 - [ ] API key 具备调用所选 embedding model 的权限。
 - [ ] 已确认 OpenAI 账户额度、账单和速率限制满足 MVP 使用量。

@@ -1,0 +1,253 @@
+{
+  "ok": true,
+  "generatedAt": "2026-06-04T15:54:07.940Z",
+  "durationMs": 77517,
+  "user": {
+    "id": "cmpxfx7w20004l809h5uoj0g7",
+    "phone": "+8613352833702",
+    "email": null
+  },
+  "config": {
+    "provider": "qwen",
+    "model": "qwen-plus",
+    "providerConfigured": true,
+    "llmEnabled": false,
+    "embeddingProvider": "openai",
+    "embeddingModel": "text-embedding-3-small",
+    "topK": 10,
+    "similarityThreshold": 0.35,
+    "maxContextChunks": 12,
+    "maxContextChars": 12000
+  },
+  "indexStatus": {
+    "knowledgeItems": 1,
+    "chunks": 1,
+    "embeddedChunks": 0,
+    "missingEmbeddings": 1,
+    "metadataIndexedChunks": 0,
+    "vectorizedRatio": 0,
+    "pgvectorEnabled": true,
+    "matchFunctionExists": true
+  },
+  "tests": [
+    {
+      "question": "联创合伙人",
+      "answer": "结论：目前只能按已命中的资料做谨慎回答，资格、禁止事项和执行口径还需要继续确认。\n\n解释：\n- 联创合伙人计划获取资格\n\n提醒：《联创合伙人计划剖析》文档，仅限下发到五星以上领导人和在梦想家园讲该课程的相关核心。新伙伴一线沟通不要讲制度，一律以产品为导向，对于新客户，只讲销售出去一套产品有30%提成。要了解更多合伙人计划，引导进梦想家园了解学习，不然新人讲不懂联创合伙人计划，反而讲偏了，适得其反！！！\n\n五星以上领导人，需要文档，请私下找咨询线上领导人获取，禁止下发！ [1]\n\n建议：先核对资格要求、适用对象、审批或确认流程，再决定是否推荐对方进入下一步。\n\n可用话术：你可以先了解联创合伙人计划的正式资格和边界，如果条件匹配，我再帮你对接下一步确认。\n\n注意事项：不要夸大收益，不要承诺一定入选，不要绕开正式确认流程。",
+      "providerUsed": "local",
+      "modelUsed": "local-test-mode",
+      "fallbackUsed": true,
+      "retrieval": {
+        "mode": "keyword",
+        "answerMode": "partial",
+        "confidence": 0.8519,
+        "totalCandidates": 1,
+        "filteredCandidates": 1,
+        "returnedSourceCount": 1,
+        "usedContextCount": 1,
+        "queries": [
+          "联创合伙人",
+          "联创合伙人 联创合伙 创合伙人 联创合 合伙人",
+          "联创合伙人 联创合伙 创合伙人",
+          "联创合伙人 联创合伙 创合伙人 资格 条件 要求 适用对象 禁止 需要确认"
+        ],
+        "intent": {
+          "type": "policy_explanation",
+          "label": "制度解释"
+        },
+        "relaxedRetrievalUsed": true,
+        "keywordFallbackUsed": false,
+        "message": "已找到 1 条相关候选知识，其中 1 条用于回答；依据还不完整，将按当前资料谨慎整理。"
+      },
+      "analysis": {
+        "keyPoints": [
+          {
+            "key": "qualification",
+            "label": "资格/条件",
+            "covered": true
+          },
+          {
+            "key": "forbidden",
+            "label": "禁止事项/边界",
+            "covered": true
+          },
+          {
+            "key": "script",
+            "label": "可用话术",
+            "covered": true
+          },
+          {
+            "key": "executionAdvice",
+            "label": "执行建议",
+            "covered": true
+          }
+        ],
+        "missingKeyPoints": [],
+        "aiLike": {
+          "passed": true,
+          "matches": []
+        }
+      },
+      "citations": [
+        {
+          "citationIndex": 1,
+          "title": "联创合伙人计划资格及沟通规范",
+          "category": "内部流程",
+          "chunkId": "cmpzo56ro0000v8wgjc7tpnco",
+          "knowledgeItemId": "cmpzl4ixh0009l109zjji15n2",
+          "sourceTitle": "3、联创合伙人计划获取资格(1).docx",
+          "sourceUrl": null,
+          "similarity": 1,
+          "score": 0.9649
+        }
+      ]
+    },
+    {
+      "question": "联创合伙人计划的资格要求是什么？",
+      "answer": "结论：目前只能按已命中的资料做谨慎回答，资格、禁止事项和执行口径还需要继续确认。\n\n解释：\n- 联创合伙人计划获取资格\n\n提醒：《联创合伙人计划剖析》文档，仅限下发到五星以上领导人和在梦想家园讲该课程的相关核心。新伙伴一线沟通不要讲制度，一律以产品为导向，对于新客户，只讲销售出去一套产品有30%提成。要了解更多合伙人计划，引导进梦想家园了解学习，不然新人讲不懂联创合伙人计划，反而讲偏了，适得其反！！！\n\n五星以上领导人，需要文档，请私下找咨询线上领导人获取，禁止下发！ [1]\n\n建议：先核对资格要求、适用对象、审批或确认流程，再决定是否推荐对方进入下一步。\n\n可用话术：你可以先了解联创合伙人计划的正式资格和边界，如果条件匹配，我再帮你对接下一步确认。\n\n注意事项：不要夸大收益，不要承诺一定入选，不要绕开正式确认流程。",
+      "providerUsed": "local",
+      "modelUsed": "local-test-mode",
+      "fallbackUsed": true,
+      "retrieval": {
+        "mode": "keyword",
+        "answerMode": "partial",
+        "confidence": 0.8519,
+        "totalCandidates": 1,
+        "filteredCandidates": 1,
+        "returnedSourceCount": 1,
+        "usedContextCount": 1,
+        "queries": [
+          "联创合伙人计划的资格要求是什么？",
+          "联创合伙人计划的资格要求是什么 联创合伙人计 创合伙人计划 合伙人计划的 人计划的资格",
+          "联创合伙人计划的资格要求是什么 联创合伙人计 创合伙人计划",
+          "联创合伙人计划的资格要求是什么 联创合伙人计 创合伙人计划 资格 条件 要求 适用对象 禁止 需要确认"
+        ],
+        "intent": {
+          "type": "policy_explanation",
+          "label": "制度解释"
+        },
+        "relaxedRetrievalUsed": true,
+        "keywordFallbackUsed": false,
+        "message": "已找到 1 条相关候选知识，其中 1 条用于回答；依据还不完整，将按当前资料谨慎整理。"
+      },
+      "analysis": {
+        "keyPoints": [
+          {
+            "key": "qualification",
+            "label": "资格/条件",
+            "covered": true
+          },
+          {
+            "key": "forbidden",
+            "label": "禁止事项/边界",
+            "covered": true
+          },
+          {
+            "key": "script",
+            "label": "可用话术",
+            "covered": true
+          },
+          {
+            "key": "executionAdvice",
+            "label": "执行建议",
+            "covered": true
+          }
+        ],
+        "missingKeyPoints": [],
+        "aiLike": {
+          "passed": true,
+          "matches": []
+        }
+      },
+      "citations": [
+        {
+          "citationIndex": 1,
+          "title": "联创合伙人计划资格及沟通规范",
+          "category": "内部流程",
+          "chunkId": "cmpzo56ro0000v8wgjc7tpnco",
+          "knowledgeItemId": "cmpzl4ixh0009l109zjji15n2",
+          "sourceTitle": "3、联创合伙人计划获取资格(1).docx",
+          "sourceUrl": null,
+          "similarity": 1,
+          "score": 0.9649
+        }
+      ]
+    },
+    {
+      "question": "新伙伴问我怎么成为联创合伙人，我应该怎么说？",
+      "answer": "结论：目前只能按已命中的资料做谨慎回答，资格、禁止事项和执行口径还需要继续确认。\n\n解释：\n- 联创合伙人计划获取资格\n\n提醒：《联创合伙人计划剖析》文档，仅限下发到五星以上领导人和在梦想家园讲该课程的相关核心。新伙伴一线沟通不要讲制度，一律以产品为导向，对于新客户，只讲销售出去一套产品有30%提成。要了解更多合伙人计划，引导进梦想家园了解学习，不然新人讲不懂联创合伙人计划，反而讲偏了，适得其反！！！\n\n五星以上领导人，需要文档，请私下找咨询线上领导人获取，禁止下发！ [1]\n\n建议：先核对资格要求、适用对象、审批或确认流程，再决定是否推荐对方进入下一步。\n\n可用话术：你可以先了解联创合伙人计划的正式资格和边界，如果条件匹配，我再帮你对接下一步确认。\n\n注意事项：不要夸大收益，不要承诺一定入选，不要绕开正式确认流程。",
+      "providerUsed": "local",
+      "modelUsed": "local-test-mode",
+      "fallbackUsed": true,
+      "retrieval": {
+        "mode": "keyword",
+        "answerMode": "partial",
+        "confidence": 0.8519,
+        "totalCandidates": 1,
+        "filteredCandidates": 1,
+        "returnedSourceCount": 1,
+        "usedContextCount": 1,
+        "queries": [
+          "新伙伴问我怎么成为联创合伙人，我应该怎么说？",
+          "新伙伴问我怎么成为联创合伙人 怎么成为联创 么成为联创合 成为联创合伙 为联创合伙人",
+          "新伙伴问我怎么成为联创合伙人 怎么成为联创 么成为联创合",
+          "新伙伴问我怎么成为联创合伙人 怎么成为联创 么成为联创合 沟通 话术 注意事项 不能说 推荐表达"
+        ],
+        "intent": {
+          "type": "business_script",
+          "label": "业务话术"
+        },
+        "relaxedRetrievalUsed": true,
+        "keywordFallbackUsed": false,
+        "message": "已找到 1 条相关候选知识，其中 1 条用于回答；依据还不完整，将按当前资料谨慎整理。"
+      },
+      "analysis": {
+        "keyPoints": [
+          {
+            "key": "qualification",
+            "label": "资格/条件",
+            "covered": true
+          },
+          {
+            "key": "forbidden",
+            "label": "禁止事项/边界",
+            "covered": true
+          },
+          {
+            "key": "script",
+            "label": "可用话术",
+            "covered": true
+          },
+          {
+            "key": "executionAdvice",
+            "label": "执行建议",
+            "covered": true
+          }
+        ],
+        "missingKeyPoints": [],
+        "aiLike": {
+          "passed": true,
+          "matches": []
+        }
+      },
+      "citations": [
+        {
+          "citationIndex": 1,
+          "title": "联创合伙人计划资格及沟通规范",
+          "category": "内部流程",
+          "chunkId": "cmpzo56ro0000v8wgjc7tpnco",
+          "knowledgeItemId": "cmpzl4ixh0009l109zjji15n2",
+          "sourceTitle": "3、联创合伙人计划获取资格(1).docx",
+          "sourceUrl": null,
+          "similarity": 1,
+          "score": 0.9649
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "totalQuestions": 3,
+    "executedQuestions": 3,
+    "failedQuestionCount": 0,
+    "failedQuestions": []
+  }
+}

@@ -1,7 +1,11 @@
 import "server-only";
 
 import { chatWithFallback } from "@/lib/ai/providers";
-import { buildRagPromptMessages, type RagContext } from "@/lib/ai/rag-prompt";
+import {
+  buildRagPromptMessages,
+  type RagAnswerMode,
+  type RagContext
+} from "@/lib/ai/rag-prompt";
 import type { ChatProviderName } from "@/lib/ai/types";
 import { recordAiUsage } from "@/lib/analytics";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
@@ -28,6 +32,11 @@ export interface GenerateRagAnswerOptions {
   requestId?: string;
   userId?: string;
   provider?: ChatProviderName;
+  model?: string;
+  answerMode?: RagAnswerMode;
+  confidence?: number;
+  intentLabel?: string;
+  retrievalMessage?: string | null;
 }
 
 export async function generateRagAnswer(
@@ -45,16 +54,22 @@ export async function generateRagAnswer(
     throw new Error("generateRagAnswer failed: at least one context is required.");
   }
 
-  const messages = buildRagPromptMessages(normalizedQuestion, contexts);
+  const messages = buildRagPromptMessages(normalizedQuestion, contexts, {
+    answerMode: options.answerMode,
+    confidence: options.confidence,
+    intentLabel: options.intentLabel,
+    retrievalMessage: options.retrievalMessage
+  });
   const startedAt = Date.now();
   const estimatedInputTokens = estimateTokenCount(messages.map((message) => message.content).join("\n\n"));
 
   try {
     const response = await chatWithFallback({
-      temperature: 0.2,
+      temperature: options.answerMode === "partial" ? 0.25 : 0.35,
       messages,
       requestId: options.requestId,
-      provider: options.provider
+      provider: options.provider,
+      model: options.model
     });
     const answer = response.text.trim();
 
@@ -75,7 +90,10 @@ export async function generateRagAnswer(
       estimatedOutputTokens,
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
       fallbackUsed: response.fallbackUsed,
-      contextCount: contexts.length
+      contextCount: contexts.length,
+      answerMode: options.answerMode,
+      confidence: options.confidence,
+      intentLabel: options.intentLabel
     });
     await recordAiUsage({
       requestId: options.requestId,
@@ -89,7 +107,10 @@ export async function generateRagAnswer(
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
         originalProviderErrorCode: response.originalProviderErrorCode,
-        contextCount: contexts.length
+        contextCount: contexts.length,
+        answerMode: options.answerMode,
+        confidence: options.confidence,
+        intentLabel: options.intentLabel
       }
     });
 

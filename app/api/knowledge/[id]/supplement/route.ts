@@ -337,7 +337,15 @@ export async function POST(request: Request, context: RouteContext) {
       requestId,
       currentUser.id
     );
-    const chunks = splitContentIntoChunks(supplementedContent);
+    const chunks = splitContentIntoChunks(supplementedContent, {
+      title: structured.title,
+      category: structured.category,
+      tags: structured.tags,
+      summary: structured.summary,
+      sourceType: existing.sourceType,
+      sourceTitle: existing.sourceTitle,
+      sourceUrl: existing.sourceUrl
+    });
     const embeddings = await createChunkEmbeddings(chunks, {
       requestId,
       operation: "knowledge_supplement_chunk_embedding",
@@ -371,10 +379,12 @@ export async function POST(request: Request, context: RouteContext) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
+                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
                   embeddingError: embedding?.errorMessage ?? null,
+                  embeddingStatus: embedding?.embedding ? "indexed" : "missing",
                   regeneratedBy: "knowledge_supplement"
                 }
               };

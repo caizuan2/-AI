@@ -93,11 +93,12 @@ export function createDeepSeekChatProvider(): ChatProvider {
     async chat(input: ChatProviderInput): Promise<ChatProviderResult> {
       const startedAt = Date.now();
       const estimatedInputTokens = estimateTokenCount(input.messages.map((message) => message.content).join("\n"));
+      const model = input.model?.trim() || getDeepSeekModel();
 
       try {
         const response = await withRetry(
           () => getDeepSeekClient().chat.completions.create({
-            model: getDeepSeekModel(),
+            model,
             temperature: input.temperature ?? 0.2,
             max_tokens: input.maxTokens,
             messages: toOpenAIChatMessages(input)
@@ -106,7 +107,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
             logger.warn("ai.provider_retry", {
               requestId: input.requestId,
               provider: "deepseek",
-              model: getDeepSeekModel(),
+              model,
               attempt,
               error: toSafeErrorLog(error)
             });
@@ -139,7 +140,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
         logger.error("ai.provider_failed", {
           requestId: input.requestId,
           provider: "deepseek",
-          model: getDeepSeekModel(),
+          model,
           durationMs: Date.now() - startedAt,
           error: toSafeErrorLog(error)
         });

@@ -6,17 +6,20 @@ import type { ChatProviderName } from "@/lib/ai/types";
 import { requireLicensedUser } from "@/lib/auth/guards";
 import { buildAiCacheKey, getAiCacheValue, getCorpusVersion, setAiCacheValue } from "@/lib/cache/ai-cache";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
+import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { retrieveKnowledge } from "@/lib/rag/retriever";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
+  RAG_MAX_CONTEXT_CHUNKS,
   RAG_MAX_CONTEXT_CHARS,
   getDeepSeekModel,
   getOpenAIModel,
   getPrimaryAIProvider,
   getQwenModel,
   hasDatabaseUrl,
+  hasUsableChatProvider,
   type ChatProviderName as ConfigChatProviderName
 } from "@/lib/server-config";
 
@@ -35,6 +38,7 @@ interface KnowledgeQuerySource {
   title: string;
   contentPreview: string;
   similarity: number;
+  score: number;
 }
 
 interface KnowledgeQueryResponse {
@@ -87,7 +91,7 @@ function toRagContexts(results: Awaited<ReturnType<typeof retrieveKnowledge>>["r
   let usedChars = 0;
   const contexts: RagContext[] = [];
 
-  for (const result of results) {
+  for (const result of results.slice(0, RAG_MAX_CONTEXT_CHUNKS)) {
     const remaining = RAG_MAX_CONTEXT_CHARS - usedChars;
 
     if (remaining <= 0) {
@@ -101,8 +105,14 @@ function toRagContexts(results: Awaited<ReturnType<typeof retrieveKnowledge>>["r
       id: result.knowledgeItemId,
       title: result.title,
       content,
+      summary: result.summary,
+      category: result.category,
       sourceType: result.sourceType,
-      sourceId: result.chunkId
+      sourceId: result.chunkId,
+      sourceTitle: result.sourceTitle,
+      sourceUrl: result.sourceUrl,
+      score: result.score,
+      similarity: result.similarity
     });
   }
 
@@ -115,7 +125,8 @@ function toSources(results: Awaited<ReturnType<typeof retrieveKnowledge>>["resul
     chunkId: result.chunkId,
     title: result.title,
     contentPreview: result.chunkText.slice(0, 240),
-    similarity: result.similarity
+    similarity: result.similarity,
+    score: result.score
   }));
 }
 
@@ -194,6 +205,7 @@ export async function POST(request: Request) {
     if (cached) {
       return apiSuccess<KnowledgeQueryResponse>({
         ...cached,
+        answer: cleanUserFacingRagAnswer(cached.answer),
         cached: true,
         requestId,
         latencyMs: Date.now() - startedAt
@@ -204,17 +216,18 @@ export async function POST(request: Request) {
       query: input.query,
       topK: effectiveTopK,
       minSimilarity: effectiveMinScore,
+      minResults: 3,
       userId: user.id,
       requestId
     });
     const sources = toSources(retrieval.results);
 
-    if (retrieval.insufficient || sources.length === 0) {
+    if (sources.length === 0) {
       const response: KnowledgeQueryResponse = {
-        answer: retrieval.message ?? "知识库中没有找到足够依据。",
+        answer: `这个问题当前没有足够的内部资料可以直接确认。可以先补充相关制度原文、标准口径、适用边界或实际沟通案例，我再帮你整理成可直接使用的回答。`,
         sources: [],
-        providerUsed: "none",
-        modelUsed: "none",
+        providerUsed: effectiveProvider,
+        modelUsed: requestedModel,
         fallbackUsed: false,
         cached: false,
         requestId,
@@ -224,13 +237,22 @@ export async function POST(request: Request) {
       return apiSuccess<KnowledgeQueryResponse>(response);
     }
 
+    if (!hasUsableChatProvider(effectiveProvider)) {
+      throw new AIError("当前选择的 AI 生成 provider 未配置，请在环境变量或设置中配置可用模型。");
+    }
+
     const ragAnswer = await generateRagAnswer(input.query, toRagContexts(retrieval.results), {
       requestId,
       userId: user.id,
-      provider: effectiveProvider
+      provider: effectiveProvider,
+      model: requestedModel,
+      answerMode: retrieval.answerMode,
+      confidence: retrieval.confidence,
+      intentLabel: retrieval.intent.label,
+      retrievalMessage: retrieval.message
     });
     const response: KnowledgeQueryResponse = {
-      answer: ragAnswer.answer,
+      answer: cleanUserFacingRagAnswer(ragAnswer.answer),
       sources,
       providerUsed: ragAnswer.providerUsed,
       modelUsed: ragAnswer.model,

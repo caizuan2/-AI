@@ -1,0 +1,154 @@
+{
+  "timestamp": "2026-06-04T18:21:59.742Z",
+  "serverUrl": "http://localhost:3001",
+  "apiPath": "/api/chat",
+  "auth": {
+    "cookieDetected": true,
+    "cookieSource": "RAG_TEST_COOKIE_NAME/RAG_TEST_COOKIE_VALUE",
+    "cookieName": "ai_kb_session",
+    "cookieValuePreview": "IuAnt8***C5YE",
+    "checks": [
+      {
+        "path": "/api/auth/session",
+        "status": 404,
+        "exists": false,
+        "message": "不存在或不支持该方法",
+        "responseText": "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/css/app/layout.css?v=1780..."
+      },
+      {
+        "path": "/api/session",
+        "status": 404,
+        "exists": false,
+        "message": "不存在或不支持该方法",
+        "responseText": "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/css/app/layout.css?v=1780..."
+      },
+      {
+        "path": "/api/me",
+        "status": 404,
+        "exists": false,
+        "message": "不存在或不支持该方法",
+        "responseText": "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/css/app/layout.css?v=1780..."
+      },
+      {
+        "path": "/api/user",
+        "status": 404,
+        "exists": false,
+        "message": "不存在或不支持该方法",
+        "responseText": "<!DOCTYPE html><html lang=\"zh-CN\"><head><meta charSet=\"utf-8\"/><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/><link rel=\"stylesheet\" href=\"/_next/static/css/app/layout.css?v=1780..."
+      }
+    ]
+  },
+  "summary": {
+    "total": 5,
+    "passed": 5,
+    "failed": 0,
+    "warnings": 0
+  },
+  "results": [
+    {
+      "question": "联创合伙人",
+      "answer": "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。",
+      "passed": true,
+      "failures": [],
+      "warnings": [],
+      "mechanicalPhrasesFound": [],
+      "businessKeywordsFound": [
+        "联创合伙人",
+        "五星",
+        "领导人",
+        "梦想家园",
+        "新伙伴",
+        "产品",
+        "提成",
+        "承诺",
+        "确认"
+      ],
+      "answerLength": 164,
+      "suggestion": "无需修改，当前回答已基本符合自然、简洁、直接的 ChatGPT 风格。"
+    },
+    {
+      "question": "联创合伙人计划的资格要求是什么？",
+      "answer": "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。",
+      "passed": true,
+      "failures": [],
+      "warnings": [],
+      "mechanicalPhrasesFound": [],
+      "businessKeywordsFound": [
+        "联创合伙人",
+        "五星",
+        "领导人",
+        "梦想家园",
+        "新伙伴",
+        "产品",
+        "提成",
+        "承诺",
+        "确认"
+      ],
+      "answerLength": 164,
+      "suggestion": "无需修改，当前回答已基本符合自然、简洁、直接的 ChatGPT 风格。"
+    },
+    {
+      "question": "新伙伴问我怎么成为联创合伙人，我应该怎么说？",
+      "answer": "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。",
+      "passed": true,
+      "failures": [],
+      "warnings": [],
+      "mechanicalPhrasesFound": [],
+      "businessKeywordsFound": [
+        "联创合伙人",
+        "五星",
+        "领导人",
+        "梦想家园",
+        "新伙伴",
+        "产品",
+        "提成",
+        "承诺",
+        "确认"
+      ],
+      "answerLength": 164,
+      "suggestion": "无需修改，当前回答已基本符合自然、简洁、直接的 ChatGPT 风格。"
+    },
+    {
+      "question": "联创合伙人计划能不能直接跟新客户讲？",
+      "answer": "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。",
+      "passed": true,
+      "failures": [],
+      "warnings": [],
+      "mechanicalPhrasesFound": [],
+      "businessKeywordsFound": [
+        "联创合伙人",
+        "五星",
+        "领导人",
+        "梦想家园",
+        "新伙伴",
+        "产品",
+        "提成",
+        "承诺",
+        "确认"
+      ],
+      "answerLength": 164,
+      "suggestion": "无需修改，当前回答已基本符合自然、简洁、直接的 ChatGPT 风格。"
+    },
+    {
+      "question": "五星领导人想要这个文档，应该怎么处理？",
+      "answer": "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。",
+      "passed": true,
+      "failures": [],
+      "warnings": [],
+      "mechanicalPhrasesFound": [],
+      "businessKeywordsFound": [
+        "联创合伙人",
+        "五星",
+        "领导人",
+        "梦想家园",
+        "新伙伴",
+        "产品",
+        "提成",
+        "承诺",
+        "确认"
+      ],
+      "answerLength": 164,
+      "suggestion": "无需修改，当前回答已基本符合自然、简洁、直接的 ChatGPT 风格。"
+    }
+  ]
+}

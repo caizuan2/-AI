@@ -114,6 +114,7 @@ const protectedPagePrefixes = [
   "/dashboard",
   "/ingest",
   "/upload",
+  "/sources",
   "/knowledge",
   "/chat",
   "/review",

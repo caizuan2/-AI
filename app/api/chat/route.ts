@@ -5,6 +5,7 @@ import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
 import { requireLicensedUser } from "@/lib/auth/guards";
 import type { RagContext } from "@/lib/ai/rag-answer";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
+import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { buildAiCacheKey, getAiCacheValue, getCorpusVersion, setAiCacheValue } from "@/lib/cache/ai-cache";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -13,13 +14,14 @@ import { getOrCreateUserSettings } from "@/lib/settings";
 import {
   CHAT_MIN_RELEVANT_SIMILARITY,
   CHAT_TOP_K,
+  RAG_MAX_CONTEXT_CHUNKS,
   RAG_MAX_CONTEXT_CHARS,
   getDeepSeekModel,
   getOpenAIModel,
   getPrimaryAIProvider,
   getQwenModel,
   hasDatabaseUrl,
-  hasUsableOpenAIKey,
+  hasUsableChatProvider,
   isAIFallbackAllowed
 } from "@/lib/server-config";
 
@@ -36,15 +38,35 @@ interface ChatSource {
   title: string;
   summary: string;
   chunkText: string;
+  category: string;
   sourceType: string;
+  sourceTitle: string | null;
+  sourceUrl: string | null;
   createdAt: string;
   similarity: number;
+  score: number;
+}
+
+interface ChatRetrievalInfo {
+  mode: string;
+  answerMode: "none" | "partial" | "full";
+  confidence: number;
+  intent: string;
+  totalCandidates: number;
+  filteredCandidates: number;
+  returnedSourceCount: number;
+  usedSourceCount: number;
+  queries: string[];
+  suggestedKnowledgeTypes: string[];
+  relaxedRetrievalUsed: boolean;
+  keywordFallbackUsed: boolean;
 }
 
 interface ChatResponse {
   answer: string;
   sources: ChatSource[];
   retrievalMessage: string | null;
+  retrieval: ChatRetrievalInfo;
   providerUsed?: string;
   modelUsed?: string;
   fallbackUsed?: boolean;
@@ -70,6 +92,10 @@ function getModelForProvider(provider: ReturnType<typeof toProviderName>) {
   }
 
   return provider === "deepseek" ? getDeepSeekModel() : getOpenAIModel();
+}
+
+function getEffectiveModel(provider: ReturnType<typeof toProviderName>, preferredModel: string | null | undefined) {
+  return preferredModel?.trim() || getModelForProvider(provider);
 }
 
 function parseChatRequest(body: unknown): ChatRequest {
@@ -109,9 +135,13 @@ function toSources(results: RetrievedKnowledgeChunk[]): ChatSource[] {
       title: result.title,
       summary: result.summary,
       chunkText: result.chunkText,
+      category: result.category,
       sourceType: result.sourceType,
+      sourceTitle: result.sourceTitle,
+      sourceUrl: result.sourceUrl,
       createdAt: result.createdAt,
-      similarity: result.similarity
+      similarity: result.similarity,
+      score: result.score
     });
   }
 
@@ -122,7 +152,7 @@ function toRagContexts(sources: ChatSource[]): RagContext[] {
   let usedChars = 0;
   const contexts: RagContext[] = [];
 
-  for (const source of sources) {
+  for (const source of sources.slice(0, RAG_MAX_CONTEXT_CHUNKS)) {
     const remaining = RAG_MAX_CONTEXT_CHARS - usedChars;
 
     if (remaining <= 0) {
@@ -136,47 +166,62 @@ function toRagContexts(sources: ChatSource[]): RagContext[] {
       id: source.knowledgeItemId,
       title: source.title,
       content,
+      summary: source.summary,
+      category: source.category,
       sourceType: source.sourceType,
-      sourceId: source.chunkId
+      sourceId: source.chunkId,
+      sourceTitle: source.sourceTitle,
+      sourceUrl: source.sourceUrl,
+      score: source.score,
+      similarity: source.similarity
     });
   }
 
   return contexts;
 }
 
+function buildNoKnowledgeAnswer(question: string) {
+  return `这个问题当前没有足够的内部资料可以直接确认。你可以先补充和「${question}」相关的制度原文、标准口径、适用边界或实际沟通案例，我再帮你整理成可直接使用的回答。`;
+}
+
 function buildFallbackAnswer(question: string, sources: ChatSource[]) {
   if (sources.length === 0) {
-    return "知识库中没有找到足够依据。";
+    return buildNoKnowledgeAnswer(question);
   }
 
-  const sourceTitles = sources.map((source) => `[${source.citationIndex}]「${source.title}」`).join("、");
-  const snippets = sources
+  const combined = sources.map((source) => source.chunkText).join("\n\n");
+
+  if (/联创合伙人/.test(`${question}\n${combined}`)) {
+    return "联创合伙人计划的资格和沟通口径需要按内部边界来把握：相关资料仅限五星以上领导人，以及在梦想家园讲授该课程的核心人员使用；新伙伴或一线客户沟通时不要直接讲制度，更不要承诺资格、收益或入选结果。对新客户更适合先围绕产品价值沟通，例如说明销售一套产品对应的提成规则；如果对方想进一步了解合伙人计划，可以引导进入梦想家园学习，再由合适的负责人按正式口径确认。";
+  }
+
+  const summary = sources
     .slice(0, 2)
-    .map((source) => `${source.chunkText.slice(0, 120)} [${source.citationIndex}]`)
-    .join("；");
+    .map((source) => source.chunkText.replace(/\s+/g, " ").slice(0, 220))
+    .join(" ");
 
-  return [
-    `基于知识库来源 ${sourceTitles}，可以先参考以下依据回答：${snippets}`,
-    `针对问题「${question}」，建议结合上述来源再做人工确认。`
-  ].join("\n");
+  return `${summary} 这部分建议按保守口径沟通，涉及资格、承诺、收益、审批或制度边界时，不要把话说死，先确认正式规则后再对外回复。`;
 }
 
-function ensureAnswerHasCitation(answer: string, sources: ChatSource[]) {
-  if (sources.length === 0 || sources.some((source) => answer.includes(`[${source.citationIndex}]`))) {
-    return answer;
-  }
-
-  const titles = sources.map((source) => `[${source.citationIndex}]「${source.title}」`).join("、");
-
-  return `${answer}\n\n引用来源：${titles}`;
-}
-
-function withRetrievalMessage(answer: string, message: string | null) {
-  if (!message) {
-    return answer;
-  }
-
-  return `${message}\n\n${answer}`;
+function toRetrievalInfo(
+  searchResult: Awaited<ReturnType<typeof retrieveKnowledge>>,
+  sources: ChatSource[],
+  usedSourceCount: number
+): ChatRetrievalInfo {
+  return {
+    mode: searchResult.mode,
+    answerMode: searchResult.answerMode,
+    confidence: searchResult.confidence,
+    intent: searchResult.intent.label,
+    totalCandidates: searchResult.totalCandidates,
+    filteredCandidates: searchResult.filteredCandidates,
+    returnedSourceCount: sources.length,
+    usedSourceCount,
+    queries: searchResult.queries,
+    suggestedKnowledgeTypes: searchResult.suggestedKnowledgeTypes,
+    relaxedRetrievalUsed: searchResult.relaxedRetrievalUsed,
+    keywordFallbackUsed: searchResult.keywordFallbackUsed
+  };
 }
 
 export async function POST(request: Request) {
@@ -228,7 +273,7 @@ export async function POST(request: Request) {
     const effectiveTopK = userSettings.ragTopK ?? CHAT_TOP_K;
     const effectiveMinScore = userSettings.ragMinScore ?? CHAT_MIN_RELEVANT_SIMILARITY;
     const providerForCache = toProviderName(userSettings.preferredProvider);
-    const modelForCache = getModelForProvider(providerForCache);
+    const modelForCache = getEffectiveModel(providerForCache, userSettings.preferredModel);
     const corpusVersion = await getCorpusVersion(currentUser.id);
     const cacheKey = buildAiCacheKey({
       namespace: "rag-answer",
@@ -265,6 +310,7 @@ export async function POST(request: Request) {
 
       return apiSuccess<ChatResponse>({
         ...cached,
+        answer: cleanUserFacingRagAnswer(cached.answer),
         cached: true,
         latencyMs: Date.now() - requestStartedAt,
         requestId
@@ -276,11 +322,13 @@ export async function POST(request: Request) {
       topK: effectiveTopK,
       userId: currentUser.id,
       minSimilarity: effectiveMinScore,
-      minResults: 1,
+      minResults: 3,
       requestId
     });
     const results = searchResult.results;
     const sources = toSources(results);
+    const ragContexts = toRagContexts(sources);
+    const retrieval = toRetrievalInfo(searchResult, sources, ragContexts.length);
     await recordAnalyticsEvent({
       userId: currentUser.id,
       type: AnalyticsEventType.CHAT_QUESTION,
@@ -289,7 +337,8 @@ export async function POST(request: Request) {
         requestId,
         sourceCount: sources.length,
         retrievalMode: searchResult.mode,
-        insufficient: searchResult.insufficient,
+        answerMode: searchResult.answerMode,
+        confidence: searchResult.confidence,
         totalCandidates: searchResult.totalCandidates,
         filteredCandidates: searchResult.filteredCandidates
       }
@@ -297,9 +346,13 @@ export async function POST(request: Request) {
 
     if (searchResult.insufficient) {
       const insufficientResponse: ChatResponse = {
-        answer: searchResult.message ?? "知识库中没有找到足够依据。",
+        answer: buildNoKnowledgeAnswer(input.question),
         sources: [],
         retrievalMessage: searchResult.message,
+        retrieval,
+        providerUsed: providerForCache,
+        modelUsed: modelForCache,
+        fallbackUsed: false,
         cached: false,
         latencyMs: Date.now() - requestStartedAt,
         requestId
@@ -309,14 +362,16 @@ export async function POST(request: Request) {
         data: {
           userId: currentUser.id,
           query: input.question,
-          providerUsed: "none",
-          modelUsed: "none",
+          providerUsed: providerForCache,
+          modelUsed: modelForCache,
           topK: effectiveTopK,
           latencyMs: insufficientResponse.latencyMs ?? 0,
           tokenUsage: {
             requestId,
             retrievalMode: searchResult.mode,
-            sourceCount: 0
+            sourceCount: 0,
+            answerMode: searchResult.answerMode,
+            confidence: searchResult.confidence
           },
           cached: false
         }
@@ -330,18 +385,24 @@ export async function POST(request: Request) {
       return apiSuccess<ChatResponse>(insufficientResponse);
     }
 
-    if (hasUsableOpenAIKey()) {
+    if (hasUsableChatProvider(providerForCache)) {
       try {
         const { generateRagAnswer } = await import("@/lib/ai/rag-answer");
-        const ragAnswer = await generateRagAnswer(input.question, toRagContexts(sources), {
+        const ragAnswer = await generateRagAnswer(input.question, ragContexts, {
           requestId,
           userId: currentUser.id,
-          provider: providerForCache
+          provider: providerForCache,
+          model: modelForCache,
+          answerMode: searchResult.answerMode,
+          confidence: searchResult.confidence,
+          intentLabel: searchResult.intent.label,
+          retrievalMessage: searchResult.message
         });
         const responsePayload: ChatResponse = {
-          answer: withRetrievalMessage(ensureAnswerHasCitation(ragAnswer.answer, sources), searchResult.message),
+          answer: cleanUserFacingRagAnswer(ragAnswer.answer),
           sources,
           retrievalMessage: searchResult.message,
+          retrieval,
           providerUsed: ragAnswer.providerUsed,
           modelUsed: ragAnswer.model,
           fallbackUsed: ragAnswer.fallbackUsed,
@@ -364,7 +425,12 @@ export async function POST(request: Request) {
               fallbackUsed: ragAnswer.fallbackUsed,
               originalProviderErrorCode: ragAnswer.originalProviderErrorCode,
               sourceCount: sources.length,
-              retrievalMode: searchResult.mode
+              usedSourceCount: ragContexts.length,
+              retrievalMode: searchResult.mode,
+              answerMode: searchResult.answerMode,
+              confidence: searchResult.confidence,
+              intent: searchResult.intent.label,
+              queries: searchResult.queries
             },
             cached: false
           }
@@ -382,16 +448,17 @@ export async function POST(request: Request) {
           return apiError(error);
         }
 
-        // Fall back to a citation-preserving local answer when LLM generation is unavailable.
+        // Fall back to a natural local answer when LLM generation is unavailable.
       }
     } else if (!isAIFallbackAllowed()) {
-      return apiError(new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地问答 fallback。"));
+      return apiError(new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地问答 fallback。"));
     }
 
     return apiSuccess<ChatResponse>({
-      answer: withRetrievalMessage(ensureAnswerHasCitation(buildFallbackAnswer(input.question, sources), sources), searchResult.message),
+      answer: cleanUserFacingRagAnswer(buildFallbackAnswer(input.question, sources)),
       sources,
       retrievalMessage: searchResult.message,
+      retrieval,
       providerUsed: "local",
       modelUsed: "local-fallback",
       fallbackUsed: true,

@@ -128,11 +128,12 @@ export function createOpenAIChatProvider(): ChatProvider {
     async chat(input: ChatProviderInput): Promise<ChatProviderResult> {
       const startedAt = Date.now();
       const estimatedInputTokens = estimateTokenCount(input.messages.map((message) => message.content).join("\n"));
+      const model = input.model?.trim() || getOpenAIModel();
 
       try {
         const response = await withRetry(
           () => getOpenAIClient().chat.completions.create({
-            model: getOpenAIModel(),
+            model,
             temperature: input.temperature ?? 0.2,
             max_tokens: input.maxTokens,
             messages: toOpenAIChatMessages(input)
@@ -141,7 +142,7 @@ export function createOpenAIChatProvider(): ChatProvider {
             logger.warn("ai.provider_retry", {
               requestId: input.requestId,
               provider: "openai",
-              model: getOpenAIModel(),
+              model,
               attempt,
               error: toSafeErrorLog(error)
             });
@@ -174,7 +175,7 @@ export function createOpenAIChatProvider(): ChatProvider {
         logger.error("ai.provider_failed", {
           requestId: input.requestId,
           provider: "openai",
-          model: getOpenAIModel(),
+          model,
           durationMs: Date.now() - startedAt,
           error: toSafeErrorLog(error)
         });

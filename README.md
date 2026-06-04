@@ -27,6 +27,7 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 - `/unlock`：输入卡密激活知识库。
 - `/ingest`：投喂文本或网页链接。
 - `/upload`：上传 `txt`、`md`、`pdf`、`docx` 文件。
+- `/sources`：查看 Notion、Google Drive、Slack、GitHub、Confluence、Website Crawler 和 Local Files 等数据源连接状态。
 - `/knowledge`：查看、搜索和筛选知识。
 - `/knowledge/[id]`：查看详情、编辑、删除、补全知识。
 - `/chat`：基于知识库提问。
@@ -47,6 +48,14 @@ AI 知识库 App 是一个“对话式投喂型知识库”。你可以把会议
 - pgvector
 - OpenAI API
 - node-cron / Netlify Scheduled Functions
+
+## 产品 UI 与跨平台
+
+当前 UI 按企业级 SaaS 工作台设计：桌面端为左侧导航、中间工作区、右侧上下文面板；移动端为单栏工作流和底部导航。问答页突出引用来源、检索过程、模型信息、后续问题和反馈动作，方便追溯答案依据。
+
+现有项目是 Next.js Web 应用，Android、iOS、macOS 和 Windows 不建议重写为独立客户端。最小可维护方案是保留 Netlify + Supabase 后端，把线上 Web 应用用 Capacitor、Tauri 或 Electron 封装为原生安装包。
+
+详细打包说明见 [docs/cross-platform-packaging.md](docs/cross-platform-packaging.md)。
 
 ## 本地启动
 
@@ -94,9 +103,16 @@ DEEPSEEK_MODEL="deepseek-chat"
 AI_PROVIDER="qwen"
 AI_FALLBACK_PROVIDER="openai"
 AI_SECONDARY_FALLBACK_PROVIDER="deepseek"
-RAG_TOP_K="8"
-RAG_MIN_SCORE="0.72"
+LLM_PROVIDER=""
+LLM_MODEL=""
+EMBEDDING_PROVIDER="openai"
+EMBEDDING_MODEL=""
+RAG_TOP_K="10"
+RAG_MIN_SCORE="0.35"
+RAG_SIMILARITY_THRESHOLD="0.35"
+RAG_MAX_CONTEXT_CHUNKS="12"
 RAG_MAX_CONTEXT_CHARS="12000"
+RAG_ENABLE_RERANK="true"
 RAG_CACHE_TTL_SECONDS="3600"
 RATE_LIMIT_PER_USER_PER_MINUTE="20"
 RATE_LIMIT_GLOBAL_PER_MINUTE="500"
@@ -131,7 +147,12 @@ NODE_VERSION="22"
 - `AI_PROVIDER`：主生成 provider，可选 `qwen`、`openai` 或 `deepseek`，默认 `qwen`。
 - `AI_FALLBACK_PROVIDER`：主 provider 失败时的第一兜底 provider，建议 `openai`。
 - `AI_SECONDARY_FALLBACK_PROVIDER`：第二兜底 provider，建议 `deepseek`。
-- `RAG_TOP_K`、`RAG_MIN_SCORE`、`RAG_MAX_CONTEXT_CHARS`：RAG 检索条数、最低分数和上下文长度上限。
+- `LLM_PROVIDER` / `LLM_MODEL`：兼容别名；当 `AI_PROVIDER` 或具体 provider 模型变量未设置时生效，项目原生变量优先。
+- `EMBEDDING_PROVIDER` / `EMBEDDING_MODEL`：embedding 兼容别名；当前 provider 固定为 `openai`，`OPENAI_EMBEDDING_MODEL` 优先。
+- `RAG_TOP_K`：RAG 初次召回条数，建议 10。
+- `RAG_MIN_SCORE` / `RAG_SIMILARITY_THRESHOLD`：最低相似度阈值，二者兼容；推荐 0.25-0.45，默认 0.35。
+- `RAG_MAX_CONTEXT_CHUNKS`、`RAG_MAX_CONTEXT_CHARS`：最终传给大模型的片段数量和上下文长度上限，默认 12 条 / 12000 字符。
+- `RAG_ENABLE_RERANK`：是否启用本地重排序，默认 true。
 - `RAG_CACHE_TTL_SECONDS`：RAG 答案缓存时间，默认 3600 秒。
 - `RATE_LIMIT_PER_USER_PER_MINUTE`、`RATE_LIMIT_GLOBAL_PER_MINUTE`：用户级和全局限流。
 - `INGEST_MAX_CHUNK_CHARS`、`INGEST_CHUNK_OVERLAP_CHARS`、`INGEST_BATCH_SIZE`：投喂 chunk 切分和 embedding 批处理参数。
@@ -255,6 +276,7 @@ pnpm prisma:format               # 格式化 Prisma schema
 pnpm db:check                    # 检查生产数据库、pgvector 和关键数据表
 pnpm ingest:schema:check         # 检查投喂依赖表和字段
 pnpm rag:check                   # dry-run 检查 RAG env/database/schema/vector/provider 配置
+pnpm rag:reindex                 # 重建已有知识 chunks 与 embedding 索引
 pnpm prisma:migrate:create -- --name change-name
 pnpm prisma:migrate:deploy       # 部署迁移
 pnpm prisma:studio               # 打开 Prisma Studio

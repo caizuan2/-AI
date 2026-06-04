@@ -6,7 +6,9 @@ import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 import {
   getDeepSeekModel,
+  getEmbeddingProviderName,
   getEmbeddingModel,
+  getChatModelForProvider,
   getOpenAIModel,
   getQwenBaseUrl,
   getQwenModel,
@@ -67,7 +69,7 @@ type ProviderConfigCheck = {
 
 type EmbeddingCheck = {
   checked: boolean;
-  provider: "openai";
+  provider: string;
   model: string;
   configured: boolean;
   missingEnv: string[];
@@ -113,6 +115,16 @@ function hasEnv(name: string) {
   return Boolean(process.env[name]?.trim());
 }
 
+function hasAnyEnv(...names: string[]) {
+  return names.some(hasEnv);
+}
+
+function hasLLMModelAliasFor(provider: string) {
+  const llmProvider = process.env.AI_PROVIDER?.trim() || process.env.LLM_PROVIDER?.trim() || "qwen";
+
+  return hasEnv("LLM_MODEL") && llmProvider.toLowerCase() === provider;
+}
+
 function getBaseUrlHost(value: string) {
   try {
     return new URL(value).host;
@@ -132,7 +144,7 @@ function getMissingQwenEnv() {
     missingEnv.push("QWEN_BASE_URL");
   }
 
-  if (!hasEnv("QWEN_MODEL")) {
+  if (!hasEnv("QWEN_MODEL") && !hasLLMModelAliasFor("qwen")) {
     missingEnv.push("QWEN_MODEL");
   }
 
@@ -150,7 +162,7 @@ function getMissingDeepSeekEnv() {
     missingEnv.push("DEEPSEEK_BASE_URL");
   }
 
-  if (!hasEnv("DEEPSEEK_MODEL")) {
+  if (!hasEnv("DEEPSEEK_MODEL") && !hasLLMModelAliasFor("deepseek")) {
     missingEnv.push("DEEPSEEK_MODEL");
   }
 
@@ -168,7 +180,7 @@ function getMissingOpenAIEnv() {
     missingEnv.push("OPENAI_BASE_URL");
   }
 
-  if (!hasEnv("OPENAI_MODEL")) {
+  if (!hasEnv("OPENAI_MODEL") && !hasLLMModelAliasFor("openai")) {
     missingEnv.push("OPENAI_MODEL");
   }
 
@@ -182,13 +194,13 @@ function getEmbeddingCheck(): EmbeddingCheck {
     missingEnv.push("OPENAI_API_KEY");
   }
 
-  if (!hasEnv("OPENAI_EMBEDDING_MODEL")) {
-    missingEnv.push("OPENAI_EMBEDDING_MODEL");
+  if (!hasAnyEnv("OPENAI_EMBEDDING_MODEL", "EMBEDDING_MODEL")) {
+    missingEnv.push("OPENAI_EMBEDDING_MODEL or EMBEDDING_MODEL");
   }
 
   return {
     checked: true,
-    provider: "openai",
+    provider: getEmbeddingProviderName(),
     model: getEmbeddingModel(),
     configured: missingEnv.length === 0 && hasUsableOpenAIKey(),
     missingEnv
@@ -246,8 +258,8 @@ function getAiCheck(input: {
     missingEnv.push("OPENAI_API_KEY");
   }
 
-  if (!hasEnv("OPENAI_EMBEDDING_MODEL")) {
-    missingEnv.push("OPENAI_EMBEDDING_MODEL");
+  if (!hasAnyEnv("OPENAI_EMBEDDING_MODEL", "EMBEDDING_MODEL")) {
+    missingEnv.push("OPENAI_EMBEDDING_MODEL or EMBEDDING_MODEL");
   }
 
   if (input.shouldCheckQwen) {
@@ -264,11 +276,7 @@ function getAiCheck(input: {
     fallbackProvider: readiness.fallbackProvider,
     secondaryFallbackProvider: readiness.secondaryFallbackProvider,
     providerChain: readiness.providerChain,
-    model: readiness.primaryProvider === "qwen"
-      ? getQwenModel()
-      : readiness.primaryProvider === "deepseek"
-        ? getDeepSeekModel()
-        : getOpenAIModel(),
+    model: getChatModelForProvider(readiness.primaryProvider),
     embeddingModel: getEmbeddingModel(),
     openaiConfigured: hasUsableOpenAIKey(),
     qwenConfigured: hasUsableQwenKey(),

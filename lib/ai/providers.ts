@@ -78,7 +78,11 @@ export async function chatWithFallback(
       }
 
       const provider = getChatProvider(providerName);
-      const result = await provider.chat(input);
+      const result = await provider.chat(
+        providerName === primaryName
+          ? input
+          : { ...input, model: undefined }
+      );
 
       return {
         ...result,
