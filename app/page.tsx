@@ -132,7 +132,7 @@ export default async function HomePage() {
               <CardTitle>当前版本边界</CardTitle>
             </div>
             <CardDescription>
-              当前版本已接入真实 API、Prisma、PostgreSQL 和 pgvector；本地开发可使用 fallback，生产环境必须配置真实 OpenAI key。
+              当前版本已接入真实 API、Prisma、PostgreSQL 和 pgvector；生产环境建议配置 Qwen 主模型、OpenAI embedding 和兜底模型。
             </CardDescription>
           </CardHeader>
         </Card>

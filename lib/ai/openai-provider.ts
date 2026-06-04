@@ -64,10 +64,10 @@ function getProviderErrorCode(error: unknown) {
       return type.includes("quota") ? "AI_QUOTA_EXCEEDED" : "AI_RATE_LIMITED";
     }
 
-    return "AI_PROVIDER_FAILED";
+    return "OPENAI_REQUEST_FAILED";
   }
 
-  return "AI_PROVIDER_FAILED";
+  return "OPENAI_REQUEST_FAILED";
 }
 
 function normalizeChatError(error: unknown) {
@@ -150,7 +150,7 @@ export function createOpenAIChatProvider(): ChatProvider {
         const text = response.choices[0]?.message.content?.trim();
 
         if (!text) {
-          throw new AppError("AI_PROVIDER_FAILED", "OpenAI 返回了空内容。", 502);
+          throw new AppError("OPENAI_REQUEST_FAILED", "OpenAI 返回了空内容。", 502);
         }
 
         logger.info("ai.provider_call", {

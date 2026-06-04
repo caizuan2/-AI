@@ -17,6 +17,7 @@ import {
   getDeepSeekModel,
   getOpenAIModel,
   getPrimaryAIProvider,
+  getQwenModel,
   hasDatabaseUrl,
   hasUsableOpenAIKey,
   isAIFallbackAllowed
@@ -60,7 +61,15 @@ const CHAT_RATE_LIMIT = {
 };
 
 function toProviderName(value: string | null | undefined) {
-  return value === "openai" || value === "deepseek" ? value : getPrimaryAIProvider();
+  return value === "qwen" || value === "openai" || value === "deepseek" ? value : getPrimaryAIProvider();
+}
+
+function getModelForProvider(provider: ReturnType<typeof toProviderName>) {
+  if (provider === "qwen") {
+    return getQwenModel();
+  }
+
+  return provider === "deepseek" ? getDeepSeekModel() : getOpenAIModel();
 }
 
 function parseChatRequest(body: unknown): ChatRequest {
@@ -219,7 +228,7 @@ export async function POST(request: Request) {
     const effectiveTopK = userSettings.ragTopK ?? CHAT_TOP_K;
     const effectiveMinScore = userSettings.ragMinScore ?? CHAT_MIN_RELEVANT_SIMILARITY;
     const providerForCache = toProviderName(userSettings.preferredProvider);
-    const modelForCache = providerForCache === "deepseek" ? getDeepSeekModel() : getOpenAIModel();
+    const modelForCache = getModelForProvider(providerForCache);
     const corpusVersion = await getCorpusVersion(currentUser.id);
     const cacheKey = buildAiCacheKey({
       namespace: "rag-answer",

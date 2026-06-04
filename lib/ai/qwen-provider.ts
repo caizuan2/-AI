@@ -3,7 +3,7 @@ import "server-only";
 import OpenAI from "openai";
 import { AppError } from "@/lib/errors";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
-import { getDeepSeekBaseUrl, getDeepSeekModel, hasUsableDeepSeekKey } from "@/lib/server-config";
+import { getQwenBaseUrl, getQwenModel, hasUsableQwenKey } from "@/lib/server-config";
 import {
   toOpenAIChatMessages,
   type ChatProvider,
@@ -18,19 +18,19 @@ const MAX_ATTEMPTS = 3;
 let cachedClient: OpenAI | null = null;
 let cachedClientKey = "";
 
-function getDeepSeekClient() {
-  const apiKey = process.env.DEEPSEEK_API_KEY?.trim();
+function getQwenClient() {
+  const apiKey = process.env.QWEN_API_KEY?.trim();
 
-  if (!apiKey || !hasUsableDeepSeekKey()) {
-    throw new AppError("MISSING_AI_API_KEY", "DeepSeek API Key 未配置。", 500);
+  if (!apiKey || !hasUsableQwenKey()) {
+    throw new AppError("MISSING_QWEN_API_KEY", "Qwen API Key 未配置。", 500);
   }
 
-  const cacheKey = `${getDeepSeekBaseUrl()}::${apiKey.slice(0, 8)}`;
+  const cacheKey = `${getQwenBaseUrl()}::${apiKey.slice(0, 8)}`;
 
   if (!cachedClient || cachedClientKey !== cacheKey) {
     cachedClient = new OpenAI({
       apiKey,
-      baseURL: getDeepSeekBaseUrl(),
+      baseURL: getQwenBaseUrl(),
       maxRetries: 0,
       timeout: REQUEST_TIMEOUT_MS
     });
@@ -44,14 +44,14 @@ function usageToRecord(usage: unknown): ProviderUsage | undefined {
   return usage && typeof usage === "object" ? { ...(usage as Record<string, unknown>) } : undefined;
 }
 
-function normalizeDeepSeekError(error: unknown) {
+function normalizeQwenError(error: unknown) {
   if (error instanceof AppError) {
     return error;
   }
 
   if (error instanceof OpenAI.APIError) {
     if (error.status === 401 || error.status === 403) {
-      return new AppError("MISSING_AI_API_KEY", "DeepSeek API Key 未配置或无效。", 500);
+      return new AppError("MISSING_QWEN_API_KEY", "Qwen API Key 未配置或无效。", 500);
     }
 
     if (error.status === 429) {
@@ -59,13 +59,13 @@ function normalizeDeepSeekError(error: unknown) {
 
       return new AppError(
         type.includes("quota") ? "AI_QUOTA_EXCEEDED" : "AI_RATE_LIMITED",
-        type.includes("quota") ? "DeepSeek 额度不足，请检查账号额度。" : "DeepSeek 请求过于频繁，请稍后再试。",
+        type.includes("quota") ? "Qwen 额度不足，请检查账号额度。" : "Qwen 请求过于频繁，请稍后再试。",
         429
       );
     }
   }
 
-  return new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek provider 调用失败。", 502);
+  return new AppError("QWEN_REQUEST_FAILED", "Qwen provider 调用失败。", 502);
 }
 
 async function withRetry<T>(operation: () => Promise<T>, onRetry: (attempt: number, error: unknown) => void) {
@@ -86,18 +86,18 @@ async function withRetry<T>(operation: () => Promise<T>, onRetry: (attempt: numb
   throw lastError;
 }
 
-export function createDeepSeekChatProvider(): ChatProvider {
+export function createQwenChatProvider(): ChatProvider {
   return {
-    name: "deepseek",
-    model: getDeepSeekModel(),
+    name: "qwen",
+    model: getQwenModel(),
     async chat(input: ChatProviderInput): Promise<ChatProviderResult> {
       const startedAt = Date.now();
       const estimatedInputTokens = estimateTokenCount(input.messages.map((message) => message.content).join("\n"));
 
       try {
         const response = await withRetry(
-          () => getDeepSeekClient().chat.completions.create({
-            model: getDeepSeekModel(),
+          () => getQwenClient().chat.completions.create({
+            model: getQwenModel(),
             temperature: input.temperature ?? 0.2,
             max_tokens: input.maxTokens,
             messages: toOpenAIChatMessages(input)
@@ -105,8 +105,8 @@ export function createDeepSeekChatProvider(): ChatProvider {
           (attempt, error) => {
             logger.warn("ai.provider_retry", {
               requestId: input.requestId,
-              provider: "deepseek",
-              model: getDeepSeekModel(),
+              provider: "qwen",
+              model: getQwenModel(),
               attempt,
               error: toSafeErrorLog(error)
             });
@@ -115,12 +115,12 @@ export function createDeepSeekChatProvider(): ChatProvider {
         const text = response.choices[0]?.message.content?.trim();
 
         if (!text) {
-          throw new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek 返回了空内容。", 502);
+          throw new AppError("QWEN_REQUEST_FAILED", "Qwen 返回了空内容。", 502);
         }
 
         logger.info("ai.provider_call", {
           requestId: input.requestId,
-          provider: "deepseek",
+          provider: "qwen",
           model: response.model,
           durationMs: Date.now() - startedAt,
           estimatedInputTokens,
@@ -132,19 +132,19 @@ export function createDeepSeekChatProvider(): ChatProvider {
         return {
           text,
           usage: usageToRecord(response.usage),
-          provider: "deepseek",
+          provider: "qwen",
           model: response.model
         };
       } catch (error) {
         logger.error("ai.provider_failed", {
           requestId: input.requestId,
-          provider: "deepseek",
-          model: getDeepSeekModel(),
+          provider: "qwen",
+          model: getQwenModel(),
           durationMs: Date.now() - startedAt,
           error: toSafeErrorLog(error)
         });
 
-        throw normalizeDeepSeekError(error);
+        throw normalizeQwenError(error);
       }
     }
   };

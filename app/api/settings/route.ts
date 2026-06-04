@@ -24,7 +24,7 @@ function parseSettingsPatch(body: unknown) {
   const defaultExpireDays = typeof body.defaultExpireDays === "number"
     ? Math.round(body.defaultExpireDays)
     : Number.NaN;
-  const preferredProvider = body.preferredProvider === "openai" || body.preferredProvider === "deepseek"
+  const preferredProvider = body.preferredProvider === "qwen" || body.preferredProvider === "openai" || body.preferredProvider === "deepseek"
     ? body.preferredProvider
     : null;
   const preferredModel = typeof body.preferredModel === "string" && body.preferredModel.trim()

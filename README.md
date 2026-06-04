@@ -81,6 +81,9 @@ DIRECT_URL="postgresql://postgres:your-url-encoded-db-password@db.your-project-r
 SESSION_SECRET="replace-with-a-long-random-session-secret"
 LICENSE_SECRET="replace-with-a-long-random-license-secret"
 ADMIN_TOKEN="replace-with-a-long-random-admin-token"
+QWEN_API_KEY="sk-your-qwen-api-key"
+QWEN_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
+QWEN_MODEL="qwen-plus"
 OPENAI_API_KEY="sk-your-openai-api-key"
 OPENAI_BASE_URL="https://api.openai.com/v1"
 OPENAI_MODEL="gpt-4.1-mini"
@@ -88,8 +91,9 @@ OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 DEEPSEEK_API_KEY=""
 DEEPSEEK_BASE_URL="https://api.deepseek.com"
 DEEPSEEK_MODEL="deepseek-chat"
-AI_PROVIDER="openai"
-AI_FALLBACK_PROVIDER="deepseek"
+AI_PROVIDER="qwen"
+AI_FALLBACK_PROVIDER="openai"
+AI_SECONDARY_FALLBACK_PROVIDER="deepseek"
 RAG_TOP_K="8"
 RAG_MIN_SCORE="0.72"
 RAG_MAX_CONTEXT_CHARS="12000"
@@ -114,15 +118,19 @@ NODE_VERSION="22"
 - `SESSION_SECRET`：用于 session token，生产环境必须填写长随机字符串。
 - `LICENSE_SECRET`：用于 Netlify Functions 卡密 HMAC-SHA256 hash，生产环境必须填写 32 位以上随机字符串。
 - `ADMIN_TOKEN`：用于 `/admin/licenses` 调用 Netlify 卡密管理接口，生产环境必须填写长随机 token。
-- `OPENAI_API_KEY`：OpenAI API key。没有 key 时仅本地开发可使用 fallback；生产环境必须配置真实 key。
+- `QWEN_API_KEY`：Qwen / 千问 API key，默认生成 provider 使用它。
+- `QWEN_BASE_URL`：Qwen OpenAI-compatible base URL，默认 `https://dashscope.aliyuncs.com/compatible-mode/v1`。
+- `QWEN_MODEL`：Qwen 生成模型，建议 `qwen-plus`，低成本场景可改 `qwen-flash`。
+- `OPENAI_API_KEY`：OpenAI API key。用于高质量生成兜底和默认 embedding；生产环境必须配置真实 key。
 - `OPENAI_BASE_URL`：OpenAI-compatible base URL，默认 `https://api.openai.com/v1`。
-- `OPENAI_MODEL`：默认高质量生成模型，建议 `gpt-4.1-mini`。
+- `OPENAI_MODEL`：高质量兜底生成模型，建议 `gpt-4.1-mini`。
 - `OPENAI_EMBEDDING_MODEL`：默认 embedding 模型，建议 `text-embedding-3-small`。DeepSeek 不作为 embedding provider。
 - `DEEPSEEK_API_KEY`：DeepSeek chat provider key，可作为低成本生成/分析模型。
 - `DEEPSEEK_BASE_URL`：DeepSeek OpenAI-compatible base URL，默认 `https://api.deepseek.com`。
 - `DEEPSEEK_MODEL`：DeepSeek 生成模型，建议 `deepseek-chat`。
-- `AI_PROVIDER`：主生成 provider，可选 `openai` 或 `deepseek`，默认 `openai`。
-- `AI_FALLBACK_PROVIDER`：主 provider 失败时的生成 fallback provider。
+- `AI_PROVIDER`：主生成 provider，可选 `qwen`、`openai` 或 `deepseek`，默认 `qwen`。
+- `AI_FALLBACK_PROVIDER`：主 provider 失败时的第一兜底 provider，建议 `openai`。
+- `AI_SECONDARY_FALLBACK_PROVIDER`：第二兜底 provider，建议 `deepseek`。
 - `RAG_TOP_K`、`RAG_MIN_SCORE`、`RAG_MAX_CONTEXT_CHARS`：RAG 检索条数、最低分数和上下文长度上限。
 - `RAG_CACHE_TTL_SECONDS`：RAG 答案缓存时间，默认 3600 秒。
 - `RATE_LIMIT_PER_USER_PER_MINUTE`、`RATE_LIMIT_GLOBAL_PER_MINUTE`：用户级和全局限流。
@@ -226,7 +234,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 
 没有 OpenAI key 或 embedding 不可用时，本地开发会降级为关键词检索；生产环境需要配置真实 OpenAI key。
 
-DeepSeek 仅用于 chat/reasoner 生成能力，默认不用于 embedding。大规模生产检索建议继续使用 OpenAI `text-embedding-3-small` + pgvector HNSW/IVFFlat 索引。
+Qwen、OpenAI、DeepSeek 仅用于生成能力，默认不用于 embedding。大规模生产检索建议继续使用 OpenAI `text-embedding-3-small` + pgvector HNSW/IVFFlat 索引。
 
 ## 常用命令
 
