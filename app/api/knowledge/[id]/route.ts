@@ -421,14 +421,32 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const existing = await prisma.knowledgeItem.findUnique({
       where: { id: context.params.id },
-      select: { id: true, userId: true }
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        summary: true,
+        tags: true,
+        category: true,
+        sourceType: true,
+        sourceTitle: true,
+        sourceUrl: true
+      }
     });
 
     if (!existing || existing.userId !== currentUser.id) {
       return apiError(new NotFoundError("知识不存在。"));
     }
 
-    const replacementChunks = input.content === undefined ? null : splitContentIntoChunks(input.content);
+    const replacementChunks = input.content === undefined ? null : splitContentIntoChunks(input.content, {
+      title: input.title ?? existing.title,
+      category: input.category ?? existing.category,
+      tags: input.tags ?? existing.tags,
+      summary: input.summary ?? existing.summary,
+      sourceType: existing.sourceType,
+      sourceTitle: existing.sourceTitle,
+      sourceUrl: existing.sourceUrl
+    });
     const replacementEmbeddings = replacementChunks
       ? await createChunkEmbeddings(replacementChunks, {
           requestId,
@@ -476,10 +494,12 @@ export async function PATCH(request: Request, context: RouteContext) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
+                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
-                  embeddingError: embedding?.errorMessage ?? null
+                  embeddingError: embedding?.errorMessage ?? null,
+                  embeddingStatus: embedding?.embedding ? "indexed" : "missing"
                 }
               };
             })

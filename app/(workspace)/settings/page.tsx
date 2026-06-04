@@ -7,17 +7,21 @@ import {
   Database,
   Download,
   FileText,
+  Info,
   KeyRound,
   Loader2,
+  Palette,
   Save,
   SearchCheck,
   ShieldCheck,
   Sparkles,
   Table,
   TriangleAlert,
-  UploadCloud
+  UploadCloud,
+  UserRound
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { ThemeToggle } from "@/components/product/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -134,8 +138,8 @@ export default function SettingsPage() {
   const [defaultExpireDays, setDefaultExpireDays] = useState(90);
   const [preferredProvider, setPreferredProvider] = useState("qwen");
   const [preferredModel, setPreferredModel] = useState("qwen-plus");
-  const [ragTopK, setRagTopK] = useState(8);
-  const [ragMinScore, setRagMinScore] = useState(0.72);
+  const [ragTopK, setRagTopK] = useState(10);
+  const [ragMinScore, setRagMinScore] = useState(0.35);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -163,8 +167,8 @@ export default function SettingsPage() {
           setDefaultExpireDays(data.defaultExpireDays);
           setPreferredProvider(data.preferredProvider ?? "qwen");
           setPreferredModel(data.preferredModel ?? "qwen-plus");
-          setRagTopK(data.ragTopK ?? 8);
-          setRagMinScore(data.ragMinScore ?? 0.72);
+          setRagTopK(data.ragTopK ?? 10);
+          setRagMinScore(data.ragMinScore ?? 0.35);
         }
       } catch (caughtError) {
         if (!cancelled) {
@@ -512,10 +516,10 @@ export default function SettingsPage() {
                 />
               </label>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
-                <span>
-                  <span className="block text-sm font-medium text-ink">开发环境本地 fallback</span>
-                  <span className="block text-xs text-muted">仅用于本地调试；生产环境必须配置真实 OpenAI key。</span>
-                </span>
+                  <span>
+                    <span className="block text-sm font-medium text-ink">开发环境本地 fallback</span>
+                  <span className="block text-xs text-muted">仅用于本地调试；生产环境必须配置真实生成模型，embedding 建议配置 OpenAI key。</span>
+                  </span>
                 <input
                   checked={useMockApi}
                   onChange={(event) => setUseMockApi(event.target.checked)}
@@ -532,7 +536,7 @@ export default function SettingsPage() {
                 <SearchCheck className="h-4 w-4 text-coral" />
                 <CardTitle>检索与引用</CardTitle>
               </div>
-              <CardDescription>控制问答是否必须带引用来源。</CardDescription>
+              <CardDescription>控制问答召回规模和最低相似度，默认偏向先召回再谨慎整理。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">
@@ -560,7 +564,7 @@ export default function SettingsPage() {
                   />
                 </label>
                 <label className="block">
-                  <span className="text-sm font-medium text-ink">最低置信度</span>
+                  <span className="text-sm font-medium text-ink">最低相似度阈值</span>
                   <Input
                     className="mt-2"
                     type="number"
@@ -577,6 +581,68 @@ export default function SettingsPage() {
         </div>
 
         <aside className="space-y-5">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Palette className="h-4 w-4 text-indigo-600" />
+                <CardTitle>外观与应用</CardTitle>
+              </div>
+              <CardDescription>跨平台客户端会复用同一套浅色/深色主题。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex items-center justify-between rounded-lg border border-line p-3 dark:border-slate-700">
+                <span>
+                  <span className="block text-sm font-medium text-ink dark:text-slate-100">主题模式</span>
+                  <span className="block text-xs text-muted dark:text-slate-400">本地保存，不影响其他用户。</span>
+                </span>
+                <ThemeToggle />
+              </div>
+              <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3 dark:border-slate-700">
+                <span>
+                  <span className="block text-sm font-medium text-ink dark:text-slate-100">仅允许知识库回答</span>
+                  <span className="block text-xs text-muted dark:text-slate-400">缺少依据时明确提示，不编造答案。</span>
+                </span>
+                <input
+                  checked={requireCitations}
+                  onChange={(event) => setRequireCitations(event.target.checked)}
+                  type="checkbox"
+                  className="h-5 w-5 rounded border-line text-indigo-600"
+                />
+              </label>
+              <div className="rounded-lg border border-line p-3 text-sm dark:border-slate-700">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="font-medium text-ink dark:text-slate-100">最大引用数量</span>
+                  <Badge variant="secondary">{ragTopK}</Badge>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted dark:text-slate-400">由检索 Top K 控制，当前设置会随页面保存一起提交。</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <UserRound className="h-4 w-4 text-teal-700" />
+                <CardTitle>账户设置</CardTitle>
+              </div>
+              <CardDescription>账号、授权和跨端同步状态。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 dark:bg-slate-900">
+                <span className="text-muted dark:text-slate-400">登录方式</span>
+                <span className="font-medium text-ink dark:text-slate-100">手机号密码</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 dark:bg-slate-900">
+                <span className="text-muted dark:text-slate-400">卡密授权</span>
+                <Badge>已启用</Badge>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-canvas px-3 py-2 dark:bg-slate-900">
+                <span className="text-muted dark:text-slate-400">跨端同步</span>
+                <Badge variant="secondary">云端同步</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <div className="flex items-center gap-2">
@@ -612,6 +678,20 @@ export default function SettingsPage() {
                 {savingSettings ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                 保存页面设置
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-indigo-600" />
+                <CardTitle>关于应用</CardTitle>
+              </div>
+              <CardDescription>AI 知识库跨平台工作台。</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm text-muted dark:text-slate-400">
+              <p>当前 Web 版本基于 Next.js App Router，移动端和桌面端建议通过 WebView / Tauri 外壳复用同一套界面。</p>
+              <p>核心闭环：投喂、整理、入库、检索、问答和引用追踪。</p>
             </CardContent>
           </Card>
         </aside>

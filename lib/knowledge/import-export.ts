@@ -12,6 +12,7 @@ import {
   isKnowledgeSourceType,
   type KnowledgeSourceType
 } from "@/lib/knowledge/source-types";
+import { estimateTokenCount } from "@/lib/logger";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { prisma } from "@/lib/prisma";
 
@@ -527,7 +528,15 @@ export async function createImportedKnowledgeItem(
   item: ImportKnowledgeItem,
   fallbackExpiresAt: Date
 ) {
-  const chunks = splitContentIntoChunks(item.content);
+  const chunks = splitContentIntoChunks(item.content, {
+    title: item.title,
+    category: item.category,
+    tags: item.tags,
+    summary: item.summary,
+    sourceType: item.sourceType,
+    sourceTitle: item.sourceTitle,
+    sourceUrl: item.sourceUrl
+  });
   const embeddings = await createChunkEmbeddings(chunks, {
     operation: "knowledge_import_chunk_embedding",
     userId
@@ -566,13 +575,18 @@ export async function createImportedKnowledgeItem(
               chunkText: chunk.chunkText,
               chunkIndex: chunk.chunkIndex,
               metadata: {
+                ...chunk.metadata,
                 charLength: chunk.chunkText.length,
                 embeddingModel: embedding?.model ?? null,
                 embeddingSkipped: embedding?.embedding === null,
                 embeddingError: embedding?.errorMessage ?? null,
+                embeddingStatus: embedding?.embedding ? "indexed" : "missing",
                 importedBy: "json_import",
                 originalKnowledgeItemId: item.originalId
-              }
+              },
+              charCount: chunk.chunkText.length,
+              tokenCount: estimateTokenCount(chunk.chunkText),
+              embeddingModel: embedding?.model ?? null
             };
           })
         }

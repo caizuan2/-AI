@@ -1,15 +1,10 @@
 "use client";
 
 import { FormEvent, Suspense, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
-  BookOpenCheck,
   Bot,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  ExternalLink,
   Loader2,
   MessageCircleQuestion,
   SendHorizontal,
@@ -19,11 +14,12 @@ import {
   UserRound
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
+import { TopSearchBar } from "@/components/product/top-search-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { unwrapApiResponse } from "@/lib/api/client";
-import { getKnowledgeSourceTypeLabel } from "@/lib/knowledge/source-types";
+import { suggestedQuestions } from "@/lib/mock/product-ui";
 import { cn } from "@/lib/utils";
 
 type ChatSource = {
@@ -33,15 +29,35 @@ type ChatSource = {
   title: string;
   summary: string;
   chunkText: string;
+  category: string;
   sourceType: string;
+  sourceTitle: string | null;
+  sourceUrl: string | null;
   createdAt: string;
   similarity?: number;
+  score?: number;
+};
+
+type ChatRetrievalInfo = {
+  mode: string;
+  answerMode: "none" | "partial" | "full";
+  confidence: number;
+  intent: string;
+  totalCandidates: number;
+  filteredCandidates: number;
+  returnedSourceCount: number;
+  usedSourceCount: number;
+  queries: string[];
+  suggestedKnowledgeTypes: string[];
+  relaxedRetrievalUsed: boolean;
+  keywordFallbackUsed: boolean;
 };
 
 type ChatApiResponse = {
   answer: string;
   sources: ChatSource[];
   retrievalMessage: string | null;
+  retrieval?: ChatRetrievalInfo;
   providerUsed?: string;
   modelUsed?: string;
   fallbackUsed?: boolean;
@@ -63,6 +79,7 @@ type ChatMessage = {
   cached?: boolean;
   latencyMs?: number;
   requestId?: string;
+  retrieval?: ChatRetrievalInfo;
 };
 type FeedbackChoice = "helpful" | "not_helpful";
 type AnswerFeedbackState = {
@@ -82,52 +99,12 @@ function getNowLabel() {
 
 function AnswerContent({
   content,
-  sources,
-  onCitationClick,
   className
 }: {
   content: string;
-  sources: ChatSource[];
-  onCitationClick?: (index: number) => void;
   className?: string;
 }) {
-  const sourceIndexes = new Set(sources.map((source) => source.citationIndex));
-  const nodes: Array<string | JSX.Element> = [];
-  const citationPattern = /\[(\d+)\]/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-
-  while ((match = citationPattern.exec(content)) !== null) {
-    const citationText = match[0];
-    const citationIndex = Number(match[1]);
-
-    if (match.index > lastIndex) {
-      nodes.push(content.slice(lastIndex, match.index));
-    }
-
-    if (sourceIndexes.has(citationIndex)) {
-      nodes.push(
-        <button
-          key={`${citationIndex}-${match.index}`}
-          type="button"
-          onClick={() => onCitationClick?.(citationIndex)}
-          className="focus-ring mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded border border-teal-200 bg-teal-50 px-1 text-[11px] font-semibold leading-none text-teal-700 hover:bg-teal-100"
-        >
-          {citationText}
-        </button>
-      );
-    } else {
-      nodes.push(citationText);
-    }
-
-    lastIndex = match.index + citationText.length;
-  }
-
-  if (lastIndex < content.length) {
-    nodes.push(content.slice(lastIndex));
-  }
-
-  return <p className={cn("whitespace-pre-wrap", className)}>{nodes}</p>;
+  return <p className={cn("whitespace-pre-wrap", className)}>{content}</p>;
 }
 
 function AnswerFeedback({
@@ -202,7 +179,6 @@ function AnswerFeedback({
 
 function ChatBubble({
   message,
-  onCitationClick,
   feedbackState,
   onSubmitFeedback,
   onOpenFeedbackReason,
@@ -210,7 +186,6 @@ function ChatBubble({
   onCancelFeedbackReason
 }: {
   message: ChatMessage;
-  onCitationClick?: (index: number) => void;
   feedbackState?: AnswerFeedbackState;
   onSubmitFeedback?: (message: ChatMessage, choice: FeedbackChoice, reason?: string) => void;
   onOpenFeedbackReason?: (messageId: string) => void;
@@ -218,7 +193,6 @@ function ChatBubble({
   onCancelFeedbackReason?: (messageId: string) => void;
 }) {
   const isUser = message.role === "user";
-  const sources = message.sources ?? [];
   const answerFeedbackState = feedbackState ?? {};
 
   return (
@@ -238,33 +212,9 @@ function ChatBubble({
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
-          <AnswerContent content={message.content} sources={sources} onCitationClick={onCitationClick} />
+          <AnswerContent content={message.content} />
         )}
         <div className={cn("mt-2 text-xs", isUser ? "text-slate-300" : "text-muted")}>{message.createdAt}</div>
-
-        {!isUser && sources.length > 0 ? (
-          <div className="mt-3 space-y-2 border-t border-line pt-3">
-            {sources.map((source) => (
-              <Link
-                key={`${source.knowledgeItemId}-${source.chunkId}`}
-                href={`/knowledge/${source.knowledgeItemId}`}
-                className="focus-ring block rounded-md border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-teal-800 hover:bg-teal-100"
-              >
-                <span className="flex items-center justify-between gap-2 font-semibold">
-                  [{source.citationIndex}] {source.title}
-                  <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-                </span>
-                <span className="mt-1 block font-normal leading-5 text-teal-700">
-                  {getKnowledgeSourceTypeLabel(source.sourceType)} · {new Date(source.createdAt).toLocaleString("zh-CN")}
-                  {typeof source.similarity === "number" ? ` · 相似度 ${Math.round(source.similarity * 100)}%` : ""}
-                </span>
-                <span className="mt-1 block line-clamp-2 font-normal leading-5 text-teal-700">
-                  {source.summary}
-                </span>
-              </Link>
-            ))}
-          </div>
-        ) : null}
 
         {!isUser ? (
           <AnswerFeedback
@@ -287,73 +237,13 @@ function ChatBubble({
   );
 }
 
-function SourceCard({
-  source,
-  isHighlighted,
-  isExpanded,
-  onToggle
-}: {
-  source: ChatSource;
-  isHighlighted: boolean;
-  isExpanded: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <article
-      id={`source-card-${source.citationIndex}`}
-      className={cn(
-        "rounded-lg border border-line bg-white p-4 transition-colors",
-        isHighlighted ? "border-teal-300 bg-teal-50 shadow-sm" : "hover:border-teal-100 hover:bg-teal-50/40"
-      )}
-    >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-start gap-2">
-            <span className="mt-0.5 inline-flex h-6 min-w-6 shrink-0 items-center justify-center rounded-md border border-teal-200 bg-teal-50 px-1 text-xs font-semibold text-teal-700">
-              [{source.citationIndex}]
-            </span>
-            <Link href={`/knowledge/${source.knowledgeItemId}`} className="focus-ring rounded text-sm font-semibold text-ink hover:text-teal-700">
-              {source.title}
-            </Link>
-          </div>
-          <p className="mt-2 text-xs text-muted">
-            {getKnowledgeSourceTypeLabel(source.sourceType)} · {new Date(source.createdAt).toLocaleString("zh-CN")}
-            {typeof source.similarity === "number" ? ` · 相似度 ${Math.round(source.similarity * 100)}%` : ""}
-          </p>
-        </div>
-        <Link href={`/knowledge/${source.knowledgeItemId}`} className="focus-ring rounded text-muted hover:text-teal-700" aria-label="打开知识详情">
-          <ExternalLink className="h-4 w-4 shrink-0" />
-        </Link>
-      </div>
-
-      <p className="mt-3 line-clamp-3 text-xs leading-5 text-muted">{source.summary}</p>
-
-      <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2">
-        <p className="text-xs font-medium text-amber-900">命中片段</p>
-        <p className={cn("mt-1 text-xs leading-5 text-amber-900", isExpanded ? "whitespace-pre-wrap" : "line-clamp-4")}>
-          {source.chunkText}
-        </p>
-      </div>
-
-      <Button type="button" variant="ghost" size="sm" onClick={onToggle} className="mt-3 w-full justify-center">
-        {isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-        {isExpanded ? "收起完整来源" : "展开完整来源"}
-      </Button>
-    </article>
-  );
-}
-
 function ChatWorkspace() {
   const searchParams = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState(searchParams.get("q") ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [highlightedSourceIndex, setHighlightedSourceIndex] = useState<number | null>(null);
-  const [expandedSources, setExpandedSources] = useState<Set<number>>(() => new Set());
   const [feedbackByMessageId, setFeedbackByMessageId] = useState<Record<string, AnswerFeedbackState>>({});
-  const latestAnswer = [...messages].reverse().find((message) => message.role === "assistant");
-  const latestSources = latestAnswer?.sources ?? [];
   const questionHistory = messages
     .map((message, index) => ({ message, index }))
     .filter(({ message }) => message.role === "user")
@@ -362,28 +252,6 @@ function ChatWorkspace() {
       answer: messages.slice(index + 1).find((item) => item.role === "assistant")
     }))
     .reverse();
-
-  function handleCitationClick(index: number) {
-    setHighlightedSourceIndex(index);
-    document.getElementById(`source-card-${index}`)?.scrollIntoView({
-      behavior: "smooth",
-      block: "center"
-    });
-  }
-
-  function toggleSource(index: number) {
-    setExpandedSources((current) => {
-      const next = new Set(current);
-
-      if (next.has(index)) {
-        next.delete(index);
-      } else {
-        next.add(index);
-      }
-
-      return next;
-    });
-  }
 
   function updateFeedbackState(messageId: string, patch: AnswerFeedbackState) {
     setFeedbackByMessageId((current) => ({
@@ -457,10 +325,7 @@ function ChatWorkspace() {
     }
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const question = input.trim();
-
+  async function submitQuestion(question: string) {
     if (!question) {
       setError("请输入问题后再发送。");
       return;
@@ -485,7 +350,9 @@ function ChatWorkspace() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({
+          question
+        })
       });
 
       const data = await unwrapApiResponse<ChatApiResponse>(response, "生成回答失败。");
@@ -501,11 +368,10 @@ function ChatWorkspace() {
         fallbackUsed: data.fallbackUsed,
         cached: data.cached,
         latencyMs: data.latencyMs,
-        requestId: data.requestId
+        requestId: data.requestId,
+        retrieval: data.retrieval
       };
 
-      setHighlightedSourceIndex(null);
-      setExpandedSources(new Set());
       setMessages((current) => [...current, assistantMessage]);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "生成回答失败。");
@@ -514,65 +380,60 @@ function ChatWorkspace() {
     }
   }
 
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitQuestion(input.trim());
+  }
+
   return (
-    <section className="grid min-h-[680px] gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+    <div className="space-y-5">
+      <section className="rounded-lg border border-line bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+        <TopSearchBar
+          value={input}
+          onChange={setInput}
+          onSubmit={() => submitQuestion(input.trim())}
+          placeholder="直接提问：例如 销售遇到安全审计问题时怎么回复？"
+        />
+        {loading ? (
+          <div className="mt-4 flex items-center gap-2 text-sm text-muted">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            正在生成回答...
+          </div>
+        ) : null}
+        {messages.length === 0 ? (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {suggestedQuestions.map((question) => (
+              <button
+                key={question}
+                type="button"
+                onClick={() => setInput(question)}
+                className="focus-ring rounded-full border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100 dark:border-indigo-500/30 dark:bg-indigo-500/10 dark:text-indigo-100"
+              >
+                {question}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="grid min-h-[680px] gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
       <Card className="flex min-h-0 flex-col">
         <CardHeader className="border-b border-line">
           <CardTitle>知识库问答</CardTitle>
-          <CardDescription>基于已入库知识回答问题，回答会附带引用来源。</CardDescription>
+          <CardDescription>直接提问，获取自然、清晰的业务回答。</CardDescription>
         </CardHeader>
 
         <CardContent className="flex flex-1 flex-col p-0">
           <div className="flex-1 space-y-5 overflow-y-auto bg-canvas/60 p-4 sm:p-5">
-            {latestAnswer ? (
-              <section className="rounded-lg border border-teal-100 bg-white p-4 shadow-sm">
-                <div className="flex items-center gap-2 text-sm font-semibold text-ink">
-                  <BookOpenCheck className="h-4 w-4 text-teal-700" />
-                  当前回答
-                </div>
-                <AnswerContent
-                  content={latestAnswer.content}
-                  sources={latestSources}
-                  onCitationClick={handleCitationClick}
-                  className="mt-3 text-sm leading-6 text-slate-700"
-                />
-                <div className="mt-3 flex flex-wrap gap-2 border-t border-line pt-3 text-xs text-muted">
-                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
-                    Provider：{latestAnswer.providerUsed ?? "unknown"}
-                  </span>
-                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
-                    Model：{latestAnswer.modelUsed ?? "unknown"}
-                  </span>
-                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
-                    {latestAnswer.fallbackUsed ? "已 fallback" : "未 fallback"}
-                  </span>
-                  <span className="rounded-md border border-line bg-canvas px-2 py-1">
-                    {latestAnswer.cached ? "缓存命中" : "实时生成"}
-                  </span>
-                  {typeof latestAnswer.latencyMs === "number" ? (
-                    <span className="rounded-md border border-line bg-canvas px-2 py-1">
-                      {latestAnswer.latencyMs}ms
-                    </span>
-                  ) : null}
-                  {latestAnswer.requestId ? (
-                    <span className="break-all rounded-md border border-line bg-canvas px-2 py-1">
-                      {latestAnswer.requestId}
-                    </span>
-                  ) : null}
-                </div>
-              </section>
-            ) : null}
-
             {messages.length === 0 ? (
               <div className="rounded-lg border border-dashed border-line bg-white p-8 text-center text-sm text-muted">
-                暂无会话，输入一个问题开始检索知识库。
+                暂无会话，输入一个问题开始。
               </div>
             ) : (
               messages.map((message) => (
                 <ChatBubble
                   key={message.id}
                   message={message}
-                  onCitationClick={handleCitationClick}
                   feedbackState={feedbackByMessageId[message.id]}
                   onSubmitFeedback={submitAnswerFeedback}
                   onOpenFeedbackReason={openFeedbackReason}
@@ -585,7 +446,7 @@ function ChatWorkspace() {
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-muted">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                正在检索知识并生成回答...
+                正在生成回答...
               </div>
             ) : null}
           </div>
@@ -618,33 +479,6 @@ function ChatWorkspace() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-2">
-              <BookOpenCheck className="h-4 w-4 text-teal-700" />
-              <CardTitle>引用来源</CardTitle>
-            </div>
-            <CardDescription>当前回答命中的知识片段。</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {latestSources.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-line p-6 text-center text-sm text-muted">
-                暂无可引用知识
-              </div>
-            ) : (
-              latestSources.map((source) => (
-                <SourceCard
-                  key={`${source.knowledgeItemId}-${source.chunkId}`}
-                  source={source}
-                  isHighlighted={highlightedSourceIndex === source.citationIndex}
-                  isExpanded={expandedSources.has(source.citationIndex)}
-                  onToggle={() => toggleSource(source.citationIndex)}
-                />
-              ))
-            )}
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
               <MessageCircleQuestion className="h-4 w-4 text-coral" />
               <CardTitle>历史问答</CardTitle>
             </div>
@@ -669,7 +503,8 @@ function ChatWorkspace() {
           </CardContent>
         </Card>
       </div>
-    </section>
+      </section>
+    </div>
   );
 }
 
@@ -679,7 +514,7 @@ export default function ChatPage() {
       <PageHeader
         eyebrow="Chat"
         title="知识库问答"
-        description="基于知识库提问，回答必须带来源引用。"
+        description="基于知识库提问，获得自然、清晰、可直接使用的业务答案。"
       />
       <Suspense fallback={<div className="rounded-lg border border-line bg-white p-6 text-sm text-muted">加载问答页...</div>}>
         <ChatWorkspace />

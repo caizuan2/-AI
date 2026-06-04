@@ -428,7 +428,15 @@ export async function POST(request: Request) {
     return apiError(error);
   }
 
-  const chunks = splitContentIntoChunks(input.content);
+  const chunks = splitContentIntoChunks(input.content, {
+    title: input.title,
+    category: input.category,
+    tags: input.tags,
+    summary: input.summary,
+    sourceType: input.sourceType,
+    sourceTitle: input.sourceTitle,
+    sourceUrl: input.sourceUrl
+  });
 
   if (!hasDatabaseUrl()) {
     return apiError(databaseConfigError("创建知识"));
@@ -472,10 +480,12 @@ export async function POST(request: Request) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
+                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
-                  embeddingError: embedding?.errorMessage ?? null
+                  embeddingError: embedding?.errorMessage ?? null,
+                  embeddingStatus: embedding?.embedding ? "indexed" : "missing"
                 },
                 charCount: chunk.chunkText.length,
                 tokenCount: estimateTokenCount(chunk.chunkText),

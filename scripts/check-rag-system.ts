@@ -3,9 +3,16 @@ import { checkIngestSchema } from "@/lib/db/ingest-schema";
 import { getSafeDatabaseUrlInfo } from "@/lib/safe-db-url";
 import {
   getEmbeddingModel,
+  getEmbeddingProviderName,
+  getChatModelForProvider,
   getFallbackAIProvider,
   getPrimaryAIProvider,
   getSecondaryFallbackAIProvider,
+  CHAT_MIN_RELEVANT_SIMILARITY,
+  CHAT_TOP_K,
+  RAG_ENABLE_RERANK,
+  RAG_MAX_CONTEXT_CHUNKS,
+  RAG_MAX_CONTEXT_CHARS,
   hasDatabaseUrl,
   hasUsableDeepSeekKey,
   hasUsableOpenAIKey,
@@ -30,6 +37,10 @@ async function main() {
     QWEN_API_KEY: hasUsableQwenKey(),
     OPENAI_API_KEY: hasUsableOpenAIKey(),
     DEEPSEEK_API_KEY: hasUsableDeepSeekKey(),
+    LLM_PROVIDER: exists("LLM_PROVIDER"),
+    LLM_MODEL: exists("LLM_MODEL"),
+    EMBEDDING_PROVIDER: exists("EMBEDDING_PROVIDER"),
+    EMBEDDING_MODEL: exists("EMBEDDING_MODEL"),
     OPENAI_EMBEDDING_MODEL: exists("OPENAI_EMBEDDING_MODEL"),
     NEXT_PUBLIC_SUPABASE_URL: exists("NEXT_PUBLIC_SUPABASE_URL"),
     NEXT_PUBLIC_SUPABASE_ANON_KEY: exists("NEXT_PUBLIC_SUPABASE_ANON_KEY")
@@ -41,10 +52,18 @@ async function main() {
     env,
     provider: {
       primary: getPrimaryAIProvider(),
+      model: getChatModelForProvider(getPrimaryAIProvider()),
       fallback: getFallbackAIProvider(),
       secondaryFallback: getSecondaryFallbackAIProvider(),
-      embeddingProvider: "openai",
+      embeddingProvider: getEmbeddingProviderName(),
       embeddingModel: getEmbeddingModel()
+    },
+    rag: {
+      topK: CHAT_TOP_K,
+      minSimilarity: CHAT_MIN_RELEVANT_SIMILARITY,
+      maxContextChunks: RAG_MAX_CONTEXT_CHUNKS,
+      maxContextChars: RAG_MAX_CONTEXT_CHARS,
+      rerank: RAG_ENABLE_RERANK
     },
     databaseTarget
   }, null, 2));

@@ -12,6 +12,7 @@ export type ChatMessage = {
 export type ChatProviderInput = {
   system?: string;
   messages: ChatMessage[];
+  model?: string;
   temperature?: number;
   maxTokens?: number;
   requestId?: string;

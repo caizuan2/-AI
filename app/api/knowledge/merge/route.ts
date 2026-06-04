@@ -332,7 +332,15 @@ export async function POST(request: Request) {
       requestId,
       currentUser.id
     );
-    const chunks = splitContentIntoChunks(mergedContent);
+    const chunks = splitContentIntoChunks(mergedContent, {
+      title: mergedDraft.title,
+      category: mergedDraft.category,
+      tags: mergedDraft.tags,
+      summary: mergedDraft.summary,
+      sourceType: input.sourceType,
+      sourceTitle: input.sourceTitle,
+      sourceUrl: input.sourceUrl
+    });
     const embeddings = await createChunkEmbeddings(chunks, {
       requestId,
       operation: "knowledge_merge_chunk_embedding",
@@ -366,10 +374,12 @@ export async function POST(request: Request) {
                 chunkText: chunk.chunkText,
                 chunkIndex: chunk.chunkIndex,
                 metadata: {
+                  ...chunk.metadata,
                   charLength: chunk.chunkText.length,
                   embeddingModel: embedding?.model ?? null,
                   embeddingSkipped: embedding?.embedding === null,
                   embeddingError: embedding?.errorMessage ?? null,
+                  embeddingStatus: embedding?.embedding ? "indexed" : "missing",
                   regeneratedBy: "knowledge_merge"
                 }
               };

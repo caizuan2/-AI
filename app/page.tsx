@@ -1,42 +1,18 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowRight, BotMessageSquare, Database, FilePlus2, Sparkles, UploadCloud } from "lucide-react";
+import { ArrowRight, BotMessageSquare, CircleHelp, Database, MessageSquareWarning } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
+import { KnowledgeBaseCard } from "@/components/product/knowledge-base-card";
+import { MetricCard } from "@/components/product/metric-card";
 import { SystemStatusCard } from "@/components/system-status-card";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { isAdminUser } from "@/lib/admin";
 import { getCurrentUser } from "@/lib/auth";
 import { UnauthorizedError } from "@/lib/errors";
+import { dashboardMetrics, knowledgeBaseCards, popularQuestions, unansweredQuestions } from "@/lib/mock/product-ui";
 
 export const dynamic = "force-dynamic";
-
-const workflow = [
-  {
-    title: "聊天投喂",
-    description: "通过对话框输入会议、工单或销售通话内容。",
-    href: "/ingest",
-    icon: FilePlus2
-  },
-  {
-    title: "文件投喂",
-    description: "上传 txt、md、pdf、docx 文件并自动提取文本。",
-    href: "/upload",
-    icon: UploadCloud
-  },
-  {
-    title: "知识入库",
-    description: "AI 整理标题、摘要、标签和分类，用户确认后入库。",
-    href: "/knowledge",
-    icon: Database
-  },
-  {
-    title: "问答引用",
-    description: "基于知识库生成回答，并展示可追溯来源。",
-    href: "/chat",
-    icon: BotMessageSquare
-  }
-];
 
 export default async function HomePage() {
   let user: Awaited<ReturnType<typeof getCurrentUser>>;
@@ -58,84 +34,108 @@ export default async function HomePage() {
   return (
     <AppShell user={{ ...user, isAdmin: isAdminUser(user) }}>
       <div className="mx-auto flex max-w-7xl flex-col gap-6">
-        <section className="rounded-lg border border-line bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+        <section className="rounded-lg border border-line bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div className="max-w-3xl">
-              <Badge>MVP</Badge>
-              <h1 className="mt-4 text-2xl font-semibold text-ink sm:text-3xl">
-                对话式投喂型 AI 知识库
+              <Badge>Analytics Dashboard</Badge>
+              <h1 className="mt-4 text-2xl font-semibold text-ink sm:text-3xl dark:text-slate-100">
+                AI 知识库分析首页
               </h1>
-              <p className="mt-3 text-sm leading-6 text-muted sm:text-base">
-                第一版先完成聊天投喂、AI 自动整理、确认入库、知识问答和引用来源的完整闭环。
+              <p className="mt-3 text-sm leading-6 text-muted sm:text-base dark:text-slate-400">
+                查看知识资产规模、问答命中质量、未回答问题和低置信度风险，确保团队回答可追溯。
               </p>
             </div>
-            <Link
-              href="/ingest"
-              className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800"
-            >
-              开始投喂
-              <ArrowRight className="h-4 w-4" />
-            </Link>
+            <div className="flex flex-wrap gap-3">
+              <Link
+                href="/chat"
+                className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-ink px-4 text-sm font-semibold text-white hover:bg-slate-800 dark:bg-indigo-600 dark:hover:bg-indigo-500"
+              >
+                开始问答
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+              <Link
+                href="/upload"
+                className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              >
+                上传文档
+              </Link>
+            </div>
           </div>
         </section>
 
-        <section className="grid gap-4 md:grid-cols-3">
-          {[
-            { label: "投喂整理", value: "AI", hint: "自动生成标题、摘要、标签和分类" },
-            { label: "知识入库", value: "DB", hint: "PostgreSQL + Prisma 持久化" },
-            { label: "问答引用", value: "RAG", hint: "检索知识片段并展示来源" }
-          ].map((metric) => (
-            <Card key={metric.label}>
-              <CardHeader>
-                <CardDescription>{metric.label}</CardDescription>
-                <CardTitle className="text-3xl">{metric.value}</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-xs text-muted">{metric.hint}</p>
-              </CardContent>
-            </Card>
+        <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          {dashboardMetrics.map((metric) => (
+            <MetricCard key={metric.label} {...metric} />
           ))}
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-4">
-          {workflow.map((item) => {
-            const Icon = item.icon;
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
+          <div className="space-y-5">
+            <Card className="dark:border-slate-700 dark:bg-slate-900">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Database className="h-4 w-4 text-indigo-700 dark:text-indigo-200" />
+                  <CardTitle className="dark:text-slate-100">知识库概览</CardTitle>
+                </div>
+                <CardDescription className="dark:text-slate-400">文档数量、权限状态和索引状态。</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 lg:grid-cols-3">
+                {knowledgeBaseCards.map((item) => (
+                  <KnowledgeBaseCard key={item.id} {...item} />
+                ))}
+              </CardContent>
+            </Card>
 
-            return (
-              <Link key={item.href} href={item.href} className="focus-ring group rounded-lg">
-                <Card className="h-full transition group-hover:-translate-y-0.5 group-hover:border-teal-100 group-hover:shadow-soft">
-                  <CardHeader>
-                    <span className="grid h-10 w-10 place-items-center rounded-lg bg-teal-50 text-teal-700">
-                      <Icon className="h-5 w-5" />
+            <Card className="dark:border-slate-700 dark:bg-slate-900">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <BotMessageSquare className="h-4 w-4 text-indigo-700 dark:text-indigo-200" />
+                  <CardTitle className="dark:text-slate-100">热门问题</CardTitle>
+                </div>
+                <CardDescription className="dark:text-slate-400">最近被反复询问的问题和平均置信度。</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {popularQuestions.map((item) => (
+                  <article key={item.question} className="flex items-center justify-between gap-4 rounded-lg border border-line bg-canvas px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-ink dark:text-slate-100">{item.question}</p>
+                      <p className="mt-1 text-xs text-muted dark:text-slate-400">{item.count} 次提问</p>
+                    </div>
+                    <span className="rounded-full bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-200">
+                      {Math.round(item.confidence * 100)}%
                     </span>
-                    <CardTitle className="pt-2">{item.title}</CardTitle>
-                    <CardDescription>{item.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <span className="inline-flex items-center gap-2 text-sm font-medium text-teal-700">
-                      进入页面
-                      <ArrowRight className="h-4 w-4" />
-                    </span>
-                  </CardContent>
-                </Card>
-              </Link>
-            );
-          })}
+                  </article>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="space-y-5">
+            <SystemStatusCard />
+
+            <Card className="dark:border-slate-700 dark:bg-slate-900">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <MessageSquareWarning className="h-4 w-4 text-rose-600 dark:text-rose-300" />
+                  <CardTitle className="dark:text-slate-100">未回答问题</CardTitle>
+                </div>
+                <CardDescription className="dark:text-slate-400">需要补充知识或人工确认的高价值问题。</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {unansweredQuestions.map((question) => (
+                  <Link
+                    key={question}
+                    href={`/ingest?q=${encodeURIComponent(question)}`}
+                    className="focus-ring flex items-center gap-3 rounded-lg border border-line bg-white px-4 py-3 text-sm text-ink hover:border-indigo-200 hover:bg-indigo-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <CircleHelp className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-300" />
+                    {question}
+                  </Link>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
         </section>
-
-        <SystemStatusCard />
-
-        <Card>
-          <CardHeader>
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-teal-700" />
-              <CardTitle>当前版本边界</CardTitle>
-            </div>
-            <CardDescription>
-              当前版本已接入真实 API、Prisma、PostgreSQL 和 pgvector；生产环境建议配置 Qwen 主模型、OpenAI embedding 和兜底模型。
-            </CardDescription>
-          </CardHeader>
-        </Card>
       </div>
     </AppShell>
   );

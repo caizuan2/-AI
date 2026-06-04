@@ -14,6 +14,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
+    "test:chatgpt-style": "node scripts/test_chatgpt_style_report.js",
     "test:license": "tsx scripts/license-smoke-test.ts",
     "test:production-license": "node scripts/production-smoke-test.js",
     "debug:health": "node scripts/debug-health.js",
@@ -23,6 +24,8 @@
     "db:check": "tsx scripts/debug-ingest-health.ts",
     "ingest:schema:check": "tsx scripts/check-ingest-schema.ts",
     "rag:check": "tsx scripts/check-rag-system.ts",
+    "rag:reindex": "node --conditions=react-server --import tsx scripts/rebuild-knowledge-index.ts",
+    "rag:test:advanced": "node scripts/test_rag_advanced.js",
     "db:production-check": "tsx scripts/check-production-db.ts",
     "license:generate": "tsx scripts/generate-license-keys.ts",
     "prisma:seed": "tsx prisma/seed.ts",
@@ -52,6 +55,7 @@
     "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "server-only": "0.0.1",
     "tailwind-merge": "^2.5.5"
   },
   "devDependencies": {
