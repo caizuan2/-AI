@@ -8,11 +8,14 @@ import {
   getDeepSeekModel,
   getEmbeddingModel,
   getOpenAIModel,
+  getQwenBaseUrl,
+  getQwenModel,
   hasDatabaseUrl,
   hasLicenseSecret,
   hasSessionSecret,
   hasUsableDeepSeekKey,
-  hasUsableOpenAIKey
+  hasUsableOpenAIKey,
+  hasUsableQwenKey
 } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -44,18 +47,30 @@ type AiCheck = {
   checked: boolean;
   provider: string;
   fallbackProvider: string | null;
+  secondaryFallbackProvider?: string | null;
+  providerChain?: string[];
   model: string;
   embeddingModel: string;
   openaiConfigured: boolean;
+  qwenConfigured: boolean;
   deepseekConfigured: boolean;
   missingEnv: string[];
-  deepseek?: {
-    checked: boolean;
-    configured: boolean;
-    baseUrlConfigured: boolean;
-    modelConfigured: boolean;
-    missingEnv: string[];
-  };
+};
+
+type ProviderConfigCheck = {
+  checked: boolean;
+  configured: boolean;
+  model: string;
+  baseUrlHost: string | null;
+  missingEnv: string[];
+};
+
+type EmbeddingCheck = {
+  checked: boolean;
+  provider: "openai";
+  model: string;
+  configured: boolean;
+  missingEnv: string[];
 };
 
 type VectorCheck = {
@@ -82,6 +97,10 @@ interface HealthResponse {
     database?: DatabaseCheck;
     schema?: SchemaCheck;
     ai?: AiCheck;
+    qwen?: ProviderConfigCheck;
+    openai?: ProviderConfigCheck;
+    deepseek?: ProviderConfigCheck;
+    embedding?: EmbeddingCheck;
     vector?: VectorCheck;
   };
 }
@@ -92,6 +111,32 @@ function parseBooleanParam(value: string | null) {
 
 function hasEnv(name: string) {
   return Boolean(process.env[name]?.trim());
+}
+
+function getBaseUrlHost(value: string) {
+  try {
+    return new URL(value).host;
+  } catch {
+    return null;
+  }
+}
+
+function getMissingQwenEnv() {
+  const missingEnv: string[] = [];
+
+  if (!hasEnv("QWEN_API_KEY")) {
+    missingEnv.push("QWEN_API_KEY");
+  }
+
+  if (!hasEnv("QWEN_BASE_URL")) {
+    missingEnv.push("QWEN_BASE_URL");
+  }
+
+  if (!hasEnv("QWEN_MODEL")) {
+    missingEnv.push("QWEN_MODEL");
+  }
+
+  return missingEnv;
 }
 
 function getMissingDeepSeekEnv() {
@@ -112,9 +157,26 @@ function getMissingDeepSeekEnv() {
   return missingEnv;
 }
 
-function getAiCheck(shouldCheckDeepSeek: boolean): AiCheck {
-  const readiness = getProviderReadiness();
+function getMissingOpenAIEnv() {
   const missingEnv: string[] = [];
+
+  if (!hasEnv("OPENAI_API_KEY")) {
+    missingEnv.push("OPENAI_API_KEY");
+  }
+
+  if (!hasEnv("OPENAI_BASE_URL")) {
+    missingEnv.push("OPENAI_BASE_URL");
+  }
+
+  if (!hasEnv("OPENAI_MODEL")) {
+    missingEnv.push("OPENAI_MODEL");
+  }
+
+  return missingEnv;
+}
+
+function getEmbeddingCheck(): EmbeddingCheck {
+  const missingEnv = [];
 
   if (!hasEnv("OPENAI_API_KEY")) {
     missingEnv.push("OPENAI_API_KEY");
@@ -124,30 +186,94 @@ function getAiCheck(shouldCheckDeepSeek: boolean): AiCheck {
     missingEnv.push("OPENAI_EMBEDDING_MODEL");
   }
 
-  const deepseekMissingEnv = shouldCheckDeepSeek ? getMissingDeepSeekEnv() : [];
+  return {
+    checked: true,
+    provider: "openai",
+    model: getEmbeddingModel(),
+    configured: missingEnv.length === 0 && hasUsableOpenAIKey(),
+    missingEnv
+  };
+}
 
-  missingEnv.push(...deepseekMissingEnv);
+function getQwenCheck(): ProviderConfigCheck {
+  const missingEnv = getMissingQwenEnv();
+
+  return {
+    checked: true,
+    configured: missingEnv.length === 0 && hasUsableQwenKey(),
+    model: getQwenModel(),
+    baseUrlHost: getBaseUrlHost(getQwenBaseUrl()),
+    missingEnv
+  };
+}
+
+function getOpenAICheck(): ProviderConfigCheck {
+  const missingEnv = getMissingOpenAIEnv();
+
+  return {
+    checked: true,
+    configured: missingEnv.length === 0 && hasUsableOpenAIKey(),
+    model: getOpenAIModel(),
+    baseUrlHost: getBaseUrlHost(process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1"),
+    missingEnv
+  };
+}
+
+function getDeepSeekCheck(): ProviderConfigCheck {
+  const missingEnv = getMissingDeepSeekEnv();
+
+  return {
+    checked: true,
+    configured: missingEnv.length === 0 && hasUsableDeepSeekKey(),
+    model: getDeepSeekModel(),
+    baseUrlHost: getBaseUrlHost(process.env.DEEPSEEK_BASE_URL?.trim() || "https://api.deepseek.com"),
+    missingEnv
+  };
+}
+
+function getAiCheck(input: {
+  shouldCheckQwen: boolean;
+  shouldCheckDeepSeek: boolean;
+}): AiCheck {
+  const readiness = getProviderReadiness();
+  const missingEnv: string[] = [];
+
+  if (readiness.primaryProvider === "qwen" && !hasUsableQwenKey()) {
+    missingEnv.push("QWEN_API_KEY");
+  }
+
+  if (!hasUsableOpenAIKey()) {
+    missingEnv.push("OPENAI_API_KEY");
+  }
+
+  if (!hasEnv("OPENAI_EMBEDDING_MODEL")) {
+    missingEnv.push("OPENAI_EMBEDDING_MODEL");
+  }
+
+  if (input.shouldCheckQwen) {
+    missingEnv.push(...getMissingQwenEnv());
+  }
+
+  if (input.shouldCheckDeepSeek) {
+    missingEnv.push(...getMissingDeepSeekEnv());
+  }
 
   return {
     checked: true,
     provider: readiness.primaryProvider,
     fallbackProvider: readiness.fallbackProvider,
-    model: readiness.primaryProvider === "deepseek" ? getDeepSeekModel() : getOpenAIModel(),
+    secondaryFallbackProvider: readiness.secondaryFallbackProvider,
+    providerChain: readiness.providerChain,
+    model: readiness.primaryProvider === "qwen"
+      ? getQwenModel()
+      : readiness.primaryProvider === "deepseek"
+        ? getDeepSeekModel()
+        : getOpenAIModel(),
     embeddingModel: getEmbeddingModel(),
     openaiConfigured: hasUsableOpenAIKey(),
-    deepseekConfigured: shouldCheckDeepSeek ? deepseekMissingEnv.length === 0 && hasUsableDeepSeekKey() : hasUsableDeepSeekKey(),
-    missingEnv,
-    ...(shouldCheckDeepSeek
-      ? {
-          deepseek: {
-            checked: true,
-            configured: deepseekMissingEnv.length === 0 && hasUsableDeepSeekKey(),
-            baseUrlConfigured: hasEnv("DEEPSEEK_BASE_URL"),
-            modelConfigured: hasEnv("DEEPSEEK_MODEL"),
-            missingEnv: deepseekMissingEnv
-          }
-        }
-      : {})
+    qwenConfigured: hasUsableQwenKey(),
+    deepseekConfigured: hasUsableDeepSeekKey(),
+    missingEnv: Array.from(new Set(missingEnv))
   };
 }
 
@@ -283,8 +409,9 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const shouldCheckDatabase = parseBooleanParam(url.searchParams.get("database"));
   const shouldCheckSchema = parseBooleanParam(url.searchParams.get("schema"));
-  const shouldCheckAi = parseBooleanParam(url.searchParams.get("ai")) || parseBooleanParam(url.searchParams.get("deepseek"));
+  const shouldCheckQwen = parseBooleanParam(url.searchParams.get("qwen"));
   const shouldCheckDeepSeek = parseBooleanParam(url.searchParams.get("deepseek"));
+  const shouldCheckAi = parseBooleanParam(url.searchParams.get("ai")) || shouldCheckQwen || shouldCheckDeepSeek;
   const shouldCheckVector = parseBooleanParam(url.searchParams.get("vector"));
   const hasExplicitChecks = shouldCheckDatabase || shouldCheckSchema || shouldCheckAi || shouldCheckVector;
   const checks: HealthResponse["checks"] = {};
@@ -310,7 +437,17 @@ export async function GET(request: Request) {
   }
 
   if (!hasExplicitChecks || shouldCheckAi) {
-    checks.ai = getAiCheck(shouldCheckDeepSeek);
+    checks.ai = getAiCheck({ shouldCheckQwen, shouldCheckDeepSeek });
+    checks.embedding = getEmbeddingCheck();
+    checks.openai = getOpenAICheck();
+
+    if (shouldCheckQwen || !hasExplicitChecks) {
+      checks.qwen = getQwenCheck();
+    }
+
+    if (shouldCheckDeepSeek || !hasExplicitChecks) {
+      checks.deepseek = getDeepSeekCheck();
+    }
   }
 
   if (shouldCheckVector) {
@@ -331,11 +468,13 @@ export async function GET(request: Request) {
   const databaseReady = checks.database ? checks.database.connected : hasDatabaseUrl();
   const schemaReady = checks.schema ? checks.schema.ready : true;
   const aiReady = checks.ai ? checks.ai.openaiConfigured : hasUsableOpenAIKey();
+  const qwenReady = shouldCheckQwen ? Boolean(checks.qwen?.configured) : true;
   const deepseekReady = shouldCheckDeepSeek && checks.ai ? checks.ai.deepseekConfigured : true;
+  const embeddingReady = checks.embedding ? checks.embedding.configured : true;
   const vectorReady = checks.vector ? checks.vector.ready : true;
   const auth = hasSessionSecret();
   const license = hasLicenseSecret();
-  const ok = databaseReady && schemaReady && aiReady && deepseekReady && vectorReady && auth && license;
+  const ok = databaseReady && schemaReady && aiReady && qwenReady && deepseekReady && embeddingReady && vectorReady && auth && license;
   const response: HealthResponse = {
     ok,
     status: ok ? "ok" : "degraded",

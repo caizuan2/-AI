@@ -9,7 +9,7 @@ import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { normalizeQualityScores, type KnowledgeQualityScores } from "@/lib/knowledge/quality";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
-import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
 
 export const dynamic = "force-dynamic";
 
@@ -174,9 +174,9 @@ async function structureSupplementedKnowledge(
   requestId?: string,
   userId?: string
 ): Promise<StructuredSupplement> {
-  if (!hasUsableOpenAIKey()) {
+  if (!hasUsableChatProvider()) {
     if (!isAIFallbackAllowed()) {
-      throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地知识补充 fallback。");
+      throw new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地知识补充 fallback。");
     }
 
     return buildLocalSupplementDraft(existing, input);

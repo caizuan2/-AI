@@ -65,7 +65,7 @@ function normalizeDeepSeekError(error: unknown) {
     }
   }
 
-  return new AppError("AI_PROVIDER_FAILED", "DeepSeek provider 调用失败。", 502);
+  return new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek provider 调用失败。", 502);
 }
 
 async function withRetry<T>(operation: () => Promise<T>, onRetry: (attempt: number, error: unknown) => void) {
@@ -115,7 +115,7 @@ export function createDeepSeekChatProvider(): ChatProvider {
         const text = response.choices[0]?.message.content?.trim();
 
         if (!text) {
-          throw new AppError("AI_PROVIDER_FAILED", "DeepSeek 返回了空内容。", 502);
+          throw new AppError("DEEPSEEK_REQUEST_FAILED", "DeepSeek 返回了空内容。", 502);
         }
 
         logger.info("ai.provider_call", {

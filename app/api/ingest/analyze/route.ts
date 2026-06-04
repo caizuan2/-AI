@@ -241,7 +241,11 @@ export async function POST(request: Request) {
   if (!hasUsableChatProvider()) {
     if (!isAIFallbackAllowed()) {
       const provider = getPrimaryAIProvider();
-      const envName = provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
+      const envName = provider === "qwen"
+        ? "QWEN_API_KEY"
+        : provider === "deepseek"
+          ? "DEEPSEEK_API_KEY"
+          : "OPENAI_API_KEY";
 
       return apiError(new AppError(
         "MISSING_AI_API_KEY",

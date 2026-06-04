@@ -5,9 +5,11 @@ import {
   getEmbeddingModel,
   getFallbackAIProvider,
   getPrimaryAIProvider,
+  getSecondaryFallbackAIProvider,
   hasDatabaseUrl,
   hasUsableDeepSeekKey,
-  hasUsableOpenAIKey
+  hasUsableOpenAIKey,
+  hasUsableQwenKey
 } from "@/lib/server-config-core";
 
 type VectorCheckRow = {
@@ -25,6 +27,7 @@ async function main() {
     DATABASE_URL: exists("DATABASE_URL"),
     DIRECT_URL: exists("DIRECT_URL"),
     SESSION_SECRET: exists("SESSION_SECRET"),
+    QWEN_API_KEY: hasUsableQwenKey(),
     OPENAI_API_KEY: hasUsableOpenAIKey(),
     DEEPSEEK_API_KEY: hasUsableDeepSeekKey(),
     OPENAI_EMBEDDING_MODEL: exists("OPENAI_EMBEDDING_MODEL"),
@@ -39,6 +42,7 @@ async function main() {
     provider: {
       primary: getPrimaryAIProvider(),
       fallback: getFallbackAIProvider(),
+      secondaryFallback: getSecondaryFallbackAIProvider(),
       embeddingProvider: "openai",
       embeddingModel: getEmbeddingModel()
     },

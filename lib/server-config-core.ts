@@ -1,6 +1,7 @@
 export const OPENAI_PLACEHOLDER_API_KEY = "sk-your-openai-api-key";
 export const DEEPSEEK_PLACEHOLDER_API_KEY = "sk-your-deepseek-api-key";
-export type ChatProviderName = "openai" | "deepseek";
+export const QWEN_PLACEHOLDER_API_KEY = "sk-your-qwen-api-key";
+export type ChatProviderName = "qwen" | "openai" | "deepseek";
 
 export const SEARCH_DEFAULT_TOP_K = readIntEnv("RAG_TOP_K", 8, 1, 20);
 export const SEARCH_MAX_TOP_K = 20;
@@ -38,13 +39,19 @@ function readFloatEnv(name: string, fallback: number, min: number, max: number) 
 function normalizeProviderName(value: string | undefined, fallback: ChatProviderName): ChatProviderName {
   const normalized = value?.trim().toLowerCase();
 
-  return normalized === "deepseek" || normalized === "openai" ? normalized : fallback;
+  return normalized === "qwen" || normalized === "deepseek" || normalized === "openai" ? normalized : fallback;
 }
 
 export function hasUsableOpenAIKey() {
   const key = process.env.OPENAI_API_KEY?.trim();
 
   return Boolean(key && !key.includes(OPENAI_PLACEHOLDER_API_KEY));
+}
+
+export function hasUsableQwenKey() {
+  const key = process.env.QWEN_API_KEY?.trim();
+
+  return Boolean(key && !key.includes(QWEN_PLACEHOLDER_API_KEY));
 }
 
 export function hasUsableDeepSeekKey() {
@@ -54,22 +61,62 @@ export function hasUsableDeepSeekKey() {
 }
 
 export function getPrimaryAIProvider(): ChatProviderName {
-  return normalizeProviderName(process.env.AI_PROVIDER, "openai");
+  return normalizeProviderName(process.env.AI_PROVIDER, "qwen");
 }
 
 export function getFallbackAIProvider(): ChatProviderName | null {
-  const fallback = normalizeProviderName(process.env.AI_FALLBACK_PROVIDER, "deepseek");
+  const fallback = normalizeProviderName(process.env.AI_FALLBACK_PROVIDER, "openai");
   const primary = getPrimaryAIProvider();
 
   return fallback === primary ? null : fallback;
 }
 
+export function getSecondaryFallbackAIProvider(): ChatProviderName | null {
+  const secondary = normalizeProviderName(process.env.AI_SECONDARY_FALLBACK_PROVIDER, "deepseek");
+  const primary = getPrimaryAIProvider();
+  const fallback = getFallbackAIProvider();
+
+  return secondary === primary || secondary === fallback ? null : secondary;
+}
+
+export function getAIProviderFallbackChain(provider = getPrimaryAIProvider()) {
+  const providers: ChatProviderName[] = [provider];
+  const fallback = getFallbackAIProvider();
+  const secondary = getSecondaryFallbackAIProvider();
+
+  if (fallback && !providers.includes(fallback)) {
+    providers.push(fallback);
+  }
+
+  if (secondary && !providers.includes(secondary)) {
+    providers.push(secondary);
+  }
+
+  return providers;
+}
+
 export function hasUsableChatProvider(name = getPrimaryAIProvider()) {
-  return name === "deepseek" ? hasUsableDeepSeekKey() : hasUsableOpenAIKey();
+  const hasProvider = (provider: ChatProviderName) => {
+    if (provider === "qwen") {
+      return hasUsableQwenKey();
+    }
+
+    return provider === "deepseek" ? hasUsableDeepSeekKey() : hasUsableOpenAIKey();
+  };
+
+  if (name !== getPrimaryAIProvider()) {
+    return hasProvider(name);
+  }
+
+  return getAIProviderFallbackChain(name).some(hasProvider);
 }
 
 export function getOpenAIBaseUrl() {
   return process.env.OPENAI_BASE_URL?.trim() || "https://api.openai.com/v1";
+}
+
+export function getQwenBaseUrl() {
+  return process.env.QWEN_BASE_URL?.trim() || "https://dashscope.aliyuncs.com/compatible-mode/v1";
 }
 
 export function getDeepSeekBaseUrl() {
@@ -78,6 +125,10 @@ export function getDeepSeekBaseUrl() {
 
 export function getOpenAIModel() {
   return process.env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+}
+
+export function getQwenModel() {
+  return process.env.QWEN_MODEL?.trim() || "qwen-plus";
 }
 
 export function getDeepSeekModel() {

@@ -132,8 +132,8 @@ function downloadTextFile(file: KnowledgeExportResponse) {
 export default function SettingsPage() {
   const [saveStrategy, setSaveStrategy] = useState<SaveStrategy>("MANUAL_CONFIRM");
   const [defaultExpireDays, setDefaultExpireDays] = useState(90);
-  const [preferredProvider, setPreferredProvider] = useState("openai");
-  const [preferredModel, setPreferredModel] = useState("gpt-4.1-mini");
+  const [preferredProvider, setPreferredProvider] = useState("qwen");
+  const [preferredModel, setPreferredModel] = useState("qwen-plus");
   const [ragTopK, setRagTopK] = useState(8);
   const [ragMinScore, setRagMinScore] = useState(0.72);
   const [loadingSettings, setLoadingSettings] = useState(true);
@@ -161,8 +161,8 @@ export default function SettingsPage() {
         if (!cancelled) {
           setSaveStrategy(data.saveStrategy);
           setDefaultExpireDays(data.defaultExpireDays);
-          setPreferredProvider(data.preferredProvider ?? "openai");
-          setPreferredModel(data.preferredModel ?? "gpt-4.1-mini");
+          setPreferredProvider(data.preferredProvider ?? "qwen");
+          setPreferredModel(data.preferredModel ?? "qwen-plus");
           setRagTopK(data.ragTopK ?? 8);
           setRagMinScore(data.ragMinScore ?? 0.72);
         }
@@ -478,7 +478,7 @@ export default function SettingsPage() {
                 <KeyRound className="h-4 w-4 text-teal-700" />
                 <CardTitle>模型与 API</CardTitle>
               </div>
-              <CardDescription>OpenAI 配置由服务端环境变量读取，页面不展示真实 key。</CardDescription>
+              <CardDescription>生成模型由服务端环境变量读取，页面不展示真实 key。</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <label className="block">
@@ -493,10 +493,11 @@ export default function SettingsPage() {
                     const provider = event.target.value;
 
                     setPreferredProvider(provider);
-                    setPreferredModel(provider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini");
+                    setPreferredModel(provider === "qwen" ? "qwen-plus" : provider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini");
                   }}
                   className="focus-ring mt-2 h-11 w-full rounded-lg border border-line bg-white px-3 text-sm text-ink shadow-sm"
                 >
+                  <option value="qwen">Qwen / 千问</option>
                   <option value="openai">OpenAI</option>
                   <option value="deepseek">DeepSeek</option>
                 </select>
@@ -507,7 +508,7 @@ export default function SettingsPage() {
                   className="mt-2"
                   value={preferredModel}
                   onChange={(event) => setPreferredModel(event.target.value)}
-                  placeholder={preferredProvider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini"}
+                  placeholder={preferredProvider === "qwen" ? "qwen-plus" : preferredProvider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini"}
                 />
               </label>
               <label className="flex items-center justify-between gap-3 rounded-lg border border-line p-3">

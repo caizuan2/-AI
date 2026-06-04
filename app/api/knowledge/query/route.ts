@@ -15,6 +15,7 @@ import {
   getDeepSeekModel,
   getOpenAIModel,
   getPrimaryAIProvider,
+  getQwenModel,
   hasDatabaseUrl,
   type ChatProviderName as ConfigChatProviderName
 } from "@/lib/server-config";
@@ -51,7 +52,7 @@ interface KnowledgeQueryResponse {
 const MAX_QUERY_CHARS = 2_000;
 
 function normalizeProvider(value: unknown): ChatProviderName | undefined {
-  return value === "openai" || value === "deepseek" ? value : undefined;
+  return value === "qwen" || value === "openai" || value === "deepseek" ? value : undefined;
 }
 
 function normalizeTopK(value: unknown) {
@@ -119,6 +120,10 @@ function toSources(results: Awaited<ReturnType<typeof retrieveKnowledge>>["resul
 }
 
 function providerModel(provider: ConfigChatProviderName) {
+  if (provider === "qwen") {
+    return getQwenModel();
+  }
+
   return provider === "deepseek" ? getDeepSeekModel() : getOpenAIModel();
 }
 
@@ -168,7 +173,7 @@ export async function POST(request: Request) {
     const requestedProvider = input.provider ?? getPrimaryAIProvider();
     const userSettings = await getOrCreateUserSettings(user.id);
     const effectiveProvider = input.provider
-      ?? (userSettings.preferredProvider === "openai" || userSettings.preferredProvider === "deepseek"
+      ?? (userSettings.preferredProvider === "qwen" || userSettings.preferredProvider === "openai" || userSettings.preferredProvider === "deepseek"
         ? userSettings.preferredProvider
         : requestedProvider);
     const requestedModel = userSettings.preferredModel || providerModel(effectiveProvider);

@@ -18,7 +18,7 @@ import {
 } from "@/lib/knowledge/analyze";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { getRequestIdFromHeaders } from "@/lib/logger";
-import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
 import { getOrCreateUserSettings } from "@/lib/settings";
 
 export const runtime = "nodejs";
@@ -102,13 +102,13 @@ export async function POST(request: Request) {
       return matchedCategory ? { ...draft, category: matchedCategory } : draft;
     };
 
-    if (!hasUsableOpenAIKey() && !isAIFallbackAllowed()) {
-      return apiError(new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地文件整理 fallback。"));
+    if (!hasUsableChatProvider() && !isAIFallbackAllowed()) {
+      return apiError(new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地文件整理 fallback。"));
     }
 
     let analysis = preferExistingCategory(mockAnalyzeKnowledge(analysisText));
 
-    if (hasUsableOpenAIKey()) {
+    if (hasUsableChatProvider()) {
       try {
         const { structureKnowledge } = await import("@/lib/ai/knowledge-structurer");
         const result = await structureKnowledge({

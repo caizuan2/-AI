@@ -2,6 +2,9 @@ type EnvKey =
   | "DATABASE_URL"
   | "DIRECT_URL"
   | "SESSION_SECRET"
+  | "QWEN_API_KEY"
+  | "QWEN_BASE_URL"
+  | "QWEN_MODEL"
   | "OPENAI_API_KEY"
   | "OPENAI_BASE_URL"
   | "OPENAI_MODEL"
@@ -10,10 +13,13 @@ type EnvKey =
   | "DEEPSEEK_BASE_URL"
   | "DEEPSEEK_MODEL"
   | "AI_PROVIDER"
-  | "AI_FALLBACK_PROVIDER";
+  | "AI_FALLBACK_PROVIDER"
+  | "AI_SECONDARY_FALLBACK_PROVIDER";
 
 const requiredEnvKeys: EnvKey[] = [
   "DATABASE_URL",
+  "QWEN_API_KEY",
+  "QWEN_MODEL",
   "OPENAI_API_KEY",
   "OPENAI_MODEL",
   "OPENAI_EMBEDDING_MODEL"
@@ -22,6 +28,9 @@ const knownEnvKeys: EnvKey[] = [
   "DATABASE_URL",
   "DIRECT_URL",
   "SESSION_SECRET",
+  "QWEN_API_KEY",
+  "QWEN_BASE_URL",
+  "QWEN_MODEL",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_MODEL",
@@ -30,7 +39,8 @@ const knownEnvKeys: EnvKey[] = [
   "DEEPSEEK_BASE_URL",
   "DEEPSEEK_MODEL",
   "AI_PROVIDER",
-  "AI_FALLBACK_PROVIDER"
+  "AI_FALLBACK_PROVIDER",
+  "AI_SECONDARY_FALLBACK_PROVIDER"
 ];
 
 function readRequiredEnv(key: EnvKey) {

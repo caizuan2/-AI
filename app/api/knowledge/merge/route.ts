@@ -12,7 +12,7 @@ import {
 } from "@/lib/knowledge/source-types";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { getRequestIdFromHeaders } from "@/lib/logger";
-import { hasDatabaseUrl, hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config";
+import { hasDatabaseUrl, hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config";
 import { AIError, NotFoundError, ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -199,9 +199,9 @@ async function generateMergedDraft(
   requestId?: string,
   userId?: string
 ): Promise<MergedKnowledgeDraft> {
-  if (!hasUsableOpenAIKey()) {
+  if (!hasUsableChatProvider()) {
     if (!isAIFallbackAllowed()) {
-      throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地合并整理 fallback。");
+      throw new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地合并整理 fallback。");
     }
 
     return buildLocalMergedDraft(existing, incoming);

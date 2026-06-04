@@ -5,7 +5,7 @@ import {
   isLowQualityKnowledge,
   type KnowledgeQualityScores
 } from "@/lib/knowledge/quality";
-import { hasUsableOpenAIKey, isAIFallbackAllowed } from "@/lib/server-config-core";
+import { hasUsableChatProvider, isAIFallbackAllowed } from "@/lib/server-config-core";
 
 export type CompletionSuggestionMode = "ai" | "local";
 
@@ -130,7 +130,7 @@ export async function generateCompletionSuggestions(
   item: KnowledgeForCompletionSuggestions,
   options: CompletionSuggestionsOptions = {}
 ): Promise<CompletionSuggestionsResult> {
-  if (hasUsableOpenAIKey()) {
+  if (hasUsableChatProvider()) {
     try {
       const { suggestKnowledgeCompletions } = await import("@/lib/ai/knowledge-completion-core");
       const result = await suggestKnowledgeCompletions(item, {
@@ -150,7 +150,7 @@ export async function generateCompletionSuggestions(
       // Keep background jobs and degraded environments useful when AI is unavailable.
     }
   } else if (!isAIFallbackAllowed()) {
-    throw new AIError("生产环境必须配置真实 OPENAI_API_KEY，不能使用本地补全建议 fallback。");
+    throw new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地补全建议 fallback。");
   }
 
   return {
