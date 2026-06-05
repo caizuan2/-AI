@@ -1,16 +1,4 @@
-function sanitizeCopyText(input: unknown): string {
-  return String(input ?? "")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/^\s*[•*-]\s*$/gm, "")
-    .replace(/^\s*[•*]\s+/gm, "- ")
-    .replace(/(?:Provider|Model|fallback|chunk|score|similarity|source|sources|metadata|requestId|retrieval)\s*[:：=]\s*[^\n，。；;]*/gi, "")
-    .replace(/(?:引用来源|来源|References?|Sources?)[:：]\s*[^\n]*/gi, "")
-    .replace(/\[(?:\d{1,3})\]|\【(?:\d{1,3})\】/g, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n[ \t]+/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
+import { sanitizeAnswer } from "@/lib/ai/rag-output";
 
 function stripMarkdownSyntax(markdown: unknown) {
   return String(markdown ?? "")
@@ -26,7 +14,7 @@ function stripMarkdownSyntax(markdown: unknown) {
 }
 
 export function markdownToPlainTextForCopy(markdown?: unknown): string {
-  const cleaned = sanitizeCopyText(markdown);
+  const cleaned = sanitizeAnswer(String(markdown ?? ""));
   const plain = stripMarkdownSyntax(cleaned)
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n[ \t]+/g, "\n")
@@ -51,7 +39,7 @@ export function markdownToPlainTextForCopy(markdown?: unknown): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return sanitizeCopyText(plain);
+  return sanitizeAnswer(plain);
 }
 
 function collectQuoteBlockAfterLine(lines: string[], titleIndex: number) {
@@ -84,7 +72,7 @@ function collectQuoteBlockAfterLine(lines: string[], titleIndex: number) {
 }
 
 export function extractCustomerScript(markdown?: unknown): string | null {
-  const cleaned = sanitizeCopyText(markdown);
+  const cleaned = sanitizeAnswer(String(markdown ?? ""));
   const lines = cleaned.replace(/\r\n/g, "\n").split("\n");
   const titlePatterns = [
     /可以发给客户这样说/,
