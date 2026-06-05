@@ -14,6 +14,9 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
+    "test:answer-sanitizer": "node scripts/test_answer_sanitizer.js",
+    "test:copy-utils": "node scripts/test_copy_utils.js",
+    "test:answer-render-utils": "node scripts/test_answer_render_utils.js",
     "test:chatgpt-style": "node scripts/test_chatgpt_style_report.js",
     "test:license": "tsx scripts/license-smoke-test.ts",
     "test:production-license": "node scripts/production-smoke-test.js",
@@ -55,6 +58,8 @@
     "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "server-only": "0.0.1",
     "tailwind-merge": "^2.5.5"
   },
