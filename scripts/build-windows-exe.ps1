@@ -2,7 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $OutputDir = Join-Path $Root "dist-app/windows"
-$OutputExe = Join-Path $OutputDir "AI知识库助手.exe"
+$OutputExe = Join-Path $OutputDir "ai-knowledge-chat.exe"
+$LegacyOutputExe = Join-Path $OutputDir "AI知识库助手.exe"
 
 function Invoke-ProjectCommand {
   param(
@@ -29,15 +30,27 @@ if (-not (Test-Path (Join-Path $Root "node_modules/electron-builder"))) {
   throw "electron-builder dependency is missing. Please run pnpm install before building Windows EXE."
 }
 
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+Remove-Item -LiteralPath $OutputExe -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $LegacyOutputExe -Force -ErrorAction SilentlyContinue
+
 if (-not $env:USER_APP_URL) {
-  $env:USER_APP_URL = "https://stately-sawine-1efd4d.netlify.app/chat-ui"
+  $env:USER_APP_URL = "https://stately-sawine-1efd4d.netlify.app/login"
 }
 
 Invoke-ProjectCommand -FilePath "npx" -Arguments @("electron-builder", "--win")
 
-$GeneratedExe = Get-ChildItem -LiteralPath $OutputDir -Recurse -Filter "*.exe" |
+$GeneratedExe = Get-ChildItem -LiteralPath $OutputDir -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+  Where-Object { $_.FullName -ne $OutputExe } |
   Sort-Object LastWriteTime -Descending |
   Select-Object -First 1
+
+if (-not $GeneratedExe) {
+  $GeneratedExe = Get-ChildItem -LiteralPath $OutputDir -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch "\\resources\\elevate\.exe$" -and $_.FullName -ne $OutputExe } |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+}
 
 if (-not $GeneratedExe) {
   throw "No Windows EXE was generated under $OutputDir."
