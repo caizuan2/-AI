@@ -39,7 +39,10 @@
     "prisma:migrate:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "app:android": "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1",
-    "app:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1"
+    "app:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1",
+    "admin:android": "powershell -ExecutionPolicy Bypass -File scripts/build-admin-android-apk.ps1",
+    "admin:windows": "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1",
+    "admin:copy-installers": "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
