@@ -2,8 +2,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin, requireSuperAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
+import { softDeleteKnowledgeItem } from "@/lib/knowledge/soft-delete";
 import { isKnowledgeLifecycleStatus } from "@/lib/knowledge/status";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
@@ -65,6 +67,8 @@ interface KnowledgeDetailResponse {
 interface DeleteKnowledgeResponse {
   id: string;
   deleted: true;
+  deletedAt: string;
+  alreadyDeleted: boolean;
 }
 
 type RouteContext = {
@@ -296,7 +300,7 @@ function serializeKnowledgeDetail(item: {
 
 async function findKnowledgeItem(id: string, userId: string) {
   return prisma.knowledgeItem.findFirst({
-    where: { id, userId },
+    where: { id, userId, deletedAt: null },
     include: {
       chunks: {
         orderBy: { chunkIndex: "asc" }
@@ -362,11 +366,26 @@ function buildPatchData(input: PatchKnowledgeInput): Prisma.KnowledgeItemUpdateI
   return data;
 }
 
-export async function GET(_request: Request, context: RouteContext) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+function parseDeleteReason(body: unknown) {
+  if (!isPlainObject(body)) {
+    return null;
+  }
+
+  return typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
+}
+
+export async function GET(request: Request, context: RouteContext) {
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      targetId: context.params.id,
+      metadata: {
+        operation: "knowledge_detail"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -382,6 +401,18 @@ export async function GET(_request: Request, context: RouteContext) {
       return apiError(new NotFoundError("知识不存在。"));
     }
 
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "KNOWLEDGE_VIEW",
+      targetType: "knowledge_item",
+      targetId: item.id,
+      request,
+      metadata: {
+        scope: "detail"
+      }
+    });
+
     return apiSuccess<KnowledgeDetailResponse>(serializeKnowledgeDetail(item));
   } catch (error) {
     return apiError(error);
@@ -390,10 +421,17 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function PATCH(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      targetId: context.params.id,
+      metadata: {
+        operation: "knowledge_patch"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -430,11 +468,12 @@ export async function PATCH(request: Request, context: RouteContext) {
         category: true,
         sourceType: true,
         sourceTitle: true,
-        sourceUrl: true
+        sourceUrl: true,
+        deletedAt: true
       }
     });
 
-    if (!existing || existing.userId !== currentUser.id) {
+    if (!existing || existing.userId !== currentUser.id || existing.deletedAt) {
       return apiError(new NotFoundError("知识不存在。"));
     }
 
@@ -538,11 +577,15 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, context: RouteContext) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+export async function DELETE(request: Request, context: RouteContext) {
+  let currentUser: Awaited<ReturnType<typeof requireSuperAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireSuperAdmin(request, {
+      deniedAction: "KNOWLEDGE_SOFT_DELETE_DENIED",
+      targetType: "knowledge_item",
+      targetId: context.params.id
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -551,21 +594,35 @@ export async function DELETE(_request: Request, context: RouteContext) {
     return apiError(databaseConfigError("删除知识"));
   }
 
+  let reason: string | null = null;
+
   try {
-    const result = await prisma.knowledgeItem.deleteMany({
-      where: {
-        id: context.params.id,
-        userId: currentUser.id
+    if (request.headers.get("content-type")?.includes("application/json")) {
+      reason = parseDeleteReason(await request.json().catch(() => null));
+    }
+  } catch {
+    reason = null;
+  }
+
+  try {
+    const result = await softDeleteKnowledgeItem({
+      knowledgeItemId: context.params.id,
+      actor: {
+        id: currentUser.id,
+        role: currentUser.role
+      },
+      request,
+      reason,
+      metadata: {
+        route: "/api/knowledge/[id]"
       }
     });
 
-    if (result.count === 0) {
-      return apiError(new NotFoundError("知识不存在。"));
-    }
-
     return apiSuccess<DeleteKnowledgeResponse>({
-      id: context.params.id,
-      deleted: true
+      id: result.id,
+      deleted: true,
+      deletedAt: result.deletedAt.toISOString(),
+      alreadyDeleted: result.alreadyDeleted
     });
   } catch (error) {
     return apiError(error);

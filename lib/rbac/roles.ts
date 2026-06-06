@@ -43,8 +43,3 @@ export function canAccessAdminApiRole(role: AppRole) {
 export function canSoftDeleteKnowledgeRole(role: AppRole) {
   return role === "super_admin";
 }
-
-export function canDeleteKnowledgeFileRole(role: AppRole) {
-  void role;
-  return false;
-}

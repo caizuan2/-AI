@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
+import { writeAuditLog } from "@/lib/audit-log";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -64,8 +65,10 @@ function parsePatchRequest(body: unknown) {
 }
 
 export async function PATCH(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -103,6 +106,18 @@ export async function PATCH(request: Request) {
     const user = await prisma.user.update({
       where: { id: input.userId },
       data: {
+        licenseActivated: input.licenseActivated
+      }
+    });
+
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_USER_UPDATE",
+      targetType: "user",
+      targetId: input.userId,
+      request,
+      metadata: {
         licenseActivated: input.licenseActivated
       }
     });

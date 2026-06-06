@@ -33,7 +33,7 @@ export function normalizeCategoryName(value: unknown, fieldName = "分类") {
 export async function listKnowledgeCategories(userId: string): Promise<KnowledgeCategoriesResponse> {
   const grouped = await prisma.knowledgeItem.groupBy({
     by: ["category"],
-    where: { userId },
+    where: { userId, deletedAt: null },
     _count: {
       _all: true
     },

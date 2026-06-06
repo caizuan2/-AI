@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { AIError, NotFoundError, ValidationError } from "@/lib/errors";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
@@ -287,10 +288,17 @@ function serializeKnowledgeDetail(item: ExistingKnowledge & {
 
 export async function POST(request: Request, context: RouteContext) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      targetId: context.params.id,
+      metadata: {
+        operation: "knowledge_supplement"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -319,7 +327,8 @@ export async function POST(request: Request, context: RouteContext) {
     const existing = await prisma.knowledgeItem.findFirst({
       where: {
         id: context.params.id,
-        userId: currentUser.id
+        userId: currentUser.id,
+        deletedAt: null
       }
     });
 
@@ -416,6 +425,20 @@ export async function POST(request: Request, context: RouteContext) {
       }
 
       return item;
+    });
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      targetId: updated.id,
+      request,
+      metadata: {
+        requestId,
+        operation: "knowledge_supplement",
+        chunkCount: updated.chunks.length
+      }
     });
 
     return apiSuccess<SupplementKnowledgeResponse>(serializeKnowledgeDetail(updated));

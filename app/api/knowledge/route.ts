@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { normalizeQualityScores } from "@/lib/knowledge/quality";
 import { calculateExpiresAt } from "@/lib/knowledge/status";
@@ -217,7 +218,7 @@ function buildKnowledgeWhere(searchParams: URLSearchParams, userId: string): Pri
   const tag = searchParams.get("tag")?.trim();
   const category = searchParams.get("category")?.trim();
   const status = searchParams.get("status")?.trim();
-  const filters: Prisma.KnowledgeItemWhereInput[] = [{ userId }];
+  const filters: Prisma.KnowledgeItemWhereInput[] = [{ userId, deletedAt: null }];
 
   if (q) {
     filters.push({
@@ -339,10 +340,13 @@ function serializeKnowledgeItem(item: {
 }
 
 export async function GET(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item"
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -380,6 +384,20 @@ export async function GET(request: Request) {
     ]);
     const totalPages = Math.ceil(total / pageSize);
 
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "KNOWLEDGE_VIEW",
+      targetType: "knowledge_item",
+      request,
+      metadata: {
+        scope: "list",
+        page,
+        pageSize,
+        total
+      }
+    });
+
     return apiSuccess<KnowledgeListResponse>({
       items: items.map(serializeKnowledgeItem),
       pagination: {
@@ -398,10 +416,16 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let user: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let user: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    user = await requireLicensedUser();
+    user = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      metadata: {
+        operation: "knowledge_create"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -516,6 +540,22 @@ export async function POST(request: Request) {
       }
 
       return created;
+    });
+
+    await writeAuditLog({
+      userId: user.id,
+      role: user.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      targetId: knowledgeItem.id,
+      request,
+      metadata: {
+        requestId,
+        sourceType: input.sourceType,
+        category: input.category,
+        tagCount: input.tags.length,
+        chunkCount: knowledgeItem.chunks.length
+      }
     });
 
     return apiSuccess<CreateKnowledgeResponse>(

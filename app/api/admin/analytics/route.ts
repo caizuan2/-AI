@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { writeAuditLog } from "@/lib/audit-log";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const dynamic = "force-dynamic";
@@ -150,6 +151,7 @@ async function getDailyActiveRows(startDate: Date) {
       SELECT "userId", date_trunc('day', "createdAt")::date AS day
       FROM "knowledge_items"
       WHERE "createdAt" >= ${startDate}
+        AND "deleted_at" IS NULL
 
       UNION
 
@@ -175,6 +177,7 @@ async function getDailyKnowledgeRows(startDate: Date) {
     SELECT date_trunc('day', "createdAt")::date AS day, COUNT(*) AS count
     FROM "knowledge_items"
     WHERE "createdAt" >= ${startDate}
+      AND "deleted_at" IS NULL
     GROUP BY day
     ORDER BY day ASC
   `;
@@ -256,6 +259,7 @@ async function getRetention(startDate: Date, currentWeekStart: Date, endDate: Da
       SELECT "userId", "createdAt" AS active_at
       FROM "knowledge_items"
       WHERE "createdAt" >= ${startDate} AND "createdAt" < ${endDate}
+        AND "deleted_at" IS NULL
 
       UNION
 
@@ -302,8 +306,10 @@ async function getRetention(startDate: Date, currentWeekStart: Date, endDate: Da
 }
 
 export async function GET(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -413,6 +419,18 @@ export async function GET(request: Request) {
       item.aiCallCount === 0 &&
       item.uploadFileCount === 0
     ));
+
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_ANALYTICS_VIEW",
+      targetType: "admin_analytics",
+      request,
+      metadata: {
+        days,
+        empty
+      }
+    });
 
     return apiSuccess<AdminAnalyticsResponse>({
       range: {

@@ -12,6 +12,8 @@ const apiRateLimitBuckets = new Map<string, RateLimitBucket>();
 
 const apiRateLimitRules = [
   { prefix: "/api/auth", limit: 20, windowMs: 60_000 },
+  { prefix: "/api/admin/kb", limit: 30, windowMs: 60_000 },
+  { prefix: "/api/admin", limit: 40, windowMs: 60_000 },
   { prefix: "/api/upload", limit: 8, windowMs: 60_000 },
   { prefix: "/api/knowledge/import", limit: 6, windowMs: 60_000 },
   { prefix: "/api/knowledge/export", limit: 20, windowMs: 60_000 },

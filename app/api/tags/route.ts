@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
@@ -79,7 +79,7 @@ function summarizeTags(items: KnowledgeItemTags[]): TagsResponse {
 
 async function listUserTagItems(userId: string) {
   return prisma.knowledgeItem.findMany({
-    where: { userId },
+    where: { userId, deletedAt: null },
     select: {
       id: true,
       tags: true
@@ -126,14 +126,16 @@ async function parseJsonBody(request: Request) {
 
 async function getAuthUserOrResponse() {
   try {
-    return await requireLicensedUser();
+    return await requireKbAdmin(undefined, {
+      targetType: "knowledge_tag"
+    });
   } catch (error) {
     throw error;
   }
 }
 
 export async function GET() {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -153,7 +155,7 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -182,7 +184,8 @@ export async function PATCH(request: Request) {
     const items = await prisma.knowledgeItem.findMany({
       where: {
         userId: currentUser.id,
-        tags: { has: from }
+        tags: { has: from },
+        deletedAt: null
       },
       select: {
         id: true,
@@ -202,7 +205,7 @@ export async function PATCH(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -231,7 +234,8 @@ export async function DELETE(request: Request) {
     const items = await prisma.knowledgeItem.findMany({
       where: {
         userId: currentUser.id,
-        tags: { has: tag }
+        tags: { has: tag },
+        deletedAt: null
       },
       select: {
         id: true,
@@ -251,7 +255,7 @@ export async function DELETE(request: Request) {
 }
 
 export async function POST(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
     currentUser = await getAuthUserOrResponse();
@@ -286,7 +290,8 @@ export async function POST(request: Request) {
     const items = await prisma.knowledgeItem.findMany({
       where: {
         userId: currentUser.id,
-        tags: { hasSome: sourceTags }
+        tags: { hasSome: sourceTags },
+        deletedAt: null
       },
       select: {
         id: true,
