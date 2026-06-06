@@ -88,7 +88,7 @@
   },
   "build": {
     "appId": "com.aiknowledge.chat.desktop",
-    "productName": "AI知识库助手",
+    "productName": "AIKnowledgeAssistant",
     "directories": {
       "output": "dist-app/windows"
     },
@@ -101,7 +101,7 @@
         "nsis",
         "portable"
       ],
-      "artifactName": "AI知识库助手.${ext}"
+      "artifactName": "AIKnowledgeAssistant.${ext}"
     }
   }
 }
