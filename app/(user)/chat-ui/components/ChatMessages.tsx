@@ -1,0 +1,90 @@
+"use client";
+
+import * as React from "react";
+import { Bot, Loader2, User } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { EmptyState } from "./EmptyState";
+import { SourceList } from "./SourceList";
+import type { ChatMessageView, ChatMode } from "../types";
+
+interface ChatMessagesProps {
+  messages: ChatMessageView[];
+  loading: boolean;
+  mode: ChatMode;
+  onModeChange: (mode: ChatMode) => void;
+}
+
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMessagesProps) {
+  if (messages.length === 0) {
+    return <EmptyState mode={mode} onModeChange={onModeChange} />;
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 py-6 md:px-6">
+      {messages.map((message) => {
+        const isUser = message.role === "user";
+
+        return (
+          <article
+            key={message.id}
+            className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
+          >
+            {!isUser ? (
+              <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+                <Bot className="h-4 w-4" aria-hidden="true" />
+              </div>
+            ) : null}
+
+            <div
+              className={cn(
+                "max-w-[min(760px,88%)] rounded-3xl px-4 py-3 text-sm leading-7 shadow-sm",
+                isUser
+                  ? "rounded-br-lg bg-blue-600 text-white"
+                  : "rounded-bl-lg border border-slate-200 bg-white text-slate-900"
+              )}
+            >
+              <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              {message.pending ? (
+                <div className="mt-2 text-xs opacity-80">发送中...</div>
+              ) : null}
+              {!isUser ? (
+                <SourceList sources={message.sources} confidence={message.confidence} />
+              ) : null}
+              <div className={cn("mt-2 text-xs", isUser ? "text-blue-100" : "text-slate-400")}>
+                {formatMessageTime(message.created_at)}
+              </div>
+            </div>
+
+            {isUser ? (
+              <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
+                <User className="h-4 w-4" aria-hidden="true" />
+              </div>
+            ) : null}
+          </article>
+        );
+      })}
+
+      {loading ? (
+        <div className="flex items-center gap-3 text-sm text-slate-500">
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          </span>
+          AI 正在检索知识库并生成回答...
+        </div>
+      ) : null}
+    </div>
+  );
+}
