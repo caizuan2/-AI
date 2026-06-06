@@ -4,15 +4,18 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import DownloadPage from "../app/download/page";
 
-const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/login";
+const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<DownloadPage />);
 
   assert.match(pageMarkup, /AI知识库助手下载/);
+  assert.match(pageMarkup, /用户端/);
   assert.match(pageMarkup, /Android APK 下载/);
   assert.match(pageMarkup, /Windows EXE 下载/);
-  assert.match(pageMarkup, /请先登录账号/);
+  assert.match(pageMarkup, /登录普通用户账号/);
+  assert.doesNotMatch(pageMarkup, /投喂/);
+  assert.doesNotMatch(pageMarkup, /管理员后台/);
   assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat-latest\.apk/);
   assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat-latest\.exe/);
   assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat\.apk/);
@@ -21,24 +24,35 @@ async function main() {
   const electronMain = readFileSync("electron/main.cjs", "utf8");
   const capacitorConfig = readFileSync("capacitor.config.ts", "utf8");
   const appShell = readFileSync("app-shell/index.html", "utf8");
+  const mainActivity = readFileSync("android/app/src/main/java/com/aiknowledge/chat/MainActivity.java", "utf8");
   const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
   assert.match(electronMain, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(electronMain, /USER_CHAT_URL\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app\/chat-ui"/);
+  assert.match(electronMain, /blockedPrefixes\s*=\s*\["\/ingest",\s*"\/admin",\s*"\/api\/admin"\]/);
+  assert.match(electronMain, /isForbiddenUserAppUrl/);
+  assert.match(electronMain, /did-navigate-in-page/);
   assert.match(electronMain, /nodeIntegration:\s*false/);
   assert.match(electronMain, /contextIsolation:\s*true/);
   assert.match(electronMain, /sandbox:\s*true/);
-  assert.doesNotMatch(electronMain, /\/chat-ui/);
-  assert.doesNotMatch(electronMain, /\/ingest/);
-  assert.doesNotMatch(electronMain, /\/admin/);
+  assert.doesNotMatch(electronMain, /stately-sawine-1efd4d\.netlify\.app\/ingest/);
+  assert.doesNotMatch(electronMain, /stately-sawine-1efd4d\.netlify\.app\/admin/);
 
   assert.match(capacitorConfig, /appId:\s*"com\.aiknowledge\.chat"/);
   assert.match(capacitorConfig, /appName:\s*"AI知识库助手"/);
   assert.match(capacitorConfig, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(capacitorConfig, /cleartext:\s*false/);
-  assert.doesNotMatch(capacitorConfig, /\/ingest/);
+  assert.doesNotMatch(capacitorConfig, /stately-sawine-1efd4d\.netlify\.app\/ingest/);
   assert.match(appShell, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.doesNotMatch(appShell, /\/chat-ui/);
-  assert.doesNotMatch(appShell, /\/ingest/);
+  assert.doesNotMatch(appShell, /stately-sawine-1efd4d\.netlify\.app\/ingest/);
+
+  assert.match(mainActivity, /USER_APP_ORIGIN\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app"/);
+  assert.match(mainActivity, /USER_CHAT_URL\s*=\s*USER_APP_ORIGIN \+ "\/chat-ui"/);
+  assert.match(mainActivity, /path\.equals\("\/ingest"\)/);
+  assert.match(mainActivity, /path\.equals\("\/admin"\)/);
+  assert.match(mainActivity, /path\.equals\("\/api\/admin"\)/);
+  assert.match(mainActivity, /__aiUserAppRouteGuardInstalled/);
+  assert.match(mainActivity, /history\.pushState/);
 
   assert.equal(packageJson.scripts["app:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1");
   assert.equal(packageJson.scripts["app:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1");

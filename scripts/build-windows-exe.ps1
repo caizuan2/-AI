@@ -30,12 +30,15 @@ if (-not (Test-Path (Join-Path $Root "node_modules/electron-builder"))) {
   throw "electron-builder dependency is missing. Please run pnpm install before building Windows EXE."
 }
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-Remove-Item -LiteralPath $OutputExe -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $LegacyOutputExe -Force -ErrorAction SilentlyContinue
+if (Test-Path $OutputDir) {
+  Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+} else {
+  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+}
 
 if (-not $env:USER_APP_URL) {
-  $env:USER_APP_URL = "https://stately-sawine-1efd4d.netlify.app/login"
+  $env:USER_APP_URL = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui"
 }
 
 Invoke-ProjectCommand -FilePath "npx" -Arguments @("electron-builder", "--win")

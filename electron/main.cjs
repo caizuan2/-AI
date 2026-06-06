@@ -3,7 +3,8 @@ const { app, BrowserWindow, Menu, shell } = require("electron");
 const USER_APP_URL =
   process.env.USER_APP_URL ||
   process.env.NEXT_PUBLIC_USER_APP_URL ||
-  "https://stately-sawine-1efd4d.netlify.app/login";
+  "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
+const USER_CHAT_URL = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
 
 let mainWindow = null;
 
@@ -12,14 +13,40 @@ function isAllowedAppUrl(targetUrl) {
     const appUrl = new URL(USER_APP_URL);
     const url = new URL(targetUrl);
 
-    return url.origin === appUrl.origin;
+    return url.origin === appUrl.origin && !isForbiddenUserAppUrl(url);
   } catch {
     return false;
   }
 }
 
+function isForbiddenUserAppUrl(url) {
+  const blockedPrefixes = ["/ingest", "/admin", "/api/admin"];
+  return blockedPrefixes.some((prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`));
+}
+
 function openExternalUrl(targetUrl) {
   void shell.openExternal(targetUrl);
+}
+
+function handleNavigationTarget(targetUrl) {
+  try {
+    const appUrl = new URL(USER_APP_URL);
+    const url = new URL(targetUrl);
+
+    if (url.origin !== appUrl.origin) {
+      openExternalUrl(targetUrl);
+      return;
+    }
+
+    if (isForbiddenUserAppUrl(url)) {
+      void mainWindow.loadURL(USER_CHAT_URL);
+      return;
+    }
+
+    void mainWindow.loadURL(targetUrl);
+  } catch {
+    openExternalUrl(targetUrl);
+  }
 }
 
 function createMainWindow() {
@@ -39,11 +66,7 @@ function createMainWindow() {
   mainWindow.loadURL(USER_APP_URL);
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (isAllowedAppUrl(url)) {
-      void mainWindow.loadURL(url);
-    } else {
-      openExternalUrl(url);
-    }
+    handleNavigationTarget(url);
 
     return { action: "deny" };
   });
@@ -54,7 +77,15 @@ function createMainWindow() {
     }
 
     event.preventDefault();
-    openExternalUrl(url);
+    handleNavigationTarget(url);
+  });
+
+  mainWindow.webContents.on("did-navigate-in-page", (_event, url) => {
+    if (isAllowedAppUrl(url)) {
+      return;
+    }
+
+    handleNavigationTarget(url);
   });
 
   mainWindow.webContents.on("before-input-event", (event, input) => {
