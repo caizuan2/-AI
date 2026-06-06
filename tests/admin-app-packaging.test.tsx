@@ -36,7 +36,40 @@ async function main() {
   assert.match(adminElectronMain, /nodeIntegration:\s*false/);
   assert.match(adminElectronMain, /contextIsolation:\s*true/);
   assert.match(adminElectronMain, /sandbox:\s*true/);
+  assert.match(adminElectronMain, /ADMIN_INGEST_URL\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app\/ingest"/);
+  assert.match(adminElectronMain, /function isForbiddenAdminAppUrl/);
+  assert.match(adminElectronMain, /url\.searchParams\.get\("app"\)\s*===\s*"user"/);
+  assert.match(adminElectronMain, /blockedPrefixes\s*=\s*\["\/chat-ui",\s*"\/download"\]/);
+  assert.match(adminElectronMain, /url\.pathname\s*===\s*"\/user-download\.html"/);
+  assert.match(adminElectronMain, /did-navigate-in-page/);
+  assert.match(adminElectronMain, /mainWindow\.loadURL\(ADMIN_INGEST_URL\)/);
   assert.doesNotMatch(adminElectronMain, /loadURL\([^)]*chat-ui/);
+  const adminElectronGuard = adminElectronMain.slice(
+    adminElectronMain.indexOf("function isForbiddenAdminAppUrl"),
+    adminElectronMain.indexOf("function openExternalUrl")
+  );
+  assert.doesNotMatch(adminElectronGuard, /\/ingest/);
+  assert.doesNotMatch(adminElectronGuard, /\/api\/admin/);
+
+  const androidMainActivity = readFileSync("android/app/src/main/java/com/aiknowledge/chat/MainActivity.java", "utf8");
+  assert.match(androidMainActivity, /ADMIN_APP_PACKAGE\s*=\s*"com\.aiknowledge\.admin"/);
+  assert.match(androidMainActivity, /ADMIN_INGEST_URL\s*=\s*APP_ORIGIN \+ "\/ingest"/);
+  assert.match(androidMainActivity, /isAdminShell\(\)/);
+  assert.match(androidMainActivity, /isForbiddenAdminRoute/);
+  assert.match(androidMainActivity, /getQueryParameter\("app"\)/);
+  assert.match(androidMainActivity, /"user"\.equals\(appMode\)/);
+  assert.match(androidMainActivity, /path\.equals\("\/chat-ui"\)/);
+  assert.match(androidMainActivity, /path\.equals\("\/download"\)/);
+  assert.match(androidMainActivity, /path\.equals\("\/user-download\.html"\)/);
+  assert.match(androidMainActivity, /adminShell && isForbiddenAdminRoute/);
+  assert.match(androidMainActivity, /!adminShell && isForbiddenUserRoute/);
+  assert.match(androidMainActivity, /__aiAdminAppRouteGuardInstalled/);
+  const androidAdminGuard = androidMainActivity.slice(
+    androidMainActivity.indexOf("private static boolean isForbiddenAdminRoute"),
+    androidMainActivity.indexOf("private static class AppRouteWebViewClient")
+  );
+  assert.doesNotMatch(androidAdminGuard, /\/ingest/);
+  assert.doesNotMatch(androidAdminGuard, /\/api\/admin/);
 
   const adminBuilderConfig = readFileSync("electron-builder.admin.yml", "utf8");
   assert.match(adminBuilderConfig, /appId:\s*com\.aiknowledge\.admin\.desktop/);
@@ -54,6 +87,11 @@ async function main() {
   const userElectronMain = readFileSync("electron/main.cjs", "utf8");
   assert.match(userCapacitorConfig, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(userElectronMain, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+
+  const loginPage = readFileSync("app/login/page.tsx", "utf8");
+  assert.match(loginPage, /searchParams\.get\("next"\)/);
+  assert.match(loginPage, /getSafeNextPath/);
+  assert.match(loginPage, /router\.replace\(nextPath \|\| \(data\.licenseActivated \? "\/ingest" : "\/unlock"\)\)/);
 
   const prismaSchema = readFileSync("prisma/schema.prisma", "utf8");
   assert.doesNotMatch(prismaSchema, /ai-knowledge-admin|ADMIN_APP_URL|com\.aiknowledge\.admin/);
