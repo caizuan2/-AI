@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { NotFoundError, UnauthorizedError, ValidationError } from "../lib/errors";
 import {
   NO_KNOWLEDGE_ANSWER,
+  RAG_CUSTOMER_DRAFT_ANSWER,
   getAiChatHistory,
   handleAiChatAsk,
   type AiChatDb
@@ -181,6 +182,10 @@ async function main() {
 
   assert.equal(askResult.mode, "fast");
   assert.equal(askResult.provider_status, "provider_not_configured");
+  assert.equal(askResult.answer, RAG_CUSTOMER_DRAFT_ANSWER);
+  assert.match(askResult.customer_answer, /您好，关于/);
+  assert.match(askResult.customer_answer, /核对订单号/);
+  assert.equal(/chunk_refund_1|storage_path|系统提示词/i.test(askResult.customer_answer), false);
   assert.equal(askResult.sources.length, 1);
   assert.equal(askResult.sources[0].chunk_id, "chunk_refund_1");
   assert.equal(fake.state.conversations.length, 1);
@@ -214,6 +219,8 @@ async function main() {
   });
 
   assert.equal(noKnowledge.answer, NO_KNOWLEDGE_ANSWER);
+  assert.equal(noKnowledge.provider_status, "no_relevant_knowledge");
+  assert.match(noKnowledge.customer_answer, /暂无该问题的明确资料/);
   assert.equal(noKnowledge.sources.length, 0);
   assert.equal(noKnowledge.confidence, "low");
 
@@ -291,6 +298,7 @@ async function main() {
 
   assert.equal(injectionResult.provider_status, "ok");
   assert.equal(injectionResult.answer, "退款需要先核对订单号。");
+  assert.match(injectionResult.customer_answer, /退款需要先核对订单号/);
 
   fake.state.conversations.push({
     id: "conv_foreign",

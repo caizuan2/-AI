@@ -1,5 +1,6 @@
 export type ChatMode = "fast" | "expert";
 export type RagConfidence = "high" | "medium" | "low";
+export type ProviderStatus = "ok" | "provider_not_configured" | "no_relevant_knowledge" | "error";
 export type AttachmentType = "image" | "camera_photo" | "gallery_photo" | "file" | "audio" | "video";
 
 export interface ChatAttachmentDraft {
@@ -25,6 +26,8 @@ export interface ChatMessageView {
   attachments?: ChatAttachmentDraft[] | null;
   sources?: ChatSource[] | null;
   confidence?: RagConfidence | null;
+  customer_answer?: string | null;
+  provider_status?: ProviderStatus | null;
   created_at: string;
   pending?: boolean;
 }
@@ -53,9 +56,10 @@ export interface AskChatResponse {
   conversation_id: string;
   message_id: string;
   mode: ChatMode;
+  customer_answer?: string | null;
   sources: ChatSource[];
   confidence: RagConfidence;
-  provider_status?: string;
+  provider_status?: ProviderStatus;
 }
 
 export interface ConversationsResponse {

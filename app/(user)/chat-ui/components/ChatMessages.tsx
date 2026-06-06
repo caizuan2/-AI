@@ -3,7 +3,9 @@
 import * as React from "react";
 import { Bot, Loader2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
+import { RichAnswerView } from "./RichAnswerView";
 import { SourceList } from "./SourceList";
 import type { ChatMessageView, ChatMode } from "../types";
 
@@ -27,6 +29,10 @@ function formatMessageTime(value: string) {
   }).format(date);
 }
 
+function shouldShowDebugSources() {
+  return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
+}
+
 export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMessagesProps) {
   if (messages.length === 0) {
     return <EmptyState mode={mode} onModeChange={onModeChange} />;
@@ -36,6 +42,7 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 py-6 md:px-6">
       {messages.map((message) => {
         const isUser = message.role === "user";
+        const showSources = !isUser && shouldShowDebugSources();
 
         return (
           <article
@@ -56,11 +63,22 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
                   : "rounded-bl-lg border border-slate-200 bg-white text-slate-900"
               )}
             >
-              <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              {isUser ? (
+                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+              ) : (
+                <RichAnswerView
+                  answer={message.content}
+                  customerAnswer={message.customer_answer}
+                  providerStatus={message.provider_status}
+                />
+              )}
               {message.pending ? (
                 <div className="mt-2 text-xs opacity-80">发送中...</div>
               ) : null}
               {!isUser ? (
+                <CustomerAnswerCard content={message.customer_answer} />
+              ) : null}
+              {showSources ? (
                 <SourceList sources={message.sources} confidence={message.confidence} />
               ) : null}
               <div className={cn("mt-2 text-xs", isUser ? "text-blue-100" : "text-slate-400")}>

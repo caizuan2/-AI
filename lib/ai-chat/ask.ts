@@ -1,5 +1,10 @@
 import type { RagContext } from "@/lib/ai/rag-prompt";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
+import {
+  buildCustomerAnswerFromChunks,
+  buildCustomerAnswerFromText,
+  buildNoKnowledgeCustomerAnswer
+} from "@/lib/ai-chat/customer-answer";
 import { AppError, NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
@@ -18,6 +23,7 @@ import {
 } from "@/lib/rag/search";
 
 export const NO_KNOWLEDGE_ANSWER = "知识库中暂无明确资料。";
+export const RAG_CUSTOMER_DRAFT_ANSWER = "已根据知识库资料整理如下，可直接复制给客户。";
 
 export interface AiChatActor {
   id: string;
@@ -196,14 +202,6 @@ function toSource(chunk: RetrievedRagChunk) {
   };
 }
 
-function buildProviderNotConfiguredAnswer(chunks: RetrievedRagChunk[]) {
-  if (chunks.length === 0) {
-    return NO_KNOWLEDGE_ANSWER;
-  }
-
-  return "已检索到相关知识库资料，但当前 AI provider 未配置，暂时无法生成完整回答。请配置可用模型后重试。";
-}
-
 async function writeAuditLog(
   db: AiChatDb,
   actor: AiChatActor,
@@ -285,6 +283,7 @@ async function saveAssistantMessage(
   conversationId: string,
   answer: string,
   sources: ReturnType<typeof toSource>[],
+  customerAnswer: string,
   metadata: JsonObject
 ) {
   return db.message.create({
@@ -294,7 +293,10 @@ async function saveAssistantMessage(
       role: "ASSISTANT",
       content: answer,
       sources,
-      metadata
+      metadata: {
+        ...metadata,
+        customerAnswer
+      }
     }
   });
 }
@@ -354,12 +356,20 @@ export async function handleAiChatAsk(
   });
 
   let answer = NO_KNOWLEDGE_ANSWER;
-  let providerStatus: "not_needed" | "ok" | "provider_not_configured" | "provider_unavailable" = "not_needed";
+  let customerAnswer = buildNoKnowledgeCustomerAnswer();
+  let providerStatus: "ok" | "provider_not_configured" | "no_relevant_knowledge" | "error" = "no_relevant_knowledge";
   let providerUsed: string | undefined;
   let modelUsed: string | undefined;
   let fallbackUsed: boolean | undefined;
 
   if (contexts.length > 0) {
+    customerAnswer = buildCustomerAnswerFromChunks({
+      question,
+      chunks,
+      confidence,
+      mode
+    });
+
     if (options.providerConfigured && options.answerProvider) {
       try {
         const providerResult = await options.answerProvider({
@@ -371,6 +381,7 @@ export async function handleAiChatAsk(
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
+        customerAnswer = buildCustomerAnswerFromText(question, answer);
         providerStatus = "ok";
         providerUsed = providerResult.providerUsed;
         modelUsed = providerResult.modelUsed;
@@ -380,11 +391,11 @@ export async function handleAiChatAsk(
           throw new AppError("AI_PROVIDER_FAILED", "AI provider 返回了空回答。", 502);
         }
       } catch {
-        answer = "已检索到相关知识库资料，但当前 AI provider 暂时不可用，无法生成完整回答。请稍后重试。";
-        providerStatus = "provider_unavailable";
+        answer = RAG_CUSTOMER_DRAFT_ANSWER;
+        providerStatus = "provider_not_configured";
       }
     } else {
-      answer = buildProviderNotConfiguredAnswer(chunks);
+      answer = RAG_CUSTOMER_DRAFT_ANSWER;
       providerStatus = "provider_not_configured";
       await writeAuditLog(db, actor, "CHAT_PROVIDER_NOT_CONFIGURED", normalizedConversationId, {
         mode,
@@ -393,7 +404,7 @@ export async function handleAiChatAsk(
     }
   }
 
-  const assistantMessage = await saveAssistantMessage(db, actor, normalizedConversationId, answer, sources, {
+  const assistantMessage = await saveAssistantMessage(db, actor, normalizedConversationId, answer, sources, customerAnswer, {
     mode,
     confidence,
     sourceCount: sources.length,
@@ -426,6 +437,7 @@ export async function handleAiChatAsk(
     conversation_id: normalizedConversationId,
     message_id: String(assistantMessage.id),
     mode,
+    customer_answer: customerAnswer,
     sources,
     confidence,
     provider_status: providerStatus
@@ -446,6 +458,10 @@ function serializeConversation(conversation: ConversationRecord) {
 
 function serializeMessage(message: MessageRecord) {
   const role = String(message.role ?? "").toLowerCase();
+  const metadata = toJsonObject(message.metadata) ?? {};
+  const confidence = typeof metadata.confidence === "string" ? metadata.confidence : null;
+  const providerStatus = typeof metadata.providerStatus === "string" ? metadata.providerStatus : null;
+  const customerAnswer = typeof metadata.customerAnswer === "string" ? metadata.customerAnswer : null;
 
   return {
     id: String(message.id),
@@ -453,6 +469,9 @@ function serializeMessage(message: MessageRecord) {
     content: String(message.content ?? ""),
     attachments: message.attachments ?? null,
     sources: message.sources ?? null,
+    customer_answer: customerAnswer,
+    provider_status: providerStatus,
+    confidence,
     metadata: message.metadata ?? null,
     created_at: toIsoString(message.createdAt)
   };
