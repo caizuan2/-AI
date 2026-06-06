@@ -1,16 +1,9 @@
-param(
-  [ValidateSet("Debug", "Release")]
-  [string]$Configuration = "Debug",
-  [switch]$SkipWebBuild
-)
-
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $AndroidDir = Join-Path $Root "android"
 $OutputDir = Join-Path $Root "dist-app/android"
-$OutputApk = Join-Path $OutputDir "ai-knowledge-chat.apk"
-$LegacyOutputApk = Join-Path $OutputDir "AI知识库助手.apk"
+$OutputApk = Join-Path $OutputDir "AI知识库助手.apk"
 
 function Invoke-ProjectCommand {
   param(
@@ -34,17 +27,6 @@ if (-not (Test-Path (Join-Path $Root "node_modules/@capacitor/core"))) {
   throw "Capacitor dependencies are missing. Please run pnpm install before building Android APK."
 }
 
-if (-not $SkipWebBuild) {
-  Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "build")
-}
-
-if (Test-Path $OutputDir) {
-  Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
-    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
-} else {
-  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-}
-
 if (-not (Test-Path $AndroidDir)) {
   Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "add", "android")
 }
@@ -62,15 +44,11 @@ $hasReleaseSigning =
   $env:ANDROID_KEY_ALIAS -and
   $env:ANDROID_KEY_PASSWORD
 
-if ($Configuration -eq "Release" -and -not $hasReleaseSigning) {
-  throw "Release build requires ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
-}
-
-$buildTask = if ($Configuration -eq "Release") { "assembleRelease" } else { "assembleDebug" }
+$buildTask = if ($hasReleaseSigning) { "assembleRelease" } else { "assembleDebug" }
 Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments @($buildTask) -WorkingDirectory $AndroidDir
 
 $candidateApks = @()
-if ($Configuration -eq "Release") {
+if ($hasReleaseSigning) {
   $candidateApks += Join-Path $AndroidDir "app/build/outputs/apk/release/app-release.apk"
   $candidateApks += Join-Path $AndroidDir "app/build/outputs/apk/release/app-release-unsigned.apk"
 }
@@ -81,6 +59,7 @@ if (-not $SourceApk) {
   throw "No APK was generated under android/app/build/outputs/apk."
 }
 
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 Copy-Item -LiteralPath $SourceApk -Destination $OutputApk -Force
 
 Write-Host "Android APK generated: $OutputApk"
