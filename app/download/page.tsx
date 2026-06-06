@@ -23,7 +23,7 @@ export default function DownloadPage() {
           <p className="text-sm font-semibold text-blue-600">用户端安装包</p>
           <h1 className="text-3xl font-bold tracking-tight">AI知识库助手下载</h1>
           <p className="text-sm leading-6 text-slate-600">
-            请选择对应系统下载安装包。安装后请先登录账号，再使用 AI 知识库助手。
+            用户端安装后请登录普通用户账号，进入 AI 知识库助手问答页面。
           </p>
         </div>
 

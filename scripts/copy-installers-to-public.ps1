@@ -15,18 +15,24 @@ if (-not (Test-Path $WindowsSource)) {
   throw "Windows EXE not found: $WindowsSource"
 }
 
+$targetFiles = @(
+  "ai-knowledge-chat.apk",
+  "ai-knowledge-chat-latest.apk",
+  "ai-knowledge-chat.exe",
+  "ai-knowledge-chat-latest.exe"
+)
+
+foreach ($targetFile in $targetFiles) {
+  Remove-Item -LiteralPath (Join-Path $DownloadsDir $targetFile) -Force -ErrorAction SilentlyContinue
+}
+
 Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.apk") -Force
 Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat-latest.apk") -Force
 Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.exe") -Force
 Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat-latest.exe") -Force
 
 Get-ChildItem -LiteralPath $DownloadsDir -File |
-  Where-Object { $_.Name -in @(
-    "ai-knowledge-chat.apk",
-    "ai-knowledge-chat-latest.apk",
-    "ai-knowledge-chat.exe",
-    "ai-knowledge-chat-latest.exe"
-  ) } |
+  Where-Object { $_.Name -in $targetFiles } |
   Sort-Object Name |
   Select-Object Name, Length, LastWriteTime, FullName |
   Format-Table -AutoSize

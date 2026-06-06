@@ -28,9 +28,12 @@ if (-not (Test-Path (Join-Path $Root "node_modules/@capacitor/core"))) {
   throw "Capacitor dependencies are missing. Please run pnpm install before building Android APK."
 }
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-Remove-Item -LiteralPath $OutputApk -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $LegacyOutputApk -Force -ErrorAction SilentlyContinue
+if (Test-Path $OutputDir) {
+  Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
+    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+} else {
+  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+}
 
 if (-not (Test-Path $AndroidDir)) {
   Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "add", "android")

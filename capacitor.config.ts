@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const userAppUrl =
   process.env.NEXT_PUBLIC_USER_APP_URL ||
-  "https://stately-sawine-1efd4d.netlify.app/login";
+  "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
 
 const config: CapacitorConfig = {
   appId: "com.aiknowledge.chat",
