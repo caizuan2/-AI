@@ -1,0 +1,14 @@
+appId: com.aiknowledge.admin.desktop
+productName: AI知识库管理后台
+directories:
+  output: dist-app/admin-windows
+files:
+  - electron-admin/**
+  - package.json
+extraMetadata:
+  main: electron-admin/main.cjs
+win:
+  target:
+    - portable
+    - nsis
+  artifactName: ai-knowledge-admin.${ext}
