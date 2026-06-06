@@ -1,6 +1,7 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { AIError, ValidationError } from "@/lib/errors";
 import {
   buildUploadAnalysisText,
@@ -61,12 +62,18 @@ function validateUploadContentLength(request: Request) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
   let settings: Awaited<ReturnType<typeof getOrCreateUserSettings>>;
   let existingCategories: string[] = [];
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_file",
+      metadata: {
+        operation: "upload_analyze"
+      }
+    });
 
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("分析上传文件"));
@@ -137,6 +144,21 @@ export async function POST(request: Request) {
       userId: currentUser.id,
       type: AnalyticsEventType.FILE_UPLOAD,
       numericValue: 1,
+      metadata: {
+        requestId,
+        extension: extracted.extension,
+        size: extracted.size,
+        charLength: extracted.charLength,
+        segmentCount: extracted.segments.length
+      }
+    });
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "FILE_UPLOAD",
+      targetType: "knowledge_file",
+      targetId: extracted.fileName,
+      request,
       metadata: {
         requestId,
         extension: extracted.extension,

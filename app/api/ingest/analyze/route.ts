@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { AppError, InvalidInputError, RateLimitError, ValidationError, toAppError } from "@/lib/errors";
 import { getPrismaErrorDiagnostics } from "@/lib/db/prisma-error-diagnostics";
 import {
@@ -103,12 +104,18 @@ function isRequestBody(value: unknown): value is IngestAnalyzeRequest {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
   let settings: Awaited<ReturnType<typeof getOrCreateUserSettings>>;
   let existingCategories: string[] = [];
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      metadata: {
+        operation: "ingest_analyze"
+      }
+    });
     const rateLimit = checkRateLimit(request, {
       namespace: "api:ingest:analyze",
       userId: currentUser.id,
@@ -254,8 +261,26 @@ export async function POST(request: Request) {
       ));
     }
 
+    const response = withSourceMetadata(withSaveStrategy(preferExistingCategory(buildFallbackDraft()), settings.saveStrategy));
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      request,
+      metadata: {
+        requestId,
+        sourceType,
+        fetchedFromUrl: sourceType === "web_url",
+        contentLength: content.length,
+        providerUsed: "local",
+        fallbackUsed: true
+      }
+    });
+
     return apiSuccess<IngestAnalyzeResponse>({
-      ...withSourceMetadata(withSaveStrategy(preferExistingCategory(buildFallbackDraft()), settings.saveStrategy)),
+      ...response,
       providerUsed: "local",
       modelUsed: "mock-fallback",
       fallbackUsed: true,
@@ -272,6 +297,23 @@ export async function POST(request: Request) {
       userId: currentUser.id
     });
     const response = withSourceMetadata(withSaveStrategy(preferExistingCategory(toAnalyzeDraft(result.knowledge)), settings.saveStrategy));
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      request,
+      metadata: {
+        requestId,
+        sourceType,
+        fetchedFromUrl: sourceType === "web_url",
+        contentLength: content.length,
+        providerUsed: result.providerUsed,
+        modelUsed: result.model,
+        fallbackUsed: result.fallbackUsed
+      }
+    });
 
     return apiSuccess<IngestAnalyzeResponse>({
       ...response,
@@ -293,6 +335,21 @@ export async function POST(request: Request) {
     }
 
     const fallback = preferExistingCategory(buildFallbackDraft());
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      request,
+      metadata: {
+        requestId,
+        sourceType,
+        fetchedFromUrl: sourceType === "web_url",
+        contentLength: content.length,
+        providerUsed: "local",
+        fallbackUsed: true
+      }
+    });
 
     return apiSuccess<IngestAnalyzeResponse>(
       {

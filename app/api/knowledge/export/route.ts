@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { ValidationError } from "@/lib/errors";
 import {
   isKnowledgeExportFormat,
@@ -12,10 +13,16 @@ import { hasDatabaseUrl } from "@/lib/server-config";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      metadata: {
+        operation: "knowledge_export"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -33,7 +40,7 @@ export async function GET(request: Request) {
 
   try {
     const items = await prisma.knowledgeItem.findMany({
-      where: { userId: currentUser.id },
+      where: { userId: currentUser.id, deletedAt: null },
       orderBy: [{ updatedAt: "desc" }],
       include: {
         chunks: {
@@ -46,6 +53,19 @@ export async function GET(request: Request) {
             createdAt: true
           }
         }
+      }
+    });
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "KNOWLEDGE_VIEW",
+      targetType: "knowledge_item",
+      request,
+      metadata: {
+        scope: "export",
+        format,
+        itemCount: items.length
       }
     });
 

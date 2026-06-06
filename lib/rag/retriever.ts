@@ -526,6 +526,7 @@ async function vectorSearch(
     INNER JOIN "knowledge_items" ki ON ki."id" = kc."knowledgeItemId"
     WHERE kc."embedding" IS NOT NULL
       AND ki."userId" = ${userId}
+      AND ki."deleted_at" IS NULL
     ORDER BY kc."embedding" <=> ${vector}::vector
     LIMIT ${candidateLimit}
   `;
@@ -586,7 +587,8 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
     where: {
       knowledgeItem: {
         is: {
-          userId
+          userId,
+          deletedAt: null
         }
       },
       OR: textFilters
@@ -650,6 +652,7 @@ async function hasIndexedEmbeddings(userId: string) {
     FROM "knowledge_chunks" kc
     INNER JOIN "knowledge_items" ki ON ki."id" = kc."knowledgeItemId"
     WHERE ki."userId" = ${userId}
+      AND ki."deleted_at" IS NULL
       AND kc."embedding" IS NOT NULL
   `;
 

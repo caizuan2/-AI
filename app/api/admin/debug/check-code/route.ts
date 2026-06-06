@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
+import { writeAuditLog } from "@/lib/audit-log";
 import {
   getAcceptedLicenseHashes,
   hashLicenseKey,
@@ -37,8 +38,10 @@ function parseCheckCodeRequest(body: unknown) {
 }
 
 export async function POST(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -65,6 +68,17 @@ export async function POST(request: Request) {
     });
 
     if (!license) {
+      await writeAuditLog({
+        userId: admin.id,
+        role: admin.role,
+        action: "ADMIN_DEBUG_CHECK_CODE",
+        targetType: "license_key",
+        request,
+        metadata: {
+          exists: false
+        }
+      });
+
       return apiSuccess<CheckCodeResponse>({
         normalized_code: normalized,
         code_hash_prefix: codeHash.slice(0, 12),
@@ -77,6 +91,20 @@ export async function POST(request: Request) {
     }
 
     const expired = Boolean(license.expiresAt && license.expiresAt <= new Date());
+
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_DEBUG_CHECK_CODE",
+      targetType: "license_key",
+      targetId: license.id,
+      request,
+      metadata: {
+        exists: true,
+        expired,
+        status: license.status.toLowerCase()
+      }
+    });
 
     return apiSuccess<CheckCodeResponse>({
       normalized_code: normalized,

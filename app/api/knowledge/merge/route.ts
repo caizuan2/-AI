@@ -1,7 +1,8 @@
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireLicensedUser } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
+import { writeAuditLog } from "@/lib/audit-log";
 import { createChunkEmbeddings, splitContentIntoChunks } from "@/lib/knowledge/chunks";
 import { getExistingCategoryNames } from "@/lib/knowledge/categories";
 import { normalizeQualityScores, type KnowledgeQualityScores } from "@/lib/knowledge/quality";
@@ -269,10 +270,16 @@ function toMergeHistoryResponse(history: {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let currentUser: Awaited<ReturnType<typeof requireLicensedUser>>;
+  let currentUser: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
-    currentUser = await requireLicensedUser();
+    currentUser = await requireKbAdmin(request, {
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "knowledge_item",
+      metadata: {
+        operation: "knowledge_merge"
+      }
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -301,7 +308,8 @@ export async function POST(request: Request) {
     const existing = await prisma.knowledgeItem.findFirst({
       where: {
         id: input.targetKnowledgeItemId,
-        userId: currentUser.id
+        userId: currentUser.id,
+        deletedAt: null
       },
       select: {
         id: true,
@@ -424,6 +432,21 @@ export async function POST(request: Request) {
       });
 
       return { updated, history };
+    });
+
+    await writeAuditLog({
+      userId: currentUser.id,
+      role: currentUser.role,
+      action: "INGEST_CREATE",
+      targetType: "knowledge_item",
+      targetId: result.updated.id,
+      request,
+      metadata: {
+        requestId,
+        operation: "knowledge_merge",
+        sourceType: input.sourceType,
+        chunkCount: result.updated.chunks.length
+      }
     });
 
     return apiSuccess<MergeKnowledgeResponse>({

@@ -2,6 +2,7 @@ import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { writeAuditLog } from "@/lib/audit-log";
 import { isPlainObject } from "@/lib/api/responses";
 import { generatePlainLicenseKey, hashLicenseKey } from "@/lib/auth/license";
 import { ValidationError } from "@/lib/errors";
@@ -72,9 +73,11 @@ function parseGenerateRequest(body: unknown) {
   return { count, expiresAt };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -89,6 +92,17 @@ export async function GET() {
       take: 500
     });
 
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_LICENSE_VIEW",
+      targetType: "license_key",
+      request,
+      metadata: {
+        resultCount: licenses.length
+      }
+    });
+
     return apiSuccess<ListAdminLicensesResponse>({
       licenses: licenses.map(serializeLicense)
     });
@@ -98,8 +112,10 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -138,6 +154,18 @@ export async function POST(request: Request) {
         expiresAt: input.expiresAt
       })),
       skipDuplicates: true
+    });
+
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_LICENSE_GENERATE",
+      targetType: "license_key",
+      request,
+      metadata: {
+        count: codes.size,
+        expiresAt: input.expiresAt?.toISOString() ?? null
+      }
     });
 
     return apiSuccess<GenerateAdminLicensesResponse>({

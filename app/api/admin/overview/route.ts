@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/admin";
 import { apiError, apiSuccess } from "@/lib/api-response";
+import { writeAuditLog } from "@/lib/audit-log";
 import {
   countRecentLogEntries,
   getRecentLogEntries,
@@ -126,7 +127,11 @@ async function collectDatabaseMetrics() {
 
     const [userCount, knowledgeCount, inactiveLicenseCount, openFeedbackCount, users, feedback] = await prisma.$transaction([
       prisma.user.count(),
-      prisma.knowledgeItem.count(),
+      prisma.knowledgeItem.count({
+        where: {
+          deletedAt: null
+        }
+      }),
       prisma.user.count({
         where: {
           licenseActivated: false
@@ -224,9 +229,11 @@ function deriveHealthStatus(input: {
   return "healthy";
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  let admin: Awaited<ReturnType<typeof requireAdminUser>>;
+
   try {
-    await requireAdminUser();
+    admin = await requireAdminUser(request);
   } catch (error) {
     return apiError(error);
   }
@@ -250,6 +257,17 @@ export async function GET() {
       databaseOk: databaseMetrics.database.ok,
       openaiConfigured,
       recentErrorCount
+    });
+
+    await writeAuditLog({
+      userId: admin.id,
+      role: admin.role,
+      action: "ADMIN_OVERVIEW_VIEW",
+      targetType: "admin",
+      request,
+      metadata: {
+        healthStatus: status
+      }
     });
 
     return apiSuccess<AdminOverviewResponse>({
