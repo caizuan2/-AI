@@ -8,6 +8,7 @@
       :root {
         color-scheme: light;
         --bg: #f4f7fb;
+        --card: #ffffff;
         --text: #0f172a;
         --muted: #64748b;
         --border: #dbe3ef;
@@ -149,14 +150,8 @@
         color: var(--primary-dark);
       }
 
-      button:disabled {
-        cursor: default;
-        border-color: #dbe3ef;
-        color: #64748b;
-      }
-
       a.button:hover,
-      button:not(:disabled):hover {
+      button:hover {
         transform: translateY(-1px);
       }
 
@@ -172,37 +167,6 @@
         color: #9a3412;
         padding: 16px;
         font-size: 14px;
-        line-height: 1.7;
-      }
-
-      .release-card {
-        margin: 18px 0;
-        border: 1px solid #bbf7d0;
-        border-radius: 18px;
-        background: #ecfdf5;
-        color: #064e3b;
-        padding: 16px;
-        font-size: 14px;
-      }
-
-      .release-meta {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 10px;
-        align-items: center;
-        margin-bottom: 10px;
-      }
-
-      .pill {
-        border-radius: 999px;
-        background: #ffffff;
-        padding: 6px 12px;
-        font-weight: 750;
-      }
-
-      .changelog {
-        margin: 0;
-        padding-left: 20px;
         line-height: 1.7;
       }
 
@@ -241,31 +205,18 @@
       </section>
 
       <section class="panel">
-        <section class="release-card" aria-label="当前版本">
-          <div class="release-meta">
-            <span class="pill">最新版本 <span id="release-version">1.0.3</span></span>
-            <span>构建号：<span id="release-build">103</span></span>
-            <span>更新日期：<span id="release-date">2026-06-13</span></span>
-          </div>
-          <ul id="release-changelog" class="changelog">
-            <li>优化管理员端打包</li>
-            <li>修复管理员 APK 跳转</li>
-            <li>更新下载入口</li>
-          </ul>
-        </section>
-
         <div class="grid">
           <article class="download-card">
             <div class="label">
               <span class="icon">📱</span>
               <div>
-                <p class="name">管理端 Android APK</p>
+                <p class="name">管理员 Android APK</p>
                 <p class="desc">适用于 Android 手机和平板的管理员端内部测试安装包。</p>
               </div>
             </div>
             <div class="actions">
-              <a id="apk-link" class="button" href="https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk">下载 APK</a>
-              <button id="apk-copy" type="button" data-link="https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk">复制链接</button>
+              <a class="button" href="https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk">下载 APK</a>
+              <button type="button" data-link="https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk">复制链接</button>
             </div>
           </article>
 
@@ -273,39 +224,13 @@
             <div class="label">
               <span class="icon">💻</span>
               <div>
-                <p class="name">管理端 Windows EXE</p>
+                <p class="name">管理员 Windows EXE</p>
                 <p class="desc">Windows 管理端安装包，建议通过 GitHub Release 获取。</p>
               </div>
             </div>
             <div class="actions">
-              <a id="exe-link" class="button" href="https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe">下载 EXE</a>
-              <button id="exe-copy" type="button" data-link="https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe">复制链接</button>
-            </div>
-          </article>
-
-          <article class="download-card">
-            <div class="label">
-              <span class="icon">🍎</span>
-              <div>
-                <p class="name">管理端 iPhone iOS IPA</p>
-                <p class="desc">iOS 管理端请通过 TestFlight 或管理员提供安装包；本页不提供不存在的 IPA 直链。</p>
-              </div>
-            </div>
-            <div class="actions">
-              <button type="button" disabled>联系管理员获取</button>
-            </div>
-          </article>
-
-          <article class="download-card">
-            <div class="label">
-              <span class="icon">🖥️</span>
-              <div>
-                <p class="name">管理端 macOS DMG</p>
-                <p class="desc">macOS 管理端请联系管理员获取；正式发布后建议通过 GitHub Release 或对象存储分发。</p>
-              </div>
-            </div>
-            <div class="actions">
-              <button type="button" disabled>即将提供</button>
+              <a class="button" href="https://github.com/caizuan2/AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe">下载 EXE</a>
+              <button type="button" data-link="https://github.com/caizuan2/AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe">复制链接</button>
             </div>
           </article>
 
@@ -313,13 +238,12 @@
             <div class="label">
               <span class="icon">🌐</span>
               <div>
-                <p class="name">管理端 Web 登录入口</p>
+                <p class="name">管理员 Web 登录入口</p>
                 <p class="desc">不安装客户端时，可直接使用网页版进入管理员后台。</p>
               </div>
             </div>
             <div class="actions">
-              <a id="web-link" class="button" href="https://stately-sawine-1efd4d.netlify.app/login?app=admin&amp;next=/ingest">打开 Web</a>
-              <button id="web-copy" type="button" data-link="https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest">复制链接</button>
+              <a class="button" href="https://stately-sawine-1efd4d.netlify.app/login?app=admin&amp;next=/ingest">打开 Web</a>
             </div>
           </article>
         </div>
@@ -331,80 +255,6 @@
     </main>
 
     <script>
-      function setText(id, value) {
-        const element = document.getElementById(id);
-        if (element && value) {
-          element.textContent = value;
-        }
-      }
-
-      function updateLink(anchorId, buttonId, value) {
-        const anchor = document.getElementById(anchorId);
-        const button = document.getElementById(buttonId);
-        if (!value) {
-          return;
-        }
-        if (anchor) {
-          anchor.setAttribute("href", value);
-        }
-        if (button) {
-          button.setAttribute("data-link", value);
-        }
-      }
-
-      function getReleaseInfo(manifest, appKey) {
-        if (!manifest) {
-          return null;
-        }
-
-        if (manifest[appKey]) {
-          return manifest[appKey];
-        }
-
-        const app = manifest.apps && manifest.apps[appKey];
-        if (!app || !Array.isArray(app.versions)) {
-          return null;
-        }
-
-        return app.versions.find((item) => item.version === app.active_version)
-          || app.versions.find((item) => item.channel === "stable")
-          || app.versions[0]
-          || null;
-      }
-
-      async function hydrateReleaseInfo() {
-        try {
-          const response = await fetch("/releases/latest.json", { cache: "no-store" });
-          if (!response.ok) {
-            return;
-          }
-          const manifest = await response.json();
-          const release = getReleaseInfo(manifest, "admin");
-          if (!release) {
-            return;
-          }
-
-          setText("release-version", release.version);
-          setText("release-build", String(release.build || ""));
-          setText("release-date", String(manifest.updated_at || "").slice(0, 10));
-
-          const changelog = document.getElementById("release-changelog");
-          if (changelog && Array.isArray(release.changelog)) {
-            changelog.innerHTML = "";
-            release.changelog.forEach((item) => {
-              const li = document.createElement("li");
-              li.textContent = item;
-              changelog.appendChild(li);
-            });
-          }
-
-          updateLink("apk-link", "apk-copy", release.apk_url);
-          updateLink("exe-link", "exe-copy", release.exe_url);
-          updateLink("web-link", "web-copy", release.web_url);
-        } catch {
-        }
-      }
-
       document.querySelectorAll("button[data-link]").forEach((button) => {
         button.addEventListener("click", async () => {
           const link = button.getAttribute("data-link");
@@ -420,8 +270,6 @@
           }
         });
       });
-
-      hydrateReleaseInfo();
     </script>
   </body>
 </html>
