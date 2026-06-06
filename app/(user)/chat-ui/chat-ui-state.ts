@@ -62,6 +62,8 @@ export function appendAskResult(
       id: result.message_id,
       role: "assistant",
       content: result.answer,
+      customer_answer: result.customer_answer ?? null,
+      provider_status: result.provider_status ?? null,
       sources: result.sources,
       confidence: result.confidence,
       created_at: new Date().toISOString()
