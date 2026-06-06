@@ -2,23 +2,31 @@ $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $DownloadsDir = Join-Path $Root "public/downloads"
-$AndroidSource = Join-Path $Root "dist-app/android/AI知识库助手.apk"
-$WindowsSource = Join-Path $Root "dist-app/windows/AI知识库助手.exe"
+$AndroidSource = Join-Path $Root "dist-app/android/ai-knowledge-chat.apk"
+$WindowsSource = Join-Path $Root "dist-app/windows/ai-knowledge-chat.exe"
 
 New-Item -ItemType Directory -Force -Path $DownloadsDir | Out-Null
 
-if (Test-Path $AndroidSource) {
-  Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "AI知识库助手.apk") -Force
-  Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.apk") -Force
-  Write-Host "Copied Android APK to public/downloads."
-} else {
-  Write-Host "Android APK not found, skipped."
+if (-not (Test-Path $AndroidSource)) {
+  throw "Android APK not found: $AndroidSource"
 }
 
-if (Test-Path $WindowsSource) {
-  Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "AI知识库助手.exe") -Force
-  Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.exe") -Force
-  Write-Host "Copied Windows EXE to public/downloads."
-} else {
-  Write-Host "Windows EXE not found, skipped."
+if (-not (Test-Path $WindowsSource)) {
+  throw "Windows EXE not found: $WindowsSource"
 }
+
+Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.apk") -Force
+Copy-Item -LiteralPath $AndroidSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat-latest.apk") -Force
+Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat.exe") -Force
+Copy-Item -LiteralPath $WindowsSource -Destination (Join-Path $DownloadsDir "ai-knowledge-chat-latest.exe") -Force
+
+Get-ChildItem -LiteralPath $DownloadsDir -File |
+  Where-Object { $_.Name -in @(
+    "ai-knowledge-chat.apk",
+    "ai-knowledge-chat-latest.apk",
+    "ai-knowledge-chat.exe",
+    "ai-knowledge-chat-latest.exe"
+  ) } |
+  Sort-Object Name |
+  Select-Object Name, Length, LastWriteTime, FullName |
+  Format-Table -AutoSize
