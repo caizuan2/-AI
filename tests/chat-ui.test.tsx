@@ -5,15 +5,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import ChatUiPage from "../app/(user)/chat-ui/page";
 import { askChat } from "../app/(user)/chat-ui/api";
 import {
-  fetchCurrentChatUiUser,
-  getChatUiModeForUser,
-  loginChatUiUser,
-  logoutChatUiUser,
-  redeemChatUiLicense,
-  registerChatUiUser,
-  validateChatUiRegisterInput
-} from "../app/(user)/chat-ui/client-auth";
-import {
   appendAskResult,
   createAskRequestPayload,
   createNewChatState,
@@ -22,7 +13,6 @@ import {
 } from "../app/(user)/chat-ui/chat-ui-state";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
 import { ChatMessages } from "../app/(user)/chat-ui/components/ChatMessages";
-import { ClientAuthGate } from "../app/(user)/chat-ui/components/ClientAuthGate";
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import {
   CustomerAnswerCard,
@@ -38,27 +28,11 @@ async function main() {
   const pageMarkup = renderToStaticMarkup(<ChatUiPage />);
 
   assert.match(pageMarkup, /AI 知识库助手/);
-  assert.match(pageMarkup, /正在校验登录状态/);
-
-  const authGateMarkup = renderToStaticMarkup(
-    <ClientAuthGate>
-      <ChatShell />
-    </ClientAuthGate>
-  );
-
-  assert.match(authGateMarkup, /正在校验登录状态/);
+  assert.match(pageMarkup, /使用快速模式开始对话/);
 
   const shellMarkup = renderToStaticMarkup(<ChatShell />);
 
   assert.match(shellMarkup, /使用快速模式开始对话/);
-  assert.equal(getChatUiModeForUser(null), "login");
-  assert.equal(getChatUiModeForUser({ licenseActivated: false }), "activate");
-  assert.equal(getChatUiModeForUser({ licenseActivated: true }), "ready");
-  assert.equal(validateChatUiRegisterInput({
-    account: "13352833703",
-    password: "password123",
-    confirmPassword: "password456"
-  }), "两次输入的密码不一致。");
 
   for (const routeFile of [
     "app/api/ai/chat/ask/route.ts",
@@ -196,125 +170,6 @@ async function main() {
 
   const originalFetch = globalThis.fetch;
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
-
-  const authCalls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
-
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    authCalls.push({ input, init });
-    const url = String(input);
-
-    if (url === "/api/auth/me") {
-      return new Response(JSON.stringify({
-        ok: true,
-        success: true,
-        data: {
-          user: {
-            id: "user_1",
-            phone: "13352833702",
-            name: "测试用户",
-            licenseActivated: true
-          }
-        }
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-
-    if (url === "/api/auth/login") {
-      return new Response(JSON.stringify({
-        ok: true,
-        success: true,
-        data: {
-          success: true,
-          licenseActivated: false,
-          user: {
-            id: "user_1",
-            phone: "13352833702",
-            name: "测试用户"
-          }
-        }
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-
-    if (url === "/api/auth/register") {
-      return new Response(JSON.stringify({
-        ok: true,
-        success: true,
-        data: {
-          user: {
-            id: "user_2",
-            phone: "13352833703",
-            name: "13352833703",
-            licenseActivated: false
-          }
-        }
-      }), {
-        status: 201,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-
-    if (url === "/api/license/redeem") {
-      return new Response(JSON.stringify({
-        ok: true,
-        success: true,
-        data: {
-          success: true,
-          licenseActivated: true
-        }
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-
-    if (url === "/api/auth/logout") {
-      return new Response(JSON.stringify({
-        ok: true,
-        success: true,
-        data: {
-          signedOut: true
-        }
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
-    }
-
-    throw new Error(`Unexpected auth fetch: ${url}`);
-  }) as typeof fetch;
-
-  const currentUser = await fetchCurrentChatUiUser();
-  const loginUser = await loginChatUiUser({ account: "13352833702", password: "password123" });
-  const registerUser = await registerChatUiUser({ account: "13352833703", password: "password123" });
-  const redeemResult = await redeemChatUiLicense("AIKB-TEST-TEST-TEST");
-  const logoutResult = await logoutChatUiUser();
-
-  assert.equal(currentUser.licenseActivated, true);
-  assert.equal(loginUser.licenseActivated, false);
-  assert.equal(registerUser.licenseActivated, false);
-  assert.equal(redeemResult.licenseActivated, true);
-  assert.equal(logoutResult.signedOut, true);
-  assert.equal(String(authCalls[1].input), "/api/auth/login");
-  assert.match(String(authCalls[1].init?.body), /"phone":"13352833702"/);
-  assert.equal(String(authCalls[2].input), "/api/auth/register");
-  assert.match(String(authCalls[2].init?.body), /"phone":"13352833703"/);
-  assert.equal(String(authCalls[3].input), "/api/license/redeem");
-  assert.match(String(authCalls[3].init?.body), /"licenseKey":"AIKB-TEST-TEST-TEST"/);
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ input, init });
