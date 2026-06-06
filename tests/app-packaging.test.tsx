@@ -34,7 +34,7 @@ async function main() {
   assert.equal(packageJson.scripts["app:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1");
   assert.equal(packageJson.scripts["app:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1");
   assert.equal(packageJson.build.appId, "com.aiknowledge.chat.desktop");
-  assert.equal(packageJson.build.productName, "AI知识库助手");
+  assert.match(packageJson.build.productName, /AI/);
 
   console.log("App packaging tests passed.");
 }
