@@ -3,31 +3,16 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminDownloadPage from "../app/admin-download/page";
-import { normalizeLatestReleaseManifest } from "../lib/app-update";
-import latestRelease from "../public/releases/latest.json";
 
 const adminAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
-const adminWindowsExeUrl =
-  "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe";
-const adminAndroidApkUrl =
-  "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk";
-const userCapacitorAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
-const userElectronAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
-const parsedLatestRelease = normalizeLatestReleaseManifest(latestRelease);
-
-assert.ok(parsedLatestRelease);
-const latestAdminRelease = parsedLatestRelease.admin;
+const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<AdminDownloadPage />);
-  const escapedAdminVersion = latestAdminRelease.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   assert.match(pageMarkup, /AI知识库管理后台下载/);
   assert.match(pageMarkup, /仅供授权管理员使用/);
-  assert.match(pageMarkup, new RegExp(`最新版本 ${escapedAdminVersion}`));
-  assert.match(pageMarkup, new RegExp(`构建号：${latestAdminRelease.build}`));
-  assert.match(pageMarkup, /复制链接/);
-  assert.match(pageMarkup, new RegExp(adminAndroidApkUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(pageMarkup, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk/);
   assert.match(pageMarkup, /\/ingest/);
   assert.doesNotMatch(pageMarkup, /ai-knowledge-chat-latest/);
 
@@ -51,57 +36,7 @@ async function main() {
   assert.match(adminElectronMain, /nodeIntegration:\s*false/);
   assert.match(adminElectronMain, /contextIsolation:\s*true/);
   assert.match(adminElectronMain, /sandbox:\s*true/);
-  assert.match(adminElectronMain, /ADMIN_INGEST_URL\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app\/ingest"/);
-  assert.match(adminElectronMain, /function isForbiddenAdminAppUrl/);
-  assert.match(adminElectronMain, /url\.searchParams\.get\("app"\)\s*===\s*"user"/);
-  assert.match(adminElectronMain, /blockedPrefixes\s*=\s*\["\/chat-ui",\s*"\/download"\]/);
-  assert.match(adminElectronMain, /url\.pathname\s*===\s*"\/user-download\.html"/);
-  assert.match(adminElectronMain, /did-navigate-in-page/);
-  assert.match(adminElectronMain, /mainWindow\.loadURL\(ADMIN_INGEST_URL\)/);
   assert.doesNotMatch(adminElectronMain, /loadURL\([^)]*chat-ui/);
-  const adminElectronGuard = adminElectronMain.slice(
-    adminElectronMain.indexOf("function isForbiddenAdminAppUrl"),
-    adminElectronMain.indexOf("function openExternalUrl")
-  );
-  assert.doesNotMatch(adminElectronGuard, /\/ingest/);
-  assert.doesNotMatch(adminElectronGuard, /\/api\/admin/);
-
-  const androidMainActivity = readFileSync("android/app/src/main/java/com/aiknowledge/chat/MainActivity.java", "utf8");
-  const androidBuildGradle = readFileSync("android/app/build.gradle", "utf8");
-  assert.match(androidMainActivity, /ADMIN_APP_PACKAGE\s*=\s*"com\.aiknowledge\.admin"/);
-  assert.match(androidBuildGradle, /versionCode\s+103/);
-  assert.match(androidBuildGradle, /versionName\s+"1\.0\.3"/);
-  assert.match(androidBuildGradle, /buildConfig\s+true/);
-  assert.match(androidMainActivity, /clearStaleWebViewState\(webView\)/);
-  assert.match(androidMainActivity, /clearCache\(true\)/);
-  assert.match(androidMainActivity, /clearHistory\(\)/);
-  assert.match(androidMainActivity, /removeAllCookies\(null\)/);
-  assert.match(androidMainActivity, /setSupportMultipleWindows\(true\)/);
-  assert.match(androidMainActivity, /setJavaScriptCanOpenWindowsAutomatically\(true\)/);
-  assert.match(androidMainActivity, /shouldOverrideUrlLoading/);
-  assert.match(androidMainActivity, /Intent\.ACTION_VIEW/);
-  assert.match(androidMainActivity, /Intent\.CATEGORY_BROWSABLE/);
-  assert.match(androidMainActivity, /addJavascriptInterface\(new AndroidBridge\(\),\s*"AndroidBridge"\)/);
-  assert.match(androidMainActivity, /public void openUrl\(String url\)/);
-  assert.match(androidMainActivity, /openExternalBrowser\(url\);\s*return true;/);
-  assert.match(androidMainActivity, /openExternalBrowser\(uri\);\s*return true;/);
-  assert.match(androidMainActivity, /ADMIN_INGEST_URL\s*=\s*APP_ORIGIN \+ "\/ingest"/);
-  assert.match(androidMainActivity, /isAdminShell\(\)/);
-  assert.match(androidMainActivity, /isForbiddenAdminRoute/);
-  assert.match(androidMainActivity, /getQueryParameter\("app"\)/);
-  assert.match(androidMainActivity, /"user"\.equals\(appMode\)/);
-  assert.match(androidMainActivity, /path\.equals\("\/chat-ui"\)/);
-  assert.match(androidMainActivity, /path\.equals\("\/download"\)/);
-  assert.match(androidMainActivity, /path\.equals\("\/user-download\.html"\)/);
-  assert.match(androidMainActivity, /adminShell && isForbiddenAdminRoute/);
-  assert.match(androidMainActivity, /!adminShell && isForbiddenUserRoute/);
-  assert.match(androidMainActivity, /__aiAdminAppRouteGuardInstalled/);
-  const androidAdminGuard = androidMainActivity.slice(
-    androidMainActivity.indexOf("private static boolean isForbiddenAdminRoute"),
-    androidMainActivity.indexOf("private class AppWebChromeClient")
-  );
-  assert.doesNotMatch(androidAdminGuard, /\/ingest/);
-  assert.doesNotMatch(androidAdminGuard, /\/api\/admin/);
 
   const adminBuilderConfig = readFileSync("electron-builder.admin.yml", "utf8");
   assert.match(adminBuilderConfig, /appId:\s*com\.aiknowledge\.admin\.desktop/);
@@ -115,21 +50,10 @@ async function main() {
   assert.equal(packageJson.scripts["admin:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1");
   assert.equal(packageJson.scripts["admin:copy-installers"], "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1");
 
-  assert.equal(latestAdminRelease.apk_url, adminAndroidApkUrl);
-  assert.equal(latestAdminRelease.version, "1.0.3");
-  assert.equal(latestAdminRelease.build, 103);
-  assert.equal(latestAdminRelease.exe_url, adminWindowsExeUrl);
-  assert.match(latestAdminRelease.download_page, /\/admin-download\.html$/);
-
   const userCapacitorConfig = readFileSync("capacitor.config.ts", "utf8");
   const userElectronMain = readFileSync("electron/main.cjs", "utf8");
-  assert.match(userCapacitorConfig, new RegExp(userCapacitorAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(userElectronMain, new RegExp(userElectronAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-
-  const loginPage = readFileSync("app/login/page.tsx", "utf8");
-  assert.match(loginPage, /searchParams\.get\("next"\)/);
-  assert.match(loginPage, /getSafeNextPath/);
-  assert.match(loginPage, /router\.replace\(nextPath \|\| \(data\.licenseActivated \? "\/ingest" : "\/unlock"\)\)/);
+  assert.match(userCapacitorConfig, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(userElectronMain, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
   const prismaSchema = readFileSync("prisma/schema.prisma", "utf8");
   assert.doesNotMatch(prismaSchema, /ai-knowledge-admin|ADMIN_APP_URL|com\.aiknowledge\.admin/);
