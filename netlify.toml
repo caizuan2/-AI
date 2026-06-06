@@ -35,6 +35,7 @@ status = 200
 from = "/api/admin/health"
 to = "/.netlify/functions/admin-health"
 status = 200
+force = true
 
 [[redirects]]
 from = "/api/admin/db-repair"
