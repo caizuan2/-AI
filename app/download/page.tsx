@@ -3,12 +3,14 @@ import React from "react";
 const downloadLinks = [
   {
     label: "Android APK 下载",
-    href: "/downloads/ai-knowledge-chat.apk",
+    href: "/downloads/ai-knowledge-chat-latest.apk",
+    compatibilityHref: "/downloads/ai-knowledge-chat.apk",
     description: "适用于 Android 手机和平板的内部测试安装包。"
   },
   {
     label: "Windows EXE 下载",
-    href: "/downloads/ai-knowledge-chat.exe",
+    href: "/downloads/ai-knowledge-chat-latest.exe",
+    compatibilityHref: "/downloads/ai-knowledge-chat.exe",
     description: "适用于 Windows 桌面端的内部测试安装包。"
   }
 ];
@@ -21,7 +23,7 @@ export default function DownloadPage() {
           <p className="text-sm font-semibold text-blue-600">用户端安装包</p>
           <h1 className="text-3xl font-bold tracking-tight">AI知识库助手下载</h1>
           <p className="text-sm leading-6 text-slate-600">
-            请选择对应系统下载安装包。当前安装包仅打开用户端 AI 聊天页面，不包含管理员入口。
+            请选择对应系统下载安装包。安装后请先登录账号，再使用 AI 知识库助手。
           </p>
         </div>
 
@@ -34,6 +36,7 @@ export default function DownloadPage() {
             >
               <span className="block text-base font-semibold text-slate-950">{link.label}</span>
               <span className="mt-2 block text-sm leading-6 text-slate-600">{link.description}</span>
+              <span className="mt-3 block text-xs text-slate-500">兼容链接：{link.compatibilityHref}</span>
             </a>
           ))}
         </div>

@@ -3,7 +3,7 @@ const { app, BrowserWindow, Menu, shell } = require("electron");
 const USER_APP_URL =
   process.env.USER_APP_URL ||
   process.env.NEXT_PUBLIC_USER_APP_URL ||
-  "https://stately-sawine-1efd4d.netlify.app/chat-ui";
+  "https://stately-sawine-1efd4d.netlify.app/login";
 
 let mainWindow = null;
 
@@ -12,7 +12,7 @@ function isAllowedAppUrl(targetUrl) {
     const appUrl = new URL(USER_APP_URL);
     const url = new URL(targetUrl);
 
-    return url.origin === appUrl.origin && url.pathname.startsWith("/chat-ui");
+    return url.origin === appUrl.origin;
   } catch {
     return false;
   }

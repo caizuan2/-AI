@@ -3,7 +3,8 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $AndroidDir = Join-Path $Root "android"
 $OutputDir = Join-Path $Root "dist-app/android"
-$OutputApk = Join-Path $OutputDir "AI知识库助手.apk"
+$OutputApk = Join-Path $OutputDir "ai-knowledge-chat.apk"
+$LegacyOutputApk = Join-Path $OutputDir "AI知识库助手.apk"
 
 function Invoke-ProjectCommand {
   param(
@@ -26,6 +27,10 @@ function Invoke-ProjectCommand {
 if (-not (Test-Path (Join-Path $Root "node_modules/@capacitor/core"))) {
   throw "Capacitor dependencies are missing. Please run pnpm install before building Android APK."
 }
+
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+Remove-Item -LiteralPath $OutputApk -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $LegacyOutputApk -Force -ErrorAction SilentlyContinue
 
 if (-not (Test-Path $AndroidDir)) {
   Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "add", "android")
@@ -59,7 +64,6 @@ if (-not $SourceApk) {
   throw "No APK was generated under android/app/build/outputs/apk."
 }
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 Copy-Item -LiteralPath $SourceApk -Destination $OutputApk -Force
 
 Write-Host "Android APK generated: $OutputApk"
