@@ -84,6 +84,8 @@ model User {
   analyticsEvents  AnalyticsEvent[]
   roleAssignments  UserRoleAssignment[]
   auditLogs        AuditLog[]
+  uploadedFiles    KnowledgeFile[]
+  ingestionJobs    IngestionJob[]
 
   @@index([licenseActivated])
   @@index([isActive])
@@ -231,6 +233,7 @@ model KnowledgeItem {
   updatedAt             DateTime                        @updatedAt
   user                  User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
   chunks                KnowledgeChunk[]
+  ingestionJobs         IngestionJob[]
   mergeHistories        KnowledgeMergeHistory[]
   completionSuggestions KnowledgeCompletionSuggestion[]
 
@@ -271,6 +274,62 @@ model AuditLog {
   @@index([targetType, targetId], map: "audit_logs_target_type_target_id_idx")
   @@index([createdAt], map: "audit_logs_created_at_idx")
   @@map("audit_logs")
+}
+
+model KnowledgeFile {
+  id              String           @id @default(cuid())
+  originalName    String           @map("original_name")
+  fileType        String           @map("file_type")
+  fileSize        Int              @map("file_size")
+  storagePath     String           @map("storage_path")
+  uploaderId      String           @map("uploader_id")
+  status          String           @default("uploaded")
+  categoryId      String?          @map("category_id")
+  tags            String[]         @default([])
+  metadata        Json?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+  deletedAt       DateTime?        @map("deleted_at")
+  deletedByUserId String?          @map("deleted_by")
+  deleteReason    String?          @map("delete_reason") @db.Text
+  uploader        User             @relation(fields: [uploaderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  chunks          KnowledgeChunk[]
+  ingestionJobs   IngestionJob[]
+
+  @@index([uploaderId], map: "knowledge_files_uploader_id_idx")
+  @@index([status])
+  @@index([fileType], map: "knowledge_files_file_type_idx")
+  @@index([deletedAt], map: "knowledge_files_deleted_at_idx")
+  @@index([createdAt], map: "knowledge_files_created_at_idx")
+  @@map("knowledge_files")
+}
+
+model IngestionJob {
+  id                String         @id @default(cuid())
+  sourceType        String         @map("source_type")
+  sourceId          String?        @map("source_id")
+  status            String         @default("pending")
+  progress          Int            @default(0)
+  errorMessage      String?        @map("error_message") @db.Text
+  createdByUserId   String         @map("created_by")
+  fileId            String?        @map("file_id")
+  knowledgeItemId   String?        @map("knowledge_item_id")
+  metadata          Json?
+  createdAt         DateTime       @default(now()) @map("created_at")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+  finishedAt        DateTime?      @map("finished_at")
+  createdBy         User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  file              KnowledgeFile? @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  knowledgeItem     KnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([createdByUserId], map: "ingestion_jobs_created_by_idx")
+  @@index([sourceType], map: "ingestion_jobs_source_type_idx")
+  @@index([sourceId], map: "ingestion_jobs_source_id_idx")
+  @@index([status])
+  @@index([fileId], map: "ingestion_jobs_file_id_idx")
+  @@index([knowledgeItemId], map: "ingestion_jobs_knowledge_item_id_idx")
+  @@index([createdAt], map: "ingestion_jobs_created_at_idx")
+  @@map("ingestion_jobs")
 }
 
 model KnowledgeMergeHistory {
@@ -395,10 +454,14 @@ model RateLimitEvent {
 model KnowledgeChunk {
   id              String                       @id @default(cuid())
   knowledgeItemId String
+  fileId          String?                      @map("file_id")
   chunkText       String                       @db.Text
   chunkIndex      Int
+  summary         String?                      @db.Text
   tokenCount      Int?
   charCount       Int?
+  contentHash     String?                      @map("content_hash")
+  embeddingId     String?                      @map("embedding_id")
   embeddingModel  String?
   metadata        Json?
   /// pgvector is represented as Unsupported because Prisma Client does not natively support VECTOR.
@@ -406,8 +469,11 @@ model KnowledgeChunk {
   embedding       Unsupported("vector(1536)")?
   createdAt       DateTime                     @default(now())
   knowledgeItem   KnowledgeItem                @relation(fields: [knowledgeItemId], references: [id], onDelete: Cascade)
+  file            KnowledgeFile?               @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@unique([knowledgeItemId, chunkIndex])
   @@index([knowledgeItemId])
+  @@index([fileId], map: "knowledge_chunks_file_id_idx")
+  @@index([contentHash], map: "knowledge_chunks_content_hash_idx")
   @@map("knowledge_chunks")
 }
