@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ChatUiPage from "../app/(user)/chat-ui/page";
-import { askChat } from "../app/(user)/chat-ui/api";
+import { askChat, fetchQuickActionCategories } from "../app/(user)/chat-ui/api";
 import {
   appendAskResult,
   createAskRequestPayload,
@@ -13,7 +13,11 @@ import {
 } from "../app/(user)/chat-ui/chat-ui-state";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
 import { ChatMessages } from "../app/(user)/chat-ui/components/ChatMessages";
+import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
+import { ChatSettingsMenu } from "../app/(user)/chat-ui/components/ChatSettingsMenu";
+import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarDrawer";
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
+import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
 import {
   CustomerAnswerCard,
   copyCustomerAnswerToClipboard
@@ -33,6 +37,70 @@ async function main() {
   const shellMarkup = renderToStaticMarkup(<ChatShell />);
 
   assert.match(shellMarkup, /使用快速模式开始对话/);
+  assert.match(shellMarkup, /新对话/);
+  assert.match(shellMarkup, /内容由 AI 生成/);
+  assert.match(shellMarkup, /打开历史会话/);
+  assert.match(shellMarkup, /新建对话/);
+  assert.match(shellMarkup, /快速/);
+  assert.match(shellMarkup, /AI 创作/);
+  assert.match(shellMarkup, /照片动起来/);
+  assert.match(shellMarkup, /视频通话/);
+  assert.match(shellMarkup, /发消息或按住说话/);
+  assert.match(shellMarkup, /语音输入/);
+  assert.match(shellMarkup, /打开上传菜单/);
+
+  const quickActionsMarkup = renderToStaticMarkup(
+    <ChatQuickActions
+      mode="expert"
+      enableDeepThinking
+      enableWebSearch={false}
+      categoryLabels={["售后", "企业服务"]}
+      onModeChange={() => undefined}
+      onToggleDeepThinking={() => undefined}
+      onToggleWebSearch={() => undefined}
+    />
+  );
+
+  assert.match(quickActionsMarkup, /快速/);
+  assert.match(quickActionsMarkup, /AI 创作/);
+  assert.match(quickActionsMarkup, /照片动起来/);
+  assert.match(quickActionsMarkup, /视频通话/);
+  assert.match(quickActionsMarkup, /专家/);
+  assert.match(quickActionsMarkup, /深度思考/);
+  assert.match(quickActionsMarkup, /智能搜索/);
+  assert.match(quickActionsMarkup, /售后/);
+
+  const drawerMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[]}
+      activeConversationId={null}
+      open
+      loading={false}
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(drawerMarkup, /搜索/);
+  assert.match(drawerMarkup, /AI 知识库/);
+  assert.match(drawerMarkup, /AI 内容获客系统设计框架与路径/);
+  assert.match(drawerMarkup, /企业科技化转型与授信获取/);
+  assert.match(drawerMarkup, /扫描内容/);
+  assert.match(drawerMarkup, /消息/);
+  assert.match(drawerMarkup, /设置/);
+
+  const settingsMarkup = renderToStaticMarkup(<ChatSettingsMenu open />);
+
+  assert.match(settingsMarkup, /退出登录/);
+  assert.match(settingsMarkup, /修改密码/);
+  assert.match(settingsMarkup, /切换账号/);
+
+  const attachmentMenuMarkup = renderToStaticMarkup(<AttachmentMenu open />);
+
+  assert.match(attachmentMenuMarkup, /上传手机照片/);
+  assert.match(attachmentMenuMarkup, /上传文件/);
+  assert.match(attachmentMenuMarkup, /打开相机/);
 
   for (const routeFile of [
     "app/api/ai/chat/ask/route.ts",
@@ -257,6 +325,46 @@ async function main() {
     }),
     /没有权限/
   );
+
+  globalThis.fetch = originalFetch;
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    ok: true,
+    success: true,
+    data: {
+      categories: [
+        {
+          name: "管理员分类",
+          count: 3
+        }
+      ]
+    }
+  }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  })) as typeof fetch;
+
+  const quickCategories = await fetchQuickActionCategories();
+
+  assert.equal(quickCategories[0].label, "管理员分类");
+  assert.equal(quickCategories[0].kind, "category");
+
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    ok: false,
+    success: false,
+    error: {
+      message: "forbidden"
+    }
+  }), {
+    status: 403,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  })) as typeof fetch;
+
+  assert.deepEqual(await fetchQuickActionCategories(), []);
 
   globalThis.fetch = originalFetch;
 

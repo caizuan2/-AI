@@ -42,6 +42,22 @@ export interface ChatConversation {
   updated_at: string;
 }
 
+export interface ChatQuickActionItem {
+  id: string;
+  label: string;
+  prompt?: string | null;
+  kind?: "mode" | "category" | "tool";
+  mode?: ChatMode;
+  sortOrder?: number | null;
+}
+
+export interface CurrentChatUser {
+  id: string;
+  phone: string;
+  name: string;
+  licenseActivated: boolean;
+}
+
 export interface AskChatRequest {
   text: string;
   attachments: ChatAttachmentDraft[];
@@ -69,4 +85,8 @@ export interface ConversationsResponse {
 export interface HistoryResponse {
   conversation: ChatConversation;
   messages: ChatMessageView[];
+}
+
+export interface CurrentUserResponse {
+  user: CurrentChatUser;
 }
