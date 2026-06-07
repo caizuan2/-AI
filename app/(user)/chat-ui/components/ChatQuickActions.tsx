@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Images, Search, Sparkles, Video, Zap } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMode, ChatQuickActionItem } from "../types";
 
@@ -17,7 +18,9 @@ interface ChatQuickActionsProps {
   onQuickAction?: (action: ChatQuickActionItem) => void;
 }
 
-const defaultActions: Array<ChatQuickActionItem & { icon: typeof Zap }> = [
+type ChatQuickActionWithIcon = ChatQuickActionItem & { icon: LucideIcon };
+
+const defaultActions: ChatQuickActionWithIcon[] = [
   {
     id: "fast",
     label: "快速",
@@ -48,7 +51,11 @@ const defaultActions: Array<ChatQuickActionItem & { icon: typeof Zap }> = [
   }
 ];
 
-function getActionIcon(action: ChatQuickActionItem) {
+function hasActionIcon(action: ChatQuickActionItem): action is ChatQuickActionWithIcon {
+  return "icon" in action;
+}
+
+function getActionIcon(action: ChatQuickActionItem): LucideIcon {
   if (action.mode === "fast" || action.label.includes("快速")) {
     return Zap;
   }
@@ -98,7 +105,7 @@ export function ChatQuickActions({
         aria-label="快捷功能"
       >
         {visibleActions.map((action) => {
-          const Icon = "icon" in action ? action.icon : getActionIcon(action);
+          const Icon = hasActionIcon(action) ? action.icon : getActionIcon(action);
           const active = action.kind === "mode" && action.mode === mode;
 
           return (
