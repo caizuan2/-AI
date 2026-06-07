@@ -100,12 +100,30 @@ Use:
 powershell -ExecutionPolicy Bypass -File scripts/release-web-assets.ps1
 ```
 
-This builds the Web assets and syncs Capacitor. Because no OTA plugin is currently installed, the script only prepares assets and prints next-step guidance.
+This builds the Web assets and syncs Capacitor. Capgo OTA support is available through `@capgo/capacitor-updater`, but users must first install an APK that includes the updater plugin.
+
+To publish a Capgo OTA bundle after configuring CI Secrets or local environment variables:
+
+```powershell
+$env:CAPGO_TOKEN="your-capgo-token"
+$env:CAPGO_APP_ID="com.aiknowledge.chat"
+$env:OTA_CHANNEL="production"
+powershell -ExecutionPolicy Bypass -File scripts/release-ota-capgo.ps1
+```
+
+The script never prints the token. If `CAPGO_TOKEN` or `CAPGO_APP_ID` is missing, it builds and syncs only, then skips upload with instructions. By default it prints the masked Capgo command but does not upload; add `-ExecuteUpload` only after confirming `app-shell` is the intended OTA bundle path.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/release-ota-capgo.ps1 -ExecuteUpload
+```
+
+Important architecture note: `capacitor.config.ts` currently uses `server.url` to load the hosted Next.js app, while `webDir` is `app-shell`, a lightweight redirect shell. Hosted Web UI updates still come from Web deployment. Test Capgo on a real device before declaring production OTA complete.
 
 OTA can update:
 
 - React UI
-- JS/CSS served by the Web deployment
+- JS/CSS
+- Images and ordinary Web assets
 - Text and layout changes
 - User `/chat-ui` and admin Web pages loaded from the hosted app
 
@@ -115,7 +133,18 @@ OTA cannot update:
 - AndroidManifest permissions
 - Java/Kotlin native code
 - App icon/name/id/signing
+- Prisma/database schema changes
 - First-time installation
+
+Database schema changes still require:
+
+```powershell
+npx prisma migrate deploy
+```
+
+Native capability, permission, signing, or plugin changes still require a new APK.
+
+The manual APK download flow remains supported. If OTA fails or a user does not yet have the updater-enabled APK, publish the latest APK through `/download`.
 
 ## 5. Desktop Package Updates
 
