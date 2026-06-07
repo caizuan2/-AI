@@ -6,6 +6,16 @@ This guide covers Web deployment, Android APK releases, Web-layer update behavio
 
 The project uses Next.js App Router with API routes, Prisma, authentication, and server-side behavior. It is not a pure static export. Deploy it to Netlify or another platform that supports Next.js server routes.
 
+For a guided Windows release preflight, run:
+
+```powershell
+cd D:\XT
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\safe-full-release.ps1
+```
+
+The script checks Git state, Prisma, migrations, build, tests, optional Android sync, optional debug APK build, and only runs `git add / commit / push` after explicit confirmation.
+
 Recommended flow:
 
 ```powershell
@@ -156,4 +166,3 @@ Update that file when publishing new APK or desktop packages. Keep URLs stable w
 - Do not hardcode API keys, tokens, signing passwords, or deployment credentials
 - Use `npx prisma migrate deploy` for production migrations
 - Keep a rollback path for Web deployment and OTA bundles
-
