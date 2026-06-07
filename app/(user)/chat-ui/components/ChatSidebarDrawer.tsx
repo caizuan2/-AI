@@ -19,9 +19,16 @@ interface ChatSidebarDrawerProps {
   activeConversationId: string | null;
   open: boolean;
   loading: boolean;
+  userName?: string;
+  userDescription?: string;
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (conversationId: string) => void;
+  onScan?: () => void;
+  onMessages?: () => void;
+  onLogout?: () => void;
+  onChangePassword?: () => void;
+  onSwitchAccount?: () => void;
 }
 
 const mockConversationTitles = [
@@ -83,9 +90,16 @@ export function ChatSidebarDrawer({
   activeConversationId,
   open,
   loading,
+  userName = "当前用户",
+  userDescription = "AI 知识库账号",
   onClose,
   onNewChat,
-  onSelect
+  onSelect,
+  onScan,
+  onMessages,
+  onLogout,
+  onChangePassword,
+  onSwitchAccount
 }: ChatSidebarDrawerProps) {
   const [query, setQuery] = React.useState("");
   const [settingsOpen, setSettingsOpen] = React.useState(false);
@@ -207,13 +221,14 @@ export function ChatSidebarDrawer({
                   用
                 </span>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-bold text-slate-950">当前用户</p>
-                  <p className="truncate text-[11px] text-slate-400">AI 知识库账号</p>
+                  <p className="truncate text-sm font-bold text-slate-950">{userName}</p>
+                  <p className="truncate text-[11px] text-slate-400">{userDescription}</p>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1 text-slate-900">
                 <button
                   type="button"
+                  onClick={onScan}
                   className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-slate-50"
                   aria-label="扫描内容"
                 >
@@ -221,6 +236,7 @@ export function ChatSidebarDrawer({
                 </button>
                 <button
                   type="button"
+                  onClick={onMessages}
                   className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-slate-50"
                   aria-label="消息"
                 >
@@ -236,7 +252,12 @@ export function ChatSidebarDrawer({
                   >
                     <Settings className="h-6 w-6" aria-hidden="true" />
                   </button>
-                  <ChatSettingsMenu open={settingsOpen} />
+                  <ChatSettingsMenu
+                    open={settingsOpen}
+                    onLogout={onLogout}
+                    onChangePassword={onChangePassword}
+                    onSwitchAccount={onSwitchAccount}
+                  />
                 </div>
               </div>
             </div>
