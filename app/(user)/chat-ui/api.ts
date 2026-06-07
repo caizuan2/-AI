@@ -102,12 +102,14 @@ function normalizeQuickActionCategory(item: unknown, index: number): ChatQuickAc
   const rawPrompt = getRecordValue(record, "prompt") ?? getRecordValue(record, "description");
   const rawId = getRecordValue(record, "id") ?? getRecordValue(record, "key") ?? label;
   const sortOrder = toOptionalNumber(getRecordValue(record, "sortOrder") ?? getRecordValue(record, "order") ?? getRecordValue(record, "position"));
+  const fastModeAction = label === "快速";
 
   return {
     id: `category-${String(rawId)}-${index}`,
     label,
-    prompt: typeof rawPrompt === "string" && rawPrompt.trim() ? rawPrompt.trim() : label,
-    kind: "category",
+    prompt: fastModeAction ? null : typeof rawPrompt === "string" && rawPrompt.trim() ? rawPrompt.trim() : label,
+    kind: fastModeAction ? "mode" : "category",
+    mode: fastModeAction ? "fast" : undefined,
     sortOrder
   };
 }
