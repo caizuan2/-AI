@@ -59,6 +59,7 @@ export default function DownloadPage() {
 
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 text-sm leading-7 text-amber-900">
           <p>Android 安装时如提示未知来源，请在系统设置中允许安装。</p>
+          <p>新版 APK 支持 Web 层 OTA 后，普通界面、JS 和 CSS 可自动获取更新；如更新异常，仍可重新下载安装包。</p>
           <p>Windows 如提示未知发布者，是因为未进行代码签名，内部测试可继续安装。</p>
         </div>
       </section>

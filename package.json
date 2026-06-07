@@ -50,6 +50,7 @@
   "dependencies": {
     "@capacitor/android": "^8.4.0",
     "@capacitor/core": "^8.4.0",
+    "@capgo/capacitor-updater": "^8.48.0",
     "@netlify/blobs": "^10.7.9",
     "@prisma/client": "^6.0.0",
     "@types/pdf-parse": "^1.1.5",

@@ -23,6 +23,7 @@ import {
   UploadCloud
 } from "lucide-react";
 import { AppBottomNavigation } from "@/components/product/app-bottom-navigation";
+import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { Sidebar, type SidebarItem } from "@/components/product/sidebar";
 import { ThemeToggle } from "@/components/product/theme-toggle";
 
@@ -72,6 +73,7 @@ export function AppShell({ children, user }: { children: ReactNode; user?: AppSh
 
   return (
     <div className="min-h-dvh bg-canvas text-ink dark:bg-slate-950 dark:text-slate-100">
+      <CapacitorOtaUpdater />
       <div className="flex min-h-dvh">
         <Sidebar
           items={navItems}
