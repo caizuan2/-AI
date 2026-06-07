@@ -18,6 +18,7 @@ import {
   Search,
   Settings,
   ShieldCheck,
+  Sparkles,
   Tags,
   UploadCloud
 } from "lucide-react";
@@ -35,6 +36,7 @@ const baseNavItems: SidebarItem[] = [
   { href: "/review", label: "知识复习", icon: BookOpenCheck },
   { href: "/tags", label: "标签管理", icon: Tags },
   { href: "/categories", label: "分类管理", icon: FolderOpen },
+  { href: "/quick-actions", label: "快捷分类", icon: Sparkles },
   { href: "/feedback", label: "反馈", icon: MessageSquareWarning },
   { href: "/settings", label: "设置", icon: Settings }
 ];

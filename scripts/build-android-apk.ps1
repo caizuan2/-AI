@@ -1,3 +1,9 @@
+param(
+  [ValidateSet("Debug", "Release")]
+  [string]$Configuration = "Debug",
+  [switch]$SkipWebBuild
+)
+
 $ErrorActionPreference = "Stop"
 
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -28,6 +34,10 @@ if (-not (Test-Path (Join-Path $Root "node_modules/@capacitor/core"))) {
   throw "Capacitor dependencies are missing. Please run pnpm install before building Android APK."
 }
 
+if (-not $SkipWebBuild) {
+  Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "build")
+}
+
 if (Test-Path $OutputDir) {
   Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
@@ -52,11 +62,15 @@ $hasReleaseSigning =
   $env:ANDROID_KEY_ALIAS -and
   $env:ANDROID_KEY_PASSWORD
 
-$buildTask = if ($hasReleaseSigning) { "assembleRelease" } else { "assembleDebug" }
+if ($Configuration -eq "Release" -and -not $hasReleaseSigning) {
+  throw "Release build requires ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
+}
+
+$buildTask = if ($Configuration -eq "Release") { "assembleRelease" } else { "assembleDebug" }
 Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments @($buildTask) -WorkingDirectory $AndroidDir
 
 $candidateApks = @()
-if ($hasReleaseSigning) {
+if ($Configuration -eq "Release") {
   $candidateApks += Join-Path $AndroidDir "app/build/outputs/apk/release/app-release.apk"
   $candidateApks += Join-Path $AndroidDir "app/build/outputs/apk/release/app-release-unsigned.apk"
 }

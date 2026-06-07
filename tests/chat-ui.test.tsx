@@ -128,6 +128,13 @@ async function main() {
   assert.match(attachmentMenuMarkup, /上传文件/);
   assert.match(attachmentMenuMarkup, /打开相机/);
 
+  const quickActionsPageText = readFileSync("app/(workspace)/quick-actions/page.tsx", "utf8");
+
+  assert.match(quickActionsPageText, /快捷分类管理/);
+  assert.match(quickActionsPageText, /分类名称/);
+  assert.match(quickActionsPageText, /点击动作/);
+  assert.match(quickActionsPageText, /快捷提示词/);
+
   for (const routeFile of [
     "app/api/ai/chat/ask/route.ts",
     "app/api/ai/chat/conversations/route.ts",
@@ -136,11 +143,25 @@ async function main() {
     assert.match(readFileSync(routeFile, "utf8"), /requireLicense:\s*true/);
   }
 
-  const userCategoriesRoute = readFileSync("app/api/user/categories/route.ts", "utf8");
+  const schemaText = readFileSync("prisma/schema.prisma", "utf8");
+  const migrationText = readFileSync("prisma/migrations/20260607140000_add_quick_action_categories/migration.sql", "utf8");
+  const adminQuickActionsRoute = readFileSync("app/api/admin/quick-actions/route.ts", "utf8");
+  const userQuickActionsRoute = readFileSync("app/api/user/quick-actions/route.ts", "utf8");
 
-  assert.match(userCategoriesRoute, /requireLicensedUser/);
-  assert.match(userCategoriesRoute, /export async function GET/);
-  assert.doesNotMatch(userCategoriesRoute, /export async function (POST|PATCH|DELETE)/);
+  assert.match(schemaText, /model QuickActionCategory/);
+  assert.match(migrationText, /CREATE TABLE "quick_action_categories"/);
+  assert.match(migrationText, /quick_default_creative/);
+  assert.match(adminQuickActionsRoute, /requireKbAdmin/);
+  assert.match(adminQuickActionsRoute, /export async function GET/);
+  assert.match(adminQuickActionsRoute, /export async function POST/);
+  assert.match(adminQuickActionsRoute, /export async function PATCH/);
+  assert.match(adminQuickActionsRoute, /export async function DELETE/);
+  assert.match(userQuickActionsRoute, /requireLicensedUser/);
+  assert.match(userQuickActionsRoute, /WHERE enabled = true/);
+  assert.match(userQuickActionsRoute, /export async function GET/);
+  assert.doesNotMatch(userQuickActionsRoute, /export async function (POST|PATCH|DELETE)/);
+
+  assert.match(readFileSync("components/app-shell.tsx", "utf8"), /快捷分类/);
 
   const modeMarkup = renderToStaticMarkup(
     <ModeToggle mode="fast" onChange={() => undefined} />
@@ -369,10 +390,32 @@ async function main() {
     ok: true,
     success: true,
     data: {
-      categories: [
+      quickActions: [
         {
-          name: "管理员分类",
-          count: 3
+          id: "quick-second",
+          name: "排序第二",
+          prompt: "第二个提示词",
+          action: "fill_prompt",
+          enabled: true,
+          sortOrder: 2
+        },
+        {
+          id: "quick-disabled",
+          name: "禁用分类",
+          prompt: "不应显示",
+          action: "fill_prompt",
+          enabled: false,
+          sortOrder: 1
+        },
+        {
+          id: "quick-first",
+          name: "排序第一",
+          prompt: "第一个提示词",
+          action: "send_prompt",
+          icon: "zap",
+          type: "prompt",
+          enabled: true,
+          sortOrder: 1
         }
       ]
     }
@@ -386,53 +429,30 @@ async function main() {
 
   const quickCategories = await fetchQuickActionCategories();
 
-  assert.equal(quickCategories[0].label, "管理员分类");
+  assert.equal(quickCategories.length, 2);
+  assert.equal(quickCategories[0].label, "排序第一");
+  assert.equal(quickCategories[0].prompt, "第一个提示词");
+  assert.equal(quickCategories[0].action, "send_prompt");
+  assert.equal(quickCategories[0].icon, "zap");
+  assert.equal(quickCategories[1].label, "排序第二");
+  assert.equal(quickCategories.some((item) => item.label === "禁用分类"), false);
   assert.equal(quickCategories[0].kind, "category");
-  assert.equal(String(categoryCalls[0]), "/api/user/categories");
+  assert.equal(String(categoryCalls[0]), "/api/user/quick-actions");
 
-  let fallbackCallCount = 0;
-
-  globalThis.fetch = (async () => {
-    fallbackCallCount += 1;
-
-    if (fallbackCallCount === 1) {
-      return new Response(JSON.stringify({
-        ok: false,
-        success: false,
-        error: {
-          message: "forbidden"
-        }
-      }), {
-        status: 403,
-        headers: {
-          "Content-Type": "application/json"
-        }
-      });
+  globalThis.fetch = (async () => new Response(JSON.stringify({
+    ok: true,
+    success: true,
+    data: {
+      quickActions: []
     }
+  }), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  })) as typeof fetch;
 
-    return new Response(JSON.stringify({
-      ok: true,
-      success: true,
-      data: {
-        categories: [
-          {
-            name: "旧接口分类",
-            count: 2
-          }
-        ]
-      }
-    }), {
-      status: 200,
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
-  }) as typeof fetch;
-
-  const fallbackCategories = await fetchQuickActionCategories();
-
-  assert.equal(fallbackCategories[0].label, "旧接口分类");
-  assert.equal(fallbackCallCount, 2);
+  assert.deepEqual(await fetchQuickActionCategories(), []);
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
     ok: false,

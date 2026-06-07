@@ -1,0 +1,14 @@
+{
+  "version": "1.0.0",
+  "buildNumber": "2026.06.07",
+  "date": "2026-06-07",
+  "androidApkUrl": "/downloads/ai-knowledge-chat-latest.apk",
+  "androidCompatibilityUrl": "/downloads/ai-knowledge-chat.apk",
+  "desktopUrl": "/downloads/ai-knowledge-chat-latest.exe",
+  "desktopCompatibilityUrl": "/downloads/ai-knowledge-chat.exe",
+  "changelog": [
+    "新增管理员后台独立快捷分类管理。",
+    "用户端快捷功能条支持读取后台启用分类。",
+    "保留默认快捷分类 fallback 和上传/相机入口占位。"
+  ]
+}

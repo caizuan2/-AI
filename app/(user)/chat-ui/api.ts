@@ -102,6 +102,10 @@ function normalizeQuickActionCategory(item: unknown, index: number): ChatQuickAc
   const rawPrompt = getRecordValue(record, "prompt") ?? getRecordValue(record, "description");
   const rawId = getRecordValue(record, "id") ?? getRecordValue(record, "key") ?? label;
   const sortOrder = toOptionalNumber(getRecordValue(record, "sortOrder") ?? getRecordValue(record, "order") ?? getRecordValue(record, "position"));
+  const rawDescription = getRecordValue(record, "description");
+  const rawIcon = getRecordValue(record, "icon");
+  const rawType = getRecordValue(record, "type");
+  const rawAction = getRecordValue(record, "action");
   const fastModeAction = label === "快速";
 
   return {
@@ -110,7 +114,11 @@ function normalizeQuickActionCategory(item: unknown, index: number): ChatQuickAc
     prompt: fastModeAction ? null : typeof rawPrompt === "string" && rawPrompt.trim() ? rawPrompt.trim() : label,
     kind: fastModeAction ? "mode" : "category",
     mode: fastModeAction ? "fast" : undefined,
-    sortOrder
+    sortOrder,
+    description: typeof rawDescription === "string" ? rawDescription : null,
+    icon: typeof rawIcon === "string" ? rawIcon : null,
+    type: typeof rawType === "string" ? rawType : null,
+    action: typeof rawAction === "string" ? rawAction : null
   };
 }
 
@@ -129,8 +137,13 @@ async function fetchCategoryEndpoint(path: string) {
 
   const payload = await response.json().catch(() => null) as ApiEnvelope<{
     categories?: unknown[];
+    quickActions?: unknown[];
   }> | null;
-  const categories = Array.isArray(payload?.data?.categories) ? payload.data.categories : [];
+  const categories = Array.isArray(payload?.data?.quickActions)
+    ? payload.data.quickActions
+    : Array.isArray(payload?.data?.categories)
+      ? payload.data.categories
+      : [];
 
   return categories
     .map(normalizeQuickActionCategory)
@@ -150,15 +163,7 @@ function indexFallback(id: string) {
 }
 
 export async function fetchQuickActionCategories() {
-  for (const endpoint of ["/api/user/categories", "/api/categories"]) {
-    const categories = await fetchCategoryEndpoint(endpoint);
-
-    if (categories.length > 0) {
-      return categories;
-    }
-  }
-
-  return [];
+  return fetchCategoryEndpoint("/api/user/quick-actions");
 }
 
 export async function fetchCurrentChatUser() {

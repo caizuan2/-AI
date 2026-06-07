@@ -42,6 +42,8 @@ export function ChatShell() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [quickActions, setQuickActions] = React.useState<ChatQuickActionItem[]>([]);
   const [currentUser, setCurrentUser] = React.useState<CurrentChatUser | null>(null);
+  const [openAttachmentSignal, setOpenAttachmentSignal] = React.useState(0);
+  const [openCameraSignal, setOpenCameraSignal] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
 
   const loadConversations = React.useCallback(async () => {
@@ -154,10 +156,35 @@ export function ChatShell() {
 
     const nextInput = action.prompt?.trim() || action.label;
 
-    if (nextInput) {
+    if (action.action === "open_upload") {
+      setOpenAttachmentSignal((value) => value + 1);
+      showNotice(`已打开「${action.label}」上传入口。`);
+      return;
+    }
+
+    if (action.action === "open_camera") {
+      setOpenCameraSignal((value) => value + 1);
+      showNotice(`已打开「${action.label}」相机入口。`);
+      return;
+    }
+
+    if (action.action === "send_prompt") {
+      if (nextInput) {
+        void submitText(nextInput);
+        return;
+      }
+
+      showNotice("该功能缺少可发送的提示词。");
+      return;
+    }
+
+    if (!action.action || action.action === "fill_prompt") {
       setInput(nextInput);
       showNotice(`已选择「${action.label}」，可以继续补充问题后发送。`);
+      return;
     }
+
+    showNotice("该功能待接入。");
   }
 
   async function handleLogout() {
@@ -187,9 +214,7 @@ export function ChatShell() {
     window.location.href = "/login?app=user&next=/chat-ui";
   }
 
-  async function handleSubmit() {
-    const text = input.trim();
-
+  async function submitText(text: string) {
     if (!text || loading) {
       return;
     }
@@ -222,6 +247,10 @@ export function ChatShell() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function handleSubmit() {
+    await submitText(input.trim());
   }
 
   return (
@@ -325,6 +354,8 @@ export function ChatShell() {
             onValueChange={setInput}
             onSubmit={handleSubmit}
             onStatusMessage={showNotice}
+            openAttachmentSignal={openAttachmentSignal}
+            openCameraSignal={openCameraSignal}
           />
         </main>
       </div>
