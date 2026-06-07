@@ -143,7 +143,6 @@ export function ChatShell() {
 
   function showNotice(message: string) {
     setNotice(message);
-    setError(null);
   }
 
   function handleQuickAction(action: ChatQuickActionItem) {
