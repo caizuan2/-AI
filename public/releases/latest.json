@@ -1,110 +1,14 @@
 {
-  "updated_at": "2026-06-13T05:04:41.133Z",
-  "apps": {
-    "user": {
-      "id": "ai.chat.user",
-      "name": "AI知识库助手",
-      "platforms": [
-        "android",
-        "windows",
-        "ios",
-        "macos",
-        "web",
-        "electron"
-      ],
-      "active_version": "1.0.3",
-      "versions": [
-        {
-          "version": "1.0.3",
-          "build": 103,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
-          "changelog": [
-            "Updated user app",
-            "Improved chat experience",
-            "Fixed attachment upload"
-          ],
-          "created_at": "2026-06-12T18:07:26.236Z"
-        },
-        {
-          "version": "1.0.2",
-          "build": 102,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
-          "changelog": [
-            "Updated user app",
-            "Improved attachment handling"
-          ],
-          "created_at": "2026-06-10T00:00:00.000Z"
-        }
-      ]
-    },
-    "admin": {
-      "id": "ai.chat.admin",
-      "name": "AI知识库管理后台",
-      "platforms": [
-        "android",
-        "windows",
-        "ios",
-        "macos",
-        "web",
-        "electron"
-      ],
-      "active_version": "1.0.3",
-      "versions": [
-        {
-          "version": "1.0.3",
-          "build": 103,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
-          "changelog": [
-            "Updated admin app",
-            "Improved packaging workflow",
-            "Updated installer links"
-          ],
-          "created_at": "2026-06-12T18:07:26.236Z"
-        },
-        {
-          "version": "1.0.2",
-          "build": 102,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
-          "changelog": [
-            "Updated admin app",
-            "Updated installer links"
-          ],
-          "created_at": "2026-06-10T00:00:00.000Z"
-        }
-      ]
-    }
-  },
-  "user": {
-    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-    "build": 103,
-    "version": "1.0.103"
-  }
+  "version": "1.0.0",
+  "buildNumber": "2026.06.07",
+  "date": "2026-06-07",
+  "androidApkUrl": "/downloads/ai-knowledge-chat-latest.apk",
+  "androidCompatibilityUrl": "/downloads/ai-knowledge-chat.apk",
+  "desktopUrl": "/downloads/ai-knowledge-chat-latest.exe",
+  "desktopCompatibilityUrl": "/downloads/ai-knowledge-chat.exe",
+  "changelog": [
+    "新增管理员后台独立快捷分类管理。",
+    "用户端快捷功能条支持读取后台启用分类。",
+    "保留默认快捷分类 fallback 和上传/相机入口占位。"
+  ]
 }

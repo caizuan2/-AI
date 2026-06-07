@@ -434,6 +434,24 @@ model KnowledgeQueryLog {
   @@map("knowledge_query_logs")
 }
 
+model QuickActionCategory {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?  @db.Text
+  icon        String?
+  type        String?
+  action      String?
+  prompt      String?  @db.Text
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([enabled])
+  @@index([sortOrder])
+  @@map("quick_action_categories")
+}
+
 model AiCache {
   id        String   @id @default(cuid())
   cacheKey  String   @unique

@@ -45,7 +45,8 @@ $hasCapgo = [bool](
 
 if ($hasCapgo) {
   Write-Host "Capgo updater package detected."
-  Write-Host "Configure CAPGO_TOKEN and CAPGO_APP_ID in CI Secrets, then run scripts/release-ota-capgo.ps1."
+  Write-Host "Configure CAPGO_TOKEN and CAPGO_APP_ID in CI Secrets, then publish with your Capgo CLI command."
+  Write-Host "Example placeholder: npx @capgo/cli bundle upload --channel $Channel"
 } else {
   Write-Host "No OTA updater plugin detected. This script prepared web assets only."
   Write-Host "See docs/ota-update-plan.md before enabling Capgo, Ionic Appflow, or a self-hosted OTA service."

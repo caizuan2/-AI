@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Images, Search, Sparkles, Video, Zap } from "lucide-react";
+import { Camera, Images, Search, Sparkles, Upload, Video, Zap } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMode, ChatQuickActionItem } from "../types";
@@ -18,44 +18,70 @@ interface ChatQuickActionsProps {
   onQuickAction?: (action: ChatQuickActionItem) => void;
 }
 
-type ChatQuickActionWithIcon = ChatQuickActionItem & { icon: LucideIcon };
+type DefaultQuickAction = ChatQuickActionItem & { iconComponent: LucideIcon };
 
-const defaultActions: ChatQuickActionWithIcon[] = [
+const defaultActions: DefaultQuickAction[] = [
   {
     id: "fast",
     label: "快速",
-    icon: Zap,
+    iconComponent: Zap,
     kind: "mode",
     mode: "fast"
   },
   {
     id: "creative",
     label: "AI 创作",
-    icon: Sparkles,
+    iconComponent: Sparkles,
     kind: "tool",
     prompt: "请帮我进行 AI 创作："
   },
   {
     id: "photo-motion",
     label: "照片动起来",
-    icon: Images,
+    iconComponent: Images,
     kind: "tool",
     prompt: "我想了解照片动起来功能："
   },
   {
     id: "video-call",
     label: "视频通话",
-    icon: Video,
+    iconComponent: Video,
     kind: "tool",
     prompt: "我想了解视频通话功能："
   }
 ];
 
-function hasActionIcon(action: ChatQuickActionItem): action is ChatQuickActionWithIcon {
-  return "icon" in action;
+function hasDefaultIcon(action: ChatQuickActionItem): action is DefaultQuickAction {
+  return "iconComponent" in action;
 }
 
 function getActionIcon(action: ChatQuickActionItem): LucideIcon {
+  const icon = action.icon?.toLowerCase();
+
+  if (icon === "zap" || icon === "bolt") {
+    return Zap;
+  }
+
+  if (icon === "image" || icon === "images" || icon === "photo") {
+    return Images;
+  }
+
+  if (icon === "video") {
+    return Video;
+  }
+
+  if (icon === "camera") {
+    return Camera;
+  }
+
+  if (icon === "upload") {
+    return Upload;
+  }
+
+  if (icon === "sparkles" || icon === "star") {
+    return Sparkles;
+  }
+
   if (action.mode === "fast" || action.label.includes("快速")) {
     return Zap;
   }
@@ -105,7 +131,7 @@ export function ChatQuickActions({
         aria-label="快捷功能"
       >
         {visibleActions.map((action) => {
-          const Icon = hasActionIcon(action) ? action.icon : getActionIcon(action);
+          const Icon = hasDefaultIcon(action) ? action.iconComponent : getActionIcon(action);
           const active = action.kind === "mode" && action.mode === mode;
 
           return (

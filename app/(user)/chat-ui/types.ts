@@ -49,6 +49,10 @@ export interface ChatQuickActionItem {
   kind?: "mode" | "category" | "tool";
   mode?: ChatMode;
   sortOrder?: number | null;
+  description?: string | null;
+  icon?: string | null;
+  type?: string | null;
+  action?: string | null;
 }
 
 export interface CurrentChatUser {

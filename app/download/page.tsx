@@ -1,16 +1,17 @@
 import React from "react";
+import releaseInfo from "../../public/releases/latest.json";
 
 const downloadLinks = [
   {
     label: "Android APK 下载",
-    href: "/downloads/ai-knowledge-chat-latest.apk",
-    compatibilityHref: "/downloads/ai-knowledge-chat.apk",
+    href: releaseInfo.androidApkUrl,
+    compatibilityHref: releaseInfo.androidCompatibilityUrl,
     description: "适用于 Android 手机和平板的内部测试安装包。"
   },
   {
     label: "Windows EXE 下载",
-    href: "/downloads/ai-knowledge-chat-latest.exe",
-    compatibilityHref: "/downloads/ai-knowledge-chat.exe",
+    href: releaseInfo.desktopUrl,
+    compatibilityHref: releaseInfo.desktopCompatibilityUrl,
     description: "适用于 Windows 桌面端的内部测试安装包。"
   }
 ];
@@ -25,6 +26,21 @@ export default function DownloadPage() {
           <p className="text-sm leading-6 text-slate-600">
             用户端安装后请登录普通用户账号，进入 AI 知识库助手问答页面。
           </p>
+        </div>
+
+        <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-950">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="rounded-full bg-white px-3 py-1 font-semibold text-blue-700">
+              最新版本 {releaseInfo.version}
+            </span>
+            <span>构建号：{releaseInfo.buildNumber}</span>
+            <span>更新日期：{releaseInfo.date}</span>
+          </div>
+          <ul className="mt-4 list-disc space-y-1 pl-5 leading-6">
+            {releaseInfo.changelog.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
