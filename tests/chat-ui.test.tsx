@@ -54,21 +54,47 @@ async function main() {
       mode="expert"
       enableDeepThinking
       enableWebSearch={false}
-      categoryLabels={["售后", "企业服务"]}
+      quickActions={[
+        {
+          id: "category-after-sales",
+          label: "售后",
+          prompt: "售后",
+          kind: "category"
+        },
+        {
+          id: "category-enterprise",
+          label: "企业服务",
+          prompt: "企业服务",
+          kind: "category"
+        }
+      ]}
       onModeChange={() => undefined}
       onToggleDeepThinking={() => undefined}
       onToggleWebSearch={() => undefined}
     />
   );
 
-  assert.match(quickActionsMarkup, /快速/);
-  assert.match(quickActionsMarkup, /AI 创作/);
-  assert.match(quickActionsMarkup, /照片动起来/);
-  assert.match(quickActionsMarkup, /视频通话/);
+  assert.doesNotMatch(quickActionsMarkup, /AI 创作/);
   assert.match(quickActionsMarkup, /专家/);
   assert.match(quickActionsMarkup, /深度思考/);
   assert.match(quickActionsMarkup, /智能搜索/);
   assert.match(quickActionsMarkup, /售后/);
+
+  const fallbackQuickActionsMarkup = renderToStaticMarkup(
+    <ChatQuickActions
+      mode="fast"
+      enableDeepThinking={false}
+      enableWebSearch={false}
+      onModeChange={() => undefined}
+      onToggleDeepThinking={() => undefined}
+      onToggleWebSearch={() => undefined}
+    />
+  );
+
+  assert.match(fallbackQuickActionsMarkup, /快速/);
+  assert.match(fallbackQuickActionsMarkup, /AI 创作/);
+  assert.match(fallbackQuickActionsMarkup, /照片动起来/);
+  assert.match(fallbackQuickActionsMarkup, /视频通话/);
 
   const drawerMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -109,6 +135,12 @@ async function main() {
   ]) {
     assert.match(readFileSync(routeFile, "utf8"), /requireLicense:\s*true/);
   }
+
+  const userCategoriesRoute = readFileSync("app/api/user/categories/route.ts", "utf8");
+
+  assert.match(userCategoriesRoute, /requireLicensedUser/);
+  assert.match(userCategoriesRoute, /export async function GET/);
+  assert.doesNotMatch(userCategoriesRoute, /export async function (POST|PATCH|DELETE)/);
 
   const modeMarkup = renderToStaticMarkup(
     <ModeToggle mode="fast" onChange={() => undefined} />
@@ -328,7 +360,12 @@ async function main() {
 
   globalThis.fetch = originalFetch;
 
-  globalThis.fetch = (async () => new Response(JSON.stringify({
+  const categoryCalls: Array<RequestInfo | URL> = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    categoryCalls.push(input);
+
+    return new Response(JSON.stringify({
     ok: true,
     success: true,
     data: {
@@ -344,12 +381,58 @@ async function main() {
     headers: {
       "Content-Type": "application/json"
     }
-  })) as typeof fetch;
+  });
+  }) as typeof fetch;
 
   const quickCategories = await fetchQuickActionCategories();
 
   assert.equal(quickCategories[0].label, "管理员分类");
   assert.equal(quickCategories[0].kind, "category");
+  assert.equal(String(categoryCalls[0]), "/api/user/categories");
+
+  let fallbackCallCount = 0;
+
+  globalThis.fetch = (async () => {
+    fallbackCallCount += 1;
+
+    if (fallbackCallCount === 1) {
+      return new Response(JSON.stringify({
+        ok: false,
+        success: false,
+        error: {
+          message: "forbidden"
+        }
+      }), {
+        status: 403,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: {
+        categories: [
+          {
+            name: "旧接口分类",
+            count: 2
+          }
+        ]
+      }
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const fallbackCategories = await fetchQuickActionCategories();
+
+  assert.equal(fallbackCategories[0].label, "旧接口分类");
+  assert.equal(fallbackCallCount, 2);
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
     ok: false,
