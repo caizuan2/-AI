@@ -11,6 +11,8 @@ interface ChatInputProps {
   onValueChange: (value: string) => void;
   onSubmit: () => void;
   onStatusMessage?: (message: string) => void;
+  openAttachmentSignal?: number;
+  openCameraSignal?: number;
 }
 
 type SpeechRecognitionResultLike = {
@@ -50,7 +52,9 @@ export function ChatInput({
   loading,
   onValueChange,
   onSubmit,
-  onStatusMessage
+  onStatusMessage,
+  openAttachmentSignal = 0,
+  openCameraSignal = 0
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [listening, setListening] = React.useState(false);
@@ -122,6 +126,18 @@ export function ChatInput({
   }
 
   React.useEffect(() => () => recognitionRef.current?.stop(), []);
+
+  React.useEffect(() => {
+    if (openAttachmentSignal > 0) {
+      setAttachmentMenuOpen(true);
+    }
+  }, [openAttachmentSignal]);
+
+  React.useEffect(() => {
+    if (openCameraSignal > 0) {
+      cameraInputRef.current?.click();
+    }
+  }, [openCameraSignal]);
 
   return (
     <form
