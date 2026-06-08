@@ -14,6 +14,7 @@ export interface ChatAttachmentDraft {
   size?: number;
   reference_id?: string;
   previewUrl?: string;
+  url?: string;
   metadata?: Record<string, unknown>;
 }
 
