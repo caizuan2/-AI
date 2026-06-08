@@ -20,6 +20,7 @@ type SpeechRecognitionResultLike = {
   readonly 0: {
     transcript: string;
   };
+  readonly isFinal?: boolean;
 };
 
 type SpeechRecognitionEventLike = {
@@ -33,6 +34,7 @@ type SpeechRecognitionErrorEventLike = {
 type SpeechRecognitionLike = {
   lang: string;
   interimResults: boolean;
+  continuous: boolean;
   maxAlternatives: number;
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
@@ -52,6 +54,7 @@ export const MAX_CHAT_ATTACHMENTS = 5;
 export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md";
 export const SPEECH_UNSUPPORTED_MESSAGE = "当前设备暂不支持语音输入，请使用文字输入。";
+export const SPEECH_PERMISSION_MESSAGE = "麦克风权限未开启，请在浏览器或系统设置中允许麦克风权限。";
 
 const imageAttachmentTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
@@ -65,6 +68,33 @@ export function mergeVoiceTranscript(currentValue: string, transcript: string) {
   const trimmedCurrent = currentValue.trimEnd();
 
   return trimmedCurrent ? `${trimmedCurrent} ${trimmedTranscript}` : trimmedTranscript;
+}
+
+export function getSpeechRecognitionErrorMessage(error?: string) {
+  if (error === "not-allowed" || error === "service-not-allowed") {
+    return SPEECH_PERMISSION_MESSAGE;
+  }
+
+  return "语音输入失败，请使用文字输入或稍后重试。";
+}
+
+export function readSpeechRecognitionTranscript(event: SpeechRecognitionEventLike) {
+  const results = Array.from(event.results);
+  const finalTranscript = results
+    .filter((result) => result.isFinal !== false)
+    .map((result) => result[0]?.transcript ?? "")
+    .join("")
+    .trim();
+  const interimTranscript = results
+    .filter((result) => result.isFinal === false)
+    .map((result) => result[0]?.transcript ?? "")
+    .join("")
+    .trim();
+
+  return {
+    finalTranscript,
+    interimTranscript
+  };
 }
 
 export function validateChatAttachmentFile(file: File) {
@@ -113,6 +143,7 @@ export function createChatAttachmentFromFile(file: File, source: ChatAttachmentS
     size: file.size,
     reference_id: id,
     previewUrl,
+    url: previewUrl,
     metadata: {
       source
     }
@@ -217,21 +248,26 @@ export function ChatInput({
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
   const [listening, setListening] = React.useState(false);
+  const [interimTranscript, setInterimTranscript] = React.useState("");
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
   const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
   const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
+  const valueRef = React.useRef(value);
 
   React.useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
+  React.useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
+
   async function submitCurrentMessage() {
     const submitted = await onSubmit(attachments);
 
     if (submitted !== false) {
-      cleanupChatAttachments(attachments);
       setAttachments([]);
     }
   }
@@ -285,6 +321,7 @@ export function ChatInput({
     if (listening) {
       recognitionRef.current?.stop();
       setListening(false);
+      setInterimTranscript("");
       return;
     }
 
@@ -299,29 +336,46 @@ export function ChatInput({
     const recognition = new Recognition();
 
     recognition.lang = "zh-CN";
-    recognition.interimResults = false;
+    recognition.interimResults = true;
+    recognition.continuous = false;
     recognition.maxAlternatives = 1;
     recognition.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map((result) => result[0]?.transcript ?? "")
-        .join("")
-        .trim();
+      const {
+        finalTranscript,
+        interimTranscript: nextInterimTranscript
+      } = readSpeechRecognitionTranscript(event);
 
-      if (transcript) {
-        onValueChange(mergeVoiceTranscript(value, transcript));
+      if (finalTranscript) {
+        const nextValue = mergeVoiceTranscript(valueRef.current, finalTranscript);
+
+        valueRef.current = nextValue;
+        onValueChange(nextValue);
+        setInterimTranscript("");
         onStatusMessage?.("语音内容已填入输入框。");
+        return;
       }
+
+      setInterimTranscript(nextInterimTranscript);
     };
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
       setListening(false);
-      onStatusMessage?.("语音输入失败，请使用文字输入或稍后重试。");
+      setInterimTranscript("");
+      onStatusMessage?.(getSpeechRecognitionErrorMessage(event.error));
     };
     recognition.onend = () => {
       setListening(false);
+      setInterimTranscript("");
     };
     recognitionRef.current = recognition;
-    setListening(true);
-    recognition.start();
+
+    try {
+      recognition.start();
+      setListening(true);
+    } catch {
+      setListening(false);
+      setInterimTranscript("");
+      onStatusMessage?.("语音输入启动失败，请使用文字输入或稍后重试。");
+    }
   }
 
   React.useEffect(() => () => {
@@ -388,9 +442,11 @@ export function ChatInput({
         <button
           type="button"
           onClick={handleVoiceInput}
-          className="focus-ring inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100"
+          className="focus-ring inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100 data-[listening=true]:bg-blue-600 data-[listening=true]:text-white"
           aria-label={listening ? "停止语音输入" : "语音输入"}
           aria-pressed={listening}
+          data-listening={listening}
+          title={listening ? "正在听，再次点击停止" : "语音输入"}
         >
           <Mic className="h-7 w-7" strokeWidth={2.2} aria-hidden="true" />
         </button>
@@ -414,6 +470,11 @@ export function ChatInput({
           />
         </div>
       </div>
+      {listening || interimTranscript ? (
+        <div className="mt-2 px-3 text-xs font-medium text-blue-600">
+          {interimTranscript ? `正在听：${interimTranscript}` : "正在听..."}
+        </div>
+      ) : null}
       <input
         ref={photoInputRef}
         type="file"

@@ -33,21 +33,56 @@ function shouldShowDebugSources() {
   return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
 }
 
+function isImageAttachment(attachment: NonNullable<ChatMessageView["attachments"]>[number]) {
+  const mimeType = attachment.mimeType || attachment.mime_type || "";
+
+  return (
+    attachment.type === "image" ||
+    attachment.type === "gallery_photo" ||
+    attachment.type === "camera_photo" ||
+    mimeType.startsWith("image/")
+  );
+}
+
+function getAttachmentPreviewUrl(attachment: NonNullable<ChatMessageView["attachments"]>[number]) {
+  return attachment.previewUrl || attachment.url || "";
+}
+
 function UserMessageAttachments({ attachments }: { attachments: ChatMessageView["attachments"] }) {
   if (!attachments || attachments.length === 0) {
     return null;
   }
 
   return (
-    <div className="mt-2 space-y-1">
+    <div className="mb-3 space-y-2">
       {attachments.map((attachment, index) => {
-        const isImage = attachment.type === "image" || attachment.type === "gallery_photo" || attachment.type === "camera_photo";
+        const isImage = isImageAttachment(attachment);
+        const previewUrl = getAttachmentPreviewUrl(attachment);
         const name = attachment.name || `附件 ${index + 1}`;
+
+        if (isImage && previewUrl) {
+          return (
+            <a
+              key={attachment.reference_id || attachment.id || `${name}-${index}`}
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="block max-w-[240px] overflow-hidden rounded-2xl bg-white/15 text-left text-xs text-blue-50 ring-1 ring-white/20"
+              aria-label={`打开图片预览 ${name}`}
+            >
+              <span className="block max-h-64 overflow-hidden bg-white/10">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={previewUrl} alt={name} className="max-h-64 w-full object-cover" />
+              </span>
+              <span className="block truncate px-2.5 py-1.5">{name}</span>
+            </a>
+          );
+        }
 
         return (
           <div
             key={attachment.reference_id || attachment.id || `${name}-${index}`}
-            className="flex items-center gap-2 rounded-2xl bg-white/15 px-2 py-1.5 text-xs text-white"
+            className="flex max-w-[240px] items-center gap-2 rounded-2xl bg-white/15 px-2 py-1.5 text-xs text-white"
           >
             {isImage ? (
               <ImageIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -63,6 +98,30 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
 }
 
 export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMessagesProps) {
+  const messagesRef = React.useRef(messages);
+
+  React.useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  React.useEffect(() => {
+    return () => {
+      const blobUrls = new Set<string>();
+
+      for (const message of messagesRef.current) {
+        for (const attachment of message.attachments ?? []) {
+          const previewUrl = getAttachmentPreviewUrl(attachment);
+
+          if (previewUrl.startsWith("blob:")) {
+            blobUrls.add(previewUrl);
+          }
+        }
+      }
+
+      blobUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
   if (messages.length === 0) {
     return <EmptyState mode={mode} onModeChange={onModeChange} />;
   }
@@ -94,8 +153,8 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
             >
               {isUser ? (
                 <>
-                  <div className="whitespace-pre-wrap break-words">{message.content}</div>
                   <UserMessageAttachments attachments={message.attachments} />
+                  <div className="whitespace-pre-wrap break-words">{message.content}</div>
                 </>
               ) : (
                 <RichAnswerView

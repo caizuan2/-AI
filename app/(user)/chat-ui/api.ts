@@ -207,6 +207,7 @@ export async function updateCurrentUserAvatar(file: File) {
   const formData = new FormData();
 
   formData.set("avatar", file);
+  formData.set("file", file);
 
   const response = await fetch("/api/auth/avatar", {
     method: "POST",
