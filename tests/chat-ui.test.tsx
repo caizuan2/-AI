@@ -1,16 +1,40 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import ChatUiPage from "../app/(user)/chat-ui/page";
-import { askChat, fetchQuickActionCategories } from "../app/(user)/chat-ui/api";
+import {
+  askChat,
+  changeCurrentUserPassword,
+  fetchQuickActionCategories,
+  updateCurrentUserAvatar,
+  USER_CHAT_LOGIN_URL
+} from "../app/(user)/chat-ui/api";
 import {
   appendAskResult,
+  createAskAttachmentPayload,
   createAskRequestPayload,
   createNewChatState,
   createUserMessage,
+  getCurrentChatUserAccount,
+  getCurrentChatUserDisplayName,
   normalizeChatMode
 } from "../app/(user)/chat-ui/chat-ui-state";
+import {
+  AVATAR_MAX_SIZE_BYTES,
+  AvatarSettingsDialog,
+  validateAvatarFile
+} from "../app/(user)/chat-ui/components/AvatarSettingsDialog";
+import {
+  CHAT_FILE_ACCEPT,
+  ChatInput,
+  createChatAttachmentFromFile,
+  mergeVoiceTranscript,
+  removeChatAttachment,
+  SelectedAttachmentList,
+  SPEECH_UNSUPPORTED_MESSAGE,
+  validateChatAttachmentFile
+} from "../app/(user)/chat-ui/components/ChatInput";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
 import { ChatMessages } from "../app/(user)/chat-ui/components/ChatMessages";
 import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
@@ -48,6 +72,8 @@ async function main() {
   assert.match(shellMarkup, /发消息或按住说话/);
   assert.match(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
+  assert.doesNotMatch(shellMarkup, /11:54/);
+  assert.doesNotMatch(shellMarkup, /⌁/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -102,6 +128,14 @@ async function main() {
       activeConversationId={null}
       open
       loading={false}
+      currentUser={{
+        id: "user_1",
+        name: "蔡姑",
+        phone: "+8613360587600",
+        licenseActivated: true
+      }}
+      userName="蔡姑"
+      userDescription="+8613360587600"
       onClose={() => undefined}
       onNewChat={() => undefined}
       onSelect={() => undefined}
@@ -115,18 +149,121 @@ async function main() {
   assert.match(drawerMarkup, /扫描内容/);
   assert.match(drawerMarkup, /消息/);
   assert.match(drawerMarkup, /设置/);
+  assert.match(drawerMarkup, /蔡姑/);
+  assert.match(drawerMarkup, /\+8613360587600/);
+  assert.match(drawerMarkup, /修改头像/);
+  assert.doesNotMatch(drawerMarkup, /账号[:：]/);
 
-  const settingsMarkup = renderToStaticMarkup(<ChatSettingsMenu open />);
+  const avatarDialogMarkup = renderToStaticMarkup(
+    <AvatarSettingsDialog
+      open
+      user={{
+        id: "user_1",
+        name: "蔡姑",
+        phone: "+8613360587600",
+        licenseActivated: true
+      }}
+      userName="蔡姑"
+      userAccount="+8613360587600"
+      avatarUrl={null}
+      onClose={() => undefined}
+      onSaved={() => undefined}
+    />
+  );
 
+  assert.match(avatarDialogMarkup, /当前头像预览/);
+  assert.match(avatarDialogMarkup, /上传新头像/);
+  assert.match(avatarDialogMarkup, /恢复默认头像/);
+  assert.match(avatarDialogMarkup, /保存/);
+  assert.match(avatarDialogMarkup, /取消/);
+
+  const settingsMarkup = renderToStaticMarkup(
+    <ChatSettingsMenu
+      open
+      userName="蔡姑"
+      userAccount="+8613360587600"
+      onOpenAvatar={() => undefined}
+      onLogout={() => undefined}
+      onChangePassword={() => undefined}
+      onSwitchAccount={() => undefined}
+    />
+  );
+
+  assert.match(settingsMarkup, /账号信息/);
+  assert.match(settingsMarkup, /蔡姑/);
+  assert.match(settingsMarkup, /\+8613360587600/);
+  assert.match(settingsMarkup, /修改头像/);
   assert.match(settingsMarkup, /退出登录/);
   assert.match(settingsMarkup, /修改密码/);
   assert.match(settingsMarkup, /切换账号/);
+  assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/chat-ui");
 
   const attachmentMenuMarkup = renderToStaticMarkup(<AttachmentMenu open />);
 
   assert.match(attachmentMenuMarkup, /上传手机照片/);
   assert.match(attachmentMenuMarkup, /上传文件/);
   assert.match(attachmentMenuMarkup, /打开相机/);
+  assert.doesNotMatch(attachmentMenuMarkup, /占位/);
+
+  const chatInputMarkup = renderToStaticMarkup(
+    <ChatInput
+      value=""
+      loading={false}
+      onValueChange={() => undefined}
+      onSubmit={() => undefined}
+      onStatusMessage={() => undefined}
+    />
+  );
+
+  assert.match(chatInputMarkup, /accept="image\/\*"/);
+  assert.match(chatInputMarkup, new RegExp(`accept="${CHAT_FILE_ACCEPT.replace(/\*/g, "\\*").replace(/\./g, "\\.")}"`));
+  assert.match(chatInputMarkup, /capture="environment"/);
+
+  const attachmentFile = new File(["合同内容"], "contract.pdf", {
+    type: "application/pdf"
+  });
+  const attachment = createChatAttachmentFromFile(attachmentFile, "file");
+  const selectedAttachmentMarkup = renderToStaticMarkup(
+    <SelectedAttachmentList
+      attachments={[attachment]}
+      onRemove={() => undefined}
+    />
+  );
+
+  assert.match(selectedAttachmentMarkup, /contract\.pdf/);
+  assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
+  assert.equal(validateChatAttachmentFile(new File([new Uint8Array(10 * 1024 * 1024 + 1)], "big.pdf", {
+    type: "application/pdf"
+  })), "单个附件不能超过 10MB。");
+  assert.equal(removeChatAttachment([attachment], attachment.id ?? "").length, 0);
+  assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
+  assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
+  assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前设备暂不支持语音输入，请使用文字输入。");
+
+  const validAvatarFile = new File(["avatar"], "avatar.png", {
+    type: "image/png"
+  });
+  const invalidAvatarFile = new File(["text"], "avatar.txt", {
+    type: "text/plain"
+  });
+  const oversizedAvatarFile = new File([new Uint8Array(AVATAR_MAX_SIZE_BYTES + 1)], "avatar.png", {
+    type: "image/png"
+  });
+
+  assert.equal(validateAvatarFile(validAvatarFile), null);
+  assert.match(validateAvatarFile(invalidAvatarFile) ?? "", /仅支持/);
+  assert.match(validateAvatarFile(oversizedAvatarFile) ?? "", /2MB/);
+  assert.equal(getCurrentChatUserDisplayName({
+    id: "user_1",
+    nickname: "蔡姑",
+    phone: "+8613360587600",
+    licenseActivated: true
+  }), "蔡姑");
+  assert.equal(getCurrentChatUserAccount({
+    id: "user_1",
+    phone: "+8613360587600",
+    licenseActivated: true
+  }), "+8613360587600");
 
   const quickActionsPageText = readFileSync("app/(workspace)/quick-actions/page.tsx", "utf8");
 
@@ -174,7 +311,7 @@ async function main() {
 
   const payload = createAskRequestPayload({
     text: "  退款流程怎么处理？ ",
-    attachments: [],
+    attachments: [attachment],
     conversation_id: "conv_1",
     mode: "expert",
     enable_deep_thinking: true,
@@ -185,8 +322,11 @@ async function main() {
   assert.equal(payload.mode, "expert");
   assert.equal(payload.enable_deep_thinking, true);
   assert.equal(payload.enable_web_search, true);
+  assert.equal(payload.attachments[0].name, "contract.pdf");
+  assert.equal(payload.attachments[0].metadata.source, "file");
+  assert.equal(Object.prototype.hasOwnProperty.call(payload.attachments[0], "previewUrl"), false);
 
-  const localUserMessage = createUserMessage("退款流程怎么处理？");
+  const localUserMessage = createUserMessage("退款流程怎么处理？", [attachment]);
   const messages = appendAskResult([localUserMessage], localUserMessage.id, {
     answer: "退款需要先核对订单号。",
     customer_answer: "您好，关于退款流程，可以这样理解：\n\n1. 需要先核对订单号、付款时间和售后原因。\n2. 如果信息不完整，建议先补充订单截图或联系方式。\n3. 退款范围需要由负责人确认后再回复客户。",
@@ -206,6 +346,7 @@ async function main() {
 
   assert.equal(messages.length, 2);
   assert.equal(messages[0].pending, false);
+  assert.equal(messages[0].attachments?.[0]?.name, "contract.pdf");
   assert.equal(messages[1].content, "退款需要先核对订单号。");
   assert.match(messages[1].customer_answer ?? "", /可?以这样理解|需要先核对订单号/);
   assert.equal(messages[1].sources?.[0]?.chunk_id, "chunk_1");
@@ -220,6 +361,7 @@ async function main() {
   );
 
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
+  assert.match(chatMessagesMarkup, /contract\.pdf/);
   assert.match(chatMessagesMarkup, /现在建议你这样回复/);
   assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
   assert.match(chatMessagesMarkup, /核心判断/);
@@ -318,7 +460,7 @@ async function main() {
 
   const askResult = await askChat({
     text: "你好",
-    attachments: [],
+    attachments: [attachment],
     conversation_id: null,
     mode: "fast",
     enable_deep_thinking: false,
@@ -330,6 +472,8 @@ async function main() {
   assert.equal(String(calls[0].input), "/api/ai/chat/ask");
   assert.equal(calls[0].init?.method, "POST");
   assert.match(String(calls[0].init?.body), /"question":"你好"/);
+  assert.match(String(calls[0].init?.body), /"attachments":\[/);
+  assert.match(String(calls[0].init?.body), /"source":"file"/);
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
     ok: false,
@@ -378,6 +522,63 @@ async function main() {
     }),
     /没有权限/
   );
+
+  globalThis.fetch = originalFetch;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: {
+        avatar_url: "/uploads/avatars/user_1.png"
+      }
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const avatarResult = await updateCurrentUserAvatar(validAvatarFile);
+
+  assert.equal(avatarResult.avatar_url, "/uploads/avatars/user_1.png");
+  assert.equal(String(calls.at(-1)?.input), "/api/auth/avatar");
+  assert.equal(calls.at(-1)?.init?.method, "POST");
+  assert.ok(calls.at(-1)?.init?.body instanceof FormData);
+
+  globalThis.fetch = originalFetch;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: {
+        changed: true
+      }
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const passwordResult = await changeCurrentUserPassword({
+    currentPassword: "old-password",
+    newPassword: "new-password",
+    confirmPassword: "new-password"
+  });
+
+  assert.equal(passwordResult.changed, true);
+  assert.equal(String(calls.at(-1)?.input), "/api/auth/change-password");
+  assert.equal(calls.at(-1)?.init?.method, "POST");
+  assert.match(String(calls.at(-1)?.init?.body), /"current_password":"old-password"/);
+  assert.doesNotMatch(String(calls.at(-1)?.input), /\/api\/admin/);
 
   globalThis.fetch = originalFetch;
 
@@ -470,6 +671,25 @@ async function main() {
   assert.deepEqual(await fetchQuickActionCategories(), []);
 
   globalThis.fetch = originalFetch;
+
+  for (const userClientFile of [
+    "app/(user)/chat-ui/api.ts",
+    "app/(user)/chat-ui/components/ChatShell.tsx",
+    "app/(user)/chat-ui/components/ChatInput.tsx",
+    "app/(user)/chat-ui/components/AvatarSettingsDialog.tsx"
+  ]) {
+    const fileText = readFileSync(userClientFile, "utf8");
+
+    assert.doesNotMatch(fileText, /\/api\/admin\/kb\//);
+  }
+
+  const avatarRouteText = readFileSync("app/api/auth/avatar/route.ts", "utf8");
+  const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
+
+  assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
+  assert.equal(readdirSync("prisma/migrations").some((name) => /avatar|profile/i.test(name)), false);
 
   console.log("Chat UI tests passed.");
 }

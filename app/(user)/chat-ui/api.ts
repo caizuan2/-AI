@@ -1,12 +1,17 @@
 import { createAskRequestPayload } from "./chat-ui-state";
 import type {
+  AvatarUpdateResponse,
   AskChatRequest,
   AskChatResponse,
+  ChangePasswordInput,
+  ChangePasswordResponse,
   ConversationsResponse,
   CurrentUserResponse,
   HistoryResponse,
   ChatQuickActionItem
 } from "./types";
+
+export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/chat-ui";
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -172,4 +177,41 @@ export async function fetchCurrentChatUser() {
   });
 
   return readApiResponse<CurrentUserResponse>(response);
+}
+
+export async function logoutCurrentChatUser() {
+  const response = await fetch("/api/auth/logout", {
+    method: "POST"
+  });
+
+  return readApiResponse<{ signedOut: true }>(response);
+}
+
+export async function changeCurrentUserPassword(input: ChangePasswordInput) {
+  const response = await fetch("/api/auth/change-password", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      current_password: input.currentPassword,
+      new_password: input.newPassword,
+      confirm_password: input.confirmPassword
+    })
+  });
+
+  return readApiResponse<ChangePasswordResponse>(response);
+}
+
+export async function updateCurrentUserAvatar(file: File) {
+  const formData = new FormData();
+
+  formData.set("avatar", file);
+
+  const response = await fetch("/api/auth/avatar", {
+    method: "POST",
+    body: formData
+  });
+
+  return readApiResponse<AvatarUpdateResponse>(response);
 }

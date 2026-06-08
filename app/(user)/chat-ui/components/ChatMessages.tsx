@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bot, Loader2, User } from "lucide-react";
+import { Bot, FileText, Image as ImageIcon, Loader2, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
@@ -31,6 +31,35 @@ function formatMessageTime(value: string) {
 
 function shouldShowDebugSources() {
   return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
+}
+
+function UserMessageAttachments({ attachments }: { attachments: ChatMessageView["attachments"] }) {
+  if (!attachments || attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-2 space-y-1">
+      {attachments.map((attachment, index) => {
+        const isImage = attachment.type === "image" || attachment.type === "gallery_photo" || attachment.type === "camera_photo";
+        const name = attachment.name || `附件 ${index + 1}`;
+
+        return (
+          <div
+            key={attachment.reference_id || attachment.id || `${name}-${index}`}
+            className="flex items-center gap-2 rounded-2xl bg-white/15 px-2 py-1.5 text-xs text-white"
+          >
+            {isImage ? (
+              <ImageIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            ) : (
+              <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            )}
+            <span className="truncate">{name}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMessagesProps) {
@@ -64,7 +93,10 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
               )}
             >
               {isUser ? (
-                <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                <>
+                  <div className="whitespace-pre-wrap break-words">{message.content}</div>
+                  <UserMessageAttachments attachments={message.attachments} />
+                </>
               ) : (
                 <RichAnswerView
                   answer={message.content}
