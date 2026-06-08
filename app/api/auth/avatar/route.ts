@@ -40,7 +40,7 @@ export async function POST(request: Request) {
 
   try {
     const formData = await request.formData();
-    const avatar = formData.get("avatar") ?? formData.get("file");
+    const avatar = formData.get("avatar");
 
     if (!(avatar instanceof File)) {
       throw new ValidationError("请上传头像图片。");
@@ -52,20 +52,13 @@ export async function POST(request: Request) {
     const avatarDirectory = path.join(process.cwd(), "public", "uploads", "avatars");
     const fileName = `${user.id}-${randomUUID()}.${extension}`;
     const storagePath = path.join(avatarDirectory, fileName);
-    const avatarBytes = Buffer.from(await avatar.arrayBuffer());
 
-    try {
-      await mkdir(avatarDirectory, { recursive: true });
-      await writeFile(storagePath, avatarBytes);
+    await mkdir(avatarDirectory, { recursive: true });
+    await writeFile(storagePath, Buffer.from(await avatar.arrayBuffer()));
 
-      return apiSuccess<AvatarResponse>({
-        avatar_url: `/uploads/avatars/${fileName}`
-      });
-    } catch {
-      return apiSuccess<AvatarResponse>({
-        avatar_url: `data:${avatar.type};base64,${avatarBytes.toString("base64")}`
-      });
-    }
+    return apiSuccess<AvatarResponse>({
+      avatar_url: `/uploads/avatars/${fileName}`
+    });
   } catch (error) {
     return apiError(error);
   }

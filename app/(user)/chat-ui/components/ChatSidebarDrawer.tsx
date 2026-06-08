@@ -3,6 +3,7 @@
 import * as React from "react";
 import {
   Bell,
+  Camera,
   MessageCircle,
   ScanLine,
   Search,
@@ -10,8 +11,12 @@ import {
   SquarePen
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatConversationTime } from "../chat-ui-state";
-import type { ChatConversation } from "../types";
+import {
+  formatConversationTime,
+  getCurrentChatUserInitial
+} from "../chat-ui-state";
+import type { ChangePasswordInput, ChatConversation, CurrentChatUser } from "../types";
+import { AvatarSettingsDialog } from "./AvatarSettingsDialog";
 import { ChatSettingsMenu } from "./ChatSettingsMenu";
 
 interface ChatSidebarDrawerProps {
@@ -19,15 +24,18 @@ interface ChatSidebarDrawerProps {
   activeConversationId: string | null;
   open: boolean;
   loading: boolean;
+  currentUser?: CurrentChatUser | null;
   userName?: string;
   userDescription?: string;
+  avatarUrl?: string | null;
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (conversationId: string) => void;
   onScan?: () => void;
   onMessages?: () => void;
   onLogout?: () => void;
-  onChangePassword?: () => void;
+  onAvatarSaved?: (avatarUrl: string | null) => void;
+  onChangePassword?: (input: ChangePasswordInput) => Promise<void> | void;
   onSwitchAccount?: () => void;
 }
 
@@ -90,19 +98,23 @@ export function ChatSidebarDrawer({
   activeConversationId,
   open,
   loading,
+  currentUser = null,
   userName = "当前用户",
-  userDescription = "AI 知识库账号",
+  userDescription = "",
+  avatarUrl = null,
   onClose,
   onNewChat,
   onSelect,
   onScan,
   onMessages,
   onLogout,
+  onAvatarSaved,
   onChangePassword,
   onSwitchAccount
 }: ChatSidebarDrawerProps) {
   const [query, setQuery] = React.useState("");
   const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [avatarDialogOpen, setAvatarDialogOpen] = React.useState(false);
   const items = buildSidebarItems(conversations);
   const filteredItems = items.filter((item) => item.title.toLowerCase().includes(query.trim().toLowerCase()));
 
@@ -217,12 +229,28 @@ export function ChatSidebarDrawer({
           <div className="border-t border-slate-100 pt-3">
             <div className="flex items-center gap-2">
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-base">
-                  用
-                </span>
+                <button
+                  type="button"
+                  onClick={() => setAvatarDialogOpen(true)}
+                  title="修改头像"
+                  className="focus-ring group relative inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-base font-bold text-slate-700"
+                  aria-label="修改头像"
+                >
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    getCurrentChatUserInitial(currentUser)
+                  )}
+                  <span className="absolute inset-0 hidden items-center justify-center bg-slate-950/45 text-white group-hover:flex">
+                    <Camera className="h-4 w-4" aria-hidden="true" />
+                  </span>
+                </button>
                 <div className="min-w-0">
                   <p className="truncate text-sm font-bold text-slate-950">{userName}</p>
-                  <p className="truncate text-[11px] text-slate-400">{userDescription}</p>
+                  {userDescription ? (
+                    <p className="truncate text-[11px] text-slate-400">{userDescription}</p>
+                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1 text-slate-900">
@@ -254,6 +282,12 @@ export function ChatSidebarDrawer({
                   </button>
                   <ChatSettingsMenu
                     open={settingsOpen}
+                    userName={userName}
+                    userAccount={userDescription}
+                    onOpenAvatar={() => {
+                      setSettingsOpen(false);
+                      setAvatarDialogOpen(true);
+                    }}
                     onLogout={onLogout}
                     onChangePassword={onChangePassword}
                     onSwitchAccount={onSwitchAccount}
@@ -264,6 +298,15 @@ export function ChatSidebarDrawer({
           </div>
         </div>
       </aside>
+      <AvatarSettingsDialog
+        open={avatarDialogOpen}
+        user={currentUser}
+        userName={userName}
+        userAccount={userDescription}
+        avatarUrl={avatarUrl}
+        onClose={() => setAvatarDialogOpen(false)}
+        onSaved={(nextAvatarUrl) => onAvatarSaved?.(nextAvatarUrl)}
+      />
     </>
   );
 }

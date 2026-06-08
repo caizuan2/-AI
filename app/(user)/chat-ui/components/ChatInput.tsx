@@ -1,15 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Camera, Mic, Plus } from "lucide-react";
+import { Camera, FileText, Image as ImageIcon, Mic, Plus, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { AttachmentMenu } from "./AttachmentMenu";
+import type { ChatAttachmentDraft, ChatAttachmentSource, AttachmentType } from "../types";
 
 interface ChatInputProps {
   value: string;
   loading: boolean;
   onValueChange: (value: string) => void;
-  onSubmit: () => void;
+  onSubmit: (attachments?: ChatAttachmentDraft[]) => Promise<boolean> | boolean | void;
   onStatusMessage?: (message: string) => void;
   openAttachmentSignal?: number;
   openCameraSignal?: number;
@@ -47,6 +48,163 @@ type SpeechWindow = Window & typeof globalThis & {
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
 
+export const MAX_CHAT_ATTACHMENTS = 5;
+export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+export const CHAT_FILE_ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md";
+export const SPEECH_UNSUPPORTED_MESSAGE = "当前设备暂不支持语音输入，请使用文字输入。";
+
+const imageAttachmentTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+
+export function mergeVoiceTranscript(currentValue: string, transcript: string) {
+  const trimmedTranscript = transcript.trim();
+
+  if (!trimmedTranscript) {
+    return currentValue;
+  }
+
+  const trimmedCurrent = currentValue.trimEnd();
+
+  return trimmedCurrent ? `${trimmedCurrent} ${trimmedTranscript}` : trimmedTranscript;
+}
+
+export function validateChatAttachmentFile(file: File) {
+  if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+    return "单个附件不能超过 10MB。";
+  }
+
+  return null;
+}
+
+function getAttachmentType(file: File, source: ChatAttachmentSource): AttachmentType {
+  if (source === "camera") {
+    return "camera_photo";
+  }
+
+  if (source === "gallery") {
+    return "gallery_photo";
+  }
+
+  if (file.type.startsWith("image/")) {
+    return "image";
+  }
+
+  if (file.type.startsWith("audio/")) {
+    return "audio";
+  }
+
+  if (file.type.startsWith("video/")) {
+    return "video";
+  }
+
+  return "file";
+}
+
+export function createChatAttachmentFromFile(file: File, source: ChatAttachmentSource): ChatAttachmentDraft {
+  const id = `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const previewUrl = imageAttachmentTypes.has(file.type) ? URL.createObjectURL(file) : undefined;
+
+  return {
+    id,
+    type: getAttachmentType(file, source),
+    source,
+    name: file.name,
+    mime_type: file.type || "application/octet-stream",
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    reference_id: id,
+    previewUrl,
+    metadata: {
+      source
+    }
+  };
+}
+
+export function removeChatAttachment(
+  attachments: ChatAttachmentDraft[],
+  attachmentId: string
+) {
+  const removed = attachments.find((attachment) => attachment.id === attachmentId);
+
+  if (removed?.previewUrl?.startsWith("blob:")) {
+    URL.revokeObjectURL(removed.previewUrl);
+  }
+
+  return attachments.filter((attachment) => attachment.id !== attachmentId);
+}
+
+export function cleanupChatAttachments(items: ChatAttachmentDraft[]) {
+  for (const item of items) {
+    if (item.previewUrl?.startsWith("blob:")) {
+      URL.revokeObjectURL(item.previewUrl);
+    }
+  }
+}
+
+function formatAttachmentSize(size?: number) {
+  if (!size || !Number.isFinite(size)) {
+    return "";
+  }
+
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  return `${Math.max(1, Math.round(size / 1024))}KB`;
+}
+
+export function SelectedAttachmentList({
+  attachments,
+  onRemove
+}: {
+  attachments: ChatAttachmentDraft[];
+  onRemove?: (attachmentId: string) => void;
+}) {
+  if (attachments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mb-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto px-1">
+      {attachments.map((attachment) => {
+        const isImage = attachment.type === "image" || attachment.type === "gallery_photo" || attachment.type === "camera_photo";
+        const name = attachment.name || "未命名附件";
+
+        return (
+          <div
+            key={attachment.id || name}
+            className="flex max-w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700"
+          >
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-500">
+              {attachment.previewUrl && isImage ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={attachment.previewUrl} alt="" className="h-full w-full object-cover" />
+              ) : isImage ? (
+                <ImageIcon className="h-4 w-4" aria-hidden="true" />
+              ) : (
+                <FileText className="h-4 w-4" aria-hidden="true" />
+              )}
+            </span>
+            <span className="min-w-0">
+              <span className="block max-w-[160px] truncate font-semibold">{name}</span>
+              <span className="text-[11px] text-slate-400">{formatAttachmentSize(attachment.size)}</span>
+            </span>
+            {onRemove ? (
+              <button
+                type="button"
+                onClick={() => onRemove(attachment.id || name)}
+                className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-white"
+                aria-label={`删除附件 ${name}`}
+              >
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ChatInput({
   value,
   loading,
@@ -57,25 +215,66 @@ export function ChatInput({
   openCameraSignal = 0
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
+  const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
   const [listening, setListening] = React.useState(false);
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
   const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
+  const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
+
+  React.useEffect(() => {
+    attachmentsRef.current = attachments;
+  }, [attachments]);
+
+  async function submitCurrentMessage() {
+    const submitted = await onSubmit(attachments);
+
+    if (submitted !== false) {
+      cleanupChatAttachments(attachments);
+      setAttachments([]);
+    }
+  }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSubmit();
+    void submitCurrentMessage();
   }
 
-  function handleSelectedFile(event: React.ChangeEvent<HTMLInputElement>, label: string) {
-    const file = event.currentTarget.files?.[0];
-
-    if (file) {
-      onStatusMessage?.(`已选择${label}：${file.name}。当前入口已打开，文件解析和上传将在后续接入。`);
-    }
+  function handleSelectedFiles(event: React.ChangeEvent<HTMLInputElement>, source: ChatAttachmentSource) {
+    const files = Array.from(event.currentTarget.files ?? []);
 
     event.currentTarget.value = "";
+
+    if (files.length === 0) {
+      return;
+    }
+
+    setAttachments((current) => {
+      const next = [...current];
+
+      for (const file of files) {
+        if (next.length >= MAX_CHAT_ATTACHMENTS) {
+          onStatusMessage?.(`附件最多选择 ${MAX_CHAT_ATTACHMENTS} 个。`);
+          break;
+        }
+
+        const error = validateChatAttachmentFile(file);
+
+        if (error) {
+          onStatusMessage?.(`${file.name}：${error}`);
+          continue;
+        }
+
+        next.push(createChatAttachmentFromFile(file, source));
+      }
+
+      return next;
+    });
+
+    if (files.length > 0) {
+      onStatusMessage?.("附件已添加，会随本次提问一起发送。");
+    }
   }
 
   function handleVoiceInput() {
@@ -93,7 +292,7 @@ export function ChatInput({
     const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!Recognition) {
-      onStatusMessage?.("当前浏览器暂不支持语音输入。");
+      onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
       return;
     }
 
@@ -109,13 +308,13 @@ export function ChatInput({
         .trim();
 
       if (transcript) {
-        onValueChange(value ? `${value}${value.endsWith(" ") ? "" : " "}${transcript}` : transcript);
+        onValueChange(mergeVoiceTranscript(value, transcript));
         onStatusMessage?.("语音内容已填入输入框。");
       }
     };
     recognition.onerror = () => {
       setListening(false);
-      onStatusMessage?.("语音输入失败，请稍后重试。");
+      onStatusMessage?.("语音输入失败，请使用文字输入或稍后重试。");
     };
     recognition.onend = () => {
       setListening(false);
@@ -125,7 +324,10 @@ export function ChatInput({
     recognition.start();
   }
 
-  React.useEffect(() => () => recognitionRef.current?.stop(), []);
+  React.useEffect(() => () => {
+    recognitionRef.current?.stop();
+    cleanupChatAttachments(attachmentsRef.current);
+  }, []);
 
   React.useEffect(() => {
     if (openAttachmentSignal > 0) {
@@ -153,6 +355,11 @@ export function ChatInput({
         />
       ) : null}
 
+      <SelectedAttachmentList
+        attachments={attachments}
+        onRemove={(attachmentId) => setAttachments((current) => removeChatAttachment(current, attachmentId))}
+      />
+
       <div className="relative flex min-h-[56px] items-center gap-2 rounded-full bg-white px-3 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
         <button
           type="button"
@@ -169,7 +376,7 @@ export function ChatInput({
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              onSubmit();
+              void submitCurrentMessage();
             }
           }}
           placeholder="发消息或按住说话..."
@@ -212,14 +419,14 @@ export function ChatInput({
         type="file"
         accept="image/*"
         className="hidden"
-        onChange={(event) => handleSelectedFile(event, "手机照片")}
+        onChange={(event) => handleSelectedFiles(event, "gallery")}
       />
       <input
         ref={fileInputRef}
         type="file"
-        accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,image/*,audio/*,video/*"
+        accept={CHAT_FILE_ACCEPT}
         className="hidden"
-        onChange={(event) => handleSelectedFile(event, "文件")}
+        onChange={(event) => handleSelectedFiles(event, "file")}
       />
       <input
         ref={cameraInputRef}
@@ -227,7 +434,7 @@ export function ChatInput({
         accept="image/*"
         capture="environment"
         className="hidden"
-        onChange={(event) => handleSelectedFile(event, "相机照片")}
+        onChange={(event) => handleSelectedFiles(event, "camera")}
       />
     </form>
   );

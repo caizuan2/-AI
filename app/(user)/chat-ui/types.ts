@@ -2,13 +2,18 @@ export type ChatMode = "fast" | "expert";
 export type RagConfidence = "high" | "medium" | "low";
 export type ProviderStatus = "ok" | "provider_not_configured" | "no_relevant_knowledge" | "error";
 export type AttachmentType = "image" | "camera_photo" | "gallery_photo" | "file" | "audio" | "video";
+export type ChatAttachmentSource = "gallery" | "camera" | "file";
 
 export interface ChatAttachmentDraft {
+  id?: string;
   type: AttachmentType;
+  source?: ChatAttachmentSource;
   name?: string;
   mime_type?: string;
+  mimeType?: string;
   size?: number;
   reference_id?: string;
+  previewUrl?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -57,9 +62,28 @@ export interface ChatQuickActionItem {
 
 export interface CurrentChatUser {
   id: string;
-  phone: string;
-  name: string;
+  phone?: string | null;
+  email?: string | null;
+  account?: string | null;
+  name?: string | null;
+  nickname?: string | null;
+  avatar?: string | null;
+  avatar_url?: string | null;
   licenseActivated: boolean;
+}
+
+export interface AvatarUpdateResponse {
+  avatar_url: string;
+}
+
+export interface ChangePasswordResponse {
+  changed: true;
+}
+
+export interface ChangePasswordInput {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
 }
 
 export interface AskChatRequest {
