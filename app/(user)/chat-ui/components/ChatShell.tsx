@@ -245,6 +245,19 @@ export function ChatShell() {
     await handleLogout();
   }
 
+  function handleAvatarSaved(nextAvatarUrl: string | null) {
+    setCurrentAvatarUrl(nextAvatarUrl);
+    setCurrentUser((user) => (
+      user
+        ? {
+            ...user,
+            avatar_url: nextAvatarUrl,
+            avatar: nextAvatarUrl
+          }
+        : user
+    ));
+  }
+
   async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
     if (!text || loading) {
       if (!text && attachments.length > 0) {
@@ -310,7 +323,7 @@ export function ChatShell() {
             onScan={handleScan}
             onMessages={handleMessages}
             onLogout={handleLogout}
-            onAvatarSaved={setCurrentAvatarUrl}
+            onAvatarSaved={handleAvatarSaved}
             onChangePassword={handleChangePassword}
             onSwitchAccount={handleSwitchAccount}
           />

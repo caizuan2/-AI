@@ -29,9 +29,12 @@ import {
   CHAT_FILE_ACCEPT,
   ChatInput,
   createChatAttachmentFromFile,
+  getSpeechRecognitionErrorMessage,
   mergeVoiceTranscript,
+  readSpeechRecognitionTranscript,
   removeChatAttachment,
   SelectedAttachmentList,
+  SPEECH_PERMISSION_MESSAGE,
   SPEECH_UNSUPPORTED_MESSAGE,
   validateChatAttachmentFile
 } from "../app/(user)/chat-ui/components/ChatInput";
@@ -154,6 +157,31 @@ async function main() {
   assert.match(drawerMarkup, /修改头像/);
   assert.doesNotMatch(drawerMarkup, /账号[:：]/);
 
+  const drawerWithAvatarMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[]}
+      activeConversationId={null}
+      open
+      loading={false}
+      currentUser={{
+        id: "user_1",
+        name: "蔡姑",
+        phone: "+8613360587600",
+        avatar_url: "/uploads/avatars/user_1.png",
+        licenseActivated: true
+      }}
+      userName="蔡姑"
+      userDescription="+8613360587600"
+      avatarUrl="/uploads/avatars/user_1.png"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(drawerWithAvatarMarkup, /src="\/uploads\/avatars\/user_1\.png"/);
+  assert.doesNotMatch(drawerWithAvatarMarkup, />用</);
+
   const avatarDialogMarkup = renderToStaticMarkup(
     <AvatarSettingsDialog
       open
@@ -222,23 +250,69 @@ async function main() {
   const attachmentFile = new File(["合同内容"], "contract.pdf", {
     type: "application/pdf"
   });
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+  const revokedUrls: string[] = [];
+
+  URL.createObjectURL = (() => "blob:chat-image-preview") as typeof URL.createObjectURL;
+  URL.revokeObjectURL = ((url: string) => {
+    revokedUrls.push(url);
+  }) as typeof URL.revokeObjectURL;
+
   const attachment = createChatAttachmentFromFile(attachmentFile, "file");
+  const imageAttachment = createChatAttachmentFromFile(new File(["image"], "photo.jpg", {
+    type: "image/jpeg"
+  }), "gallery");
   const selectedAttachmentMarkup = renderToStaticMarkup(
     <SelectedAttachmentList
-      attachments={[attachment]}
+      attachments={[imageAttachment, attachment]}
       onRemove={() => undefined}
     />
   );
 
+  assert.match(selectedAttachmentMarkup, /<img/);
+  assert.match(selectedAttachmentMarkup, /photo\.jpg/);
   assert.match(selectedAttachmentMarkup, /contract\.pdf/);
   assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
   assert.equal(validateChatAttachmentFile(new File([new Uint8Array(10 * 1024 * 1024 + 1)], "big.pdf", {
     type: "application/pdf"
   })), "单个附件不能超过 10MB。");
   assert.equal(removeChatAttachment([attachment], attachment.id ?? "").length, 0);
+  assert.equal(removeChatAttachment([imageAttachment], imageAttachment.id ?? "").length, 0);
+  assert.deepEqual(revokedUrls, ["blob:chat-image-preview"]);
+  assert.equal(createAskRequestPayload({
+    text: "删除附件后发送",
+    attachments: removeChatAttachment([attachment], attachment.id ?? ""),
+    conversation_id: null,
+    mode: "fast",
+    enable_deep_thinking: false,
+    enable_web_search: false
+  }).attachments.length, 0);
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
   assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
   assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前设备暂不支持语音输入，请使用文字输入。");
+  assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_PERMISSION_MESSAGE);
+  assert.equal(readSpeechRecognitionTranscript({
+    results: [
+      {
+        0: {
+          transcript: "临时内容"
+        },
+        isFinal: false
+      },
+      {
+        0: {
+          transcript: "最终内容"
+        },
+        isFinal: true
+      }
+    ]
+  }).finalTranscript, "最终内容");
+  const chatInputSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
+
+  assert.match(chatInputSource, /recognition\.interimResults\s*=\s*true/);
+  assert.match(chatInputSource, /recognition\.continuous\s*=\s*false/);
+  assert.match(chatInputSource, /recognitionRef\.current\?\.stop\(\)/);
 
   const validAvatarFile = new File(["avatar"], "avatar.png", {
     type: "image/png"
@@ -253,6 +327,8 @@ async function main() {
   assert.equal(validateAvatarFile(validAvatarFile), null);
   assert.match(validateAvatarFile(invalidAvatarFile) ?? "", /仅支持/);
   assert.match(validateAvatarFile(oversizedAvatarFile) ?? "", /2MB/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /setCurrentUser/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /avatar_url:\s*nextAvatarUrl/);
   assert.equal(getCurrentChatUserDisplayName({
     id: "user_1",
     nickname: "蔡姑",
@@ -326,7 +402,7 @@ async function main() {
   assert.equal(payload.attachments[0].metadata.source, "file");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.attachments[0], "previewUrl"), false);
 
-  const localUserMessage = createUserMessage("退款流程怎么处理？", [attachment]);
+  const localUserMessage = createUserMessage("退款流程怎么处理？", [imageAttachment, attachment]);
   const messages = appendAskResult([localUserMessage], localUserMessage.id, {
     answer: "退款需要先核对订单号。",
     customer_answer: "您好，关于退款流程，可以这样理解：\n\n1. 需要先核对订单号、付款时间和售后原因。\n2. 如果信息不完整，建议先补充订单截图或联系方式。\n3. 退款范围需要由负责人确认后再回复客户。",
@@ -346,7 +422,8 @@ async function main() {
 
   assert.equal(messages.length, 2);
   assert.equal(messages[0].pending, false);
-  assert.equal(messages[0].attachments?.[0]?.name, "contract.pdf");
+  assert.equal(messages[0].attachments?.[0]?.name, "photo.jpg");
+  assert.equal(messages[0].attachments?.[1]?.name, "contract.pdf");
   assert.equal(messages[1].content, "退款需要先核对订单号。");
   assert.match(messages[1].customer_answer ?? "", /可?以这样理解|需要先核对订单号/);
   assert.equal(messages[1].sources?.[0]?.chunk_id, "chunk_1");
@@ -361,6 +438,9 @@ async function main() {
   );
 
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
+  assert.match(chatMessagesMarkup, /打开图片预览 photo\.jpg/);
+  assert.match(chatMessagesMarkup, /<img/);
+  assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
   assert.match(chatMessagesMarkup, /现在建议你这样回复/);
   assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
@@ -548,6 +628,8 @@ async function main() {
   assert.equal(String(calls.at(-1)?.input), "/api/auth/avatar");
   assert.equal(calls.at(-1)?.init?.method, "POST");
   assert.ok(calls.at(-1)?.init?.body instanceof FormData);
+  assert.equal((calls.at(-1)?.init?.body as FormData).get("avatar"), validAvatarFile);
+  assert.equal((calls.at(-1)?.init?.body as FormData).get("file"), validAvatarFile);
 
   globalThis.fetch = originalFetch;
 
@@ -676,6 +758,7 @@ async function main() {
     "app/(user)/chat-ui/api.ts",
     "app/(user)/chat-ui/components/ChatShell.tsx",
     "app/(user)/chat-ui/components/ChatInput.tsx",
+    "app/(user)/chat-ui/components/ChatMessages.tsx",
     "app/(user)/chat-ui/components/AvatarSettingsDialog.tsx"
   ]) {
     const fileText = readFileSync(userClientFile, "utf8");
@@ -686,10 +769,15 @@ async function main() {
   const avatarRouteText = readFileSync("app/api/auth/avatar/route.ts", "utf8");
   const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
 
+  assert.match(avatarRouteText, /formData\.get\("avatar"\)\s*\?\?\s*formData\.get\("file"\)/);
+  assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
   assert.equal(readdirSync("prisma/migrations").some((name) => /avatar|profile/i.test(name)), false);
+
+  URL.createObjectURL = originalCreateObjectURL;
+  URL.revokeObjectURL = originalRevokeObjectURL;
 
   console.log("Chat UI tests passed.");
 }
