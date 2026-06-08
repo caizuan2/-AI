@@ -5,15 +5,22 @@ import { Menu, Plus } from "lucide-react";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import {
   askChat,
+  changeCurrentUserPassword,
   fetchConversationHistory,
   fetchConversations,
   fetchCurrentChatUser,
-  fetchQuickActionCategories
+  fetchQuickActionCategories,
+  logoutCurrentChatUser,
+  USER_CHAT_LOGIN_URL
 } from "../api";
 import {
   appendAskResult,
   createNewChatState,
   createUserMessage,
+  getChatUserAvatarStorageKey,
+  getCurrentChatUserAccount,
+  getCurrentChatUserAvatarUrl,
+  getCurrentChatUserDisplayName,
   normalizeChatMode
 } from "../chat-ui-state";
 import { ChatInput } from "./ChatInput";
@@ -22,8 +29,10 @@ import { ChatQuickActions } from "./ChatQuickActions";
 import { ChatSidebarDrawer } from "./ChatSidebarDrawer";
 import type {
   ChatConversation,
+  ChatAttachmentDraft,
   ChatMessageView,
   ChatMode,
+  ChangePasswordInput,
   ChatQuickActionItem,
   CurrentChatUser
 } from "../types";
@@ -43,9 +52,12 @@ export function ChatShell() {
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [quickActions, setQuickActions] = React.useState<ChatQuickActionItem[]>([]);
   const [currentUser, setCurrentUser] = React.useState<CurrentChatUser | null>(null);
+  const [currentAvatarUrl, setCurrentAvatarUrl] = React.useState<string | null>(null);
   const [openAttachmentSignal, setOpenAttachmentSignal] = React.useState(0);
   const [openCameraSignal, setOpenCameraSignal] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const currentUserName = getCurrentChatUserDisplayName(currentUser);
+  const currentUserAccount = getCurrentChatUserAccount(currentUser);
 
   const loadConversations = React.useCallback(async () => {
     setConversationLoading(true);
@@ -106,6 +118,26 @@ export function ChatShell() {
       mounted = false;
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!currentUser) {
+      setCurrentAvatarUrl(null);
+      return;
+    }
+
+    const remoteAvatarUrl = getCurrentChatUserAvatarUrl(currentUser);
+
+    if (remoteAvatarUrl) {
+      setCurrentAvatarUrl(remoteAvatarUrl);
+      return;
+    }
+
+    try {
+      setCurrentAvatarUrl(window.localStorage.getItem(getChatUserAvatarStorageKey(currentUser)));
+    } catch {
+      setCurrentAvatarUrl(null);
+    }
+  }, [currentUser]);
 
   React.useEffect(() => {
     scrollRef.current?.scrollTo({
@@ -190,11 +222,9 @@ export function ChatShell() {
 
   async function handleLogout() {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST"
-      });
+      await logoutCurrentChatUser();
     } finally {
-      window.location.href = "/login?app=user&next=/chat-ui";
+      window.location.href = USER_CHAT_LOGIN_URL;
     }
   }
 
@@ -206,21 +236,25 @@ export function ChatShell() {
     showNotice("消息入口已保留，当前可通过左侧历史会话查看已有对话。");
   }
 
-  function handleChangePassword() {
-    showNotice("修改密码入口已保留，请在账号安全功能接入后使用。");
+  async function handleChangePassword(input: ChangePasswordInput) {
+    await changeCurrentUserPassword(input);
+    showNotice("密码已修改。");
   }
 
-  function handleSwitchAccount() {
-    showNotice("切换账号会返回登录页。");
-    window.location.href = "/login?app=user&next=/chat-ui";
+  async function handleSwitchAccount() {
+    await handleLogout();
   }
 
-  async function submitText(text: string) {
+  async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
     if (!text || loading) {
-      return;
+      if (!text && attachments.length > 0) {
+        showNotice("请先输入问题，再随问题一起发送附件。");
+      }
+
+      return false;
     }
 
-    const localUserMessage = createUserMessage(text);
+    const localUserMessage = createUserMessage(text, attachments);
 
     setInput("");
     setError(null);
@@ -231,7 +265,7 @@ export function ChatShell() {
     try {
       const result = await askChat({
         text,
-        attachments: [],
+        attachments,
         conversation_id: conversationId,
         mode,
         enable_deep_thinking: enableDeepThinking,
@@ -242,16 +276,18 @@ export function ChatShell() {
       setMode(normalizeChatMode(result.mode));
       setMessages((current) => appendAskResult(current, localUserMessage.id, result));
       void loadConversations();
+      return true;
     } catch (requestError) {
       setMessages((current) => current.filter((message) => message.id !== localUserMessage.id));
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
+      return false;
     } finally {
       setLoading(false);
     }
   }
 
-  async function handleSubmit() {
-    await submitText(input.trim());
+  async function handleSubmit(attachments: ChatAttachmentDraft[] = []) {
+    return submitText(input.trim(), attachments);
   }
 
   return (
@@ -264,35 +300,23 @@ export function ChatShell() {
             activeConversationId={conversationId}
             open={sidebarOpen}
             loading={conversationLoading}
-            userName={currentUser?.name || currentUser?.phone || "当前用户"}
-            userDescription={currentUser?.phone ? `账号 ${currentUser.phone}` : "AI 知识库账号"}
+            currentUser={currentUser}
+            userName={currentUserName}
+            userDescription={currentUserAccount}
+            avatarUrl={currentAvatarUrl}
             onClose={() => setSidebarOpen(false)}
             onNewChat={handleNewChat}
             onSelect={handleSelectConversation}
             onScan={handleScan}
             onMessages={handleMessages}
             onLogout={handleLogout}
+            onAvatarSaved={setCurrentAvatarUrl}
             onChangePassword={handleChangePassword}
             onSwitchAccount={handleSwitchAccount}
           />
 
-          <header className="z-20 shrink-0 bg-white px-5 pt-2">
+          <header className="z-20 shrink-0 bg-white px-5">
             <span className="sr-only">AI 知识库助手</span>
-            <div className="flex h-8 items-center justify-between px-2 text-[15px] font-bold text-slate-950">
-              <span>11:54</span>
-              <div className="flex items-center gap-1.5" aria-hidden="true">
-                <span className="flex items-end gap-0.5">
-                  <span className="h-2 w-1 rounded-sm bg-slate-950" />
-                  <span className="h-3 w-1 rounded-sm bg-slate-950" />
-                  <span className="h-4 w-1 rounded-sm bg-slate-950" />
-                </span>
-                <span className="text-base leading-none">⌁</span>
-                <span className="h-4 w-7 rounded-md border-2 border-slate-950">
-                  <span className="ml-0.5 mt-0.5 block h-2.5 w-4 rounded-sm bg-slate-950" />
-                </span>
-              </div>
-            </div>
-
             <div className="grid h-16 grid-cols-[52px_1fr_52px] items-center">
               <button
                 type="button"

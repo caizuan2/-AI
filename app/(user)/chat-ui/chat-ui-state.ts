@@ -1,4 +1,11 @@
-import type { AskChatRequest, AskChatResponse, ChatMessageView, ChatMode } from "./types";
+import type {
+  AskChatRequest,
+  AskChatResponse,
+  ChatAttachmentDraft,
+  ChatMessageView,
+  ChatMode,
+  CurrentChatUser
+} from "./types";
 
 export interface ChatUiResetState {
   conversationId: string | null;
@@ -20,13 +27,64 @@ export function createNewChatState(): ChatUiResetState {
   };
 }
 
+function cleanText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+export function getCurrentChatUserDisplayName(user: CurrentChatUser | null | undefined) {
+  const displayName =
+    cleanText(user?.nickname) ||
+    cleanText(user?.name) ||
+    cleanText(user?.phone) ||
+    cleanText(user?.email) ||
+    cleanText(user?.account);
+
+  return displayName || "当前用户";
+}
+
+export function getCurrentChatUserAccount(user: CurrentChatUser | null | undefined) {
+  return cleanText(user?.phone) || cleanText(user?.email) || cleanText(user?.account);
+}
+
+export function getCurrentChatUserInitial(user: CurrentChatUser | null | undefined) {
+  return getCurrentChatUserDisplayName(user).slice(0, 1) || "用";
+}
+
+export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undefined) {
+  const identity = cleanText(user?.id) || getCurrentChatUserAccount(user) || "anonymous";
+
+  return `chat-ui:user-avatar:${identity}`;
+}
+
+export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {
+  return cleanText(user?.avatar_url) || cleanText(user?.avatar) || null;
+}
+
+export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
+  const metadata = {
+    ...(attachment.metadata ?? {}),
+    ...(attachment.id ? { local_id: attachment.id } : {}),
+    ...(attachment.source ? { source: attachment.source } : {})
+  };
+  const mimeType = attachment.mime_type || attachment.mimeType;
+
+  return {
+    type: attachment.type,
+    name: attachment.name,
+    mime_type: mimeType,
+    size: attachment.size,
+    reference_id: attachment.reference_id || attachment.id,
+    metadata
+  };
+}
+
 export function createAskRequestPayload(input: AskChatRequest) {
   const text = input.text.trim();
 
   return {
     question: text,
     text,
-    attachments: input.attachments,
+    attachments: input.attachments.map(createAskAttachmentPayload),
     conversation_id: input.conversation_id,
     mode: normalizeChatMode(input.mode),
     enable_deep_thinking: input.enable_deep_thinking,

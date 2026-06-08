@@ -7,7 +7,9 @@ interface MeResponse {
   user: {
     id: string;
     phone: string;
+    email: string | null;
     name: string;
+    avatar_url: null;
     licenseActivated: boolean;
   };
 }
@@ -20,7 +22,9 @@ export async function GET() {
       user: {
         id: user.id,
         phone: user.phone,
+        email: user.email,
         name: user.name,
+        avatar_url: null,
         licenseActivated: user.licenseActivated
       }
     });

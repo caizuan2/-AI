@@ -15,19 +15,19 @@ const items = [
   {
     key: "photo",
     label: "上传手机照片",
-    description: "图片入口占位",
+    description: "从相册选择图片",
     icon: Image
   },
   {
     key: "file",
     label: "上传文件",
-    description: "文件入口占位",
+    description: "选择文档或图片",
     icon: FileText
   },
   {
     key: "camera",
     label: "打开相机",
-    description: "相机入口占位",
+    description: "拍摄一张照片",
     icon: Camera
   }
 ];
