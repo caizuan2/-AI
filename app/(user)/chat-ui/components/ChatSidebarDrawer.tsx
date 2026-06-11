@@ -4,6 +4,7 @@ import * as React from "react";
 import {
   Bell,
   Camera,
+  Check,
   MessageCircle,
   ScanLine,
   Search,
@@ -32,6 +33,7 @@ interface ChatSidebarDrawerProps {
   onNewChat: () => void;
   onSelect: (conversationId: string) => void;
   onScan?: () => void;
+  onScanFileSelected?: (file: File) => void;
   onMessages?: () => void;
   onLogout?: () => void;
   onAvatarSaved?: (avatarUrl: string | null) => void;
@@ -106,6 +108,7 @@ export function ChatSidebarDrawer({
   onNewChat,
   onSelect,
   onScan,
+  onScanFileSelected,
   onMessages,
   onLogout,
   onAvatarSaved,
@@ -115,8 +118,24 @@ export function ChatSidebarDrawer({
   const [query, setQuery] = React.useState("");
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [avatarDialogOpen, setAvatarDialogOpen] = React.useState(false);
+  const [notificationsOpen, setNotificationsOpen] = React.useState(false);
+  const scanInputRef = React.useRef<HTMLInputElement | null>(null);
   const items = buildSidebarItems(conversations);
-  const filteredItems = items.filter((item) => item.title.toLowerCase().includes(query.trim().toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredItems = items.filter((item) => {
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    const searchText = [
+      item.title,
+      item.mode === "expert" ? "专家" : "快速",
+      formatConversationTime(item.updatedAt),
+      item.updatedAt
+    ].join(" ").toLowerCase();
+
+    return searchText.includes(normalizedQuery);
+  });
 
   function handleSelect(item: SidebarItem) {
     if (item.mock) {
@@ -125,6 +144,29 @@ export function ChatSidebarDrawer({
     }
 
     onSelect(item.id);
+  }
+
+  function handleScanClick() {
+    setSettingsOpen(false);
+    setNotificationsOpen(false);
+    onScan?.();
+    scanInputRef.current?.click();
+  }
+
+  function handleScanFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0] ?? null;
+
+    event.currentTarget.value = "";
+
+    if (file) {
+      onScanFileSelected?.(file);
+    }
+  }
+
+  function handleNotificationsClick() {
+    setSettingsOpen(false);
+    setNotificationsOpen((value) => !value);
+    onMessages?.();
   }
 
   return (
@@ -187,7 +229,9 @@ export function ChatSidebarDrawer({
                 ))}
               </div>
             ) : filteredItems.length === 0 ? (
-              <div className="px-2 py-8 text-center text-sm text-slate-400">没有找到相关对话</div>
+              <div className="px-2 py-8 text-center text-sm text-slate-400">
+                {query.trim() ? "暂无匹配会话" : "没有找到相关对话"}
+              </div>
             ) : (
               <div className="space-y-1">
                 {filteredItems.map((item, index) => {
@@ -199,14 +243,16 @@ export function ChatSidebarDrawer({
                       type="button"
                       onClick={() => handleSelect(item)}
                       className={cn(
-                        "focus-ring flex w-full items-center gap-3 rounded-2xl px-2 py-2.5 text-left transition",
-                        active ? "bg-slate-100" : "hover:bg-slate-50"
+                        "focus-ring flex w-full items-center gap-3 rounded-2xl border px-2 py-2.5 text-left transition",
+                        active
+                          ? "border-blue-200 bg-blue-50 text-blue-950"
+                          : "border-transparent hover:bg-slate-50"
                       )}
                     >
                       <span
                         className={cn(
                           "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full",
-                          iconColors[index % iconColors.length]
+                          active ? "bg-blue-600 text-white" : iconColors[index % iconColors.length]
                         )}
                       >
                         <MessageCircle className="h-4 w-4" aria-hidden="true" />
@@ -219,6 +265,9 @@ export function ChatSidebarDrawer({
                           </span>
                         ) : null}
                       </span>
+                      {active ? (
+                        <Check className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
+                      ) : null}
                     </button>
                   );
                 })}
@@ -256,20 +305,36 @@ export function ChatSidebarDrawer({
               <div className="flex shrink-0 items-center gap-1 text-slate-900">
                 <button
                   type="button"
-                  onClick={onScan}
+                  onClick={handleScanClick}
                   className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-slate-50"
                   aria-label="扫描内容"
                 >
                 <ScanLine className="h-6 w-6" aria-hidden="true" />
                 </button>
-                <button
-                  type="button"
-                  onClick={onMessages}
-                  className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-slate-50"
-                  aria-label="消息"
-                >
-                <Bell className="h-6 w-6" aria-hidden="true" />
-                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={handleNotificationsClick}
+                    className="focus-ring inline-flex h-9 w-9 items-center justify-center rounded-xl hover:bg-slate-50"
+                    aria-label="消息"
+                    aria-expanded={notificationsOpen}
+                  >
+                  <Bell className="h-6 w-6" aria-hidden="true" />
+                  </button>
+                  {notificationsOpen ? (
+                    <div className="absolute bottom-12 right-0 z-50 w-64 rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-bold text-slate-950">通知</p>
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">
+                          0 条
+                        </span>
+                      </div>
+                      <div className="mt-3 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-center text-sm text-slate-400">
+                        暂无通知
+                      </div>
+                    </div>
+                  ) : null}
+                </div>
                 <div className="relative">
                   <button
                     type="button"
@@ -306,6 +371,15 @@ export function ChatSidebarDrawer({
         avatarUrl={avatarUrl}
         onClose={() => setAvatarDialogOpen(false)}
         onSaved={(nextAvatarUrl) => onAvatarSaved?.(nextAvatarUrl)}
+      />
+      <input
+        ref={scanInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        aria-label="选择扫描图片"
+        onChange={handleScanFileChange}
       />
     </>
   );
