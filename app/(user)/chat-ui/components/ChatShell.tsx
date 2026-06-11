@@ -18,8 +18,8 @@ import {
   createNewChatState,
   createUserMessage,
   getChatUserAvatarStorageKey,
-  getCurrentChatUserAccount,
   getCurrentChatUserAvatarUrl,
+  getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
   normalizeChatMode
 } from "../chat-ui-state";
@@ -57,7 +57,7 @@ export function ChatShell() {
   const [openCameraSignal, setOpenCameraSignal] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
-  const currentUserAccount = getCurrentChatUserAccount(currentUser);
+  const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
 
   const loadConversations = React.useCallback(async () => {
     setConversationLoading(true);
@@ -229,11 +229,15 @@ export function ChatShell() {
   }
 
   function handleScan() {
-    showNotice("扫描内容入口已保留，后续接入图片识别后可在这里继续使用。");
+    showNotice("已打开扫描入口。移动端可调用相机，桌面端可选择图片，二维码识别能力后续接入。");
+  }
+
+  function handleScanFileSelected(file: File) {
+    showNotice(`已选择扫描图片：${file.name}。当前先保留图片入口，后续可接入二维码识别。`);
   }
 
   function handleMessages() {
-    showNotice("消息入口已保留，当前可通过左侧历史会话查看已有对话。");
+    showNotice("已打开通知面板。");
   }
 
   async function handleChangePassword(input: ChangePasswordInput) {
@@ -321,6 +325,7 @@ export function ChatShell() {
             onNewChat={handleNewChat}
             onSelect={handleSelectConversation}
             onScan={handleScan}
+            onScanFileSelected={handleScanFileSelected}
             onMessages={handleMessages}
             onLogout={handleLogout}
             onAvatarSaved={handleAvatarSaved}
