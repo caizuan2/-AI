@@ -55,6 +55,7 @@ export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md";
 export const SPEECH_UNSUPPORTED_MESSAGE = "当前设备暂不支持语音输入，请使用文字输入。";
 export const SPEECH_PERMISSION_MESSAGE = "麦克风权限未开启，请在浏览器或系统设置中允许麦克风权限。";
+export const SPEECH_NO_MICROPHONE_MESSAGE = "当前设备未检测到麦克风，请使用文字输入。";
 
 const imageAttachmentTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
@@ -75,7 +76,31 @@ export function getSpeechRecognitionErrorMessage(error?: string) {
     return SPEECH_PERMISSION_MESSAGE;
   }
 
+  if (error === "audio-capture") {
+    return SPEECH_NO_MICROPHONE_MESSAGE;
+  }
+
   return "语音输入失败，请使用文字输入或稍后重试。";
+}
+
+function getErrorName(error: unknown) {
+  return error && typeof error === "object" && "name" in error && typeof error.name === "string"
+    ? error.name
+    : "";
+}
+
+export function getMicrophoneAccessErrorMessage(error: unknown) {
+  const name = getErrorName(error);
+
+  if (name === "NotAllowedError" || name === "SecurityError") {
+    return SPEECH_PERMISSION_MESSAGE;
+  }
+
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
+    return SPEECH_NO_MICROPHONE_MESSAGE;
+  }
+
+  return "语音输入启动失败，请使用文字输入或稍后重试。";
 }
 
 export function readSpeechRecognitionTranscript(event: SpeechRecognitionEventLike) {
@@ -313,7 +338,7 @@ export function ChatInput({
     }
   }
 
-  function handleVoiceInput() {
+  async function handleVoiceInput() {
     if (loading) {
       return;
     }
@@ -330,6 +355,22 @@ export function ChatInput({
 
     if (!Recognition) {
       onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      stream.getTracks().forEach((track) => track.stop());
+    } catch (error) {
+      setListening(false);
+      setInterimTranscript("");
+      onStatusMessage?.(getMicrophoneAccessErrorMessage(error));
       return;
     }
 
@@ -455,11 +496,11 @@ export function ChatInput({
           <button
             type="button"
             onClick={() => setAttachmentMenuOpen((open) => !open)}
-            className="focus-ring inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-100"
+            className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-100"
             aria-label="打开上传菜单"
             aria-expanded={attachmentMenuOpen}
           >
-            <Plus className="h-6 w-6" strokeWidth={2.4} aria-hidden="true" />
+            <Plus className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
           </button>
           <AttachmentMenu
             open={attachmentMenuOpen}

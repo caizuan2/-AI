@@ -48,6 +48,46 @@ function getAttachmentPreviewUrl(attachment: NonNullable<ChatMessageView["attach
   return attachment.previewUrl || attachment.url || "";
 }
 
+function UserImageAttachment({
+  name,
+  previewUrl
+}: {
+  name: string;
+  previewUrl: string;
+}) {
+  const [failed, setFailed] = React.useState(false);
+
+  if (failed) {
+    return (
+      <div className="max-w-[240px] rounded-2xl bg-white/15 px-3 py-3 text-xs text-blue-50 ring-1 ring-white/20">
+        图片加载失败
+        <span className="mt-1 block truncate text-blue-100/80">{name}</span>
+      </div>
+    );
+  }
+
+  return (
+    <a
+      href={previewUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="block max-w-[240px] overflow-hidden rounded-2xl bg-white/15 text-left text-xs text-blue-50 ring-1 ring-white/20"
+      aria-label={`打开图片预览 ${name}`}
+    >
+      <span className="block max-h-64 overflow-hidden bg-white/10">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={previewUrl}
+          alt={name}
+          className="max-h-64 w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      </span>
+      <span className="block truncate px-2.5 py-1.5">{name}</span>
+    </a>
+  );
+}
+
 function UserMessageAttachments({ attachments }: { attachments: ChatMessageView["attachments"] }) {
   if (!attachments || attachments.length === 0) {
     return null;
@@ -62,20 +102,11 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
 
         if (isImage && previewUrl) {
           return (
-            <a
+            <UserImageAttachment
               key={attachment.reference_id || attachment.id || `${name}-${index}`}
-              href={previewUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="block max-w-[240px] overflow-hidden rounded-2xl bg-white/15 text-left text-xs text-blue-50 ring-1 ring-white/20"
-              aria-label={`打开图片预览 ${name}`}
-            >
-              <span className="block max-h-64 overflow-hidden bg-white/10">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={previewUrl} alt={name} className="max-h-64 w-full object-cover" />
-              </span>
-              <span className="block truncate px-2.5 py-1.5">{name}</span>
-            </a>
+              name={name}
+              previewUrl={previewUrl}
+            />
           );
         }
 

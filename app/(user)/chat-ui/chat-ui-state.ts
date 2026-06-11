@@ -46,6 +46,17 @@ export function getCurrentChatUserAccount(user: CurrentChatUser | null | undefin
   return cleanText(user?.phone) || cleanText(user?.email) || cleanText(user?.account);
 }
 
+export function formatChatUserAccountForDisplay(account: string) {
+  const value = cleanText(account);
+  const chinaPhoneMatch = value.match(/^\+86(1[3-9]\d{9})$/);
+
+  return chinaPhoneMatch ? chinaPhoneMatch[1] : value;
+}
+
+export function getCurrentChatUserDisplayAccount(user: CurrentChatUser | null | undefined) {
+  return formatChatUserAccountForDisplay(getCurrentChatUserAccount(user));
+}
+
 export function getCurrentChatUserInitial(user: CurrentChatUser | null | undefined) {
   return getCurrentChatUserDisplayName(user).slice(0, 1) || "用";
 }

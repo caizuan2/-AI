@@ -16,7 +16,9 @@ import {
   createAskRequestPayload,
   createNewChatState,
   createUserMessage,
+  formatChatUserAccountForDisplay,
   getCurrentChatUserAccount,
+  getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
   normalizeChatMode
 } from "../app/(user)/chat-ui/chat-ui-state";
@@ -29,11 +31,13 @@ import {
   CHAT_FILE_ACCEPT,
   ChatInput,
   createChatAttachmentFromFile,
+  getMicrophoneAccessErrorMessage,
   getSpeechRecognitionErrorMessage,
   mergeVoiceTranscript,
   readSpeechRecognitionTranscript,
   removeChatAttachment,
   SelectedAttachmentList,
+  SPEECH_NO_MICROPHONE_MESSAGE,
   SPEECH_PERMISSION_MESSAGE,
   SPEECH_UNSUPPORTED_MESSAGE,
   validateChatAttachmentFile
@@ -77,6 +81,11 @@ async function main() {
   assert.match(shellMarkup, /打开上传菜单/);
   assert.doesNotMatch(shellMarkup, /11:54/);
   assert.doesNotMatch(shellMarkup, /⌁/);
+  const chatShellSource = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
+
+  assert.match(chatShellSource, /已打开扫描入口/);
+  assert.match(chatShellSource, /已选择扫描图片/);
+  assert.match(chatShellSource, /已打开通知面板/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -138,7 +147,7 @@ async function main() {
         licenseActivated: true
       }}
       userName="蔡姑"
-      userDescription="+8613360587600"
+      userDescription="13360587600"
       onClose={() => undefined}
       onNewChat={() => undefined}
       onSelect={() => undefined}
@@ -153,9 +162,26 @@ async function main() {
   assert.match(drawerMarkup, /消息/);
   assert.match(drawerMarkup, /设置/);
   assert.match(drawerMarkup, /蔡姑/);
-  assert.match(drawerMarkup, /\+8613360587600/);
+  assert.match(drawerMarkup, /13360587600/);
+  assert.doesNotMatch(drawerMarkup, /\+8613360587600/);
   assert.match(drawerMarkup, /修改头像/);
   assert.doesNotMatch(drawerMarkup, /账号[:：]/);
+  assert.equal(formatChatUserAccountForDisplay("+8613360587600"), "13360587600");
+  assert.equal(formatChatUserAccountForDisplay("user@example.com"), "user@example.com");
+  assert.equal(getCurrentChatUserDisplayAccount({
+    id: "user_1",
+    phone: "+8613360587600",
+    licenseActivated: true
+  }), "13360587600");
+
+  const drawerSource = readFileSync("app/(user)/chat-ui/components/ChatSidebarDrawer.tsx", "utf8");
+
+  assert.match(drawerSource, /暂无通知/);
+  assert.match(drawerSource, /暂无匹配会话/);
+  assert.match(drawerSource, /capture="environment"/);
+  assert.match(drawerSource, /onScanFileSelected/);
+  assert.match(drawerSource, /<Check className=/);
+  assert.match(drawerSource, /formatConversationTime\(item\.updatedAt\)/);
 
   const drawerWithAvatarMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -171,7 +197,7 @@ async function main() {
         licenseActivated: true
       }}
       userName="蔡姑"
-      userDescription="+8613360587600"
+      userDescription="13360587600"
       avatarUrl="/uploads/avatars/user_1.png"
       onClose={() => undefined}
       onNewChat={() => undefined}
@@ -192,7 +218,7 @@ async function main() {
         licenseActivated: true
       }}
       userName="蔡姑"
-      userAccount="+8613360587600"
+      userAccount="13360587600"
       avatarUrl={null}
       onClose={() => undefined}
       onSaved={() => undefined}
@@ -209,7 +235,7 @@ async function main() {
     <ChatSettingsMenu
       open
       userName="蔡姑"
-      userAccount="+8613360587600"
+      userAccount="13360587600"
       onOpenAvatar={() => undefined}
       onLogout={() => undefined}
       onChangePassword={() => undefined}
@@ -219,7 +245,7 @@ async function main() {
 
   assert.match(settingsMarkup, /账号信息/);
   assert.match(settingsMarkup, /蔡姑/);
-  assert.match(settingsMarkup, /\+8613360587600/);
+  assert.match(settingsMarkup, /13360587600/);
   assert.match(settingsMarkup, /修改头像/);
   assert.match(settingsMarkup, /退出登录/);
   assert.match(settingsMarkup, /修改密码/);
@@ -292,6 +318,9 @@ async function main() {
   assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
   assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前设备暂不支持语音输入，请使用文字输入。");
   assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_PERMISSION_MESSAGE);
+  assert.equal(getSpeechRecognitionErrorMessage("audio-capture"), SPEECH_NO_MICROPHONE_MESSAGE);
+  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("denied", "NotAllowedError")), SPEECH_PERMISSION_MESSAGE);
+  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("not found", "NotFoundError")), SPEECH_NO_MICROPHONE_MESSAGE);
   assert.equal(readSpeechRecognitionTranscript({
     results: [
       {
@@ -313,6 +342,10 @@ async function main() {
   assert.match(chatInputSource, /recognition\.interimResults\s*=\s*true/);
   assert.match(chatInputSource, /recognition\.continuous\s*=\s*false/);
   assert.match(chatInputSource, /recognitionRef\.current\?\.stop\(\)/);
+  assert.match(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.match(chatInputSource, /getUserMedia\(\{\s*audio:\s*true\s*\}\)/);
+  assert.match(chatInputSource, /h-9 w-9/);
+  assert.match(chatInputSource, /<Plus className="h-5 w-5"/);
 
   const validAvatarFile = new File(["avatar"], "avatar.png", {
     type: "image/png"
@@ -442,6 +475,8 @@ async function main() {
   assert.match(chatMessagesMarkup, /<img/);
   assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8"), /图片加载失败/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8"), /onError=\{\(\) => setFailed\(true\)\}/);
   assert.match(chatMessagesMarkup, /现在建议你这样回复/);
   assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
   assert.match(chatMessagesMarkup, /核心判断/);
