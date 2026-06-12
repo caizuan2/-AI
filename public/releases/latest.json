@@ -1,35 +1,35 @@
-{
-  "updated_at": "2026-06-13T00:00:00.000Z",
-  "user": {
-    "app_name": "AI知识库助手",
-    "version": "1.0.2",
-    "build": 102,
-    "minimum_build": 100,
-    "force_update": false,
-    "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-    "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.1-user-windows/ai-knowledge-chat-latest.exe",
-    "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
-    "changelog": [
-      "优化附件上传",
-      "修复历史图片显示",
-      "优化头像同步"
-    ]
-  },
-  "admin": {
-    "app_name": "AI知识库管理后台",
-    "version": "1.0.2",
-    "build": 102,
-    "minimum_build": 100,
-    "force_update": false,
-    "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-    "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe",
-    "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
-    "changelog": [
-      "优化管理员端打包",
-      "修复管理员 APK 跳转",
-      "更新下载入口"
-    ]
-  }
+﻿{
+    "updated_at":  "2026-06-12T17:53:17.5763144Z",
+    "user":  {
+                 "app_name":  "AI Knowledge Assistant",
+                 "version":  "1.0.3",
+                 "build":  103,
+                 "minimum_build":  100,
+                 "force_update":  false,
+                 "web_url":  "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+                 "apk_url":  "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
+                 "exe_url":  "https://github.com/caizuan2/-AI/releases/download/v1.0.1-user-windows/ai-knowledge-chat-latest.exe",
+                 "download_page":  "https://stately-sawine-1efd4d.netlify.app/user-download.html",
+                 "changelog":  [
+                                   "Updated user app",
+                                   "Improved chat experience",
+                                   "Fixed attachment upload"
+                               ]
+             },
+    "admin":  {
+                  "app_name":  "AI Knowledge Admin",
+                  "version":  "1.0.3",
+                  "build":  103,
+                  "minimum_build":  100,
+                  "force_update":  false,
+                  "web_url":  "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
+                  "apk_url":  "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk",
+                  "exe_url":  "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe",
+                  "download_page":  "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
+                  "changelog":  [
+                                    "Updated admin app",
+                                    "Improved packaging workflow",
+                                    "Updated installer links"
+                                ]
+              }
 }
