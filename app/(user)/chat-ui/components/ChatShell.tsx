@@ -201,6 +201,11 @@ export function ChatShell() {
     setNotice(message);
   }
 
+  function handleEditUserMessage(content: string) {
+    setInput(content);
+    showNotice(content.trim() ? "已填回输入框，可修改后重新发送。" : "该消息暂无文字可编辑。");
+  }
+
   function handleQuickAction(action: ChatQuickActionItem) {
     if (action.kind === "mode" && action.mode) {
       setMode(action.mode);
@@ -420,6 +425,7 @@ export function ChatShell() {
                 loading={loading}
                 mode={mode}
                 onModeChange={setMode}
+                onEditUserMessage={handleEditUserMessage}
               />
             )}
           </div>
