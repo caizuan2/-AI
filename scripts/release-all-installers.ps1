@@ -4,7 +4,9 @@
   [string]$Version,
 
   [Parameter(Mandatory = $true)]
-  [int]$Build
+  [int]$Build,
+
+  [switch]$ManifestOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,17 +24,19 @@ $UserWebUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui"
 $AdminWebUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest"
 $UserDownloadPage = "https://stately-sawine-1efd4d.netlify.app/user-download.html"
 $AdminDownloadPage = "https://stately-sawine-1efd4d.netlify.app/admin-download.html"
-
-function New-TextFromCodePoints {
-  param(
-    [Parameter(Mandatory = $true)][int[]]$CodePoints
-  )
-
-  return -join ($CodePoints | ForEach-Object { [char]$_ })
-}
-
-$UserAppName = New-TextFromCodePoints @(0x41, 0x49, 0x77E5, 0x8BC6, 0x5E93, 0x52A9, 0x624B)
-$AdminAppName = New-TextFromCodePoints @(0x41, 0x49, 0x77E5, 0x8BC6, 0x5E93, 0x7BA1, 0x7406, 0x540E, 0x53F0)
+$DefaultMinimumBuild = 100
+$UserAppName = "AI Knowledge Assistant"
+$AdminAppName = "AI Knowledge Admin"
+$UserChangelog = @(
+  "Updated user app",
+  "Improved chat experience",
+  "Fixed attachment upload"
+)
+$AdminChangelog = @(
+  "Updated admin app",
+  "Improved packaging workflow",
+  "Updated installer links"
+)
 
 function Invoke-ProjectCommand {
   param(
@@ -127,7 +131,7 @@ function New-ReleaseInfo {
     [Parameter(Mandatory = $true)][string]$DownloadPage,
     [Parameter(Mandatory = $true)][int]$MinimumBuild,
     [Parameter(Mandatory = $true)][bool]$ForceUpdate,
-    [Parameter(Mandatory = $true)][object[]]$Changelog
+    [Parameter(Mandatory = $true)][string[]]$Changelog
   )
 
   return [pscustomobject]([ordered]@{
@@ -145,12 +149,6 @@ function New-ReleaseInfo {
 }
 
 function Update-LatestManifest {
-  $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
-  $userChangelog = @($manifest.user.changelog)
-  $adminChangelog = @($manifest.admin.changelog)
-  $userMinimumBuild = if ($manifest.user.minimum_build) { [int]$manifest.user.minimum_build } else { $Build }
-  $adminMinimumBuild = if ($manifest.admin.minimum_build) { [int]$manifest.admin.minimum_build } else { $Build }
-
   $nextManifest = [pscustomobject]([ordered]@{
     updated_at = [DateTime]::UtcNow.ToString("o")
     user = New-ReleaseInfo `
@@ -159,22 +157,40 @@ function Update-LatestManifest {
       -ApkUrl $UserApkUrl `
       -ExeUrl $UserExeUrl `
       -DownloadPage $UserDownloadPage `
-      -MinimumBuild $userMinimumBuild `
-      -ForceUpdate ([bool]$manifest.user.force_update) `
-      -Changelog $userChangelog
+      -MinimumBuild $DefaultMinimumBuild `
+      -ForceUpdate $false `
+      -Changelog $UserChangelog
     admin = New-ReleaseInfo `
       -AppName $AdminAppName `
       -WebUrl $AdminWebUrl `
       -ApkUrl $AdminApkUrl `
       -ExeUrl $AdminExeUrl `
       -DownloadPage $AdminDownloadPage `
-      -MinimumBuild $adminMinimumBuild `
-      -ForceUpdate ([bool]$manifest.admin.force_update) `
-      -Changelog $adminChangelog
+      -MinimumBuild $DefaultMinimumBuild `
+      -ForceUpdate $false `
+      -Changelog $AdminChangelog
   })
 
-  $json = $nextManifest | ConvertTo-Json -Depth 8
+  $json = ($nextManifest | ConvertTo-Json -Depth 8).Replace("\u0026", "&")
+  try {
+    $null = $json | ConvertFrom-Json
+  } catch {
+    throw "Generated release manifest JSON is invalid: $($_.Exception.Message)"
+  }
+
   Set-Content -LiteralPath $ManifestPath -Value $json -Encoding utf8
+
+  try {
+    $null = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+  } catch {
+    throw "Saved release manifest JSON is invalid: $($_.Exception.Message)"
+  }
+}
+
+if ($ManifestOnly) {
+  Update-LatestManifest
+  Write-Host "Release manifest updated and validated: public/releases/latest.json"
+  return
 }
 
 Assert-GitHubCliReady
