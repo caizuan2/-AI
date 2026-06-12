@@ -111,7 +111,9 @@ async function main() {
   assert.ok(
     chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChat({")
   );
-  assert.match(chatShellSource, /文件上传失败，请重新选择后再发送/);
+  assert.doesNotMatch(chatShellSource, /文件上传失败，请重新选择后再发送/);
+  assert.match(chatShellSource, /inputCleared/);
+  assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
@@ -1103,6 +1105,7 @@ async function main() {
   assert.equal(askResult.customer_answer, "您好，AI 回答可以直接发给客户。");
   assert.equal(String(calls[0].input), "/api/ai/chat/ask");
   assert.equal(calls[0].init?.method, "POST");
+  assert.equal(calls[0].init?.credentials, "include");
   assert.match(String(calls[0].init?.body), /"question":"你好"/);
   assert.match(String(calls[0].init?.body), /"attachments":\[/);
   assert.match(String(calls[0].init?.body), /"url":"\/uploads\/chat-attachments\/photo\.jpg"/);
@@ -1145,6 +1148,8 @@ async function main() {
 
   assert.equal(String(calls[0].input), "/api/ai/chat/attachments");
   assert.equal(calls[0].init?.method, "POST");
+  assert.equal(calls[0].init?.credentials, "include");
+  assert.equal(calls[0].init?.headers, undefined);
   assert.ok(calls[0].init?.body instanceof FormData);
   assert.equal((calls[0].init?.body as FormData).get("file"), imageAttachment.file);
   assert.equal((calls[0].init?.body as FormData).get("attachment"), imageAttachment.file);
@@ -1153,6 +1158,32 @@ async function main() {
   assert.equal(uploadedAttachment.publicUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.fileUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.previewUrl, "blob:chat-image-preview");
+
+  calls.length = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: false,
+      success: false,
+      code: "UNAUTHORIZED",
+      error: "UNAUTHORIZED",
+      message: "请先登录后再上传文件。"
+    }), {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    () => uploadChatAttachment(imageAttachment),
+    /文件上传失败：未登录，请重新登录。/
+  );
+  assert.equal(String(calls[0].input), "/api/ai/chat/attachments");
+  assert.equal(calls[0].init?.credentials, "include");
+  assert.equal(calls[0].init?.headers, undefined);
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
     ok: false,
@@ -1374,6 +1405,9 @@ async function main() {
   assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
   assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)\s*\?\?\s*formData\.get\("attachments"\)/);
   assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(chatAttachmentRouteText, /inferAttachmentMimeType/);
+  assert.match(chatAttachmentRouteText, /application\/octet-stream/);
+  assert.match(chatAttachmentRouteText, /请先登录后再上传文件。/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.ms-powerpoint/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.ms-excel/);
@@ -1381,6 +1415,8 @@ async function main() {
   assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*100/);
   assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB。/);
   assert.match(chatAttachmentRouteText, /fileUrl:\s*publicUrl/);
+  assert.match(chatAttachmentRouteText, /attachment:\s*responseData\.attachment/);
+  assert.match(chatAttachmentRouteText, /当前部署环境无法保存附件/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(aiChatAskText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin\/kb/);
