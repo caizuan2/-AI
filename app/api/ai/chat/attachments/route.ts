@@ -1,6 +1,7 @@
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
+import { getStore } from "@netlify/blobs";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
 import { requireRole } from "@/lib/auth/guards";
@@ -11,6 +12,8 @@ export const dynamic = "force-dynamic";
 
 const MAX_CHAT_ATTACHMENT_SIZE_MB = 100;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
+const CHAT_ATTACHMENT_STORE_NAME = "chat-attachments";
+const NETLIFY_BLOBS_CONFIG_ERROR = "文件上传服务未配置：缺少 Netlify Blobs 环境变量。";
 const allowedAttachmentMimeTypes = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -39,6 +42,49 @@ function getAttachmentType(mimeType: string) {
   return mimeType.startsWith("image/") ? "image" : "file";
 }
 
+function getNetlifyBlobsConfig() {
+  const siteID = process.env.NETLIFY_BLOBS_SITE_ID?.trim();
+  const token = process.env.NETLIFY_BLOBS_TOKEN?.trim();
+
+  return siteID && token ? { siteID, token } : null;
+}
+
+function getChatAttachmentStore() {
+  const config = getNetlifyBlobsConfig();
+
+  if (!config) {
+    throw new AppError("CONFIG_ERROR", NETLIFY_BLOBS_CONFIG_ERROR, 500);
+  }
+
+  return getStore({
+    name: CHAT_ATTACHMENT_STORE_NAME,
+    siteID: config.siteID,
+    token: config.token,
+    consistency: "strong"
+  });
+}
+
+function shouldUseLocalUploadFallback() {
+  return process.env.NODE_ENV !== "production" && !getNetlifyBlobsConfig();
+}
+
+function getSafeUserPrefix(userId: string) {
+  return userId.replace(/[^\w-]+/g, "") || "user";
+}
+
+function getDatePathParts(date = new Date()) {
+  return {
+    year: String(date.getUTCFullYear()),
+    month: String(date.getUTCMonth() + 1).padStart(2, "0")
+  };
+}
+
+function createBlobKey(userId: string, extension: string) {
+  const { year, month } = getDatePathParts();
+
+  return `${getSafeUserPrefix(userId)}/${year}/${month}/${randomUUID()}.${extension}`;
+}
+
 function inferAttachmentMimeType(file: File) {
   const mimeType = file.type.trim().toLowerCase();
 
@@ -64,6 +110,58 @@ function validateAttachmentFile(file: File, mimeType: string) {
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
     throw new ValidationError(`单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`);
   }
+}
+
+async function saveAttachmentToLocalPublicUploads(input: {
+  actorId: string;
+  arrayBuffer: ArrayBuffer;
+  extension: string;
+}) {
+  const uploadDirectory = path.join(process.cwd(), "public", "uploads", "chat-attachments");
+  const storageName = `${getSafeUserPrefix(input.actorId)}-${Date.now()}-${randomUUID()}.${input.extension}`;
+  const publicUrl = `/uploads/chat-attachments/${storageName}`;
+
+  await mkdir(uploadDirectory, { recursive: true });
+  await writeFile(path.join(uploadDirectory, storageName), Buffer.from(input.arrayBuffer));
+
+  return {
+    url: publicUrl,
+    storage: "local-public",
+    referenceId: storageName,
+    blobKey: undefined
+  };
+}
+
+async function saveAttachmentToNetlifyBlobs(input: {
+  actorId: string;
+  arrayBuffer: ArrayBuffer;
+  extension: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+}) {
+  const blobKey = createBlobKey(input.actorId, input.extension);
+  const store = getChatAttachmentStore();
+  const uploadedAt = new Date().toISOString();
+
+  await store.set(blobKey, input.arrayBuffer, {
+    metadata: {
+      contentType: input.mimeType,
+      filename: input.filename,
+      size: input.size,
+      uploadedAt,
+      userId: input.actorId
+    }
+  });
+
+  const downloadUrl = `/api/ai/chat/attachments/download?key=${encodeURIComponent(blobKey)}`;
+
+  return {
+    url: downloadUrl,
+    storage: "netlify-blobs",
+    referenceId: blobKey,
+    blobKey
+  };
 }
 
 function unauthorizedUploadResponse() {
@@ -110,22 +208,22 @@ export async function POST(request: Request) {
     validateAttachmentFile(file, mimeType);
 
     const extension = allowedAttachmentMimeTypes.get(mimeType) ?? "bin";
-    const uploadDirectory = path.join(process.cwd(), "public", "uploads", "chat-attachments");
-    const userPrefix = String(actor.id).replace(/[^\w-]+/g, "") || "user";
     const originalName = safeFileBaseName(file.name);
-    const storageName = `${userPrefix}-${Date.now()}-${randomUUID()}.${extension}`;
-    const publicUrl = `/uploads/chat-attachments/${storageName}`;
-
-    try {
-      await mkdir(uploadDirectory, { recursive: true });
-      await writeFile(path.join(uploadDirectory, storageName), Buffer.from(await file.arrayBuffer()));
-    } catch {
-      throw new AppError(
-        "APP_ERROR",
-        "文件上传服务暂不可用：当前部署环境无法保存附件，请稍后重试或联系管理员。",
-        500
-      );
-    }
+    const arrayBuffer = await file.arrayBuffer();
+    const savedAttachment = shouldUseLocalUploadFallback()
+      ? await saveAttachmentToLocalPublicUploads({
+          actorId: actor.id,
+          arrayBuffer,
+          extension
+        })
+      : await saveAttachmentToNetlifyBlobs({
+          actorId: actor.id,
+          arrayBuffer,
+          extension,
+          filename: originalName,
+          mimeType,
+          size: file.size
+        });
 
     const responseData = {
       attachment: {
@@ -136,12 +234,16 @@ export async function POST(request: Request) {
         mimeType,
         mime_type: mimeType,
         size: file.size,
-        url: publicUrl,
-        publicUrl,
-        fileUrl: publicUrl,
-        reference_id: storageName,
+        url: savedAttachment.url,
+        publicUrl: savedAttachment.url,
+        fileUrl: savedAttachment.url,
+        downloadUrl: savedAttachment.url,
+        storage: savedAttachment.storage,
+        blobKey: savedAttachment.blobKey,
+        reference_id: savedAttachment.referenceId,
         metadata: {
-          storage: "public/uploads/chat-attachments"
+          storage: savedAttachment.storage,
+          ...(savedAttachment.blobKey ? { blobKey: savedAttachment.blobKey } : {})
         }
       }
     };

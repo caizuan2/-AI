@@ -1398,6 +1398,7 @@ async function main() {
 
   const avatarRouteText = readFileSync("app/api/auth/avatar/route.ts", "utf8");
   const chatAttachmentRouteText = readFileSync("app/api/ai/chat/attachments/route.ts", "utf8");
+  const chatAttachmentDownloadRouteText = readFileSync("app/api/ai/chat/attachments/download/route.ts", "utf8");
   const aiChatAskText = readFileSync("lib/ai-chat/ask.ts", "utf8");
   const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
 
@@ -1405,6 +1406,20 @@ async function main() {
   assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
   assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)\s*\?\?\s*formData\.get\("attachments"\)/);
   assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(chatAttachmentRouteText, /@netlify\/blobs/);
+  assert.match(chatAttachmentRouteText, /getStore/);
+  assert.match(chatAttachmentRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
+  assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_SITE_ID/);
+  assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_TOKEN/);
+  assert.match(chatAttachmentRouteText, /文件上传服务未配置：缺少 Netlify Blobs 环境变量。/);
+  assert.match(chatAttachmentRouteText, /process\.env\.NODE_ENV !== "production"/);
+  assert.match(chatAttachmentRouteText, /saveAttachmentToLocalPublicUploads/);
+  assert.match(chatAttachmentRouteText, /saveAttachmentToNetlifyBlobs/);
+  assert.match(chatAttachmentRouteText, /store\.set\(blobKey,\s*input\.arrayBuffer/);
+  assert.match(chatAttachmentRouteText, /metadata:\s*\{\s*contentType:\s*input\.mimeType/);
+  assert.match(chatAttachmentRouteText, /\/api\/ai\/chat\/attachments\/download\?key=/);
+  assert.doesNotMatch(chatAttachmentRouteText, /当前部署环境无法保存附件/);
+  assert.doesNotMatch(chatAttachmentRouteText, /downloadUrl[\s\S]{0,160}token/i);
   assert.match(chatAttachmentRouteText, /inferAttachmentMimeType/);
   assert.match(chatAttachmentRouteText, /application\/octet-stream/);
   assert.match(chatAttachmentRouteText, /请先登录后再上传文件。/);
@@ -1414,11 +1429,26 @@ async function main() {
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
   assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*100/);
   assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB。/);
-  assert.match(chatAttachmentRouteText, /fileUrl:\s*publicUrl/);
+  assert.match(chatAttachmentRouteText, /url:\s*savedAttachment\.url/);
+  assert.match(chatAttachmentRouteText, /publicUrl:\s*savedAttachment\.url/);
+  assert.match(chatAttachmentRouteText, /fileUrl:\s*savedAttachment\.url/);
+  assert.match(chatAttachmentRouteText, /storage:\s*savedAttachment\.storage/);
+  assert.match(chatAttachmentRouteText, /blobKey:\s*savedAttachment\.blobKey/);
   assert.match(chatAttachmentRouteText, /attachment:\s*responseData\.attachment/);
-  assert.match(chatAttachmentRouteText, /当前部署环境无法保存附件/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.match(chatAttachmentDownloadRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
+  assert.match(chatAttachmentDownloadRouteText, /requireRole\("user"/);
+  assert.match(chatAttachmentDownloadRouteText, /targetType:\s*"ai_chat_attachment_download"/);
+  assert.match(chatAttachmentDownloadRouteText, /safeBlobKeyPattern/);
+  assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actor\.id\)\}\/`\)/);
+  assert.match(chatAttachmentDownloadRouteText, /getWithMetadata\(key/);
+  assert.match(chatAttachmentDownloadRouteText, /type:\s*"arrayBuffer"/);
+  assert.match(chatAttachmentDownloadRouteText, /metadataUserId !== actor\.id/);
+  assert.match(chatAttachmentDownloadRouteText, /Content-Type/);
+  assert.match(chatAttachmentDownloadRouteText, /Content-Disposition/);
+  assert.doesNotMatch(chatAttachmentDownloadRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.doesNotMatch(chatAttachmentDownloadRouteText, /NETLIFY_BLOBS_TOKEN[\s\S]{0,260}Response/);
   assert.doesNotMatch(aiChatAskText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin\/kb/);
   assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
