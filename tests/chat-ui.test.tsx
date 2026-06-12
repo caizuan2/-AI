@@ -18,7 +18,9 @@ import {
   createNewChatState,
   createUserMessage,
   formatChatUserAccountForDisplay,
+  getChatUserAvatarStorageKey,
   getCurrentChatUserAccount,
+  getCurrentChatUserAvatarUrl,
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
   getCachedChatAttachmentPreviewUrl,
@@ -652,6 +654,98 @@ async function main() {
   assert.ok(
     chatMessagesMarkup.indexOf("bg-blue-600") < chatMessagesMarkup.indexOf("aria-label=\"编辑用户消息\"")
   );
+  const avatarUser = {
+    id: "user_1",
+    name: "蔡姑",
+    phone: "+8613360587600",
+    avatar_url: "/uploads/avatars/user_1.png",
+    licenseActivated: true
+  };
+  const chatAvatarMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={messages}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+      currentUser={avatarUser}
+      userAvatarUrl="/uploads/avatars/user_1.png"
+    />
+  );
+
+  assert.equal(getCurrentChatUserAvatarUrl(avatarUser), "/uploads/avatars/user_1.png");
+  assert.match(chatAvatarMarkup, /alt="当前用户头像"/);
+  assert.match(chatAvatarMarkup, /src="\/uploads\/avatars\/user_1\.png"/);
+  assert.match(chatAvatarMarkup, /lucide-bot/);
+  assert.equal(drawerWithAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
+  assert.equal(chatAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
+
+  const chatCamelAvatarMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={messages}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+      currentUser={{
+        id: "user_camel",
+        name: "驼峰头像",
+        avatarUrl: "/uploads/avatars/camel-avatar.webp",
+        licenseActivated: true
+      }}
+    />
+  );
+
+  assert.equal(getCurrentChatUserAvatarUrl({
+    id: "user_camel",
+    avatarUrl: "/uploads/avatars/camel-avatar.webp",
+    licenseActivated: true
+  }), "/uploads/avatars/camel-avatar.webp");
+  assert.match(chatCamelAvatarMarkup, /src="\/uploads\/avatars\/camel-avatar\.webp"/);
+
+  const cachedAvatarUrl = "/uploads/avatars/cached-user.png";
+  const chatCachedAvatarMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={messages}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+      currentUser={{
+        id: "user_cached",
+        name: "缓存头像",
+        licenseActivated: true
+      }}
+      userAvatarUrl={cachedAvatarUrl}
+    />
+  );
+
+  assert.match(chatCachedAvatarMarkup, /src="\/uploads\/avatars\/cached-user\.png"/);
+  assert.notEqual(
+    getChatUserAvatarStorageKey({
+      id: "user_cached",
+      licenseActivated: true
+    }),
+    getChatUserAvatarStorageKey({
+      id: "user_other",
+      licenseActivated: true
+    })
+  );
+
+  const noAvatarMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={messages}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+      currentUser={{
+        id: "user_no_avatar",
+        name: "蔡姑",
+        licenseActivated: true
+      }}
+    />
+  );
+
+  assert.match(noAvatarMarkup, /当前用户默认头像/);
+  assert.match(noAvatarMarkup, />蔡<\/div>/);
+  assert.doesNotMatch(noAvatarMarkup, /cached-user\.png/);
   assert.equal(getUserMessageCopyText(messages[0]), "退款流程怎么处理？");
   assert.equal(getUserMessageCopyText({
     content: "",
@@ -674,7 +768,11 @@ async function main() {
   assert.match(chatMessagesSource, /打开文件 \$\{name\}/);
   assert.match(chatMessagesSource, /function formatAttachmentSize/);
   assert.match(chatMessagesSource, /function UserMessageBlock/);
+  assert.match(chatMessagesSource, /function UserMessageAvatar/);
   assert.match(chatMessagesSource, /function UserMessageActions/);
+  assert.match(chatMessagesSource, /getCurrentChatUserAvatarUrl\(currentUser\)/);
+  assert.match(chatMessagesSource, /getCurrentChatUserInitial\(currentUser\)/);
+  assert.match(chatMessagesSource, /alt="当前用户头像"/);
   assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
   assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
   assert.match(chatMessagesSource, /attachment\.src/);
@@ -689,6 +787,9 @@ async function main() {
   assert.match(chatShellSourceForEdit, /function handleEditUserMessage/);
   assert.match(chatShellSourceForEdit, /setInput\(content\)/);
   assert.match(chatShellSourceForEdit, /onEditUserMessage=\{handleEditUserMessage\}/);
+  assert.match(chatShellSourceForEdit, /userAvatarUrl=\{currentAvatarUrl\}/);
+  assert.match(chatShellSourceForEdit, /currentUser=\{currentUser\}/);
+  assert.match(chatShellSourceForEdit, /avatarUrl:\s*nextAvatarUrl/);
   const historyImageMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
