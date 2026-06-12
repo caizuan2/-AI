@@ -2,7 +2,9 @@
 
 import * as React from "react";
 import { Menu, Plus } from "lucide-react";
+import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
+import { USER_APP_KIND } from "@/lib/app-version";
 import {
   askChat,
   changeCurrentUserPassword,
@@ -353,6 +355,7 @@ export function ChatShell() {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
       <CapacitorOtaUpdater />
+      <AppUpdateNotice appKind={USER_APP_KIND} />
       <div className="mx-auto flex h-screen w-full max-w-[430px] overflow-hidden bg-white shadow-2xl shadow-slate-300/40">
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <ChatSidebarDrawer

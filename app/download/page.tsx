@@ -1,17 +1,21 @@
 import React from "react";
+import { DownloadCopyButton } from "@/components/download-copy-button";
 import releaseInfo from "../../public/releases/latest.json";
+
+const userRelease = releaseInfo.user;
+const userCompatibilityApkUrl = "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat.apk";
 
 const downloadLinks = [
   {
     label: "Android APK 下载",
-    href: releaseInfo.androidApkUrl,
-    compatibilityHref: releaseInfo.androidCompatibilityUrl,
+    href: userRelease.apk_url,
+    compatibilityHref: userCompatibilityApkUrl,
     description: "适用于 Android 手机和平板的内部测试安装包。"
   },
   {
     label: "Windows EXE 下载",
-    href: releaseInfo.desktopUrl,
-    compatibilityHref: releaseInfo.desktopCompatibilityUrl,
+    href: userRelease.exe_url,
+    compatibilityHref: userRelease.exe_url,
     description: "适用于 Windows 桌面端的内部测试安装包。"
   },
   {
@@ -28,11 +32,15 @@ const downloadLinks = [
   },
   {
     label: "用户 Web 入口",
-    href: "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    href: userRelease.web_url,
     compatibilityHref: "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui",
     description: "不安装客户端时，可从浏览器进入用户端问答页面。"
   }
 ];
+
+function getUpdatedDate() {
+  return releaseInfo.updated_at.slice(0, 10);
+}
 
 export default function DownloadPage() {
   return (
@@ -49,13 +57,13 @@ export default function DownloadPage() {
         <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5 text-sm text-blue-950">
           <div className="flex flex-wrap items-center gap-3">
             <span className="rounded-full bg-white px-3 py-1 font-semibold text-blue-700">
-              最新版本 {releaseInfo.version}
+              最新版本 {userRelease.version}
             </span>
-            <span>构建号：{releaseInfo.buildNumber}</span>
-            <span>更新日期：{releaseInfo.date}</span>
+            <span>构建号：{userRelease.build}</span>
+            <span>更新日期：{getUpdatedDate()}</span>
           </div>
           <ul className="mt-4 list-disc space-y-1 pl-5 leading-6">
-            {releaseInfo.changelog.map((item) => (
+            {userRelease.changelog.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
@@ -71,18 +79,21 @@ export default function DownloadPage() {
               <span className="mt-2 block text-sm leading-6 text-slate-600">{link.description}</span>
               {link.href ? (
                 <>
-                  <a
-                    href={link.href}
-                    className="mt-4 inline-flex rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
-                  >
-                    打开下载链接
-                  </a>
+                  <div className="mt-4 flex flex-col gap-2">
+                    <a
+                      href={link.href}
+                      className="inline-flex min-h-11 items-center justify-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                    >
+                      打开下载链接
+                    </a>
+                    <DownloadCopyButton value={link.href} />
+                  </div>
                   <span className="mt-3 block break-all text-xs text-slate-500">
                     兼容链接：{link.compatibilityHref}
                   </span>
                 </>
               ) : (
-                <span className="mt-4 inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-500">
+                <span className="mt-4 inline-flex rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-500">
                   即将提供 / 联系管理员获取
                 </span>
               )}
