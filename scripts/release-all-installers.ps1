@@ -1,4 +1,4 @@
-param(
+﻿param(
   [Parameter(Mandatory = $true)]
   [ValidatePattern("^\d+\.\d+\.\d+$")]
   [string]$Version,
@@ -22,6 +22,17 @@ $UserWebUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui"
 $AdminWebUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest"
 $UserDownloadPage = "https://stately-sawine-1efd4d.netlify.app/user-download.html"
 $AdminDownloadPage = "https://stately-sawine-1efd4d.netlify.app/admin-download.html"
+
+function New-TextFromCodePoints {
+  param(
+    [Parameter(Mandatory = $true)][int[]]$CodePoints
+  )
+
+  return -join ($CodePoints | ForEach-Object { [char]$_ })
+}
+
+$UserAppName = New-TextFromCodePoints @(0x41, 0x49, 0x77E5, 0x8BC6, 0x5E93, 0x52A9, 0x624B)
+$AdminAppName = New-TextFromCodePoints @(0x41, 0x49, 0x77E5, 0x8BC6, 0x5E93, 0x7BA1, 0x7406, 0x540E, 0x53F0)
 
 function Invoke-ProjectCommand {
   param(
@@ -107,6 +118,32 @@ function Publish-GitHubAsset {
   }
 }
 
+function New-ReleaseInfo {
+  param(
+    [Parameter(Mandatory = $true)][string]$AppName,
+    [Parameter(Mandatory = $true)][string]$WebUrl,
+    [Parameter(Mandatory = $true)][string]$ApkUrl,
+    [Parameter(Mandatory = $true)][string]$ExeUrl,
+    [Parameter(Mandatory = $true)][string]$DownloadPage,
+    [Parameter(Mandatory = $true)][int]$MinimumBuild,
+    [Parameter(Mandatory = $true)][bool]$ForceUpdate,
+    [Parameter(Mandatory = $true)][object[]]$Changelog
+  )
+
+  return [pscustomobject]([ordered]@{
+    app_name = $AppName
+    version = $Version
+    build = $Build
+    minimum_build = $MinimumBuild
+    force_update = $ForceUpdate
+    web_url = $WebUrl
+    apk_url = $ApkUrl
+    exe_url = $ExeUrl
+    download_page = $DownloadPage
+    changelog = $Changelog
+  })
+}
+
 function Update-LatestManifest {
   $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
   $userChangelog = @($manifest.user.changelog)
@@ -114,33 +151,27 @@ function Update-LatestManifest {
   $userMinimumBuild = if ($manifest.user.minimum_build) { [int]$manifest.user.minimum_build } else { $Build }
   $adminMinimumBuild = if ($manifest.admin.minimum_build) { [int]$manifest.admin.minimum_build } else { $Build }
 
-  $nextManifest = [ordered]@{
+  $nextManifest = [pscustomobject]([ordered]@{
     updated_at = [DateTime]::UtcNow.ToString("o")
-    user = [ordered]@{
-      app_name = "AI知识库助手"
-      version = $Version
-      build = $Build
-      minimum_build = $userMinimumBuild
-      force_update = [bool]$manifest.user.force_update
-      web_url = $UserWebUrl
-      apk_url = $UserApkUrl
-      exe_url = $UserExeUrl
-      download_page = $UserDownloadPage
-      changelog = $userChangelog
-    }
-    admin = [ordered]@{
-      app_name = "AI知识库管理后台"
-      version = $Version
-      build = $Build
-      minimum_build = $adminMinimumBuild
-      force_update = [bool]$manifest.admin.force_update
-      web_url = $AdminWebUrl
-      apk_url = $AdminApkUrl
-      exe_url = $AdminExeUrl
-      download_page = $AdminDownloadPage
-      changelog = $adminChangelog
-    }
-  }
+    user = New-ReleaseInfo `
+      -AppName $UserAppName `
+      -WebUrl $UserWebUrl `
+      -ApkUrl $UserApkUrl `
+      -ExeUrl $UserExeUrl `
+      -DownloadPage $UserDownloadPage `
+      -MinimumBuild $userMinimumBuild `
+      -ForceUpdate ([bool]$manifest.user.force_update) `
+      -Changelog $userChangelog
+    admin = New-ReleaseInfo `
+      -AppName $AdminAppName `
+      -WebUrl $AdminWebUrl `
+      -ApkUrl $AdminApkUrl `
+      -ExeUrl $AdminExeUrl `
+      -DownloadPage $AdminDownloadPage `
+      -MinimumBuild $adminMinimumBuild `
+      -ForceUpdate ([bool]$manifest.admin.force_update) `
+      -Changelog $adminChangelog
+  })
 
   $json = $nextManifest | ConvertTo-Json -Depth 8
   Set-Content -LiteralPath $ManifestPath -Value $json -Encoding utf8
@@ -168,15 +199,15 @@ Publish-GitHubAsset `
   -Tag $UserWindowsTag `
   -AssetPath $UserExe `
   -AssetName "ai-knowledge-chat-latest.exe" `
-  -Title "AI知识库助手 Windows" `
-  -Notes "用户端 Windows EXE 安装包，打开后进入用户端问答页面。"
+  -Title "AI Knowledge Assistant Windows" `
+  -Notes "User Windows EXE installer. It opens the user chat page."
 
 Publish-GitHubAsset `
   -Tag $AdminWindowsTag `
   -AssetPath $AdminExe `
   -AssetName "ai-knowledge-admin-latest.exe" `
-  -Title "AI知识库管理后台 Windows" `
-  -Notes "管理员端 Windows EXE 安装包，打开后进入管理员登录页面。"
+  -Title "AI Knowledge Admin Windows" `
+  -Notes "Admin Windows EXE installer. It opens the admin login page."
 
 Update-LatestManifest
 
