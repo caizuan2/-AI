@@ -150,8 +150,14 @@
         color: var(--primary-dark);
       }
 
+      button:disabled {
+        cursor: default;
+        border-color: #dbe3ef;
+        color: #64748b;
+      }
+
       a.button:hover,
-      button:hover {
+      button:not(:disabled):hover {
         transform: translateY(-1px);
       }
 
@@ -236,6 +242,32 @@
 
           <article class="download-card">
             <div class="label">
+              <span class="icon">🍎</span>
+              <div>
+                <p class="name">用户 iPhone iOS IPA</p>
+                <p class="desc">iOS 版本请通过 TestFlight 或管理员提供安装包；本页不提供不存在的 IPA 直链。</p>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" disabled>联系管理员获取</button>
+            </div>
+          </article>
+
+          <article class="download-card">
+            <div class="label">
+              <span class="icon">🖥️</span>
+              <div>
+                <p class="name">用户 macOS DMG</p>
+                <p class="desc">macOS 版本请联系管理员获取；正式发布后建议通过 GitHub Release 或对象存储分发。</p>
+              </div>
+            </div>
+            <div class="actions">
+              <button type="button" disabled>即将提供</button>
+            </div>
+          </article>
+
+          <article class="download-card">
+            <div class="label">
               <span class="icon">🌐</span>
               <div>
                 <p class="name">用户 Web 入口</p>
@@ -243,7 +275,8 @@
               </div>
             </div>
             <div class="actions">
-              <a class="button" href="https://stately-sawine-1efd4d.netlify.app/download">打开 Web</a>
+              <a class="button" href="https://stately-sawine-1efd4d.netlify.app/chat-ui">打开 Web</a>
+              <button type="button" data-link="https://stately-sawine-1efd4d.netlify.app/chat-ui">复制链接</button>
             </div>
           </article>
         </div>
