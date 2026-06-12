@@ -23,6 +23,8 @@ export interface ChatAttachmentDraft {
   downloadUrl?: string;
   path?: string;
   storagePath?: string;
+  storage?: string;
+  blobKey?: string;
   file?: File;
   metadata?: Record<string, unknown>;
 }
