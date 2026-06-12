@@ -137,6 +137,16 @@ function getJsonByteLength(value: unknown) {
   return Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
 }
 
+function cleanPersistentAttachmentUrl(value: unknown) {
+  const text = trimString(value);
+
+  if (!text || text.startsWith("blob:") || text.startsWith("data:")) {
+    return null;
+  }
+
+  return text;
+}
+
 function inferConversationTitle(question: string) {
   return question.length > 40 ? `${question.slice(0, 40)}...` : question;
 }
@@ -185,9 +195,17 @@ function validateAttachments(value: unknown) {
     return {
       type,
       name: trimString(record.name) || null,
+      filename: trimString(record.filename) || trimString(record.name) || null,
       mime_type: trimString(record.mime_type) || trimString(record.mimeType) || null,
       size: typeof record.size === "number" && Number.isFinite(record.size) ? Math.max(0, Math.round(record.size)) : null,
       reference_id: trimString(record.reference_id) || trimString(record.referenceId) || null,
+      url: cleanPersistentAttachmentUrl(record.url),
+      publicUrl: cleanPersistentAttachmentUrl(record.publicUrl),
+      fileUrl: cleanPersistentAttachmentUrl(record.fileUrl),
+      downloadUrl: cleanPersistentAttachmentUrl(record.downloadUrl),
+      src: cleanPersistentAttachmentUrl(record.src),
+      storage: trimString(record.storage) || null,
+      blobKey: trimString(record.blobKey) || null,
       metadata: metadata ?? null
     };
   });

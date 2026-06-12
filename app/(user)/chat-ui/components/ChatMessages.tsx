@@ -106,20 +106,20 @@ function getAttachmentPreviewUrl(attachment: UserAttachment) {
   const directUrl = (
     normalizeAttachmentImageUrl(attachment.previewUrl) ||
     normalizeAttachmentImageUrl(attachment.url) ||
+    normalizeAttachmentImageUrl(attachment.publicUrl) ||
+    normalizeAttachmentImageUrl(attachment.fileUrl) ||
+    normalizeAttachmentImageUrl(attachment.downloadUrl) ||
     normalizeAttachmentImageUrl(attachment.src) ||
     normalizeAttachmentImageUrl(attachment.dataUrl) ||
-    normalizeAttachmentImageUrl(attachment.fileUrl) ||
-    normalizeAttachmentImageUrl(attachment.publicUrl) ||
-    normalizeAttachmentImageUrl(attachment.downloadUrl) ||
     normalizeAttachmentImageUrl(attachment.path) ||
     normalizeAttachmentImageUrl(attachment.storagePath) ||
-    normalizeAttachmentImageUrl(metadata.previewUrl) ||
     normalizeAttachmentImageUrl(metadata.url) ||
+    normalizeAttachmentImageUrl(metadata.publicUrl) ||
+    normalizeAttachmentImageUrl(metadata.fileUrl) ||
+    normalizeAttachmentImageUrl(metadata.downloadUrl) ||
+    normalizeAttachmentImageUrl(metadata.previewUrl) ||
     normalizeAttachmentImageUrl(metadata.src) ||
     normalizeAttachmentImageUrl(metadata.dataUrl) ||
-    normalizeAttachmentImageUrl(metadata.fileUrl) ||
-    normalizeAttachmentImageUrl(metadata.publicUrl) ||
-    normalizeAttachmentImageUrl(metadata.downloadUrl) ||
     normalizeAttachmentImageUrl(metadata.path) ||
     normalizeAttachmentImageUrl(metadata.storagePath)
   );
