@@ -17,6 +17,11 @@ export interface ChatAttachmentDraft {
   url?: string;
   src?: string;
   dataUrl?: string;
+  fileUrl?: string;
+  publicUrl?: string;
+  downloadUrl?: string;
+  path?: string;
+  storagePath?: string;
   metadata?: Record<string, unknown>;
 }
 

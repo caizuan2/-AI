@@ -499,11 +499,11 @@ export function ChatInput({
           <button
             type="button"
             onClick={() => setAttachmentMenuOpen((open) => !open)}
-            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-950 text-slate-950 hover:bg-slate-100"
+            className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-950 text-slate-950 hover:bg-slate-100"
             aria-label="打开上传菜单"
             aria-expanded={attachmentMenuOpen}
           >
-            <Plus className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
+            <Plus className="h-3.5 w-3.5" strokeWidth={1.9} aria-hidden="true" />
           </button>
           <AttachmentMenu
             open={attachmentMenuOpen}

@@ -57,10 +57,20 @@ function getAttachmentPreviewUrl(attachment: UserAttachment) {
     getStringValue(attachment.url) ||
     getStringValue(attachment.src) ||
     getStringValue(attachment.dataUrl) ||
+    getStringValue(attachment.fileUrl) ||
+    getStringValue(attachment.publicUrl) ||
+    getStringValue(attachment.downloadUrl) ||
+    getStringValue(attachment.path) ||
+    getStringValue(attachment.storagePath) ||
     getStringValue(metadata.previewUrl) ||
     getStringValue(metadata.url) ||
     getStringValue(metadata.src) ||
-    getStringValue(metadata.dataUrl)
+    getStringValue(metadata.dataUrl) ||
+    getStringValue(metadata.fileUrl) ||
+    getStringValue(metadata.publicUrl) ||
+    getStringValue(metadata.downloadUrl) ||
+    getStringValue(metadata.path) ||
+    getStringValue(metadata.storagePath)
   );
 }
 
