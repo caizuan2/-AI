@@ -24,11 +24,14 @@ const apiRateLimitRules = [
   { prefix: "/api", limit: 120, windowMs: 60_000 }
 ];
 
-function withSecurityHeaders(response: NextResponse) {
+function withSecurityHeaders(response: NextResponse, pathname = "") {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "same-origin");
   response.headers.set("X-Frame-Options", "DENY");
-  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  response.headers.set(
+    "Permissions-Policy",
+    pathname === "/chat-ui" ? "camera=(self), microphone=(self), geolocation=()" : "camera=(), microphone=(), geolocation=()"
+  );
   response.headers.set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
 
   return response;
@@ -291,7 +294,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders, requestId));
+  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders, requestId), request.nextUrl.pathname);
 
   response.headers.set(REQUEST_ID_HEADER, requestId);
 

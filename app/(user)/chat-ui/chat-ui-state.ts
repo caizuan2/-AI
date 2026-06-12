@@ -31,6 +31,29 @@ function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function cleanMetadataUrl(value: unknown) {
+  const text = cleanText(value);
+
+  if (!text || text.startsWith("data:")) {
+    return "";
+  }
+
+  return text;
+}
+
+function getAttachmentUrlMetadata(attachment: ChatAttachmentDraft) {
+  return {
+    ...(cleanMetadataUrl(attachment.previewUrl) ? { previewUrl: cleanMetadataUrl(attachment.previewUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.url) ? { url: cleanMetadataUrl(attachment.url) } : {}),
+    ...(cleanMetadataUrl(attachment.src) ? { src: cleanMetadataUrl(attachment.src) } : {}),
+    ...(cleanMetadataUrl(attachment.fileUrl) ? { fileUrl: cleanMetadataUrl(attachment.fileUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.publicUrl) ? { publicUrl: cleanMetadataUrl(attachment.publicUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.downloadUrl) ? { downloadUrl: cleanMetadataUrl(attachment.downloadUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.path) ? { path: cleanMetadataUrl(attachment.path) } : {}),
+    ...(cleanMetadataUrl(attachment.storagePath) ? { storagePath: cleanMetadataUrl(attachment.storagePath) } : {})
+  };
+}
+
 export function getCurrentChatUserDisplayName(user: CurrentChatUser | null | undefined) {
   const displayName =
     cleanText(user?.nickname) ||
@@ -74,6 +97,7 @@ export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undef
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
   const metadata = {
     ...(attachment.metadata ?? {}),
+    ...getAttachmentUrlMetadata(attachment),
     ...(attachment.id ? { local_id: attachment.id } : {}),
     ...(attachment.source ? { source: attachment.source } : {})
   };
