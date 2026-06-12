@@ -302,16 +302,16 @@ export function ChatShell() {
     setNotice(null);
     setLoading(true);
     let localUserMessage: ChatMessageView | null = null;
+    let inputCleared = false;
 
     try {
-      const uploadedAttachments = await uploadChatAttachments(attachments).catch(() => {
-        throw new Error("文件上传失败，请重新选择后再发送。");
-      });
+      const uploadedAttachments = await uploadChatAttachments(attachments);
 
       const nextUserMessage = createUserMessage(text, uploadedAttachments);
 
       localUserMessage = nextUserMessage;
       setInput("");
+      inputCleared = true;
       setMessages((current) => [...current, nextUserMessage]);
 
       const result = await askChat({
@@ -333,6 +333,10 @@ export function ChatShell() {
         const failedMessageId = localUserMessage.id;
 
         setMessages((current) => current.filter((message) => message.id !== failedMessageId));
+      }
+
+      if (inputCleared) {
+        setInput(text);
       }
 
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");

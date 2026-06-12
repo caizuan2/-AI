@@ -69,10 +69,13 @@ async function main() {
   assert.match(mainActivity, /fileChooserParams\.isCaptureEnabled\(\)/);
   assert.match(mainActivity, /super\.onShowFileChooser\(webView,\s*filePathCallback,\s*fileChooserParams\)/);
   assert.match(mainActivity, /Intent\.ACTION_OPEN_DOCUMENT/);
+  assert.match(mainActivity, /Intent\.FLAG_GRANT_READ_URI_PERMISSION/);
   assert.match(mainActivity, /Intent\.EXTRA_MIME_TYPES/);
   assert.match(mainActivity, /Intent\.EXTRA_ALLOW_MULTIPLE/);
   assert.match(mainActivity, /ValueCallback<Uri\[]>/);
   assert.match(mainActivity, /onActivityResult/);
+  assert.match(mainActivity, /"image\/\*"/);
+  assert.match(mainActivity, /"text\/markdown"/);
   assert.match(mainActivity, /application\/vnd\.ms-powerpoint/);
   assert.match(mainActivity, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
   assert.doesNotMatch(mainActivity, /clearCookies|clearCache|WebStorage\.getInstance\(\)\.deleteAllData/);
