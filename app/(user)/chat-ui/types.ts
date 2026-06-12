@@ -9,6 +9,7 @@ export interface ChatAttachmentDraft {
   type: AttachmentType;
   source?: ChatAttachmentSource;
   name?: string;
+  filename?: string;
   mime_type?: string;
   mimeType?: string;
   size?: number;
