@@ -14,6 +14,55 @@ interface ChatSettingsMenuProps {
   onSwitchAccount?: () => void;
 }
 
+export function SwitchAccountConfirmDialog({
+  open,
+  account,
+  onCancel,
+  onConfirm
+}: {
+  open: boolean;
+  account: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/35 px-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="switch-account-title"
+        className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-5 shadow-2xl"
+      >
+        <h2 id="switch-account-title" className="text-lg font-bold text-slate-950">切换账号</h2>
+        <div className="mt-4 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          <p className="font-semibold text-slate-950">当前账号：{account || "当前用户"}</p>
+          <p className="mt-2 leading-6 text-slate-500">切换账号会回到登录页，但不会清除本地历史展示。</p>
+        </div>
+        <div className="mt-5 flex flex-col gap-2 sm:flex-row-reverse">
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="focus-ring h-11 rounded-2xl bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            使用其他账号登录
+          </button>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="focus-ring h-11 rounded-2xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function ChatSettingsMenu({
   open,
   userName = "当前用户",
@@ -29,6 +78,7 @@ export function ChatSettingsMenu({
   const [confirmPassword, setConfirmPassword] = React.useState("");
   const [saving, setSaving] = React.useState(false);
   const [message, setMessage] = React.useState<string | null>(null);
+  const [switchAccountOpen, setSwitchAccountOpen] = React.useState(false);
 
   if (!open) {
     return null;
@@ -162,7 +212,7 @@ export function ChatSettingsMenu({
 
         <button
           type="button"
-          onClick={onSwitchAccount}
+          onClick={() => setSwitchAccountOpen(true)}
           className="focus-ring flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-semibold text-slate-800 hover:bg-slate-50"
         >
           <RefreshCw className="h-4 w-4 text-slate-500" aria-hidden="true" />
@@ -177,6 +227,15 @@ export function ChatSettingsMenu({
           退出登录
         </button>
       </div>
+      <SwitchAccountConfirmDialog
+        open={switchAccountOpen}
+        account={userAccount || userName}
+        onCancel={() => setSwitchAccountOpen(false)}
+        onConfirm={() => {
+          setSwitchAccountOpen(false);
+          onSwitchAccount?.();
+        }}
+      />
     </div>
   );
 }
