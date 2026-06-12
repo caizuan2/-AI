@@ -45,10 +45,10 @@ function getAttachmentUrlMetadata(attachment: ChatAttachmentDraft) {
   return {
     ...(cleanMetadataUrl(attachment.previewUrl) ? { previewUrl: cleanMetadataUrl(attachment.previewUrl) } : {}),
     ...(cleanMetadataUrl(attachment.url) ? { url: cleanMetadataUrl(attachment.url) } : {}),
-    ...(cleanMetadataUrl(attachment.src) ? { src: cleanMetadataUrl(attachment.src) } : {}),
-    ...(cleanMetadataUrl(attachment.fileUrl) ? { fileUrl: cleanMetadataUrl(attachment.fileUrl) } : {}),
     ...(cleanMetadataUrl(attachment.publicUrl) ? { publicUrl: cleanMetadataUrl(attachment.publicUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.fileUrl) ? { fileUrl: cleanMetadataUrl(attachment.fileUrl) } : {}),
     ...(cleanMetadataUrl(attachment.downloadUrl) ? { downloadUrl: cleanMetadataUrl(attachment.downloadUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.src) ? { src: cleanMetadataUrl(attachment.src) } : {}),
     ...(cleanMetadataUrl(attachment.path) ? { path: cleanMetadataUrl(attachment.path) } : {}),
     ...(cleanMetadataUrl(attachment.storagePath) ? { storagePath: cleanMetadataUrl(attachment.storagePath) } : {})
   };
@@ -194,6 +194,8 @@ export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
     ...(cleanMetadataUrl(attachment.fileUrl) ? { fileUrl: cleanMetadataUrl(attachment.fileUrl) } : {}),
     ...(cleanMetadataUrl(attachment.downloadUrl) ? { downloadUrl: cleanMetadataUrl(attachment.downloadUrl) } : {}),
     ...(cleanMetadataUrl(attachment.src) ? { src: cleanMetadataUrl(attachment.src) } : {}),
+    ...(cleanText(attachment.storage) ? { storage: cleanText(attachment.storage) } : {}),
+    ...(cleanText(attachment.blobKey) ? { blobKey: cleanText(attachment.blobKey) } : {}),
     metadata
   };
 }

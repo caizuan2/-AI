@@ -587,7 +587,10 @@ async function main() {
       filename: "photo.jpg",
       url: "/uploads/chat-attachments/photo.jpg",
       publicUrl: "/uploads/chat-attachments/photo.jpg",
-      fileUrl: "/uploads/chat-attachments/photo.jpg"
+      fileUrl: "/uploads/chat-attachments/photo.jpg",
+      downloadUrl: "/api/ai/chat/attachments/download?key=user_1/2026/06/photo.jpg",
+      storage: "netlify-blobs",
+      blobKey: "user_1/2026/06/photo.jpg"
     }],
     conversation_id: "conv_1",
     mode: "fast",
@@ -598,6 +601,9 @@ async function main() {
   assert.equal(uploadedImagePayload.attachments[0].url, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].publicUrl, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].fileUrl, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].downloadUrl, "/api/ai/chat/attachments/download?key=user_1/2026/06/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].storage, "netlify-blobs");
+  assert.equal(uploadedImagePayload.attachments[0].blobKey, "user_1/2026/06/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].metadata.url, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].metadata.publicUrl, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].metadata.fileUrl, "/uploads/chat-attachments/photo.jpg");
@@ -871,6 +877,21 @@ async function main() {
             },
             {
               type: "image",
+              name: "priority-photo.jpg",
+              src: "/uploads/wrong-src-photo.jpg",
+              dataUrl: "data:image/jpeg;base64,WRONG",
+              publicUrl: "/api/ai/chat/attachments/download?key=user_1/2026/06/priority.jpg"
+            },
+            {
+              type: "image",
+              name: "metadata-priority-photo.jpg",
+              metadata: {
+                src: "/uploads/wrong-metadata-src-photo.jpg",
+                publicUrl: "/api/ai/chat/attachments/download?key=user_1/2026/06/metadata-priority.jpg"
+              }
+            },
+            {
+              type: "image",
               name: "lost-photo.jpg"
             },
             {
@@ -913,6 +934,12 @@ async function main() {
   assert.match(historyImageMarkup, /blob:chat-image-preview/);
   assert.match(historyImageMarkup, /打开图片预览 filename-photo\.png/);
   assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
+  assert.match(historyImageMarkup, /打开图片预览 priority-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/priority\.jpg/);
+  assert.doesNotMatch(historyImageMarkup, /wrong-src-photo|WRONG/);
+  assert.match(historyImageMarkup, /打开图片预览 metadata-priority-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/metadata-priority\.jpg/);
+  assert.doesNotMatch(historyImageMarkup, /wrong-metadata-src-photo/);
   assert.match(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
   assert.match(historyImageMarkup, /打开文件 history-contract\.pdf/);
@@ -1093,7 +1120,10 @@ async function main() {
       ...imageAttachment,
       url: "/uploads/chat-attachments/photo.jpg",
       publicUrl: "/uploads/chat-attachments/photo.jpg",
-      fileUrl: "/uploads/chat-attachments/photo.jpg"
+      fileUrl: "/uploads/chat-attachments/photo.jpg",
+      downloadUrl: "/api/ai/chat/attachments/download?key=user_1/2026/06/photo.jpg",
+      storage: "netlify-blobs",
+      blobKey: "user_1/2026/06/photo.jpg"
     }],
     conversation_id: null,
     mode: "fast",
@@ -1111,6 +1141,9 @@ async function main() {
   assert.match(String(calls[0].init?.body), /"url":"\/uploads\/chat-attachments\/photo\.jpg"/);
   assert.match(String(calls[0].init?.body), /"publicUrl":"\/uploads\/chat-attachments\/photo\.jpg"/);
   assert.match(String(calls[0].init?.body), /"fileUrl":"\/uploads\/chat-attachments\/photo\.jpg"/);
+  assert.match(String(calls[0].init?.body), /"downloadUrl":"\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/photo\.jpg"/);
+  assert.match(String(calls[0].init?.body), /"storage":"netlify-blobs"/);
+  assert.match(String(calls[0].init?.body), /"blobKey":"user_1\/2026\/06\/photo\.jpg"/);
 
   globalThis.fetch = originalFetch;
   calls.length = 0;
@@ -1133,6 +1166,9 @@ async function main() {
           url: "/uploads/chat-attachments/uploaded-photo.jpg",
           publicUrl: "/uploads/chat-attachments/uploaded-photo.jpg",
           fileUrl: "/uploads/chat-attachments/uploaded-photo.jpg",
+          downloadUrl: "/api/ai/chat/attachments/download?key=user_1/2026/06/uploaded-photo.jpg",
+          storage: "netlify-blobs",
+          blobKey: "user_1/2026/06/uploaded-photo.jpg",
           reference_id: "uploaded-photo.jpg"
         }
       }
@@ -1157,6 +1193,9 @@ async function main() {
   assert.equal(uploadedAttachment.url, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.publicUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.fileUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
+  assert.equal(uploadedAttachment.downloadUrl, "/api/ai/chat/attachments/download?key=user_1/2026/06/uploaded-photo.jpg");
+  assert.equal(uploadedAttachment.storage, "netlify-blobs");
+  assert.equal(uploadedAttachment.blobKey, "user_1/2026/06/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.previewUrl, "blob:chat-image-preview");
 
   calls.length = 0;
@@ -1449,6 +1488,13 @@ async function main() {
   assert.match(chatAttachmentDownloadRouteText, /Content-Disposition/);
   assert.doesNotMatch(chatAttachmentDownloadRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentDownloadRouteText, /NETLIFY_BLOBS_TOKEN[\s\S]{0,260}Response/);
+  assert.match(aiChatAskText, /cleanPersistentAttachmentUrl/);
+  assert.match(aiChatAskText, /url:\s*cleanPersistentAttachmentUrl\(record\.url\)/);
+  assert.match(aiChatAskText, /publicUrl:\s*cleanPersistentAttachmentUrl\(record\.publicUrl\)/);
+  assert.match(aiChatAskText, /fileUrl:\s*cleanPersistentAttachmentUrl\(record\.fileUrl\)/);
+  assert.match(aiChatAskText, /downloadUrl:\s*cleanPersistentAttachmentUrl\(record\.downloadUrl\)/);
+  assert.match(aiChatAskText, /storage:\s*trimString\(record\.storage\)/);
+  assert.match(aiChatAskText, /blobKey:\s*trimString\(record\.blobKey\)/);
   assert.doesNotMatch(aiChatAskText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin\/kb/);
   assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
