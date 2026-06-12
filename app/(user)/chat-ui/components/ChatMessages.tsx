@@ -7,8 +7,12 @@ import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
 import { RichAnswerView } from "./RichAnswerView";
 import { SourceList } from "./SourceList";
-import { getCachedChatAttachmentPreviewUrl } from "../chat-ui-state";
-import type { ChatMessageView, ChatMode } from "../types";
+import {
+  getCachedChatAttachmentPreviewUrl,
+  getCurrentChatUserAvatarUrl,
+  getCurrentChatUserInitial
+} from "../chat-ui-state";
+import type { ChatMessageView, ChatMode, CurrentChatUser } from "../types";
 
 interface ChatMessagesProps {
   messages: ChatMessageView[];
@@ -16,6 +20,8 @@ interface ChatMessagesProps {
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
   onEditUserMessage?: (content: string) => void;
+  currentUser?: CurrentChatUser | null;
+  userAvatarUrl?: string | null;
 }
 
 function formatMessageTime(value: string) {
@@ -344,10 +350,14 @@ function UserMessageActions({
 
 function UserMessageBlock({
   message,
-  onEditUserMessage
+  onEditUserMessage,
+  currentUser,
+  userAvatarUrl
 }: {
   message: ChatMessageView;
   onEditUserMessage?: (content: string) => void;
+  currentUser?: CurrentChatUser | null;
+  userAvatarUrl?: string | null;
 }) {
   const content = message.content.trim();
 
@@ -368,14 +378,63 @@ function UserMessageBlock({
         )}
         <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
       </div>
-      <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
-        <User className="h-4 w-4" aria-hidden="true" />
-      </div>
+      <UserMessageAvatar currentUser={currentUser} userAvatarUrl={userAvatarUrl} />
     </>
   );
 }
 
-export function ChatMessages({ messages, loading, mode, onModeChange, onEditUserMessage }: ChatMessagesProps) {
+function UserMessageAvatar({
+  currentUser,
+  userAvatarUrl
+}: {
+  currentUser?: CurrentChatUser | null;
+  userAvatarUrl?: string | null;
+}) {
+  const avatarUrl = userAvatarUrl || getCurrentChatUserAvatarUrl(currentUser);
+  const [failed, setFailed] = React.useState(false);
+
+  React.useEffect(() => {
+    setFailed(false);
+  }, [avatarUrl]);
+
+  if (avatarUrl && !failed) {
+    return (
+      <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-bold text-slate-700">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={avatarUrl}
+          alt="当前用户头像"
+          className="h-full w-full object-cover"
+          onError={() => setFailed(true)}
+        />
+      </div>
+    );
+  }
+
+  if (currentUser) {
+    return (
+      <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white" aria-label="当前用户默认头像">
+        {getCurrentChatUserInitial(currentUser)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white" aria-label="当前用户默认头像">
+      <User className="h-4 w-4" aria-hidden="true" />
+    </div>
+  );
+}
+
+export function ChatMessages({
+  messages,
+  loading,
+  mode,
+  onModeChange,
+  onEditUserMessage,
+  currentUser = null,
+  userAvatarUrl = null
+}: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
 
   React.useEffect(() => {
@@ -416,7 +475,12 @@ export function ChatMessages({ messages, loading, mode, onModeChange, onEditUser
             className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
           >
             {isUser ? (
-              <UserMessageBlock message={message} onEditUserMessage={onEditUserMessage} />
+              <UserMessageBlock
+                message={message}
+                onEditUserMessage={onEditUserMessage}
+                currentUser={currentUser}
+                userAvatarUrl={userAvatarUrl}
+              />
             ) : (
               <>
             {!isUser ? (

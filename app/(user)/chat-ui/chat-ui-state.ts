@@ -169,7 +169,7 @@ export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undef
 }
 
 export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {
-  return cleanText(user?.avatar_url) || cleanText(user?.avatar) || null;
+  return cleanText(user?.avatar_url) || cleanText(user?.avatarUrl) || cleanText(user?.avatar) || null;
 }
 
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {

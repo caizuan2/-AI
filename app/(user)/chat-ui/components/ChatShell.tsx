@@ -282,6 +282,7 @@ export function ChatShell() {
         ? {
             ...user,
             avatar_url: nextAvatarUrl,
+            avatarUrl: nextAvatarUrl,
             avatar: nextAvatarUrl
           }
         : user
@@ -304,7 +305,7 @@ export function ChatShell() {
 
     try {
       const uploadedAttachments = await uploadChatAttachments(attachments).catch(() => {
-        throw new Error("图片上传失败，请重新选择后再发送。");
+        throw new Error("文件上传失败，请重新选择后再发送。");
       });
 
       const nextUserMessage = createUserMessage(text, uploadedAttachments);
@@ -426,6 +427,8 @@ export function ChatShell() {
                 mode={mode}
                 onModeChange={setMode}
                 onEditUserMessage={handleEditUserMessage}
+                currentUser={currentUser}
+                userAvatarUrl={currentAvatarUrl}
               />
             )}
           </div>
