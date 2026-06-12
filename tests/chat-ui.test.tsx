@@ -406,10 +406,10 @@ async function main() {
   assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
   assert.match(chatInputSource, /麦克风已开启，正在启动语音识别/);
   assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
-  assert.match(chatInputSource, /h-8 w-8/);
+  assert.match(chatInputSource, /h-7 w-7/);
   assert.match(chatInputSource, /border border-slate-950/);
   assert.doesNotMatch(chatInputSource, /border-2 border-slate-950/);
-  assert.match(chatInputSource, /<Plus className="h-4 w-4" strokeWidth=\{2\}/);
+  assert.match(chatInputSource, /<Plus className="h-3\.5 w-3\.5" strokeWidth=\{1\.9\}/);
 
   const validAvatarFile = new File(["avatar"], "avatar.png", {
     type: "image/png"
@@ -498,6 +498,18 @@ async function main() {
   assert.equal(payload.attachments[0].name, "contract.pdf");
   assert.equal(payload.attachments[0].metadata.source, "file");
   assert.equal(Object.prototype.hasOwnProperty.call(payload.attachments[0], "previewUrl"), false);
+  const imagePayload = createAskRequestPayload({
+    text: "  图片历史测试 ",
+    attachments: [imageAttachment],
+    conversation_id: "conv_1",
+    mode: "fast",
+    enable_deep_thinking: false,
+    enable_web_search: false
+  });
+
+  assert.equal(imagePayload.attachments[0].metadata.previewUrl, "blob:chat-image-preview");
+  assert.equal(imagePayload.attachments[0].metadata.url, "blob:chat-image-preview");
+  assert.equal(Object.prototype.hasOwnProperty.call(imagePayload.attachments[0], "previewUrl"), false);
 
   const localUserMessage = createUserMessage("退款流程怎么处理？", [imageAttachment, attachment]);
   const messages = appendAskResult([localUserMessage], localUserMessage.id, {
@@ -546,6 +558,11 @@ async function main() {
   assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
   assert.match(chatMessagesSource, /attachment\.src/);
   assert.match(chatMessagesSource, /attachment\.dataUrl/);
+  assert.match(chatMessagesSource, /attachment\.fileUrl/);
+  assert.match(chatMessagesSource, /attachment\.publicUrl/);
+  assert.match(chatMessagesSource, /attachment\.downloadUrl/);
+  assert.match(chatMessagesSource, /attachment\.path/);
+  assert.match(chatMessagesSource, /attachment\.storagePath/);
   const historyImageMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
@@ -562,10 +579,52 @@ async function main() {
             },
             {
               type: "image",
+              name: "preview-photo.jpg",
+              previewUrl: "blob:history-preview-url"
+            },
+            {
+              type: "image",
+              name: "url-photo.jpg",
+              url: "/uploads/url-photo.jpg"
+            },
+            {
+              type: "image",
               name: "metadata-photo.webp",
               metadata: {
                 dataUrl: "data:image/webp;base64,AAAA"
               }
+            },
+            {
+              type: "image",
+              name: "metadata-url-photo.jpg",
+              metadata: {
+                url: "/uploads/metadata-url-photo.jpg"
+              }
+            },
+            {
+              type: "image",
+              name: "file-url-photo.jpg",
+              fileUrl: "/uploads/file-url-photo.jpg"
+            },
+            {
+              type: "image",
+              name: "public-url-photo.jpg",
+              publicUrl: "https://example.com/public-url-photo.jpg"
+            },
+            {
+              type: "image",
+              name: "download-url-photo.jpg",
+              downloadUrl: "/api/files/download-url-photo.jpg"
+            },
+            {
+              type: "image",
+              name: "path-photo.jpg",
+              path: "/uploads/path-photo.jpg"
+            },
+            {
+              type: "image",
+              name: "storage-path-photo.jpg",
+              storagePath: "/uploads/storage-path-photo.jpg"
             },
             {
               type: "image",
@@ -581,10 +640,26 @@ async function main() {
     />
   );
 
+  assert.match(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
+  assert.match(historyImageMarkup, /blob:history-preview-url/);
+  assert.match(historyImageMarkup, /打开图片预览 url-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/url-photo\.jpg/);
   assert.match(historyImageMarkup, /打开图片预览 history-photo\.png/);
   assert.match(historyImageMarkup, /https:\/\/example\.com\/history-photo\.png/);
   assert.match(historyImageMarkup, /打开图片预览 metadata-photo\.webp/);
   assert.match(historyImageMarkup, /data:image\/webp;base64,AAAA/);
+  assert.match(historyImageMarkup, /打开图片预览 metadata-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/metadata-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 file-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/file-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 public-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /https:\/\/example\.com\/public-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 download-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/api\/files\/download-url-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 path-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/path-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 storage-path-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/storage-path-photo\.jpg/);
   assert.match(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
   assert.match(historyImageMarkup, /contract\.pdf/);
@@ -965,6 +1040,10 @@ async function main() {
   assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
   assert.equal(readdirSync("prisma/migrations").some((name) => /avatar|profile/i.test(name)), false);
+  const middlewareText = readFileSync("middleware.ts", "utf8");
+
+  assert.match(middlewareText, /pathname === "\/chat-ui"/);
+  assert.match(middlewareText, /camera=\(self\), microphone=\(self\), geolocation=\(\)/);
 
   URL.createObjectURL = originalCreateObjectURL;
   URL.revokeObjectURL = originalRevokeObjectURL;
