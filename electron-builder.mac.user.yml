@@ -1,0 +1,14 @@
+appId: com.aiknowledge.chat.desktop
+productName: AI知识库助手
+directories:
+  output: dist-app/macos
+files:
+  - electron/**
+  - package.json
+extraMetadata:
+  main: electron/main.cjs
+  defaultAppUrl: https://stately-sawine-1efd4d.netlify.app/chat-ui
+mac:
+  target:
+    - dmg
+  artifactName: ai-knowledge-chat.${ext}

@@ -5,7 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import AdminDownloadPage from "../app/admin-download/page";
 
 const adminAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
-const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
+const userCapacitorAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
+const userElectronAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<AdminDownloadPage />);
@@ -85,8 +86,8 @@ async function main() {
 
   const userCapacitorConfig = readFileSync("capacitor.config.ts", "utf8");
   const userElectronMain = readFileSync("electron/main.cjs", "utf8");
-  assert.match(userCapacitorConfig, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(userElectronMain, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(userCapacitorConfig, new RegExp(userCapacitorAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(userElectronMain, new RegExp(userElectronAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
 
   const loginPage = readFileSync("app/login/page.tsx", "utf8");
   assert.match(loginPage, /searchParams\.get\("next"\)/);

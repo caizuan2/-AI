@@ -13,6 +13,24 @@ const downloadLinks = [
     href: releaseInfo.desktopUrl,
     compatibilityHref: releaseInfo.desktopCompatibilityUrl,
     description: "适用于 Windows 桌面端的内部测试安装包。"
+  },
+  {
+    label: "iPhone iOS IPA",
+    href: "",
+    compatibilityHref: "",
+    description: "iOS 版本请通过 TestFlight 或管理员提供安装包，本页不提供不存在的 IPA 直链。"
+  },
+  {
+    label: "macOS DMG",
+    href: "",
+    compatibilityHref: "",
+    description: "macOS 版本请联系管理员获取，正式发布后建议通过 GitHub Release 或对象存储分发。"
+  },
+  {
+    label: "用户 Web 入口",
+    href: "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    compatibilityHref: "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui",
+    description: "不安装客户端时，可从浏览器进入用户端问答页面。"
   }
 ];
 
@@ -45,15 +63,30 @@ export default function DownloadPage() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           {downloadLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
+            <article
+              key={link.label}
               className="rounded-2xl border border-slate-200 bg-slate-50 p-5 transition hover:border-blue-300 hover:bg-blue-50"
             >
               <span className="block text-base font-semibold text-slate-950">{link.label}</span>
               <span className="mt-2 block text-sm leading-6 text-slate-600">{link.description}</span>
-              <span className="mt-3 block text-xs text-slate-500">兼容链接：{link.compatibilityHref}</span>
-            </a>
+              {link.href ? (
+                <>
+                  <a
+                    href={link.href}
+                    className="mt-4 inline-flex rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-blue-700"
+                  >
+                    打开下载链接
+                  </a>
+                  <span className="mt-3 block break-all text-xs text-slate-500">
+                    兼容链接：{link.compatibilityHref}
+                  </span>
+                </>
+              ) : (
+                <span className="mt-4 inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-500">
+                  即将提供 / 联系管理员获取
+                </span>
+              )}
+            </article>
           ))}
         </div>
 
@@ -61,6 +94,7 @@ export default function DownloadPage() {
           <p>Android 安装时如提示未知来源，请在系统设置中允许安装。</p>
           <p>新版 APK 支持 Web 层 OTA 后，普通界面、JS 和 CSS 可自动获取更新；如更新异常，仍可重新下载安装包。</p>
           <p>Windows 如提示未知发布者，是因为未进行代码签名，内部测试可继续安装。</p>
+          <p>iOS IPA 和 macOS DMG 需要在 macOS / Xcode 环境完成签名与发布，不提供假安装包直链。</p>
         </div>
       </section>
     </main>

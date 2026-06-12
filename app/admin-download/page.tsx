@@ -1,6 +1,8 @@
-﻿export const metadata = {
+import React from "react";
+
+export const metadata = {
   title: "AI知识库管理后台下载",
-  description: "管理员端 APK、Windows EXE 和 Web 管理端入口下载页",
+  description: "管理员端 APK、Windows EXE、iOS、macOS 和 Web 管理端入口下载页",
 };
 
 const adminApkUrl =
@@ -28,6 +30,20 @@ const items = [
     button: "下载管理员 EXE",
   },
   {
+    icon: "🍎",
+    title: "iPhone iOS IPA",
+    desc: "iOS 管理端请通过 TestFlight 或管理员提供安装包，本页不提供不存在的 IPA 直链。",
+    href: "",
+    button: "联系管理员获取",
+  },
+  {
+    icon: "🖥️",
+    title: "macOS DMG",
+    desc: "macOS 管理端请联系管理员获取，正式发布后建议通过 GitHub Release 或对象存储分发。",
+    href: "",
+    button: "即将提供",
+  },
+  {
     icon: "🌐",
     title: "Web 管理端",
     desc: "无需安装，直接通过浏览器访问管理员后台。",
@@ -50,7 +66,7 @@ export default function AdminDownloadPage() {
           </h1>
 
           <p className="mt-4 text-base leading-7 text-slate-600">
-            本页面仅供授权管理员使用。请选择 Android APK、Windows EXE
+            本页面仅供授权管理员使用。请选择 Android APK、Windows EXE、iOS、macOS
             或 Web 管理端入口。安装后请使用管理员账号登录。
           </p>
 
@@ -75,18 +91,26 @@ export default function AdminDownloadPage() {
                 {item.desc}
               </p>
 
-              <a
-                href={item.href}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-6 inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
-              >
-                {item.button}
-              </a>
+              {item.href ? (
+                <>
+                  <a
+                    href={item.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-6 inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                  >
+                    {item.button}
+                  </a>
 
-              <p className="mt-3 break-all text-xs leading-5 text-slate-400">
-                {item.href}
-              </p>
+                  <p className="mt-3 break-all text-xs leading-5 text-slate-400">
+                    {item.href}
+                  </p>
+                </>
+              ) : (
+                <span className="mt-6 inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+                  {item.button}
+                </span>
+              )}
             </article>
           ))}
         </div>
@@ -97,6 +121,7 @@ export default function AdminDownloadPage() {
           <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
             <li>Android 安装时如提示未知来源，请在系统设置中允许安装。</li>
             <li>Windows 如提示未知发布者，是因为安装包未进行代码签名，内部测试可继续安装。</li>
+            <li>iOS IPA 和 macOS DMG 需要在 macOS / Xcode 环境完成签名与发布，不提供假安装包直链。</li>
             <li>登录后应进入管理员后台 /ingest，不应进入用户端 /chat-ui。</li>
           </ul>
         </div>
@@ -104,3 +129,4 @@ export default function AdminDownloadPage() {
     </main>
   );
 }
+
