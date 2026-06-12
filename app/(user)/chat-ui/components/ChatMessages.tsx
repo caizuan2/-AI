@@ -31,6 +31,18 @@ function formatMessageTime(value: string) {
   }).format(date);
 }
 
+function formatAttachmentSize(size?: number) {
+  if (!size || !Number.isFinite(size)) {
+    return "";
+  }
+
+  if (size >= 1024 * 1024) {
+    return `${(size / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  return `${Math.max(1, Math.round(size / 1024))}KB`;
+}
+
 function shouldShowDebugSources() {
   return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
 }
@@ -230,11 +242,10 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
           );
         }
 
-        return (
-          <div
-            key={attachment.reference_id || attachment.id || `${name}-${index}`}
-            className="flex max-w-[260px] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm"
-          >
+        const fileSize = formatAttachmentSize(attachment.size);
+        const key = attachment.reference_id || attachment.id || `${name}-${index}`;
+        const fileCard = (
+          <>
             {isImage ? (
               <ImageIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             ) : (
@@ -242,10 +253,39 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
             )}
             <span className="min-w-0">
               <span className="block truncate">{name}</span>
+              {fileSize ? (
+                <span className="block truncate text-[11px] text-slate-400">{fileSize}</span>
+              ) : null}
               {isImage ? (
                 <span className="block truncate text-[11px] text-slate-400">图片预览不可用</span>
+              ) : !previewUrl ? (
+                <span className="block truncate text-[11px] text-slate-400">文件暂不可预览</span>
               ) : null}
             </span>
+          </>
+        );
+
+        if (previewUrl && !isImage) {
+          return (
+            <a
+              key={key}
+              href={previewUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex max-w-[260px] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+              aria-label={`打开文件 ${name}`}
+            >
+              {fileCard}
+            </a>
+          );
+        }
+
+        return (
+          <div
+            key={key}
+            className="flex max-w-[260px] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm"
+          >
+            {fileCard}
           </div>
         );
       })}

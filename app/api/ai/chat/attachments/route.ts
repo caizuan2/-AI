@@ -18,7 +18,11 @@ const allowedAttachmentMimeTypes = new Map([
   ["text/plain", "txt"],
   ["text/markdown", "md"],
   ["application/msword", "doc"],
-  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"]
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  ["application/vnd.ms-powerpoint", "ppt"],
+  ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+  ["application/vnd.ms-excel", "xls"],
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"]
 ]);
 
 function safeFileBaseName(name: string) {
@@ -31,7 +35,7 @@ function getAttachmentType(mimeType: string) {
 
 function validateAttachmentFile(file: File) {
   if (!allowedAttachmentMimeTypes.has(file.type)) {
-    throw new ValidationError("附件类型不支持，请重新选择图片、PDF、Word 或文本文件。");
+    throw new ValidationError("附件类型不支持，请重新选择图片、PDF、Office 或文本文件。");
   }
 
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
@@ -55,7 +59,7 @@ export async function POST(request: Request) {
 
   try {
     const formData = await request.formData();
-    const file = formData.get("file") ?? formData.get("attachment");
+    const file = formData.get("file") ?? formData.get("attachment") ?? formData.get("attachments");
 
     if (!(file instanceof File)) {
       throw new ValidationError("请上传聊天附件。");
@@ -84,6 +88,7 @@ export async function POST(request: Request) {
         size: file.size,
         url: publicUrl,
         publicUrl,
+        fileUrl: publicUrl,
         reference_id: storageName,
         metadata: {
           storage: "public/uploads/chat-attachments"
