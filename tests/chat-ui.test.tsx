@@ -95,6 +95,8 @@ async function main() {
   assert.match(shellMarkup, /发消息或按住说话/);
   assert.match(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
+  assert.match(shellMarkup, /发送消息/);
+  assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
   assert.doesNotMatch(shellMarkup, /11:54/);
   assert.doesNotMatch(shellMarkup, /⌁/);
   assert.doesNotMatch(shellMarkup, /麦克风权限未开启/);
@@ -377,11 +379,18 @@ async function main() {
   assert.match(chatInputMarkup, new RegExp(`accept="${CHAT_FILE_ACCEPT.replace(/\*/g, "\\*").replace(/\./g, "\\.")}"`));
   assert.match(chatInputMarkup, /multiple=""/);
   assert.match(chatInputMarkup, /capture="environment"/);
+  assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
+  assert.match(chatInputMarkup, /aria-label="发送消息"/);
+  assert.match(chatInputMarkup, /disabled=""/);
+  assert.match(chatInputMarkup, /bg-slate-200/);
   assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="打开相机"/);
   const chatInputComponentSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
 
   assert.match(chatInputComponentSource, /onFileUpload=\{\(\) => fileInputRef\.current\?\.click\(\)\}/);
+  assert.match(chatInputComponentSource, /onCameraOpen=\{\(\) => cameraInputRef\.current\?\.click\(\)\}/);
   assert.doesNotMatch(chatInputComponentSource, /setTimeout\([^)]*fileInputRef/);
+  assert.doesNotMatch(chatInputComponentSource, /onClick=\{\(\) => cameraInputRef\.current\?\.click\(\)\}/);
 
   const attachmentFile = new File(["合同内容"], "contract.pdf", {
     type: "application/pdf"
@@ -474,10 +483,28 @@ async function main() {
   assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
   assert.match(chatInputSource, /麦克风已开启，正在启动语音识别/);
   assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
-  assert.match(chatInputSource, /h-7 w-7/);
-  assert.match(chatInputSource, /border border-slate-950/);
+  assert.match(chatInputSource, /const hasText = value\.trim\(\)\.length > 0/);
+  assert.match(chatInputSource, /const canSend = hasText && !loading/);
+  assert.match(chatInputSource, /onClick=\{\(\) => void submitCurrentMessage\(\)\}/);
+  assert.match(chatInputSource, /disabled=\{!canSend\}/);
+  assert.match(chatInputSource, /enabled:bg-blue-600/);
+  assert.match(chatInputSource, /disabled:cursor-not-allowed/);
+  assert.match(chatInputSource, /<SendHorizontal className="h-4 w-4"/);
+  assert.match(chatInputSource, /<Plus className="h-6 w-6" strokeWidth=\{2\.2\}/);
   assert.doesNotMatch(chatInputSource, /border-2 border-slate-950/);
-  assert.match(chatInputSource, /<Plus className="h-3\.5 w-3\.5" strokeWidth=\{1\.9\}/);
+
+  const chatInputReadyMarkup = renderToStaticMarkup(
+    <ChatInput
+      value="可以发送"
+      loading={false}
+      onValueChange={() => undefined}
+      onSubmit={() => undefined}
+      onStatusMessage={() => undefined}
+    />
+  );
+
+  assert.doesNotMatch(chatInputReadyMarkup, /disabled=""/);
+  assert.match(chatInputReadyMarkup, /enabled:bg-blue-600/);
 
   const validAvatarFile = new File(["avatar"], "avatar.png", {
     type: "image/png"
@@ -683,7 +710,7 @@ async function main() {
   assert.equal(getCurrentChatUserAvatarUrl(avatarUser), "/uploads/avatars/user_1.png");
   assert.match(chatAvatarMarkup, /alt="当前用户头像"/);
   assert.match(chatAvatarMarkup, /src="\/uploads\/avatars\/user_1\.png"/);
-  assert.match(chatAvatarMarkup, /lucide-bot/);
+  assert.doesNotMatch(chatAvatarMarkup, /lucide-bot/);
   assert.equal(drawerWithAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
   assert.equal(chatAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
 
@@ -770,6 +797,10 @@ async function main() {
   assert.equal(copiedUserText, "退款流程怎么处理？");
   const chatMessagesSource = readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8");
 
+  assert.doesNotMatch(chatMessagesSource, /import \{ Bot/);
+  assert.doesNotMatch(chatMessagesSource, /<Bot className=/);
+  assert.match(chatMessagesSource, /text-\[11px\] leading-none text-slate-400/);
+  assert.doesNotMatch(chatMessagesSource, /bg-blue-600[\s\S]{0,220}formatMessageTime\(message\.created_at\)/);
   assert.match(chatMessagesSource, /图片加载失败/);
   assert.match(chatMessagesSource, /图片预览不可用/);
   assert.match(chatMessagesSource, /文件暂不可预览/);
@@ -790,6 +821,32 @@ async function main() {
   assert.match(chatMessagesSource, /attachment\.downloadUrl/);
   assert.match(chatMessagesSource, /attachment\.path/);
   assert.match(chatMessagesSource, /attachment\.storagePath/);
+  const userTimestampMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={[
+        {
+          id: "user-time-placement",
+          role: "user",
+          content: "用户消息时间在气泡外",
+          created_at: "2026-06-01T10:00:00.000Z",
+          attachments: []
+        }
+      ]}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+      currentUser={{
+        id: "user_time",
+        name: "时间用户",
+        licenseActivated: true
+      }}
+    />
+  );
+
+  assert.match(userTimestampMarkup, /text-right text-\[11px\]/);
+  assert.ok(userTimestampMarkup.indexOf("text-right text-[11px]") < userTimestampMarkup.indexOf("bg-blue-600"));
+  assert.ok(userTimestampMarkup.indexOf("bg-blue-600") < userTimestampMarkup.indexOf("用户消息时间在气泡外"));
+  assert.match(userTimestampMarkup, /当前用户默认头像/);
   const chatShellSourceForEdit = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
 
   assert.match(chatShellSourceForEdit, /function handleEditUserMessage/);

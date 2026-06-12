@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Camera, FileText, Image as ImageIcon, Mic, Plus, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Mic, Plus, SendHorizontal, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { AttachmentMenu } from "./AttachmentMenu";
 import { rememberChatAttachmentPreviewUrl } from "../chat-ui-state";
@@ -286,6 +286,8 @@ export function ChatInput({
   const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
   const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
   const valueRef = React.useRef(value);
+  const hasText = value.trim().length > 0;
+  const canSend = hasText && !loading;
 
   React.useEffect(() => {
     attachmentsRef.current = attachments;
@@ -464,14 +466,24 @@ export function ChatInput({
       />
 
       <div className="relative flex min-h-[56px] items-center gap-2 rounded-full bg-white px-3 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
-        <button
-          type="button"
-          onClick={() => cameraInputRef.current?.click()}
-          className="focus-ring inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100"
-          aria-label="打开相机"
-        >
-          <Camera className="h-7 w-7" strokeWidth={2.2} aria-hidden="true" />
-        </button>
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setAttachmentMenuOpen((open) => !open)}
+            className="focus-ring inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100"
+            aria-label="打开上传菜单"
+            aria-expanded={attachmentMenuOpen}
+          >
+            <Plus className="h-6 w-6" strokeWidth={2.2} aria-hidden="true" />
+          </button>
+          <AttachmentMenu
+            open={attachmentMenuOpen}
+            onSelect={() => setAttachmentMenuOpen(false)}
+            onPhotoUpload={() => photoInputRef.current?.click()}
+            onFileUpload={() => fileInputRef.current?.click()}
+            onCameraOpen={() => cameraInputRef.current?.click()}
+          />
+        </div>
 
         <Textarea
           value={value}
@@ -500,24 +512,15 @@ export function ChatInput({
           <Mic className="h-7 w-7" strokeWidth={2.2} aria-hidden="true" />
         </button>
 
-        <div className="relative">
-          <button
-            type="button"
-            onClick={() => setAttachmentMenuOpen((open) => !open)}
-            className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-slate-950 text-slate-950 hover:bg-slate-100"
-            aria-label="打开上传菜单"
-            aria-expanded={attachmentMenuOpen}
-          >
-            <Plus className="h-3.5 w-3.5" strokeWidth={1.9} aria-hidden="true" />
-          </button>
-          <AttachmentMenu
-            open={attachmentMenuOpen}
-            onSelect={() => setAttachmentMenuOpen(false)}
-            onPhotoUpload={() => photoInputRef.current?.click()}
-            onFileUpload={() => fileInputRef.current?.click()}
-            onCameraOpen={() => cameraInputRef.current?.click()}
-          />
-        </div>
+        <button
+          type="button"
+          onClick={() => void submitCurrentMessage()}
+          disabled={!canSend}
+          className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-400 transition enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed"
+          aria-label="发送消息"
+        >
+          <SendHorizontal className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+        </button>
       </div>
       {listening || interimTranscript ? (
         <div className="mt-2 px-3 text-xs font-medium text-blue-600">
