@@ -4,6 +4,7 @@ import * as React from "react";
 import { Camera, FileText, Image as ImageIcon, Mic, Plus, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { AttachmentMenu } from "./AttachmentMenu";
+import { rememberChatAttachmentPreviewUrl } from "../chat-ui-state";
 import type { ChatAttachmentDraft, ChatAttachmentSource, AttachmentType } from "../types";
 
 interface ChatInputProps {
@@ -158,8 +159,7 @@ function getAttachmentType(file: File, source: ChatAttachmentSource): Attachment
 export function createChatAttachmentFromFile(file: File, source: ChatAttachmentSource): ChatAttachmentDraft {
   const id = `attachment-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const previewUrl = imageAttachmentTypes.has(file.type) ? URL.createObjectURL(file) : undefined;
-
-  return {
+  const attachment = {
     id,
     type: getAttachmentType(file, source),
     source,
@@ -174,6 +174,10 @@ export function createChatAttachmentFromFile(file: File, source: ChatAttachmentS
       source
     }
   };
+
+  rememberChatAttachmentPreviewUrl(attachment);
+
+  return attachment;
 }
 
 export function removeChatAttachment(

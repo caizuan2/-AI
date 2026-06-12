@@ -54,6 +54,84 @@ function getAttachmentUrlMetadata(attachment: ChatAttachmentDraft) {
   };
 }
 
+const ATTACHMENT_PREVIEW_CACHE_PREFIX = "chat-ui:attachment-preview:";
+const attachmentPreviewCache = new Map<string, string>();
+
+function getAttachmentIdentityValues(attachment: ChatAttachmentDraft) {
+  const metadata = attachment.metadata ?? {};
+
+  return [
+    attachment.reference_id,
+    attachment.id,
+    attachment.name,
+    attachment.filename,
+    metadata.local_id,
+    metadata.reference_id,
+    metadata.referenceId
+  ]
+    .map(cleanText)
+    .filter(Boolean);
+}
+
+function getAttachmentPreviewCacheKey(value: string) {
+  return `${ATTACHMENT_PREVIEW_CACHE_PREFIX}${value}`;
+}
+
+function getAttachmentPreviewUrlForCache(attachment: ChatAttachmentDraft) {
+  return (
+    cleanText(attachment.previewUrl) ||
+    cleanText(attachment.url) ||
+    cleanText(attachment.src) ||
+    cleanText(attachment.dataUrl) ||
+    cleanText(attachment.fileUrl) ||
+    cleanText(attachment.publicUrl) ||
+    cleanText(attachment.downloadUrl) ||
+    cleanText(attachment.path) ||
+    cleanText(attachment.storagePath)
+  );
+}
+
+export function rememberChatAttachmentPreviewUrl(attachment: ChatAttachmentDraft) {
+  const previewUrl = getAttachmentPreviewUrlForCache(attachment);
+
+  if (!previewUrl) {
+    return;
+  }
+
+  for (const value of getAttachmentIdentityValues(attachment)) {
+    attachmentPreviewCache.set(value, previewUrl);
+
+    try {
+      window.sessionStorage.setItem(getAttachmentPreviewCacheKey(value), previewUrl);
+    } catch {
+      // Session storage is optional; the in-memory cache still covers the active page.
+    }
+  }
+}
+
+export function getCachedChatAttachmentPreviewUrl(attachment: ChatAttachmentDraft) {
+  for (const value of getAttachmentIdentityValues(attachment)) {
+    const cached = attachmentPreviewCache.get(value);
+
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const stored = window.sessionStorage.getItem(getAttachmentPreviewCacheKey(value));
+
+      if (stored) {
+        attachmentPreviewCache.set(value, stored);
+        return stored;
+      }
+    } catch {
+      // Ignore storage access failures in SSR, private mode, and restricted WebViews.
+    }
+  }
+
+  return "";
+}
+
 export function getCurrentChatUserDisplayName(user: CurrentChatUser | null | undefined) {
   const displayName =
     cleanText(user?.nickname) ||

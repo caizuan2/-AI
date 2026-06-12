@@ -21,6 +21,7 @@ import {
   getCurrentChatUserAccount,
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
+  getCachedChatAttachmentPreviewUrl,
   normalizeChatMode
 } from "../app/(user)/chat-ui/chat-ui-state";
 import {
@@ -342,6 +343,13 @@ async function main() {
   const imageAttachment = createChatAttachmentFromFile(new File(["image"], "photo.jpg", {
     type: "image/jpeg"
   }), "gallery");
+  assert.equal(getCachedChatAttachmentPreviewUrl({
+    type: "image",
+    name: "photo.jpg",
+    metadata: {
+      local_id: imageAttachment.id
+    }
+  }), "blob:chat-image-preview");
   const selectedAttachmentMarkup = renderToStaticMarkup(
     <SelectedAttachmentList
       attachments={[imageAttachment, attachment]}
@@ -628,6 +636,20 @@ async function main() {
             },
             {
               type: "image",
+              name: "cached-photo.jpg",
+              metadata: {
+                local_id: imageAttachment.id
+              }
+            },
+            {
+              type: "image",
+              filename: "filename-photo.png",
+              metadata: {
+                publicUrl: "/uploads/filename-photo.png"
+              }
+            },
+            {
+              type: "image",
               name: "lost-photo.jpg"
             },
             attachment
@@ -660,9 +682,40 @@ async function main() {
   assert.match(historyImageMarkup, /\/uploads\/path-photo\.jpg/);
   assert.match(historyImageMarkup, /打开图片预览 storage-path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/storage-path-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 cached-photo\.jpg/);
+  assert.match(historyImageMarkup, /blob:chat-image-preview/);
+  assert.match(historyImageMarkup, /打开图片预览 filename-photo\.png/);
+  assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
   assert.match(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
   assert.match(historyImageMarkup, /contract\.pdf/);
+  const stringAttachmentsMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={[
+        {
+          id: "history-string-attachments",
+          role: "user",
+          content: "字符串附件",
+          created_at: "2026-06-01T10:02:00.000Z",
+          attachments: JSON.stringify([
+            {
+              type: "image",
+              name: "json-string-photo.jpg",
+              metadata: {
+                url: "/uploads/json-string-photo.jpg"
+              }
+            }
+          ]) as unknown as []
+        }
+      ]}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+    />
+  );
+
+  assert.match(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
+  assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
   assert.match(chatMessagesMarkup, /现在建议你这样回复/);
   assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
   assert.match(chatMessagesMarkup, /核心判断/);

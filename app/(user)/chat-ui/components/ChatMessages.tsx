@@ -7,6 +7,7 @@ import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
 import { RichAnswerView } from "./RichAnswerView";
 import { SourceList } from "./SourceList";
+import { getCachedChatAttachmentPreviewUrl } from "../chat-ui-state";
 import type { ChatMessageView, ChatMode } from "../types";
 
 interface ChatMessagesProps {
@@ -49,41 +50,80 @@ function looksLikeImageUrl(value: string) {
   );
 }
 
+function normalizeAttachmentImageUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
+
+  if (!text || text.startsWith("data:") && !text.startsWith("data:image/")) {
+    return "";
+  }
+
+  if (
+    text.startsWith("http://") ||
+    text.startsWith("https://") ||
+    text.startsWith("blob:") ||
+    text.startsWith("data:image/") ||
+    text.startsWith("/")
+  ) {
+    return text;
+  }
+
+  if (looksLikeImageUrl(text)) {
+    const normalizedPath = text.replace(/^public\//, "");
+
+    if (normalizedPath.startsWith("uploads/")) {
+      return `/${normalizedPath}`;
+    }
+
+    const fileName = normalizedPath.split("/").filter(Boolean).at(-1);
+
+    return fileName ? `/uploads/${fileName}` : text;
+  }
+
+  return text;
+}
+
 function getAttachmentPreviewUrl(attachment: UserAttachment) {
   const metadata = attachment.metadata ?? {};
-
-  return (
-    getStringValue(attachment.previewUrl) ||
-    getStringValue(attachment.url) ||
-    getStringValue(attachment.src) ||
-    getStringValue(attachment.dataUrl) ||
-    getStringValue(attachment.fileUrl) ||
-    getStringValue(attachment.publicUrl) ||
-    getStringValue(attachment.downloadUrl) ||
-    getStringValue(attachment.path) ||
-    getStringValue(attachment.storagePath) ||
-    getStringValue(metadata.previewUrl) ||
-    getStringValue(metadata.url) ||
-    getStringValue(metadata.src) ||
-    getStringValue(metadata.dataUrl) ||
-    getStringValue(metadata.fileUrl) ||
-    getStringValue(metadata.publicUrl) ||
-    getStringValue(metadata.downloadUrl) ||
-    getStringValue(metadata.path) ||
-    getStringValue(metadata.storagePath)
+  const directUrl = (
+    normalizeAttachmentImageUrl(attachment.previewUrl) ||
+    normalizeAttachmentImageUrl(attachment.url) ||
+    normalizeAttachmentImageUrl(attachment.src) ||
+    normalizeAttachmentImageUrl(attachment.dataUrl) ||
+    normalizeAttachmentImageUrl(attachment.fileUrl) ||
+    normalizeAttachmentImageUrl(attachment.publicUrl) ||
+    normalizeAttachmentImageUrl(attachment.downloadUrl) ||
+    normalizeAttachmentImageUrl(attachment.path) ||
+    normalizeAttachmentImageUrl(attachment.storagePath) ||
+    normalizeAttachmentImageUrl(metadata.previewUrl) ||
+    normalizeAttachmentImageUrl(metadata.url) ||
+    normalizeAttachmentImageUrl(metadata.src) ||
+    normalizeAttachmentImageUrl(metadata.dataUrl) ||
+    normalizeAttachmentImageUrl(metadata.fileUrl) ||
+    normalizeAttachmentImageUrl(metadata.publicUrl) ||
+    normalizeAttachmentImageUrl(metadata.downloadUrl) ||
+    normalizeAttachmentImageUrl(metadata.path) ||
+    normalizeAttachmentImageUrl(metadata.storagePath)
   );
+
+  return directUrl || getCachedChatAttachmentPreviewUrl(attachment);
+}
+
+function looksLikeImageFileName(value: string) {
+  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(value.trim().split("?")[0]?.split("#")[0] ?? "");
 }
 
 function isImageAttachment(attachment: UserAttachment) {
   const mimeType = attachment.mimeType || attachment.mime_type || "";
   const previewUrl = getAttachmentPreviewUrl(attachment);
+  const fileName = getStringValue(attachment.name) || getStringValue(attachment.filename);
 
   return (
     attachment.type === "image" ||
     attachment.type === "gallery_photo" ||
     attachment.type === "camera_photo" ||
     mimeType.startsWith("image/") ||
-    looksLikeImageUrl(previewUrl)
+    looksLikeImageUrl(previewUrl) ||
+    looksLikeImageFileName(fileName)
   );
 }
 
@@ -127,17 +167,39 @@ function UserImageAttachment({
   );
 }
 
+function normalizeMessageAttachments(attachments: ChatMessageView["attachments"]): UserAttachment[] {
+  const value: unknown = attachments;
+
+  if (Array.isArray(value)) {
+    return value as UserAttachment[];
+  }
+
+  if (typeof value !== "string") {
+    return [];
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(value);
+
+    return Array.isArray(parsed) ? parsed as UserAttachment[] : [];
+  } catch {
+    return [];
+  }
+}
+
 function UserMessageAttachments({ attachments }: { attachments: ChatMessageView["attachments"] }) {
-  if (!attachments || attachments.length === 0) {
+  const normalizedAttachments = normalizeMessageAttachments(attachments);
+
+  if (normalizedAttachments.length === 0) {
     return null;
   }
 
   return (
     <div className="mb-3 space-y-2">
-      {attachments.map((attachment, index) => {
+      {normalizedAttachments.map((attachment, index) => {
         const isImage = isImageAttachment(attachment);
         const previewUrl = getAttachmentPreviewUrl(attachment);
-        const name = attachment.name || `附件 ${index + 1}`;
+        const name = attachment.name || attachment.filename || `附件 ${index + 1}`;
 
         if (isImage && previewUrl) {
           return (
