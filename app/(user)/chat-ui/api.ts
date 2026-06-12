@@ -108,6 +108,7 @@ export async function uploadChatAttachment(attachment: ChatAttachmentDraft) {
 
   formData.set("file", attachment.file);
   formData.set("attachment", attachment.file);
+  formData.set("attachments", attachment.file);
 
   const response = await fetch("/api/ai/chat/attachments", {
     method: "POST",

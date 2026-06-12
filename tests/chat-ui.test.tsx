@@ -109,6 +109,7 @@ async function main() {
   assert.ok(
     chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChat({")
   );
+  assert.match(chatShellSource, /文件上传失败，请重新选择后再发送/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
@@ -370,8 +371,13 @@ async function main() {
 
   assert.match(chatInputMarkup, /accept="image\/\*"/);
   assert.match(chatInputMarkup, new RegExp(`accept="${CHAT_FILE_ACCEPT.replace(/\*/g, "\\*").replace(/\./g, "\\.")}"`));
+  assert.match(chatInputMarkup, /multiple=""/);
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
+  const chatInputComponentSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
+
+  assert.match(chatInputComponentSource, /onFileUpload=\{\(\) => fileInputRef\.current\?\.click\(\)\}/);
+  assert.doesNotMatch(chatInputComponentSource, /setTimeout\([^)]*fileInputRef/);
 
   const attachmentFile = new File(["合同内容"], "contract.pdf", {
     type: "application/pdf"
@@ -406,6 +412,7 @@ async function main() {
   assert.match(selectedAttachmentMarkup, /<img/);
   assert.match(selectedAttachmentMarkup, /photo\.jpg/);
   assert.match(selectedAttachmentMarkup, /contract\.pdf/);
+  assert.match(selectedAttachmentMarkup, /1KB/);
   assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
   assert.equal(validateChatAttachmentFile(new File([new Uint8Array(10 * 1024 * 1024 + 1)], "big.pdf", {
     type: "application/pdf"
@@ -572,7 +579,8 @@ async function main() {
       ...imageAttachment,
       filename: "photo.jpg",
       url: "/uploads/chat-attachments/photo.jpg",
-      publicUrl: "/uploads/chat-attachments/photo.jpg"
+      publicUrl: "/uploads/chat-attachments/photo.jpg",
+      fileUrl: "/uploads/chat-attachments/photo.jpg"
     }],
     conversation_id: "conv_1",
     mode: "fast",
@@ -582,8 +590,10 @@ async function main() {
 
   assert.equal(uploadedImagePayload.attachments[0].url, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].publicUrl, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].fileUrl, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].metadata.url, "/uploads/chat-attachments/photo.jpg");
   assert.equal(uploadedImagePayload.attachments[0].metadata.publicUrl, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].metadata.fileUrl, "/uploads/chat-attachments/photo.jpg");
 
   const localUserMessage = createUserMessage("退款流程怎么处理？", [imageAttachment, attachment]);
   const messages = appendAskResult([localUserMessage], localUserMessage.id, {
@@ -657,6 +667,9 @@ async function main() {
 
   assert.match(chatMessagesSource, /图片加载失败/);
   assert.match(chatMessagesSource, /图片预览不可用/);
+  assert.match(chatMessagesSource, /文件暂不可预览/);
+  assert.match(chatMessagesSource, /打开文件 \$\{name\}/);
+  assert.match(chatMessagesSource, /function formatAttachmentSize/);
   assert.match(chatMessagesSource, /function UserMessageBlock/);
   assert.match(chatMessagesSource, /function UserMessageActions/);
   assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
@@ -754,6 +767,12 @@ async function main() {
               type: "image",
               name: "lost-photo.jpg"
             },
+            {
+              type: "file",
+              name: "history-contract.pdf",
+              size: 2048,
+              url: "/uploads/chat-attachments/history-contract.pdf"
+            },
             attachment
           ]
         }
@@ -790,7 +809,11 @@ async function main() {
   assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
   assert.match(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
+  assert.match(historyImageMarkup, /打开文件 history-contract\.pdf/);
+  assert.match(historyImageMarkup, /\/uploads\/chat-attachments\/history-contract\.pdf/);
+  assert.match(historyImageMarkup, /2KB/);
   assert.match(historyImageMarkup, /contract\.pdf/);
+  assert.match(historyImageMarkup, /文件暂不可预览/);
   const stringAttachmentsMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
@@ -963,7 +986,8 @@ async function main() {
     attachments: [{
       ...imageAttachment,
       url: "/uploads/chat-attachments/photo.jpg",
-      publicUrl: "/uploads/chat-attachments/photo.jpg"
+      publicUrl: "/uploads/chat-attachments/photo.jpg",
+      fileUrl: "/uploads/chat-attachments/photo.jpg"
     }],
     conversation_id: null,
     mode: "fast",
@@ -979,6 +1003,7 @@ async function main() {
   assert.match(String(calls[0].init?.body), /"attachments":\[/);
   assert.match(String(calls[0].init?.body), /"url":"\/uploads\/chat-attachments\/photo\.jpg"/);
   assert.match(String(calls[0].init?.body), /"publicUrl":"\/uploads\/chat-attachments\/photo\.jpg"/);
+  assert.match(String(calls[0].init?.body), /"fileUrl":"\/uploads\/chat-attachments\/photo\.jpg"/);
 
   globalThis.fetch = originalFetch;
   calls.length = 0;
@@ -1000,6 +1025,7 @@ async function main() {
           size: 5,
           url: "/uploads/chat-attachments/uploaded-photo.jpg",
           publicUrl: "/uploads/chat-attachments/uploaded-photo.jpg",
+          fileUrl: "/uploads/chat-attachments/uploaded-photo.jpg",
           reference_id: "uploaded-photo.jpg"
         }
       }
@@ -1018,8 +1044,10 @@ async function main() {
   assert.ok(calls[0].init?.body instanceof FormData);
   assert.equal((calls[0].init?.body as FormData).get("file"), imageAttachment.file);
   assert.equal((calls[0].init?.body as FormData).get("attachment"), imageAttachment.file);
+  assert.equal((calls[0].init?.body as FormData).get("attachments"), imageAttachment.file);
   assert.equal(uploadedAttachment.url, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.publicUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
+  assert.equal(uploadedAttachment.fileUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
   assert.equal(uploadedAttachment.previewUrl, "blob:chat-image-preview");
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
@@ -1240,8 +1268,13 @@ async function main() {
 
   assert.match(avatarRouteText, /formData\.get\("avatar"\)\s*\?\?\s*formData\.get\("file"\)/);
   assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
-  assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)/);
+  assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)\s*\?\?\s*formData\.get\("attachments"\)/);
   assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(chatAttachmentRouteText, /application\/vnd\.ms-powerpoint/);
+  assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
+  assert.match(chatAttachmentRouteText, /application\/vnd\.ms-excel/);
+  assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+  assert.match(chatAttachmentRouteText, /fileUrl:\s*publicUrl/);
   assert.match(aiChatAskText, /persistedAttachmentUrlKeys/);
   assert.match(aiChatAskText, /normalizeStoredAttachments/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
