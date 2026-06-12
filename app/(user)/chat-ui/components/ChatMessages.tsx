@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bot, FileText, Image as ImageIcon, Loader2, User } from "lucide-react";
+import { Bot, Check, Copy, FileText, Image as ImageIcon, Loader2, Pencil, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
@@ -15,6 +15,7 @@ interface ChatMessagesProps {
   loading: boolean;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
+  onEditUserMessage?: (content: string) => void;
 }
 
 function formatMessageTime(value: string) {
@@ -108,6 +109,24 @@ function getAttachmentPreviewUrl(attachment: UserAttachment) {
   return directUrl || getCachedChatAttachmentPreviewUrl(attachment);
 }
 
+export function getUserMessageCopyText(message: Pick<ChatMessageView, "content" | "attachments">) {
+  const content = message.content.trim();
+
+  if (content) {
+    return content;
+  }
+
+  const names = normalizeMessageAttachments(message.attachments)
+    .map((attachment, index) => attachment.name || attachment.filename || `附件 ${index + 1}`)
+    .filter(Boolean);
+
+  return names.length > 0 ? names.join("\n") : "暂无文字可复制";
+}
+
+export async function copyUserMessageToClipboard(content: string, clipboard: Pick<Clipboard, "writeText">) {
+  await clipboard.writeText(content);
+}
+
 function looksLikeImageFileName(value: string) {
   return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(value.trim().split("?")[0]?.split("#")[0] ?? "");
 }
@@ -138,9 +157,9 @@ function UserImageAttachment({
 
   if (failed) {
     return (
-      <div className="max-w-[240px] rounded-2xl bg-white/15 px-3 py-3 text-xs text-blue-50 ring-1 ring-white/20">
+      <div className="max-w-[260px] rounded-2xl border border-slate-200 bg-slate-100 px-3 py-3 text-xs font-medium text-slate-500">
         图片加载失败
-        <span className="mt-1 block truncate text-blue-100/80">{name}</span>
+        <span className="mt-1 block truncate text-slate-400">{name}</span>
       </div>
     );
   }
@@ -150,15 +169,15 @@ function UserImageAttachment({
       href={previewUrl}
       target="_blank"
       rel="noreferrer"
-      className="block max-w-[240px] overflow-hidden rounded-2xl bg-white/15 text-left text-xs text-blue-50 ring-1 ring-white/20"
+      className="block max-w-[260px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
       aria-label={`打开图片预览 ${name}`}
     >
-      <span className="block max-h-64 overflow-hidden bg-white/10">
+      <span className="block max-h-[260px] overflow-hidden bg-slate-100">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={previewUrl}
           alt={name}
-          className="max-h-64 w-full object-cover"
+          className="max-h-[260px] w-full object-cover"
           onError={() => setFailed(true)}
         />
       </span>
@@ -195,7 +214,7 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
   }
 
   return (
-    <div className="mb-3 space-y-2">
+    <div className="grid max-w-[280px] grid-cols-1 justify-items-end gap-2 sm:max-w-[560px] sm:grid-cols-2">
       {normalizedAttachments.map((attachment, index) => {
         const isImage = isImageAttachment(attachment);
         const previewUrl = getAttachmentPreviewUrl(attachment);
@@ -214,7 +233,7 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
         return (
           <div
             key={attachment.reference_id || attachment.id || `${name}-${index}`}
-            className="flex max-w-[240px] items-center gap-2 rounded-2xl bg-white/15 px-2 py-1.5 text-xs text-white"
+            className="flex max-w-[260px] items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 shadow-sm"
           >
             {isImage ? (
               <ImageIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -224,7 +243,7 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
             <span className="min-w-0">
               <span className="block truncate">{name}</span>
               {isImage ? (
-                <span className="block truncate text-[11px] text-blue-100/80">图片预览不可用</span>
+                <span className="block truncate text-[11px] text-slate-400">图片预览不可用</span>
               ) : null}
             </span>
           </div>
@@ -234,7 +253,89 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
   );
 }
 
-export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMessagesProps) {
+function UserMessageActions({
+  message,
+  onEditUserMessage
+}: {
+  message: ChatMessageView;
+  onEditUserMessage?: (content: string) => void;
+}) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function handleCopy() {
+    const copyText = getUserMessageCopyText(message);
+
+    if (!navigator.clipboard) {
+      return;
+    }
+
+    await copyUserMessageToClipboard(copyText, navigator.clipboard);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1200);
+  }
+
+  function handleEdit() {
+    onEditUserMessage?.(message.content);
+  }
+
+  return (
+    <div className="flex items-center justify-end gap-2 pr-1">
+      <button
+        type="button"
+        onClick={handleCopy}
+        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+        aria-label="复制用户消息"
+      >
+        {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+        {copied ? "已复制" : "复制"}
+      </button>
+      <button
+        type="button"
+        onClick={handleEdit}
+        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+        aria-label="编辑用户消息"
+      >
+        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+        编辑
+      </button>
+    </div>
+  );
+}
+
+function UserMessageBlock({
+  message,
+  onEditUserMessage
+}: {
+  message: ChatMessageView;
+  onEditUserMessage?: (content: string) => void;
+}) {
+  const content = message.content.trim();
+
+  return (
+    <>
+      <div className="flex min-w-0 max-w-[min(760px,88%)] flex-col items-end gap-2 text-sm leading-7">
+        <UserMessageAttachments attachments={message.attachments} />
+        {content ? (
+          <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
+            <div className="whitespace-pre-wrap break-words">{content}</div>
+            {message.pending ? (
+              <div className="mt-2 text-xs text-blue-100">发送中...</div>
+            ) : null}
+            <div className="mt-2 text-xs text-blue-100">{formatMessageTime(message.created_at)}</div>
+          </div>
+        ) : (
+          <div className="pr-1 text-xs text-slate-400">{formatMessageTime(message.created_at)}</div>
+        )}
+        <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
+      </div>
+      <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
+        <User className="h-4 w-4" aria-hidden="true" />
+      </div>
+    </>
+  );
+}
+
+export function ChatMessages({ messages, loading, mode, onModeChange, onEditUserMessage }: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
 
   React.useEffect(() => {
@@ -246,7 +347,7 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
       const blobUrls = new Set<string>();
 
       for (const message of messagesRef.current) {
-        for (const attachment of message.attachments ?? []) {
+        for (const attachment of normalizeMessageAttachments(message.attachments)) {
           const previewUrl = getAttachmentPreviewUrl(attachment);
 
           if (previewUrl.startsWith("blob:")) {
@@ -274,6 +375,10 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
             key={message.id}
             className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
           >
+            {isUser ? (
+              <UserMessageBlock message={message} onEditUserMessage={onEditUserMessage} />
+            ) : (
+              <>
             {!isUser ? (
               <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
                 <Bot className="h-4 w-4" aria-hidden="true" />
@@ -288,37 +393,24 @@ export function ChatMessages({ messages, loading, mode, onModeChange }: ChatMess
                   : "rounded-bl-lg border border-slate-200 bg-white text-slate-900"
               )}
             >
-              {isUser ? (
-                <>
-                  <UserMessageAttachments attachments={message.attachments} />
-                  <div className="whitespace-pre-wrap break-words">{message.content}</div>
-                </>
-              ) : (
-                <RichAnswerView
-                  answer={message.content}
-                  customerAnswer={message.customer_answer}
-                  providerStatus={message.provider_status}
-                />
-              )}
+              <RichAnswerView
+                answer={message.content}
+                customerAnswer={message.customer_answer}
+                providerStatus={message.provider_status}
+              />
               {message.pending ? (
                 <div className="mt-2 text-xs opacity-80">发送中...</div>
               ) : null}
-              {!isUser ? (
-                <CustomerAnswerCard content={message.customer_answer} />
-              ) : null}
+              <CustomerAnswerCard content={message.customer_answer} />
               {showSources ? (
                 <SourceList sources={message.sources} confidence={message.confidence} />
               ) : null}
-              <div className={cn("mt-2 text-xs", isUser ? "text-blue-100" : "text-slate-400")}>
+              <div className="mt-2 text-xs text-slate-400">
                 {formatMessageTime(message.created_at)}
               </div>
             </div>
-
-            {isUser ? (
-              <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white">
-                <User className="h-4 w-4" aria-hidden="true" />
-              </div>
-            ) : null}
+              </>
+            )}
           </article>
         );
       })}

@@ -47,7 +47,11 @@ import {
   validateChatAttachmentFile
 } from "../app/(user)/chat-ui/components/ChatInput";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
-import { ChatMessages } from "../app/(user)/chat-ui/components/ChatMessages";
+import {
+  ChatMessages,
+  copyUserMessageToClipboard,
+  getUserMessageCopyText
+} from "../app/(user)/chat-ui/components/ChatMessages";
 import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
 import { ChatSettingsMenu } from "../app/(user)/chat-ui/components/ChatSettingsMenu";
 import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarDrawer";
@@ -584,10 +588,41 @@ async function main() {
   assert.match(chatMessagesMarkup, /<img/);
   assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
+  assert.match(chatMessagesMarkup, /aria-label="复制用户消息"/);
+  assert.match(chatMessagesMarkup, /aria-label="编辑用户消息"/);
+  assert.ok(
+    chatMessagesMarkup.indexOf("打开图片预览 photo.jpg") < chatMessagesMarkup.indexOf("退款流程怎么处理？")
+  );
+  assert.ok(
+    chatMessagesMarkup.indexOf("退款流程怎么处理？") < chatMessagesMarkup.indexOf("aria-label=\"复制用户消息\"")
+  );
+  assert.ok(
+    chatMessagesMarkup.indexOf("bg-slate-100") < chatMessagesMarkup.indexOf("bg-blue-600")
+  );
+  assert.ok(
+    chatMessagesMarkup.indexOf("bg-blue-600") < chatMessagesMarkup.indexOf("aria-label=\"编辑用户消息\"")
+  );
+  assert.equal(getUserMessageCopyText(messages[0]), "退款流程怎么处理？");
+  assert.equal(getUserMessageCopyText({
+    content: "",
+    attachments: [imageAttachment]
+  }), "photo.jpg");
+  let copiedUserText = "";
+
+  await copyUserMessageToClipboard(getUserMessageCopyText(messages[0]), {
+    writeText: async (value) => {
+      copiedUserText = value;
+    }
+  });
+
+  assert.equal(copiedUserText, "退款流程怎么处理？");
   const chatMessagesSource = readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8");
 
   assert.match(chatMessagesSource, /图片加载失败/);
   assert.match(chatMessagesSource, /图片预览不可用/);
+  assert.match(chatMessagesSource, /function UserMessageBlock/);
+  assert.match(chatMessagesSource, /function UserMessageActions/);
+  assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
   assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
   assert.match(chatMessagesSource, /attachment\.src/);
   assert.match(chatMessagesSource, /attachment\.dataUrl/);
@@ -596,6 +631,11 @@ async function main() {
   assert.match(chatMessagesSource, /attachment\.downloadUrl/);
   assert.match(chatMessagesSource, /attachment\.path/);
   assert.match(chatMessagesSource, /attachment\.storagePath/);
+  const chatShellSourceForEdit = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
+
+  assert.match(chatShellSourceForEdit, /function handleEditUserMessage/);
+  assert.match(chatShellSourceForEdit, /setInput\(content\)/);
+  assert.match(chatShellSourceForEdit, /onEditUserMessage=\{handleEditUserMessage\}/);
   const historyImageMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
