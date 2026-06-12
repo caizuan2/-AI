@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import ChatUiPage from "../app/(user)/chat-ui/page";
 import {
   askChat,
   changeCurrentUserPassword,
@@ -53,7 +52,14 @@ import {
   getUserMessageCopyText
 } from "../app/(user)/chat-ui/components/ChatMessages";
 import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
-import { ChatSettingsMenu } from "../app/(user)/chat-ui/components/ChatSettingsMenu";
+import {
+  ChatSettingsMenu,
+  SwitchAccountConfirmDialog
+} from "../app/(user)/chat-ui/components/ChatSettingsMenu";
+import {
+  isChatUiAuthReady,
+  shouldRedirectChatUiAuth
+} from "../app/(user)/chat-ui/components/ClientAuthGate";
 import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarDrawer";
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
@@ -68,10 +74,10 @@ import {
 } from "../app/(user)/chat-ui/lib/answer-format";
 
 async function main() {
-  const pageMarkup = renderToStaticMarkup(<ChatUiPage />);
+  const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
-  assert.match(pageMarkup, /AI 知识库助手/);
-  assert.match(pageMarkup, /使用快速模式开始对话/);
+  assert.match(chatUiPageSource, /<ClientAuthGate>/);
+  assert.match(chatUiPageSource, /<ChatShell \/>/);
 
   const shellMarkup = renderToStaticMarkup(<ChatShell />);
 
@@ -312,7 +318,38 @@ async function main() {
   assert.match(settingsMarkup, /退出登录/);
   assert.match(settingsMarkup, /修改密码/);
   assert.match(settingsMarkup, /切换账号/);
+  assert.doesNotMatch(settingsMarkup, /使用其他账号登录/);
+  const switchAccountDialogMarkup = renderToStaticMarkup(
+    <SwitchAccountConfirmDialog
+      open
+      account="13360587600"
+      onCancel={() => undefined}
+      onConfirm={() => undefined}
+    />
+  );
+
+  assert.match(switchAccountDialogMarkup, /切换账号/);
+  assert.match(switchAccountDialogMarkup, /当前账号：13360587600/);
+  assert.match(switchAccountDialogMarkup, /使用其他账号登录/);
+  assert.match(switchAccountDialogMarkup, /取消/);
+  const settingsSource = readFileSync("app/(user)/chat-ui/components/ChatSettingsMenu.tsx", "utf8");
+
+  assert.match(settingsSource, /setSwitchAccountOpen\(true\)/);
+  assert.match(settingsSource, /onConfirm=\{\(\) => \{/);
+  assert.match(settingsSource, /onSwitchAccount\?\.\(\)/);
+  assert.match(settingsSource, /onClick=\{onLogout\}/);
+  assert.ok(settingsSource.indexOf("setSwitchAccountOpen(true)") < settingsSource.indexOf("onSwitchAccount?.()"));
   assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/chat-ui");
+  assert.equal(isChatUiAuthReady(200), true);
+  assert.equal(isChatUiAuthReady(204), true);
+  assert.equal(shouldRedirectChatUiAuth(401), true);
+  assert.equal(shouldRedirectChatUiAuth(500), false);
+  const authGateSource = readFileSync("app/(user)/chat-ui/components/ClientAuthGate.tsx", "utf8");
+
+  assert.match(authGateSource, /fetch\("\/api\/auth\/me"/);
+  assert.match(authGateSource, /router\.replace\(USER_CHAT_LOGIN_URL\)/);
+  assert.match(authGateSource, /网络异常，请稍后重试/);
+  assert.match(authGateSource, /正在检查登录状态/);
 
   const attachmentMenuMarkup = renderToStaticMarkup(<AttachmentMenu open />);
 

@@ -3,6 +3,8 @@ package com.aiknowledge.chat;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
+import android.webkit.CookieManager;
+import android.webkit.WebSettings;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import com.getcapacitor.Bridge;
@@ -20,7 +22,10 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
 
         if (getBridge() != null && getBridge().getWebView() != null) {
-            getBridge().getWebView().setWebViewClient(new AppRouteWebViewClient(getBridge(), isAdminShell()));
+            WebView webView = getBridge().getWebView();
+
+            configureSessionPersistence(webView);
+            webView.setWebViewClient(new AppRouteWebViewClient(getBridge(), isAdminShell()));
         }
     }
 
@@ -36,6 +41,17 @@ public class MainActivity extends BridgeActivity {
 
     private boolean isAdminShell() {
         return ADMIN_APP_PACKAGE.equals(getPackageName());
+    }
+
+    private void configureSessionPersistence(WebView webView) {
+        WebSettings settings = webView.getSettings();
+
+        settings.setDomStorageEnabled(true);
+        settings.setDatabaseEnabled(true);
+
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.setAcceptCookie(true);
+        cookieManager.setAcceptThirdPartyCookies(webView, true);
     }
 
     private static boolean isSameAppOrigin(Uri uri) {
