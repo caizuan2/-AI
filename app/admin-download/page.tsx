@@ -1,32 +1,27 @@
 import React from "react";
+import { DownloadCopyButton } from "@/components/download-copy-button";
+import releaseInfo from "../../public/releases/latest.json";
 
 export const metadata = {
   title: "AI知识库管理后台下载",
   description: "管理员端 APK、Windows EXE、iOS、macOS 和 Web 管理端入口下载页",
 };
 
-const adminApkUrl =
-  "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk";
-
-const adminExeUrl =
-  "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe";
-
-const adminWebUrl =
-  "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
+const adminRelease = releaseInfo.admin;
 
 const items = [
   {
     icon: "📱",
     title: "Android APK",
     desc: "适用于安卓手机和平板，安装后请使用管理员账号登录。",
-    href: adminApkUrl,
+    href: adminRelease.apk_url,
     button: "下载管理员 APK",
   },
   {
     icon: "💻",
     title: "Windows EXE",
     desc: "适用于 Windows 电脑，安装后进入管理员登录页面。",
-    href: adminExeUrl,
+    href: adminRelease.exe_url,
     button: "下载管理员 EXE",
   },
   {
@@ -47,10 +42,14 @@ const items = [
     icon: "🌐",
     title: "Web 管理端",
     desc: "无需安装，直接通过浏览器访问管理员后台。",
-    href: adminWebUrl,
+    href: adminRelease.web_url,
     button: "打开 Web 管理端",
   },
 ];
+
+function getUpdatedDate() {
+  return releaseInfo.updated_at.slice(0, 10);
+}
 
 export default function AdminDownloadPage() {
   return (
@@ -69,6 +68,21 @@ export default function AdminDownloadPage() {
             本页面仅供授权管理员使用。请选择 Android APK、Windows EXE、iOS、macOS
             或 Web 管理端入口。安装后请使用管理员账号登录。
           </p>
+
+          <div className="mt-6 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm leading-6 text-emerald-900">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="rounded-full bg-white px-3 py-1 font-semibold text-emerald-700">
+                最新版本 {adminRelease.version}
+              </span>
+              <span>构建号：{adminRelease.build}</span>
+              <span>更新日期：{getUpdatedDate()}</span>
+            </div>
+            <ul className="mt-3 list-disc space-y-1 pl-5">
+              {adminRelease.changelog.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
 
           <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-800">
             管理员端具备知识库投喂和管理能力，请勿公开分享安装包或账号信息。
@@ -93,21 +107,24 @@ export default function AdminDownloadPage() {
 
               {item.href ? (
                 <>
-                  <a
-                    href={item.href}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="mt-6 inline-flex items-center justify-center rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
-                  >
-                    {item.button}
-                  </a>
+                  <div className="mt-6 flex flex-col gap-2">
+                    <a
+                      href={item.href}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex min-h-11 items-center justify-center rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700"
+                    >
+                      {item.button}
+                    </a>
+                    <DownloadCopyButton value={item.href} />
+                  </div>
 
                   <p className="mt-3 break-all text-xs leading-5 text-slate-400">
                     {item.href}
                   </p>
                 </>
               ) : (
-                <span className="mt-6 inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
+                <span className="mt-6 inline-flex items-center justify-center rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">
                   {item.button}
                 </span>
               )}
@@ -129,4 +146,3 @@ export default function AdminDownloadPage() {
     </main>
   );
 }
-
