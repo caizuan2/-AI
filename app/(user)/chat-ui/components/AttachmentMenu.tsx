@@ -56,7 +56,7 @@ export function AttachmentMenu({
   }
 
   return (
-    <div className="absolute bottom-14 right-0 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+    <div className="absolute bottom-14 left-0 z-30 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
       <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2 text-xs font-semibold text-slate-500">
         <Upload className="h-3.5 w-3.5" aria-hidden="true" />
         上传入口
