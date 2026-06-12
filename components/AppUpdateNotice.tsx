@@ -6,7 +6,7 @@ import {
   canDismissUpdate,
   checkAppUpdate,
   detectAppPlatform,
-  resolveUpdateUrl,
+  resolveUpdateTarget,
   shouldSkipUpdateNotice,
   snoozeUpdateNotice,
   type AppUpdateResult
@@ -30,6 +30,13 @@ interface AppUpdateNoticeDialogProps {
   onSnooze: () => void;
 }
 
+interface UpdateWindowLike {
+  open?: (url: string, target: string, features: string) => { opener?: unknown } | null;
+  location?: {
+    href: string;
+  };
+}
+
 const platformUpdateTips: Record<ReturnType<typeof detectAppPlatform>, string> = {
   android: "Android 安装包需要下载后手动安装；如提示未知来源，请在系统设置中允许安装。",
   windows: "Windows 安装包将通过 EXE 下载链接获取，下载后按提示安装即可。",
@@ -38,6 +45,50 @@ const platformUpdateTips: Record<ReturnType<typeof detectAppPlatform>, string> =
   web: "Web 端会打开最新在线地址，无需安装。",
   unknown: "将打开下载页，请选择适合当前设备的安装入口。"
 };
+
+function getBrowserWindow(): UpdateWindowLike | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+
+  return {
+    open: window.open.bind(window),
+    location: window.location
+  };
+}
+
+export function openUpdateUrl(url: string, browserWindow = getBrowserWindow()) {
+  const targetUrl = url.trim();
+
+  if (!targetUrl || !browserWindow) {
+    return false;
+  }
+
+  let openedWindow: { opener?: unknown } | null = null;
+
+  try {
+    openedWindow = browserWindow.open?.(targetUrl, "_blank", "noopener,noreferrer") ?? null;
+  } catch {
+    openedWindow = null;
+  }
+
+  if (openedWindow) {
+    try {
+      openedWindow.opener = null;
+    } catch {
+      // Some WebViews expose a read-only opener. The navigation already succeeded.
+    }
+
+    return true;
+  }
+
+  if (browserWindow.location) {
+    browserWindow.location.href = targetUrl;
+    return true;
+  }
+
+  return false;
+}
 
 function getStorage() {
   try {
@@ -93,17 +144,12 @@ export function AppUpdateNotice({
 
   const latest = currentUpdate.latest;
   const dismissible = canDismissUpdate(currentUpdate);
-  const platform = detectAppPlatform();
-  const updateUrl = resolveUpdateUrl(latest, platform);
+  const updateTarget = resolveUpdateTarget(latest, appKind);
+  const { platform, url: updateUrl } = updateTarget;
 
   function handleUpdateNow(event: React.MouseEvent<HTMLAnchorElement>) {
-    if (!updateUrl) {
-      event.preventDefault();
-      return;
-    }
-
     event.preventDefault();
-    window.location.assign(updateUrl);
+    openUpdateUrl(updateUrl || latest.download_page);
   }
 
   function handleSnooze() {
