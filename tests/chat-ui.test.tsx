@@ -39,6 +39,7 @@ import {
   SelectedAttachmentList,
   SPEECH_NO_MICROPHONE_MESSAGE,
   SPEECH_PERMISSION_MESSAGE,
+  SPEECH_RECORDING_ONLY_MESSAGE,
   SPEECH_UNSUPPORTED_MESSAGE,
   validateChatAttachmentFile
 } from "../app/(user)/chat-ui/components/ChatInput";
@@ -182,6 +183,48 @@ async function main() {
   assert.match(drawerSource, /onScanFileSelected/);
   assert.match(drawerSource, /<Check className=/);
   assert.match(drawerSource, /formatConversationTime\(item\.updatedAt\)/);
+  assert.match(drawerSource, /key=\{item\.id\}/);
+  assert.match(drawerSource, /onSelect\(item\.id\)/);
+  assert.match(drawerSource, /const active = item\.id === activeConversationId/);
+  assert.doesNotMatch(drawerSource, /setActiveConversationId|selectedConversationId/);
+
+  const activeDrawerMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[
+        {
+          id: "conv_1",
+          title: "第一条历史",
+          mode: "fast",
+          metadata: null,
+          message_count: 1,
+          created_at: "2026-06-01T08:00:00.000Z",
+          updated_at: "2026-06-01T08:00:00.000Z"
+        },
+        {
+          id: "conv_2",
+          title: "第二条历史",
+          mode: "expert",
+          metadata: null,
+          message_count: 1,
+          created_at: "2026-06-01T09:00:00.000Z",
+          updated_at: "2026-06-01T09:00:00.000Z"
+        }
+      ]}
+      activeConversationId="conv_2"
+      open
+      loading={false}
+      currentUser={null}
+      userName="蔡姑"
+      userDescription="13360587600"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(activeDrawerMarkup, /第二条历史/);
+  assert.match(activeDrawerMarkup, /border-blue-200 bg-blue-50/);
+  assert.match(activeDrawerMarkup, /lucide-check/);
 
   const drawerWithAvatarMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -317,9 +360,11 @@ async function main() {
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
   assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
   assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前设备暂不支持语音输入，请使用文字输入。");
+  assert.equal(SPEECH_RECORDING_ONLY_MESSAGE, "当前环境可录音，但暂不支持语音转文字，请使用文字输入。");
   assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_PERMISSION_MESSAGE);
   assert.equal(getSpeechRecognitionErrorMessage("audio-capture"), SPEECH_NO_MICROPHONE_MESSAGE);
   assert.equal(getMicrophoneAccessErrorMessage(new DOMException("denied", "NotAllowedError")), SPEECH_PERMISSION_MESSAGE);
+  assert.equal(getMicrophoneAccessErrorMessage({ name: "PermissionDeniedError" }), SPEECH_PERMISSION_MESSAGE);
   assert.equal(getMicrophoneAccessErrorMessage(new DOMException("not found", "NotFoundError")), SPEECH_NO_MICROPHONE_MESSAGE);
   assert.equal(readSpeechRecognitionTranscript({
     results: [
@@ -344,6 +389,11 @@ async function main() {
   assert.match(chatInputSource, /recognitionRef\.current\?\.stop\(\)/);
   assert.match(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
   assert.match(chatInputSource, /getUserMedia\(\{\s*audio:\s*true\s*\}\)/);
+  assert.ok(
+    chatInputSource.indexOf("getUserMedia({ audio: true })") < chatInputSource.indexOf("const speechWindow = window as SpeechWindow;")
+  );
+  assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
+  assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
   assert.match(chatInputSource, /h-9 w-9/);
   assert.match(chatInputSource, /<Plus className="h-5 w-5"/);
 
@@ -475,8 +525,55 @@ async function main() {
   assert.match(chatMessagesMarkup, /<img/);
   assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
-  assert.match(readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8"), /图片加载失败/);
-  assert.match(readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8"), /onError=\{\(\) => setFailed\(true\)\}/);
+  const chatMessagesSource = readFileSync("app/(user)/chat-ui/components/ChatMessages.tsx", "utf8");
+
+  assert.match(chatMessagesSource, /图片加载失败/);
+  assert.match(chatMessagesSource, /图片预览不可用/);
+  assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
+  assert.match(chatMessagesSource, /attachment\.src/);
+  assert.match(chatMessagesSource, /attachment\.dataUrl/);
+  const historyImageMarkup = renderToStaticMarkup(
+    <ChatMessages
+      messages={[
+        {
+          id: "history-user-image",
+          role: "user",
+          content: "历史图片",
+          created_at: "2026-06-01T10:00:00.000Z",
+          attachments: [
+            {
+              type: "file",
+              name: "history-photo.png",
+              src: "https://example.com/history-photo.png"
+            },
+            {
+              type: "image",
+              name: "metadata-photo.webp",
+              metadata: {
+                dataUrl: "data:image/webp;base64,AAAA"
+              }
+            },
+            {
+              type: "image",
+              name: "lost-photo.jpg"
+            },
+            attachment
+          ]
+        }
+      ]}
+      loading={false}
+      mode="fast"
+      onModeChange={() => undefined}
+    />
+  );
+
+  assert.match(historyImageMarkup, /打开图片预览 history-photo\.png/);
+  assert.match(historyImageMarkup, /https:\/\/example\.com\/history-photo\.png/);
+  assert.match(historyImageMarkup, /打开图片预览 metadata-photo\.webp/);
+  assert.match(historyImageMarkup, /data:image\/webp;base64,AAAA/);
+  assert.match(historyImageMarkup, /lost-photo\.jpg/);
+  assert.match(historyImageMarkup, /图片预览不可用/);
+  assert.match(historyImageMarkup, /contract\.pdf/);
   assert.match(chatMessagesMarkup, /现在建议你这样回复/);
   assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
   assert.match(chatMessagesMarkup, /核心判断/);
