@@ -52,7 +52,7 @@ type SpeechWindow = Window & typeof globalThis & {
 };
 
 export const MAX_CHAT_ATTACHMENTS = 5;
-export const MAX_CHAT_ATTACHMENT_SIZE_MB = 50;
+export const MAX_CHAT_ATTACHMENT_SIZE_MB = 100;
 export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,image/*";
 export const SPEECH_UNSUPPORTED_MESSAGE = "当前环境暂不支持语音输入，请使用文字输入。";
