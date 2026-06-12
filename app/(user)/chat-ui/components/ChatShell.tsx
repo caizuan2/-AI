@@ -46,6 +46,7 @@ export function ChatShell() {
   const [messages, setMessages] = React.useState<ChatMessageView[]>([]);
   const [input, setInput] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [historyLoading, setHistoryLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
@@ -56,6 +57,7 @@ export function ChatShell() {
   const [openAttachmentSignal, setOpenAttachmentSignal] = React.useState(0);
   const [openCameraSignal, setOpenCameraSignal] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
+  const historyRequestIdRef = React.useRef(0);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
 
@@ -147,27 +149,45 @@ export function ChatShell() {
   }, [messages, loading]);
 
   async function handleSelectConversation(nextConversationId: string) {
+    const requestId = historyRequestIdRef.current + 1;
+
+    historyRequestIdRef.current = requestId;
     setError(null);
     setNotice(null);
-    setLoading(true);
+    setHistoryLoading(true);
+    setConversationId(nextConversationId);
+    setMessages([]);
+    setSidebarOpen(false);
 
     try {
       const history = await fetchConversationHistory(nextConversationId);
 
-      setConversationId(history.conversation.id);
+      if (historyRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setConversationId(history.conversation.id || nextConversationId);
       setMode(normalizeChatMode(history.conversation.mode));
-      setMessages(history.messages);
-      setSidebarOpen(false);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "会话历史加载失败。");
+      setMessages(Array.isArray(history.messages) ? history.messages : []);
+    } catch {
+      if (historyRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      setError("历史记录加载失败，请稍后重试");
+      setMessages([]);
     } finally {
-      setLoading(false);
+      if (historyRequestIdRef.current === requestId) {
+        setHistoryLoading(false);
+      }
     }
   }
 
   function handleNewChat() {
     const nextState = createNewChatState();
 
+    historyRequestIdRef.current += 1;
+    setHistoryLoading(false);
     setConversationId(nextState.conversationId);
     setMessages(nextState.messages);
     setInput(nextState.input);
@@ -373,12 +393,22 @@ export function ChatShell() {
           ) : null}
 
           <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto bg-white">
-            <ChatMessages
-              messages={messages}
-              loading={loading}
-              mode={mode}
-              onModeChange={setMode}
-            />
+            {historyLoading ? (
+              <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
+                正在加载历史记录...
+              </div>
+            ) : conversationId && messages.length === 0 ? (
+              <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
+                该会话暂无消息
+              </div>
+            ) : (
+              <ChatMessages
+                messages={messages}
+                loading={loading}
+                mode={mode}
+                onModeChange={setMode}
+              />
+            )}
           </div>
 
           <ChatQuickActions

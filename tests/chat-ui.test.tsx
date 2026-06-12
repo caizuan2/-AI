@@ -6,6 +6,7 @@ import ChatUiPage from "../app/(user)/chat-ui/page";
 import {
   askChat,
   changeCurrentUserPassword,
+  fetchConversationHistory,
   fetchQuickActionCategories,
   updateCurrentUserAvatar,
   USER_CHAT_LOGIN_URL
@@ -82,11 +83,19 @@ async function main() {
   assert.match(shellMarkup, /打开上传菜单/);
   assert.doesNotMatch(shellMarkup, /11:54/);
   assert.doesNotMatch(shellMarkup, /⌁/);
+  assert.doesNotMatch(shellMarkup, /麦克风权限未开启/);
   const chatShellSource = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
 
   assert.match(chatShellSource, /已打开扫描入口/);
   assert.match(chatShellSource, /已选择扫描图片/);
   assert.match(chatShellSource, /已打开通知面板/);
+  assert.match(chatShellSource, /historyRequestIdRef/);
+  assert.match(chatShellSource, /setConversationId\(nextConversationId\)/);
+  assert.match(chatShellSource, /fetchConversationHistory\(nextConversationId\)/);
+  assert.match(chatShellSource, /setMessages\(Array\.isArray\(history\.messages\)/);
+  assert.match(chatShellSource, /正在加载历史记录/);
+  assert.match(chatShellSource, /该会话暂无消息/);
+  assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -315,6 +324,7 @@ async function main() {
   assert.match(chatInputMarkup, /accept="image\/\*"/);
   assert.match(chatInputMarkup, new RegExp(`accept="${CHAT_FILE_ACCEPT.replace(/\*/g, "\\*").replace(/\./g, "\\.")}"`));
   assert.match(chatInputMarkup, /capture="environment"/);
+  assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
 
   const attachmentFile = new File(["合同内容"], "contract.pdf", {
     type: "application/pdf"
@@ -359,9 +369,10 @@ async function main() {
   }).attachments.length, 0);
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
   assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
-  assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前设备暂不支持语音输入，请使用文字输入。");
-  assert.equal(SPEECH_RECORDING_ONLY_MESSAGE, "当前环境可录音，但暂不支持语音转文字，请使用文字输入。");
-  assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_PERMISSION_MESSAGE);
+  assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前环境暂不支持语音输入，请使用文字输入。");
+  assert.equal(SPEECH_RECORDING_ONLY_MESSAGE, "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。");
+  assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
+  assert.equal(getSpeechRecognitionErrorMessage("service-not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
   assert.equal(getSpeechRecognitionErrorMessage("audio-capture"), SPEECH_NO_MICROPHONE_MESSAGE);
   assert.equal(getMicrophoneAccessErrorMessage(new DOMException("denied", "NotAllowedError")), SPEECH_PERMISSION_MESSAGE);
   assert.equal(getMicrophoneAccessErrorMessage({ name: "PermissionDeniedError" }), SPEECH_PERMISSION_MESSAGE);
@@ -393,9 +404,12 @@ async function main() {
     chatInputSource.indexOf("getUserMedia({ audio: true })") < chatInputSource.indexOf("const speechWindow = window as SpeechWindow;")
   );
   assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
+  assert.match(chatInputSource, /麦克风已开启，正在启动语音识别/);
   assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
-  assert.match(chatInputSource, /h-9 w-9/);
-  assert.match(chatInputSource, /<Plus className="h-5 w-5"/);
+  assert.match(chatInputSource, /h-8 w-8/);
+  assert.match(chatInputSource, /border border-slate-950/);
+  assert.doesNotMatch(chatInputSource, /border-2 border-slate-950/);
+  assert.match(chatInputSource, /<Plus className="h-4 w-4" strokeWidth=\{2\}/);
 
   const validAvatarFile = new File(["avatar"], "avatar.png", {
     type: "image/png"
@@ -645,6 +659,50 @@ async function main() {
 
   const originalFetch = globalThis.fetch;
   const calls: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: {
+        conversation: {
+          id: "conv_2",
+          title: "第二条历史",
+          mode: "expert",
+          metadata: null,
+          message_count: 1,
+          created_at: "2026-06-01T09:00:00.000Z",
+          updated_at: "2026-06-01T09:00:00.000Z"
+        },
+        messages: [
+          {
+            id: "msg_history_1",
+            role: "user",
+            content: "联创历史问题",
+            created_at: "2026-06-01T09:01:00.000Z",
+            attachments: []
+          }
+        ]
+      }
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const historyResult = await fetchConversationHistory("conv_2");
+
+  assert.equal(String(calls.at(-1)?.input), "/api/ai/chat/history?conversation_id=conv_2");
+  assert.equal(calls.at(-1)?.init?.method, "GET");
+  assert.equal(historyResult.conversation.id, "conv_2");
+  assert.equal(historyResult.messages[0].content, "联创历史问题");
+
+  globalThis.fetch = originalFetch;
+  calls.length = 0;
 
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({ input, init });
