@@ -8,6 +8,7 @@ import {
   changeCurrentUserPassword,
   fetchConversationHistory,
   fetchQuickActionCategories,
+  uploadChatAttachment,
   updateCurrentUserAvatar,
   USER_CHAT_LOGIN_URL
 } from "../app/(user)/chat-ui/api";
@@ -94,6 +95,10 @@ async function main() {
   assert.match(chatShellSource, /setConversationId\(nextConversationId\)/);
   assert.match(chatShellSource, /fetchConversationHistory\(nextConversationId\)/);
   assert.match(chatShellSource, /setMessages\(Array\.isArray\(history\.messages\)/);
+  assert.match(chatShellSource, /uploadChatAttachments\(attachments\)/);
+  assert.ok(
+    chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChat({")
+  );
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
@@ -455,6 +460,7 @@ async function main() {
 
   for (const routeFile of [
     "app/api/ai/chat/ask/route.ts",
+    "app/api/ai/chat/attachments/route.ts",
     "app/api/ai/chat/conversations/route.ts",
     "app/api/ai/chat/history/route.ts"
   ]) {
@@ -515,9 +521,28 @@ async function main() {
     enable_web_search: false
   });
 
-  assert.equal(imagePayload.attachments[0].metadata.previewUrl, "blob:chat-image-preview");
-  assert.equal(imagePayload.attachments[0].metadata.url, "blob:chat-image-preview");
+  assert.equal(imagePayload.attachments[0].metadata.previewUrl, undefined);
+  assert.equal(imagePayload.attachments[0].metadata.url, undefined);
   assert.equal(Object.prototype.hasOwnProperty.call(imagePayload.attachments[0], "previewUrl"), false);
+  assert.doesNotMatch(JSON.stringify(imagePayload.attachments[0]), /blob:chat-image-preview/);
+  const uploadedImagePayload = createAskRequestPayload({
+    text: "  图片历史测试 ",
+    attachments: [{
+      ...imageAttachment,
+      filename: "photo.jpg",
+      url: "/uploads/chat-attachments/photo.jpg",
+      publicUrl: "/uploads/chat-attachments/photo.jpg"
+    }],
+    conversation_id: "conv_1",
+    mode: "fast",
+    enable_deep_thinking: false,
+    enable_web_search: false
+  });
+
+  assert.equal(uploadedImagePayload.attachments[0].url, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].publicUrl, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].metadata.url, "/uploads/chat-attachments/photo.jpg");
+  assert.equal(uploadedImagePayload.attachments[0].metadata.publicUrl, "/uploads/chat-attachments/photo.jpg");
 
   const localUserMessage = createUserMessage("退款流程怎么处理？", [imageAttachment, attachment]);
   const messages = appendAskResult([localUserMessage], localUserMessage.id, {
@@ -858,7 +883,11 @@ async function main() {
 
   const askResult = await askChat({
     text: "你好",
-    attachments: [attachment],
+    attachments: [{
+      ...imageAttachment,
+      url: "/uploads/chat-attachments/photo.jpg",
+      publicUrl: "/uploads/chat-attachments/photo.jpg"
+    }],
     conversation_id: null,
     mode: "fast",
     enable_deep_thinking: false,
@@ -871,7 +900,50 @@ async function main() {
   assert.equal(calls[0].init?.method, "POST");
   assert.match(String(calls[0].init?.body), /"question":"你好"/);
   assert.match(String(calls[0].init?.body), /"attachments":\[/);
-  assert.match(String(calls[0].init?.body), /"source":"file"/);
+  assert.match(String(calls[0].init?.body), /"url":"\/uploads\/chat-attachments\/photo\.jpg"/);
+  assert.match(String(calls[0].init?.body), /"publicUrl":"\/uploads\/chat-attachments\/photo\.jpg"/);
+
+  globalThis.fetch = originalFetch;
+  calls.length = 0;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: {
+        attachment: {
+          id: "uploaded_1",
+          name: "photo.jpg",
+          filename: "photo.jpg",
+          type: "image",
+          mimeType: "image/jpeg",
+          mime_type: "image/jpeg",
+          size: 5,
+          url: "/uploads/chat-attachments/uploaded-photo.jpg",
+          publicUrl: "/uploads/chat-attachments/uploaded-photo.jpg",
+          reference_id: "uploaded-photo.jpg"
+        }
+      }
+    }), {
+      status: 201,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const uploadedAttachment = await uploadChatAttachment(imageAttachment);
+
+  assert.equal(String(calls[0].input), "/api/ai/chat/attachments");
+  assert.equal(calls[0].init?.method, "POST");
+  assert.ok(calls[0].init?.body instanceof FormData);
+  assert.equal((calls[0].init?.body as FormData).get("file"), imageAttachment.file);
+  assert.equal((calls[0].init?.body as FormData).get("attachment"), imageAttachment.file);
+  assert.equal(uploadedAttachment.url, "/uploads/chat-attachments/uploaded-photo.jpg");
+  assert.equal(uploadedAttachment.publicUrl, "/uploads/chat-attachments/uploaded-photo.jpg");
+  assert.equal(uploadedAttachment.previewUrl, "blob:chat-image-preview");
 
   globalThis.fetch = (async () => new Response(JSON.stringify({
     ok: false,
@@ -1085,11 +1157,19 @@ async function main() {
   }
 
   const avatarRouteText = readFileSync("app/api/auth/avatar/route.ts", "utf8");
+  const chatAttachmentRouteText = readFileSync("app/api/ai/chat/attachments/route.ts", "utf8");
+  const aiChatAskText = readFileSync("lib/ai-chat/ask.ts", "utf8");
   const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
 
   assert.match(avatarRouteText, /formData\.get\("avatar"\)\s*\?\?\s*formData\.get\("file"\)/);
   assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
+  assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)/);
+  assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(aiChatAskText, /persistedAttachmentUrlKeys/);
+  assert.match(aiChatAskText, /normalizeStoredAttachments/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
+  assert.doesNotMatch(aiChatAskText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin\/kb/);
   assert.doesNotMatch(changePasswordRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(readFileSync("prisma/schema.prisma", "utf8"), /avatar_url|avatarUrl/);
   assert.equal(readdirSync("prisma/migrations").some((name) => /avatar|profile/i.test(name)), false);

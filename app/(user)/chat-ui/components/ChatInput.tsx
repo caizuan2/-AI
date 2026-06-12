@@ -169,7 +169,7 @@ export function createChatAttachmentFromFile(file: File, source: ChatAttachmentS
     size: file.size,
     reference_id: id,
     previewUrl,
-    url: previewUrl,
+    file,
     metadata: {
       source
     }
