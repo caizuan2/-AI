@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import * as React from "react";
 import { ChatShell } from "./components/ChatShell";
+import { ClientAuthGate } from "./components/ClientAuthGate";
 
 export const metadata: Metadata = {
   title: "AI 知识库助手",
@@ -8,5 +9,9 @@ export const metadata: Metadata = {
 };
 
 export default function ChatUiPage() {
-  return <ChatShell />;
+  return (
+    <ClientAuthGate>
+      <ChatShell />
+    </ClientAuthGate>
+  );
 }

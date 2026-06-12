@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
@@ -13,15 +13,22 @@ interface LoginResponse {
   licenseActivated: boolean;
 }
 
+interface MeResponse {
+  user: {
+    licenseActivated: boolean;
+  };
+}
+
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState("");
 
-  function getSafeNextPath() {
+  const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
 
     if (!candidate.startsWith("/") || candidate.startsWith("//")) {
@@ -35,7 +42,46 @@ function LoginForm() {
     }
 
     return candidate;
-  }
+  }, [searchParams]);
+
+  useEffect(() => {
+    let active = true;
+
+    async function checkExistingSession() {
+      try {
+        const response = await fetch("/api/auth/me", {
+          method: "GET",
+          cache: "no-store"
+        });
+
+        if (!active) {
+          return;
+        }
+
+        if (response.ok) {
+          const payload = await response.json().catch(() => null) as {
+            data?: MeResponse;
+          } | null;
+          const nextPath = getSafeNextPath();
+
+          router.replace(nextPath || (payload?.data?.user.licenseActivated ? "/ingest" : "/unlock"));
+          return;
+        }
+
+        setCheckingSession(false);
+      } catch {
+        if (active) {
+          setCheckingSession(false);
+        }
+      }
+    }
+
+    void checkExistingSession();
+
+    return () => {
+      active = false;
+    };
+  }, [getSafeNextPath, router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -69,6 +115,14 @@ function LoginForm() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="mt-8 rounded-lg border border-line bg-slate-50 px-4 py-5 text-center text-sm text-muted">
+        正在检查登录状态...
+      </div>
+    );
   }
 
   return (
