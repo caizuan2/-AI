@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Bot, Check, Copy, FileText, Image as ImageIcon, Loader2, Pencil, User } from "lucide-react";
+import { Check, Copy, FileText, Image as ImageIcon, Loader2, Pencil, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CustomerAnswerCard } from "./CustomerAnswerCard";
 import { EmptyState } from "./EmptyState";
@@ -360,10 +360,16 @@ function UserMessageBlock({
   userAvatarUrl?: string | null;
 }) {
   const content = message.content.trim();
+  const messageTime = formatMessageTime(message.created_at);
 
   return (
     <>
       <div className="flex min-w-0 max-w-[min(760px,88%)] flex-col items-end gap-2 text-sm leading-7">
+        {messageTime ? (
+          <div className="mb-1 pr-1 text-right text-[11px] leading-none text-slate-400">
+            {messageTime}
+          </div>
+        ) : null}
         <UserMessageAttachments attachments={message.attachments} />
         {content ? (
           <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
@@ -371,11 +377,8 @@ function UserMessageBlock({
             {message.pending ? (
               <div className="mt-2 text-xs text-blue-100">发送中...</div>
             ) : null}
-            <div className="mt-2 text-xs text-blue-100">{formatMessageTime(message.created_at)}</div>
           </div>
-        ) : (
-          <div className="pr-1 text-xs text-slate-400">{formatMessageTime(message.created_at)}</div>
-        )}
+        ) : null}
         <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
       </div>
       <UserMessageAvatar currentUser={currentUser} userAvatarUrl={userAvatarUrl} />
@@ -482,38 +485,25 @@ export function ChatMessages({
                 userAvatarUrl={userAvatarUrl}
               />
             ) : (
-              <>
-            {!isUser ? (
-              <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
-                <Bot className="h-4 w-4" aria-hidden="true" />
+              <div
+                className="max-w-[min(760px,88%)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-900 shadow-sm"
+              >
+                <RichAnswerView
+                  answer={message.content}
+                  customerAnswer={message.customer_answer}
+                  providerStatus={message.provider_status}
+                />
+                {message.pending ? (
+                  <div className="mt-2 text-xs opacity-80">发送中...</div>
+                ) : null}
+                <CustomerAnswerCard content={message.customer_answer} />
+                {showSources ? (
+                  <SourceList sources={message.sources} confidence={message.confidence} />
+                ) : null}
+                <div className="mt-2 text-xs text-slate-400">
+                  {formatMessageTime(message.created_at)}
+                </div>
               </div>
-            ) : null}
-
-            <div
-              className={cn(
-                "max-w-[min(760px,88%)] rounded-3xl px-4 py-3 text-sm leading-7 shadow-sm",
-                isUser
-                  ? "rounded-br-lg bg-blue-600 text-white"
-                  : "rounded-bl-lg border border-slate-200 bg-white text-slate-900"
-              )}
-            >
-              <RichAnswerView
-                answer={message.content}
-                customerAnswer={message.customer_answer}
-                providerStatus={message.provider_status}
-              />
-              {message.pending ? (
-                <div className="mt-2 text-xs opacity-80">发送中...</div>
-              ) : null}
-              <CustomerAnswerCard content={message.customer_answer} />
-              {showSources ? (
-                <SourceList sources={message.sources} confidence={message.confidence} />
-              ) : null}
-              <div className="mt-2 text-xs text-slate-400">
-                {formatMessageTime(message.created_at)}
-              </div>
-            </div>
-              </>
             )}
           </article>
         );
