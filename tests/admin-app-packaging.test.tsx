@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import AdminDownloadPage from "../app/admin-download/page";
+import latestRelease from "../public/releases/latest.json";
 
 const adminAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
 const userCapacitorAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
@@ -10,11 +11,12 @@ const userElectronAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<AdminDownloadPage />);
+  const escapedAdminVersion = latestRelease.admin.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   assert.match(pageMarkup, /AI知识库管理后台下载/);
   assert.match(pageMarkup, /仅供授权管理员使用/);
-  assert.match(pageMarkup, /最新版本 1\.0\.2/);
-  assert.match(pageMarkup, /构建号：102/);
+  assert.match(pageMarkup, new RegExp(`最新版本 ${escapedAdminVersion}`));
+  assert.match(pageMarkup, new RegExp(`构建号：${latestRelease.admin.build}`));
   assert.match(pageMarkup, /复制链接/);
   assert.match(pageMarkup, /https:\/\/stately-sawine-1efd4d\.netlify\.app\/downloads\/admin\/ai-knowledge-admin-latest\.apk/);
   assert.match(pageMarkup, /\/ingest/);
@@ -87,9 +89,6 @@ async function main() {
   assert.equal(packageJson.scripts["admin:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1");
   assert.equal(packageJson.scripts["admin:copy-installers"], "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1");
 
-  const latestRelease = JSON.parse(readFileSync("public/releases/latest.json", "utf8"));
-  assert.equal(latestRelease.admin.version, "1.0.2");
-  assert.equal(latestRelease.admin.build, 102);
   assert.match(latestRelease.admin.apk_url, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk$/);
   assert.match(latestRelease.admin.download_page, /\/admin-download\.html$/);
 

@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import DownloadPage from "../app/download/page";
+import latestRelease from "../public/releases/latest.json";
 
 const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
 const userLoginUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
@@ -11,13 +12,14 @@ const userWindowsExeUrl =
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<DownloadPage />);
+  const escapedUserVersion = latestRelease.user.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
   assert.match(pageMarkup, /AI知识库助手下载/);
   assert.match(pageMarkup, /用户端/);
   assert.match(pageMarkup, /Android APK 下载/);
   assert.match(pageMarkup, /Windows EXE 下载/);
-  assert.match(pageMarkup, /最新版本 1\.0\.2/);
-  assert.match(pageMarkup, /构建号：102/);
+  assert.match(pageMarkup, new RegExp(`最新版本 ${escapedUserVersion}`));
+  assert.match(pageMarkup, new RegExp(`构建号：${latestRelease.user.build}`));
   assert.match(pageMarkup, /复制链接/);
   assert.match(pageMarkup, /登录普通用户账号/);
   assert.doesNotMatch(pageMarkup, /投喂/);
@@ -97,9 +99,6 @@ async function main() {
   assert.equal(packageJson.build.appId, "com.aiknowledge.chat.desktop");
   assert.match(packageJson.build.productName, /AI/);
 
-  const latestRelease = JSON.parse(readFileSync("public/releases/latest.json", "utf8"));
-  assert.equal(latestRelease.user.version, "1.0.2");
-  assert.equal(latestRelease.user.build, 102);
   assert.match(latestRelease.user.apk_url, /\/downloads\/ai-knowledge-chat-latest\.apk$/);
   assert.match(latestRelease.user.download_page, /\/user-download\.html$/);
 
