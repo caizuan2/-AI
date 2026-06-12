@@ -31,6 +31,12 @@ export interface AppUpdateResult {
   updatedAt: string | null;
 }
 
+export interface AppUpdateTarget {
+  url: string;
+  platform: AppPlatform;
+  label: string;
+}
+
 interface CheckAppUpdateOptions {
   appKind: AppKind;
   currentVersion: string;
@@ -46,6 +52,15 @@ interface UpdateStorage {
 
 const DEFAULT_MANIFEST_URL = "/releases/latest.json";
 const UPDATE_SNOOZE_MS = 12 * 60 * 60 * 1000;
+
+const platformLabels: Record<AppPlatform, string> = {
+  android: "Android APK",
+  windows: "Windows EXE",
+  ios: "iOS download page",
+  macos: "macOS download page",
+  web: "Web app",
+  unknown: "download page"
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -154,13 +169,19 @@ export async function checkAppUpdate(options: CheckAppUpdateOptions): Promise<Ap
 }
 
 export function detectAppPlatform(userAgent?: string): AppPlatform {
+  const capacitorPlatform = getCapacitorPlatform();
+
+  if (capacitorPlatform) {
+    return capacitorPlatform;
+  }
+
   const agent = userAgent ?? (typeof navigator !== "undefined" ? navigator.userAgent : "");
 
   if (!agent.trim()) {
     return "unknown";
   }
 
-  if (/Android/i.test(agent)) {
+  if (/Android|;\s*wv\)/i.test(agent)) {
     return "android";
   }
 
@@ -183,13 +204,47 @@ export function detectAppPlatform(userAgent?: string): AppPlatform {
   return "unknown";
 }
 
-export function resolveUpdateUrl(release: AppReleaseInfo, platform: AppPlatform) {
+function normalizePlatform(value: string | undefined): AppPlatform | null {
+  const platform = value?.toLowerCase();
+
+  if (platform === "android" || platform === "windows" || platform === "ios" || platform === "macos" || platform === "web") {
+    return platform;
+  }
+
+  if (platform === "mac") {
+    return "macos";
+  }
+
+  return null;
+}
+
+function getCapacitorPlatform(): AppPlatform | null {
+  const globalValue = globalThis as typeof globalThis & {
+    Capacitor?: {
+      getPlatform?: () => string;
+      platform?: string;
+    };
+  };
+  const capacitor = globalValue.Capacitor;
+
+  if (!capacitor) {
+    return null;
+  }
+
+  try {
+    return normalizePlatform(capacitor.getPlatform?.() ?? capacitor.platform) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function getPrimaryUpdateUrl(release: AppReleaseInfo, platform: AppPlatform) {
   if (platform === "android") {
-    return release.apk_url || release.download_page;
+    return release.apk_url;
   }
 
   if (platform === "windows") {
-    return release.exe_url || release.download_page;
+    return release.exe_url;
   }
 
   if (platform === "ios" || platform === "macos") {
@@ -197,10 +252,44 @@ export function resolveUpdateUrl(release: AppReleaseInfo, platform: AppPlatform)
   }
 
   if (platform === "web") {
-    return release.web_url || release.download_page;
+    return release.web_url;
   }
 
   return release.download_page;
+}
+
+function firstAvailableUrl(...urls: string[]) {
+  return urls.find((url) => url.trim().length > 0) ?? "";
+}
+
+export function resolveUpdateTarget(
+  release: AppReleaseInfo,
+  appKind: AppKind,
+  platform = detectAppPlatform()
+): AppUpdateTarget {
+  const appLabel = appKind === "admin" ? "Admin" : "User";
+
+  return {
+    platform,
+    label: `${appLabel} ${platformLabels[platform]}`,
+    url: firstAvailableUrl(
+      getPrimaryUpdateUrl(release, platform),
+      release.download_page,
+      release.web_url,
+      release.apk_url,
+      release.exe_url
+    )
+  };
+}
+
+export function resolveUpdateUrl(release: AppReleaseInfo, platform: AppPlatform) {
+  return firstAvailableUrl(
+    getPrimaryUpdateUrl(release, platform),
+    release.download_page,
+    release.web_url,
+    release.apk_url,
+    release.exe_url
+  );
 }
 
 export function canDismissUpdate(update: Pick<AppUpdateResult, "hasUpdate" | "forceUpdate">) {
