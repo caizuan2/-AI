@@ -52,7 +52,8 @@ type SpeechWindow = Window & typeof globalThis & {
 };
 
 export const MAX_CHAT_ATTACHMENTS = 5;
-export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+export const MAX_CHAT_ATTACHMENT_SIZE_MB = 50;
+export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,image/*";
 export const SPEECH_UNSUPPORTED_MESSAGE = "当前环境暂不支持语音输入，请使用文字输入。";
 export const SPEECH_RECORDING_ONLY_MESSAGE = "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。";
@@ -126,7 +127,7 @@ export function readSpeechRecognitionTranscript(event: SpeechRecognitionEventLik
 
 export function validateChatAttachmentFile(file: File) {
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
-    return "单个附件不能超过 10MB。";
+    return `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`;
   }
 
   return null;

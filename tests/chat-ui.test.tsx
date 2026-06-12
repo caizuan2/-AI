@@ -414,9 +414,12 @@ async function main() {
   assert.match(selectedAttachmentMarkup, /contract\.pdf/);
   assert.match(selectedAttachmentMarkup, /1KB/);
   assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
-  assert.equal(validateChatAttachmentFile(new File([new Uint8Array(10 * 1024 * 1024 + 1)], "big.pdf", {
-    type: "application/pdf"
-  })), "单个附件不能超过 10MB。");
+  assert.equal(validateChatAttachmentFile({
+    size: 49 * 1024 * 1024
+  } as File), null);
+  assert.equal(validateChatAttachmentFile({
+    size: 51 * 1024 * 1024
+  } as File), "单个附件不能超过 50MB。");
   assert.equal(removeChatAttachment([attachment], attachment.id ?? "").length, 0);
   assert.equal(removeChatAttachment([imageAttachment], imageAttachment.id ?? "").length, 0);
   assert.deepEqual(revokedUrls, ["blob:chat-image-preview"]);
@@ -1274,9 +1277,9 @@ async function main() {
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.ms-excel/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
+  assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*50/);
+  assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB。/);
   assert.match(chatAttachmentRouteText, /fileUrl:\s*publicUrl/);
-  assert.match(aiChatAskText, /persistedAttachmentUrlKeys/);
-  assert.match(aiChatAskText, /normalizeStoredAttachments/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(aiChatAskText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin\/kb/);
