@@ -54,6 +54,7 @@ export const MAX_CHAT_ATTACHMENTS = 5;
 export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md";
 export const SPEECH_UNSUPPORTED_MESSAGE = "当前设备暂不支持语音输入，请使用文字输入。";
+export const SPEECH_RECORDING_ONLY_MESSAGE = "当前环境可录音，但暂不支持语音转文字，请使用文字输入。";
 export const SPEECH_PERMISSION_MESSAGE = "麦克风权限未开启，请在浏览器或系统设置中允许麦克风权限。";
 export const SPEECH_NO_MICROPHONE_MESSAGE = "当前设备未检测到麦克风，请使用文字输入。";
 
@@ -92,7 +93,7 @@ function getErrorName(error: unknown) {
 export function getMicrophoneAccessErrorMessage(error: unknown) {
   const name = getErrorName(error);
 
-  if (name === "NotAllowedError" || name === "SecurityError") {
+  if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
     return SPEECH_PERMISSION_MESSAGE;
   }
 
@@ -350,14 +351,6 @@ export function ChatInput({
       return;
     }
 
-    const speechWindow = window as SpeechWindow;
-    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
-
-    if (!Recognition) {
-      onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
-      return;
-    }
-
     if (!navigator.mediaDevices?.getUserMedia) {
       onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
       return;
@@ -371,6 +364,14 @@ export function ChatInput({
       setListening(false);
       setInterimTranscript("");
       onStatusMessage?.(getMicrophoneAccessErrorMessage(error));
+      return;
+    }
+
+    const speechWindow = window as SpeechWindow;
+    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+    if (!Recognition) {
+      onStatusMessage?.(SPEECH_RECORDING_ONLY_MESSAGE);
       return;
     }
 
@@ -412,6 +413,7 @@ export function ChatInput({
     try {
       recognition.start();
       setListening(true);
+      onStatusMessage?.("正在听...");
     } catch {
       setListening(false);
       setInterimTranscript("");
