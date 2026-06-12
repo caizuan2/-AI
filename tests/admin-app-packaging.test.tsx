@@ -6,6 +6,8 @@ import AdminDownloadPage from "../app/admin-download/page";
 import latestRelease from "../public/releases/latest.json";
 
 const adminAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
+const adminWindowsExeUrl =
+  "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe";
 const userCapacitorAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
 const userElectronAppUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
 
@@ -90,6 +92,7 @@ async function main() {
   assert.equal(packageJson.scripts["admin:copy-installers"], "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1");
 
   assert.match(latestRelease.admin.apk_url, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk$/);
+  assert.equal(latestRelease.admin.exe_url, adminWindowsExeUrl);
   assert.match(latestRelease.admin.download_page, /\/admin-download\.html$/);
 
   const userCapacitorConfig = readFileSync("capacitor.config.ts", "utf8");

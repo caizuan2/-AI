@@ -100,6 +100,7 @@ async function main() {
   assert.match(packageJson.build.productName, /AI/);
 
   assert.match(latestRelease.user.apk_url, /\/downloads\/ai-knowledge-chat-latest\.apk$/);
+  assert.equal(latestRelease.user.exe_url, userWindowsExeUrl);
   assert.match(latestRelease.user.download_page, /\/user-download\.html$/);
 
   const prismaSchema = readFileSync("prisma/schema.prisma", "utf8");

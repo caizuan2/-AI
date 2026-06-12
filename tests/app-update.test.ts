@@ -7,12 +7,13 @@ import {
   checkAppUpdate,
   detectAppPlatform,
   normalizeLatestReleaseManifest,
+  resolveUpdateTarget,
   resolveUpdateUrl,
   shouldSkipUpdateNotice,
   snoozeUpdateNotice,
   type LatestReleaseManifest
 } from "../lib/app-update";
-import { AppUpdateNoticeDialog } from "../components/AppUpdateNotice";
+import { AppUpdateNoticeDialog, openUpdateUrl } from "../components/AppUpdateNotice";
 import releaseInfo from "../public/releases/latest.json";
 
 const parsedManifest = normalizeLatestReleaseManifest(releaseInfo);
@@ -70,14 +71,28 @@ async function main() {
   assert.equal(resolveUpdateUrl(manifest.user, "windows"), manifest.user.exe_url);
   assert.equal(resolveUpdateUrl(manifest.user, "ios"), manifest.user.download_page);
   assert.equal(resolveUpdateUrl(manifest.user, "macos"), manifest.user.download_page);
+  assert.equal(resolveUpdateUrl(manifest.user, "web"), manifest.user.web_url);
   assert.equal(resolveUpdateUrl(manifest.user, "unknown"), manifest.user.download_page);
   assert.equal(resolveUpdateUrl(manifest.admin, "android"), manifest.admin.apk_url);
   assert.equal(resolveUpdateUrl(manifest.admin, "windows"), manifest.admin.exe_url);
   assert.equal(resolveUpdateUrl(manifest.admin, "ios"), manifest.admin.download_page);
   assert.equal(resolveUpdateUrl(manifest.admin, "macos"), manifest.admin.download_page);
+  assert.equal(resolveUpdateUrl(manifest.admin, "web"), manifest.admin.web_url);
   assert.equal(resolveUpdateUrl(manifest.admin, "unknown"), manifest.admin.download_page);
+  assert.equal(resolveUpdateUrl({ ...manifest.user, apk_url: "" }, "android"), manifest.user.download_page);
+
+  assert.equal(resolveUpdateTarget(manifest.user, "user", "android").url, manifest.user.apk_url);
+  assert.equal(resolveUpdateTarget(manifest.admin, "admin", "android").url, manifest.admin.apk_url);
+  assert.equal(resolveUpdateTarget(manifest.user, "user", "windows").url, manifest.user.exe_url);
+  assert.equal(resolveUpdateTarget(manifest.admin, "admin", "windows").url, manifest.admin.exe_url);
+  assert.equal(resolveUpdateTarget(manifest.user, "user", "web").url, manifest.user.web_url);
+  assert.equal(resolveUpdateTarget(manifest.admin, "admin", "web").url, manifest.admin.web_url);
+  assert.equal(resolveUpdateTarget(manifest.user, "user", "unknown").url, manifest.user.download_page);
+  assert.equal(resolveUpdateTarget({ ...manifest.user, apk_url: "" }, "user", "android").url, manifest.user.download_page);
+  assert.match(resolveUpdateTarget(manifest.admin, "admin", "windows").label, /Admin Windows EXE/);
 
   assert.equal(detectAppPlatform("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36"), "android");
+  assert.equal(detectAppPlatform("Mozilla/5.0 (Linux; Android 14; wv) AppleWebKit/537.36"), "android");
   assert.equal(detectAppPlatform("Mozilla/5.0 (Windows NT 10.0) Electron/42.0.0"), "windows");
   assert.equal(detectAppPlatform("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"), "ios");
   assert.equal(detectAppPlatform("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15"), "macos");
@@ -116,6 +131,36 @@ async function main() {
   assert.match(userDialogMarkup, /aria-label="立即更新/);
   assert.match(userDialogMarkup, new RegExp(manifest.user.apk_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(userDialogMarkup, /稍后提醒/);
+  assert.doesNotMatch(userDialogMarkup, /<a[^>]*\sdisabled(?:=|\s|>)/);
+
+  const openCalls: string[][] = [];
+  const openedWindow: { opener?: unknown } = {};
+  assert.equal(openUpdateUrl(manifest.user.apk_url, {
+    open: (url, target, features) => {
+      openCalls.push([url, target, features]);
+      return openedWindow;
+    },
+    location: { href: "" }
+  }), true);
+  assert.deepEqual(openCalls, [[manifest.user.apk_url, "_blank", "noopener,noreferrer"]]);
+  assert.equal(openedWindow.opener, null);
+
+  const fallbackLocation = { href: "" };
+  assert.equal(openUpdateUrl(manifest.admin.exe_url, {
+    open: () => null,
+    location: fallbackLocation
+  }), true);
+  assert.equal(fallbackLocation.href, manifest.admin.exe_url);
+
+  const blockedLocation = { href: "" };
+  assert.equal(openUpdateUrl(manifest.user.web_url, {
+    open: () => {
+      throw new Error("window.open blocked");
+    },
+    location: blockedLocation
+  }), true);
+  assert.equal(blockedLocation.href, manifest.user.web_url);
+  assert.equal(openUpdateUrl(""), false);
 
   const adminForceDialogMarkup = renderToStaticMarkup(
     React.createElement(AppUpdateNoticeDialog, {
