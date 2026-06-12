@@ -33,19 +33,48 @@ function shouldShowDebugSources() {
   return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
 }
 
-function isImageAttachment(attachment: NonNullable<ChatMessageView["attachments"]>[number]) {
+type UserAttachment = NonNullable<ChatMessageView["attachments"]>[number];
+
+function getStringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function looksLikeImageUrl(value: string) {
+  const normalizedValue = value.trim().toLowerCase();
+  const path = normalizedValue.split("?")[0]?.split("#")[0] ?? "";
+
+  return (
+    normalizedValue.startsWith("data:image/") ||
+    /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/.test(path)
+  );
+}
+
+function getAttachmentPreviewUrl(attachment: UserAttachment) {
+  const metadata = attachment.metadata ?? {};
+
+  return (
+    getStringValue(attachment.previewUrl) ||
+    getStringValue(attachment.url) ||
+    getStringValue(attachment.src) ||
+    getStringValue(attachment.dataUrl) ||
+    getStringValue(metadata.previewUrl) ||
+    getStringValue(metadata.url) ||
+    getStringValue(metadata.src) ||
+    getStringValue(metadata.dataUrl)
+  );
+}
+
+function isImageAttachment(attachment: UserAttachment) {
   const mimeType = attachment.mimeType || attachment.mime_type || "";
+  const previewUrl = getAttachmentPreviewUrl(attachment);
 
   return (
     attachment.type === "image" ||
     attachment.type === "gallery_photo" ||
     attachment.type === "camera_photo" ||
-    mimeType.startsWith("image/")
+    mimeType.startsWith("image/") ||
+    looksLikeImageUrl(previewUrl)
   );
-}
-
-function getAttachmentPreviewUrl(attachment: NonNullable<ChatMessageView["attachments"]>[number]) {
-  return attachment.previewUrl || attachment.url || "";
 }
 
 function UserImageAttachment({
@@ -120,7 +149,12 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
             ) : (
               <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             )}
-            <span className="truncate">{name}</span>
+            <span className="min-w-0">
+              <span className="block truncate">{name}</span>
+              {isImage ? (
+                <span className="block truncate text-[11px] text-blue-100/80">图片预览不可用</span>
+              ) : null}
+            </span>
           </div>
         );
       })}
