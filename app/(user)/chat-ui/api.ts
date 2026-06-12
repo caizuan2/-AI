@@ -20,13 +20,52 @@ type ApiEnvelope<T> = {
   success?: boolean;
   data?: T;
   error?: {
+    code?: string;
     message?: string;
-  };
+  } | string;
+  code?: string;
   message?: string;
 };
 
+async function readApiPayload<T>(response: Response) {
+  const rawText = await response.text().catch(() => "");
+  let payload: ApiEnvelope<T> | null = null;
+
+  if (rawText) {
+    try {
+      payload = JSON.parse(rawText) as ApiEnvelope<T>;
+    } catch {
+      payload = null;
+    }
+  }
+
+  return {
+    payload,
+    rawText
+  };
+}
+
+function getApiErrorMessage<T>(payload: ApiEnvelope<T> | null, fallback: string) {
+  if (payload?.error && typeof payload.error === "object" && payload.error.message) {
+    return payload.error.message;
+  }
+
+  if (payload?.message) {
+    return payload.message;
+  }
+
+  if (typeof payload?.error === "string") {
+    return payload.error;
+  }
+
+  return fallback;
+}
+
 async function readApiResponse<T>(response: Response): Promise<T> {
-  const payload = await response.json().catch(() => null) as ApiEnvelope<T> | null;
+  const { payload, rawText } = await readApiPayload<T>(response).catch(() => ({
+    payload: null,
+    rawText: ""
+  }));
 
   if (!response.ok || !payload?.ok) {
     if (response.status === 401) {
@@ -37,7 +76,7 @@ async function readApiResponse<T>(response: Response): Promise<T> {
       throw new Error("当前账号没有权限访问该功能。");
     }
 
-    throw new Error(payload?.error?.message || payload?.message || "请求失败，请稍后重试。");
+    throw new Error(getApiErrorMessage(payload, rawText || "请求失败，请稍后重试。"));
   }
 
   if (!payload.data) {
@@ -50,6 +89,7 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 export async function askChat(input: AskChatRequest) {
   const response = await fetch("/api/ai/chat/ask", {
     method: "POST",
+    credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
@@ -95,6 +135,44 @@ function hasPersistentAttachmentUrl(attachment: ChatAttachmentDraft) {
   ));
 }
 
+function getUploadFailureMessage<T>(response: Response, payload: ApiEnvelope<T> | null, rawText: string) {
+  if (response.status === 401) {
+    return "未登录，请重新登录。";
+  }
+
+  if (response.status === 403) {
+    return getApiErrorMessage(payload, "当前账号没有权限上传附件。");
+  }
+
+  if (response.status === 413) {
+    return "单个附件不能超过 100MB。";
+  }
+
+  return getApiErrorMessage(payload, rawText || "服务器暂不可用。");
+}
+
+async function readChatAttachmentUploadResponse(response: Response) {
+  const { payload, rawText } = await readApiPayload<ChatAttachmentUploadResponse>(response).catch(() => ({
+    payload: null,
+    rawText: ""
+  }));
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(`文件上传失败：${getUploadFailureMessage(response, payload, rawText)}`);
+  }
+
+  const topLevelPayload = payload as ApiEnvelope<ChatAttachmentUploadResponse> & {
+    attachment?: ChatAttachmentDraft;
+  };
+  const data = payload.data ?? (topLevelPayload.attachment ? { attachment: topLevelPayload.attachment } : null);
+
+  if (!data?.attachment) {
+    throw new Error("文件上传失败：接口返回数据为空。");
+  }
+
+  return data;
+}
+
 export async function uploadChatAttachment(attachment: ChatAttachmentDraft) {
   if (hasPersistentAttachmentUrl(attachment)) {
     return attachment;
@@ -112,9 +190,10 @@ export async function uploadChatAttachment(attachment: ChatAttachmentDraft) {
 
   const response = await fetch("/api/ai/chat/attachments", {
     method: "POST",
+    credentials: "include",
     body: formData
   });
-  const result = await readApiResponse<ChatAttachmentUploadResponse>(response);
+  const result = await readChatAttachmentUploadResponse(response);
   const uploaded = result.attachment;
 
   return {
