@@ -13,7 +13,10 @@ async function main() {
 
   assert.match(pageMarkup, /AI知识库管理后台下载/);
   assert.match(pageMarkup, /仅供授权管理员使用/);
-  assert.match(pageMarkup, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk/);
+  assert.match(pageMarkup, /最新版本 1\.0\.2/);
+  assert.match(pageMarkup, /构建号：102/);
+  assert.match(pageMarkup, /复制链接/);
+  assert.match(pageMarkup, /https:\/\/stately-sawine-1efd4d\.netlify\.app\/downloads\/admin\/ai-knowledge-admin-latest\.apk/);
   assert.match(pageMarkup, /\/ingest/);
   assert.doesNotMatch(pageMarkup, /ai-knowledge-chat-latest/);
 
@@ -83,6 +86,12 @@ async function main() {
   assert.equal(packageJson.scripts["admin:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-android-apk.ps1");
   assert.equal(packageJson.scripts["admin:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1");
   assert.equal(packageJson.scripts["admin:copy-installers"], "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1");
+
+  const latestRelease = JSON.parse(readFileSync("public/releases/latest.json", "utf8"));
+  assert.equal(latestRelease.admin.version, "1.0.2");
+  assert.equal(latestRelease.admin.build, 102);
+  assert.match(latestRelease.admin.apk_url, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk$/);
+  assert.match(latestRelease.admin.download_page, /\/admin-download\.html$/);
 
   const userCapacitorConfig = readFileSync("capacitor.config.ts", "utf8");
   const userElectronMain = readFileSync("electron/main.cjs", "utf8");

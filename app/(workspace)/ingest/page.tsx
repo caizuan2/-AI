@@ -13,6 +13,7 @@ import {
   TriangleAlert,
   UserRound
 } from "lucide-react";
+import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ import {
   type KnowledgeSourceType
 } from "@/lib/knowledge/source-types";
 import { feedRecords } from "@/lib/mock-data";
+import { ADMIN_APP_KIND } from "@/lib/app-version";
 import type { FeedRecord } from "@/types";
 
 type SubmitState = "idle" | "loading" | "success" | "error";
@@ -634,6 +636,7 @@ export default function IngestPage() {
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
+      <AppUpdateNotice appKind={ADMIN_APP_KIND} />
       <PageHeader
         eyebrow="Ingest"
         title="对话式投喂"
