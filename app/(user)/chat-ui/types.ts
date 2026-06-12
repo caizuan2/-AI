@@ -23,6 +23,7 @@ export interface ChatAttachmentDraft {
   downloadUrl?: string;
   path?: string;
   storagePath?: string;
+  file?: File;
   metadata?: Record<string, unknown>;
 }
 
@@ -83,6 +84,10 @@ export interface CurrentChatUser {
 
 export interface AvatarUpdateResponse {
   avatar_url: string;
+}
+
+export interface ChatAttachmentUploadResponse {
+  attachment: ChatAttachmentDraft;
 }
 
 export interface ChangePasswordResponse {

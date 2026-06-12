@@ -3,6 +3,8 @@ import type {
   AvatarUpdateResponse,
   AskChatRequest,
   AskChatResponse,
+  ChatAttachmentDraft,
+  ChatAttachmentUploadResponse,
   ChangePasswordInput,
   ChangePasswordResponse,
   ConversationsResponse,
@@ -72,6 +74,72 @@ export async function fetchConversationHistory(conversationId: string) {
   });
 
   return readApiResponse<HistoryResponse>(response);
+}
+
+function hasPersistentAttachmentUrl(attachment: ChatAttachmentDraft) {
+  const candidates = [
+    attachment.url,
+    attachment.publicUrl,
+    attachment.fileUrl,
+    attachment.downloadUrl,
+    attachment.src,
+    attachment.path,
+    attachment.storagePath
+  ];
+
+  return candidates.some((value) => (
+    typeof value === "string" &&
+    value.trim() &&
+    !value.trim().startsWith("blob:") &&
+    !value.trim().startsWith("data:")
+  ));
+}
+
+export async function uploadChatAttachment(attachment: ChatAttachmentDraft) {
+  if (hasPersistentAttachmentUrl(attachment)) {
+    return attachment;
+  }
+
+  if (!attachment.file) {
+    return attachment;
+  }
+
+  const formData = new FormData();
+
+  formData.set("file", attachment.file);
+  formData.set("attachment", attachment.file);
+
+  const response = await fetch("/api/ai/chat/attachments", {
+    method: "POST",
+    body: formData
+  });
+  const result = await readApiResponse<ChatAttachmentUploadResponse>(response);
+  const uploaded = result.attachment;
+
+  return {
+    ...attachment,
+    ...uploaded,
+    id: attachment.id || uploaded.id,
+    reference_id: uploaded.reference_id || attachment.reference_id || attachment.id,
+    previewUrl: attachment.previewUrl || uploaded.previewUrl || uploaded.url || uploaded.publicUrl,
+    file: attachment.file,
+    metadata: {
+      ...(attachment.metadata ?? {}),
+      ...(uploaded.metadata ?? {}),
+      ...(attachment.id ? { local_id: attachment.id } : {}),
+      ...(attachment.source ? { source: attachment.source } : {})
+    }
+  };
+}
+
+export async function uploadChatAttachments(attachments: ChatAttachmentDraft[]) {
+  const uploaded: ChatAttachmentDraft[] = [];
+
+  for (const attachment of attachments) {
+    uploaded.push(await uploadChatAttachment(attachment));
+  }
+
+  return uploaded;
 }
 
 function getRecordValue(record: Record<string, unknown>, key: string) {
