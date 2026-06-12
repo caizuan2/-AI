@@ -8,7 +8,8 @@ import { ValidationError } from "@/lib/errors";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_CHAT_ATTACHMENT_SIZE_MB = 50;
+const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 const allowedAttachmentMimeTypes = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -39,7 +40,7 @@ function validateAttachmentFile(file: File) {
   }
 
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
-    throw new ValidationError("单个附件不能超过 10MB。");
+    throw new ValidationError(`单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`);
   }
 }
 
