@@ -34,7 +34,7 @@ function cleanText(value: unknown) {
 function cleanMetadataUrl(value: unknown) {
   const text = cleanText(value);
 
-  if (!text || text.startsWith("data:")) {
+  if (!text || text.startsWith("data:") || text.startsWith("blob:")) {
     return "";
   }
 
@@ -184,9 +184,16 @@ export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
   return {
     type: attachment.type,
     name: attachment.name,
+    filename: attachment.filename || attachment.name,
     mime_type: mimeType,
+    mimeType,
     size: attachment.size,
     reference_id: attachment.reference_id || attachment.id,
+    ...(cleanMetadataUrl(attachment.url) ? { url: cleanMetadataUrl(attachment.url) } : {}),
+    ...(cleanMetadataUrl(attachment.publicUrl) ? { publicUrl: cleanMetadataUrl(attachment.publicUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.fileUrl) ? { fileUrl: cleanMetadataUrl(attachment.fileUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.downloadUrl) ? { downloadUrl: cleanMetadataUrl(attachment.downloadUrl) } : {}),
+    ...(cleanMetadataUrl(attachment.src) ? { src: cleanMetadataUrl(attachment.src) } : {}),
     metadata
   };
 }

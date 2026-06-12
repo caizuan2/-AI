@@ -11,6 +11,7 @@ import {
   fetchCurrentChatUser,
   fetchQuickActionCategories,
   logoutCurrentChatUser,
+  uploadChatAttachments,
   USER_CHAT_LOGIN_URL
 } from "../api";
 import {
@@ -291,18 +292,25 @@ export function ChatShell() {
       return false;
     }
 
-    const localUserMessage = createUserMessage(text, attachments);
-
-    setInput("");
     setError(null);
     setNotice(null);
     setLoading(true);
-    setMessages((current) => [...current, localUserMessage]);
+    let localUserMessage: ChatMessageView | null = null;
 
     try {
+      const uploadedAttachments = await uploadChatAttachments(attachments).catch(() => {
+        throw new Error("图片上传失败，请重新选择后再发送。");
+      });
+
+      const nextUserMessage = createUserMessage(text, uploadedAttachments);
+
+      localUserMessage = nextUserMessage;
+      setInput("");
+      setMessages((current) => [...current, nextUserMessage]);
+
       const result = await askChat({
         text,
-        attachments,
+        attachments: uploadedAttachments,
         conversation_id: conversationId,
         mode,
         enable_deep_thinking: enableDeepThinking,
@@ -311,11 +319,16 @@ export function ChatShell() {
 
       setConversationId(result.conversation_id);
       setMode(normalizeChatMode(result.mode));
-      setMessages((current) => appendAskResult(current, localUserMessage.id, result));
+      setMessages((current) => appendAskResult(current, nextUserMessage.id, result));
       void loadConversations();
       return true;
     } catch (requestError) {
-      setMessages((current) => current.filter((message) => message.id !== localUserMessage.id));
+      if (localUserMessage) {
+        const failedMessageId = localUserMessage.id;
+
+        setMessages((current) => current.filter((message) => message.id !== failedMessageId));
+      }
+
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
       return false;
     } finally {
