@@ -1,6 +1,6 @@
 import type { AppKind } from "./app-version";
 
-export type AppPlatform = "android" | "windows" | "web" | "unknown";
+export type AppPlatform = "android" | "windows" | "ios" | "macos" | "web" | "unknown";
 
 export interface AppReleaseInfo {
   app_name: string;
@@ -168,6 +168,14 @@ export function detectAppPlatform(userAgent?: string): AppPlatform {
     return "windows";
   }
 
+  if (/iPhone|iPad|iPod/i.test(agent)) {
+    return "ios";
+  }
+
+  if (/Macintosh|Mac OS X/i.test(agent)) {
+    return "macos";
+  }
+
   if (/Mozilla|Chrome|Safari|Firefox|Edg/i.test(agent)) {
     return "web";
   }
@@ -182,6 +190,10 @@ export function resolveUpdateUrl(release: AppReleaseInfo, platform: AppPlatform)
 
   if (platform === "windows") {
     return release.exe_url || release.download_page;
+  }
+
+  if (platform === "ios" || platform === "macos") {
+    return release.download_page;
   }
 
   if (platform === "web") {
