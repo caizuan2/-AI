@@ -6,6 +6,8 @@ import DownloadPage from "../app/download/page";
 
 const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
 const userLoginUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
+const userWindowsExeUrl =
+  "https://github.com/caizuan2/-AI/releases/download/v1.0.1-user-windows/ai-knowledge-chat-latest.exe";
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<DownloadPage />);
@@ -18,9 +20,9 @@ async function main() {
   assert.doesNotMatch(pageMarkup, /投喂/);
   assert.doesNotMatch(pageMarkup, /AI知识库管理后台下载/);
   assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat-latest\.apk/);
-  assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat-latest\.exe/);
+  assert.match(pageMarkup, new RegExp(userWindowsExeUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat\.apk/);
-  assert.match(pageMarkup, /\/downloads\/ai-knowledge-chat\.exe/);
+  assert.doesNotMatch(pageMarkup, /\/downloads\/ai-knowledge-chat(?:-latest)?\.exe/);
 
   const electronMain = readFileSync("electron/main.cjs", "utf8");
   const capacitorConfig = readFileSync("capacitor.config.ts", "utf8");
