@@ -53,10 +53,10 @@ type SpeechWindow = Window & typeof globalThis & {
 export const MAX_CHAT_ATTACHMENTS = 5;
 export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = 10 * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md";
-export const SPEECH_UNSUPPORTED_MESSAGE = "当前设备暂不支持语音输入，请使用文字输入。";
-export const SPEECH_RECORDING_ONLY_MESSAGE = "当前环境可录音，但暂不支持语音转文字，请使用文字输入。";
+export const SPEECH_UNSUPPORTED_MESSAGE = "当前环境暂不支持语音输入，请使用文字输入。";
+export const SPEECH_RECORDING_ONLY_MESSAGE = "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。";
 export const SPEECH_PERMISSION_MESSAGE = "麦克风权限未开启，请在浏览器或系统设置中允许麦克风权限。";
-export const SPEECH_NO_MICROPHONE_MESSAGE = "当前设备未检测到麦克风，请使用文字输入。";
+export const SPEECH_NO_MICROPHONE_MESSAGE = "未检测到麦克风设备。";
 
 const imageAttachmentTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
@@ -74,7 +74,7 @@ export function mergeVoiceTranscript(currentValue: string, transcript: string) {
 
 export function getSpeechRecognitionErrorMessage(error?: string) {
   if (error === "not-allowed" || error === "service-not-allowed") {
-    return SPEECH_PERMISSION_MESSAGE;
+    return SPEECH_RECORDING_ONLY_MESSAGE;
   }
 
   if (error === "audio-capture") {
@@ -360,6 +360,7 @@ export function ChatInput({
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
       stream.getTracks().forEach((track) => track.stop());
+      onStatusMessage?.("麦克风已开启，正在启动语音识别...");
     } catch (error) {
       setListening(false);
       setInterimTranscript("");
@@ -498,11 +499,11 @@ export function ChatInput({
           <button
             type="button"
             onClick={() => setAttachmentMenuOpen((open) => !open)}
-            className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-slate-950 text-slate-950 hover:bg-slate-100"
+            className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-950 text-slate-950 hover:bg-slate-100"
             aria-label="打开上传菜单"
             aria-expanded={attachmentMenuOpen}
           >
-            <Plus className="h-5 w-5" strokeWidth={2.2} aria-hidden="true" />
+            <Plus className="h-4 w-4" strokeWidth={2} aria-hidden="true" />
           </button>
           <AttachmentMenu
             open={attachmentMenuOpen}
