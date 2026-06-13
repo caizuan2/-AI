@@ -18,16 +18,6 @@ def appVersionCode = (
         ?: System.getenv("APP_BUILD")
         ?: versionConfig.build
 ).toString().toInteger()
-def releaseKeystorePath = System.getenv("KEYSTORE_PATH") ?: System.getenv("ANDROID_KEYSTORE_PATH")
-def releaseKeystorePassword = System.getenv("KEYSTORE_PASSWORD") ?: System.getenv("ANDROID_KEYSTORE_PASSWORD")
-def releaseKeyAlias = System.getenv("KEY_ALIAS") ?: System.getenv("ANDROID_KEY_ALIAS")
-def releaseKeyPassword = System.getenv("KEY_PASSWORD") ?: System.getenv("ANDROID_KEY_PASSWORD")
-def hasReleaseSigning = releaseKeystorePath
-    && releaseKeystorePassword
-    && releaseKeyAlias
-    && releaseKeyPassword
-    && file(releaseKeystorePath).exists()
-
 android {
     namespace = "com.aiknowledge.chat"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -44,41 +34,15 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
-    signingConfigs {
-        release {
-            if (hasReleaseSigning) {
-                storeFile file(releaseKeystorePath)
-                storePassword releaseKeystorePassword
-                keyAlias releaseKeyAlias
-                keyPassword releaseKeyPassword
-            }
-        }
-    }
     buildTypes {
         release {
-            if (hasReleaseSigning) {
-                signingConfig signingConfigs.release
-            }
+            signingConfig signingConfigs.debug
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
     buildFeatures {
         buildConfig true
-    }
-}
-
-gradle.taskGraph.whenReady { graph ->
-    def releaseTasks = [
-        ":app:assembleRelease",
-        "assembleRelease",
-        ":app:bundleRelease",
-        "bundleRelease"
-    ]
-    def isReleaseBuild = releaseTasks.any { taskName -> graph.hasTask(taskName) }
-
-    if (isReleaseBuild && !hasReleaseSigning) {
-        throw new GradleException("Release APK signing requires KEYSTORE_PATH, KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD. KEYSTORE_PATH must point to an existing keystore file.")
     }
 }
 

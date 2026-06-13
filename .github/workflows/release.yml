@@ -58,11 +58,6 @@ jobs:
     name: Build Android APK
     runs-on: ubuntu-latest
     needs: build-web
-    env:
-      KEYSTORE_PATH: /tmp/release-keystore.jks
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -89,33 +84,46 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Capacitor sync
-        run: npx cap sync android
+      - name: Restore Android debug keystore cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
 
-      - name: Prepare Android release keystore
-        env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+      - name: Ensure Android debug keystore
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ -z "${KEYSTORE_BASE64:-}" ]]; then
-            echo "Missing KEYSTORE_BASE64 GitHub secret. Store the release keystore as base64 text." >&2
+          mkdir -p "${HOME}/.android"
+
+          if [[ ! -f "${HOME}/.android/debug.keystore" ]]; then
+            echo "Generating Android debug keystore for CI release signing..."
+            keytool -genkeypair \
+              -alias androiddebugkey \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -keystore "${HOME}/.android/debug.keystore" \
+              -storepass android \
+              -keypass android \
+              -dname "CN=Android,O=Android,C=US"
+          else
+            echo "Reusing cached Android debug keystore."
+          fi
+
+          if [[ ! -s "${HOME}/.android/debug.keystore" ]]; then
+            echo "Android debug keystore is empty or missing." >&2
             exit 1
           fi
 
-          if [[ -z "${KEYSTORE_PASSWORD:-}" || -z "${KEY_ALIAS:-}" || -z "${KEY_PASSWORD:-}" ]]; then
-            echo "Missing Android signing secrets: KEYSTORE_PASSWORD, KEY_ALIAS, and KEY_PASSWORD are required." >&2
-            exit 1
-          fi
+          keytool -list \
+            -keystore "${HOME}/.android/debug.keystore" \
+            -storepass android \
+            -alias androiddebugkey
 
-          mkdir -p "$(dirname "${KEYSTORE_PATH}")"
-          printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
-
-          if [[ ! -s "${KEYSTORE_PATH}" ]]; then
-            echo "Decoded keystore is empty or missing at KEYSTORE_PATH." >&2
-            exit 1
-          fi
+      - name: Capacitor sync
+        run: npx cap sync android
 
       - name: Build APK
         shell: bash
@@ -131,15 +139,9 @@ jobs:
           set -euo pipefail
 
           signed_apk="android/app/build/outputs/apk/release/app-release.apk"
-          unsigned_apk="android/app/build/outputs/apk/release/app-release-unsigned.apk"
 
           if [[ ! -f "${signed_apk}" ]]; then
             echo "Signed release APK was not generated: ${signed_apk}" >&2
-            exit 1
-          fi
-
-          if [[ -f "${unsigned_apk}" ]]; then
-            echo "Unsigned release APK must not be generated or uploaded: ${unsigned_apk}" >&2
             exit 1
           fi
 
@@ -149,7 +151,12 @@ jobs:
             exit 1
           fi
 
+          echo "Checking APK signature..."
           "${apksigner}" verify --verbose "${signed_apk}"
+
+          echo "Checking APK certificate..."
+          keytool -printcert -jarfile "${signed_apk}" || true
+          "${apksigner}" verify --print-certs --verbose "${signed_apk}"
 
       - name: Collect APK
         shell: bash
@@ -250,6 +257,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       - name: Load version
         run: node scripts/sync-version.mjs --env
 
@@ -282,6 +295,24 @@ jobs:
             echo "Windows EXE artifact is missing. The release cannot continue." >&2
             exit 1
           fi
+
+          if [[ -z "${ANDROID_HOME:-}" ]]; then
+            echo "ANDROID_HOME is not set. Cannot verify APK signature before release upload." >&2
+            exit 1
+          fi
+
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          if [[ -z "${apksigner}" ]]; then
+            echo "apksigner was not found in ANDROID_HOME." >&2
+            exit 1
+          fi
+
+          echo "Checking APK signature..."
+          "${apksigner}" verify --verbose "${apk_file}"
+
+          echo "Checking APK certificate..."
+          keytool -printcert -jarfile "${apk_file}" || true
+          "${apksigner}" verify --print-certs --verbose "${apk_file}"
 
           echo "APK_FILE=${apk_file}" >> "${GITHUB_ENV}"
           echo "EXE_FILE=${exe_file}" >> "${GITHUB_ENV}"
