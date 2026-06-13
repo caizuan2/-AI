@@ -22,8 +22,8 @@
           "minimum_build": 100,
           "force_update": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.1-user-windows/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
           "changelog": [
             "Updated user app",
@@ -40,8 +40,8 @@
           "minimum_build": 100,
           "force_update": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.1-user-windows/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
           "changelog": [
             "Updated user app",
@@ -72,8 +72,8 @@
           "minimum_build": 100,
           "force_update": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
           "changelog": [
             "Updated admin app",
@@ -90,8 +90,8 @@
           "minimum_build": 100,
           "force_update": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
           "changelog": [
             "Updated admin app",
@@ -103,7 +103,7 @@
     }
   },
   "user": {
-    "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
     "build": 103,
     "version": "1.0.103"
   }

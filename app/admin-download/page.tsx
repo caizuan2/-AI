@@ -1,5 +1,6 @@
 import React from "react";
 import { DownloadCopyButton } from "@/components/download-copy-button";
+import { getManifestAppReleaseSnapshot, normalizeAppStoreManifest, type AppReleaseSnapshot } from "@/lib/app-store";
 import releaseInfo from "../../public/releases/latest.json";
 
 export const metadata = {
@@ -7,7 +8,18 @@ export const metadata = {
   description: "管理员端 APK、Windows EXE、iOS、macOS 和 Web 管理端入口下载页",
 };
 
-const adminRelease = releaseInfo.admin;
+const releaseManifest = normalizeAppStoreManifest(releaseInfo);
+const adminWebCompatibilityUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
+
+function requireRelease(release: AppReleaseSnapshot | null) {
+  if (!release) {
+    throw new Error("Invalid admin release manifest.");
+  }
+
+  return release;
+}
+
+const adminRelease = requireRelease(releaseManifest ? getManifestAppReleaseSnapshot(releaseManifest, "admin") : null);
 
 const items = [
   {
@@ -42,13 +54,13 @@ const items = [
     icon: "🌐",
     title: "Web 管理端",
     desc: "无需安装，直接通过浏览器访问管理员后台。",
-    href: adminRelease.web_url,
+    href: adminRelease.web_url || adminWebCompatibilityUrl,
     button: "打开 Web 管理端",
   },
 ];
 
 function getUpdatedDate() {
-  return releaseInfo.updated_at.slice(0, 10);
+  return releaseManifest?.updated_at.slice(0, 10) ?? "";
 }
 
 export default function AdminDownloadPage() {
