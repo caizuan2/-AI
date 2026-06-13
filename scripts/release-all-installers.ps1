@@ -14,19 +14,22 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ManifestPath = Join-Path $Root "public/releases/latest.json"
 $Repo = "caizuan2/-AI"
-$UserWindowsTag = "v1.0.1-user-windows"
-$AdminWindowsTag = "v1.0.0-admin-windows"
-$UserApkUrl = "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk"
-$AdminApkUrl = "https://stately-sawine-1efd4d.netlify.app/downloads/admin/ai-knowledge-admin-latest.apk"
-$UserExeUrl = "https://github.com/$Repo/releases/download/$UserWindowsTag/ai-knowledge-chat-latest.exe"
-$AdminExeUrl = "https://github.com/$Repo/releases/download/$AdminWindowsTag/ai-knowledge-admin-latest.exe"
+$ReleaseTag = "v$Version"
+$ReleaseDownloadBase = "https://github.com/$Repo/releases/latest/download"
+$UserApkUrl = "$ReleaseDownloadBase/ai-knowledge-chat-latest.apk"
+$AdminApkUrl = "$ReleaseDownloadBase/ai-knowledge-admin-latest.apk"
+$UserExeUrl = "$ReleaseDownloadBase/ai-knowledge-chat-latest.exe"
+$AdminExeUrl = "$ReleaseDownloadBase/ai-knowledge-admin-latest.exe"
 $UserWebUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui"
 $AdminWebUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest"
 $UserDownloadPage = "https://stately-sawine-1efd4d.netlify.app/user-download.html"
 $AdminDownloadPage = "https://stately-sawine-1efd4d.netlify.app/admin-download.html"
 $DefaultMinimumBuild = 100
-$UserAppName = "AI Knowledge Assistant"
-$AdminAppName = "AI Knowledge Admin"
+$UserAppId = "ai.chat.user"
+$AdminAppId = "ai.chat.admin"
+$UserAppName = "AI知识库助手"
+$AdminAppName = "AI知识库管理后台"
+$DistributionPlatforms = @("android", "windows", "ios", "macos", "web", "electron")
 $UserChangelog = @(
   "Updated user app",
   "Improved chat experience",
@@ -100,7 +103,7 @@ function Publish-GitHubAsset {
     [Parameter(Mandatory = $true)][string]$Notes
   )
 
-  Assert-FileExists -Path $AssetPath -Message "Windows EXE file not found: $AssetPath"
+  Assert-FileExists -Path $AssetPath -Message "Release asset file not found: $AssetPath"
 
   $releaseExists = $false
   try {
@@ -122,22 +125,24 @@ function Publish-GitHubAsset {
   }
 }
 
-function New-ReleaseInfo {
+function New-AppStoreVersion {
   param(
-    [Parameter(Mandatory = $true)][string]$AppName,
     [Parameter(Mandatory = $true)][string]$WebUrl,
     [Parameter(Mandatory = $true)][string]$ApkUrl,
     [Parameter(Mandatory = $true)][string]$ExeUrl,
     [Parameter(Mandatory = $true)][string]$DownloadPage,
     [Parameter(Mandatory = $true)][int]$MinimumBuild,
     [Parameter(Mandatory = $true)][bool]$ForceUpdate,
+    [Parameter(Mandatory = $true)][string]$Channel,
+    [Parameter(Mandatory = $true)][int]$Rollout,
     [Parameter(Mandatory = $true)][string[]]$Changelog
   )
 
   return [pscustomobject]([ordered]@{
-    app_name = $AppName
     version = $Version
     build = $Build
+    channel = $Channel
+    rollout = $Rollout
     minimum_build = $MinimumBuild
     force_update = $ForceUpdate
     web_url = $WebUrl
@@ -145,33 +150,112 @@ function New-ReleaseInfo {
     exe_url = $ExeUrl
     download_page = $DownloadPage
     changelog = $Changelog
+    created_at = [DateTime]::UtcNow.ToString("o")
   })
 }
 
+function New-AppCatalog {
+  param(
+    [Parameter(Mandatory = $true)][string]$AppId,
+    [Parameter(Mandatory = $true)][string]$AppName,
+    [Parameter(Mandatory = $true)][object[]]$Versions
+  )
+
+  return [pscustomobject]([ordered]@{
+    id = $AppId
+    name = $AppName
+    platforms = $DistributionPlatforms
+    active_version = $Version
+    versions = $Versions
+  })
+}
+
+function Get-PreviousAppVersions {
+  param(
+    [Parameter(Mandatory = $true)][string]$AppKey
+  )
+
+  if (-not (Test-Path $ManifestPath)) {
+    return @()
+  }
+
+  try {
+    $existingManifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    $existingApp = $existingManifest.apps.$AppKey
+
+    if (-not $existingApp -or -not $existingApp.versions) {
+      return @()
+    }
+
+    return @($existingApp.versions | Where-Object {
+      $_.version -ne $Version -and $_.build -ne $Build
+    })
+  } catch {
+    return @()
+  }
+}
+
+function ConvertTo-AsciiJson {
+  param(
+    [Parameter(Mandatory = $true)][string]$Json
+  )
+
+  $builder = New-Object System.Text.StringBuilder
+
+  foreach ($character in $Json.ToCharArray()) {
+    $code = [int][char]$character
+
+    if ($code -gt 127) {
+      [void]$builder.Append(("\u{0:x4}" -f $code))
+    } else {
+      [void]$builder.Append($character)
+    }
+  }
+
+  return $builder.ToString()
+}
+
 function Update-LatestManifest {
+  $userVersion = New-AppStoreVersion `
+    -WebUrl $UserWebUrl `
+    -ApkUrl $UserApkUrl `
+    -ExeUrl $UserExeUrl `
+    -DownloadPage $UserDownloadPage `
+    -MinimumBuild $DefaultMinimumBuild `
+    -ForceUpdate $false `
+    -Channel "stable" `
+    -Rollout 100 `
+    -Changelog $UserChangelog
+
+  $adminVersion = New-AppStoreVersion `
+    -WebUrl $AdminWebUrl `
+    -ApkUrl $AdminApkUrl `
+    -ExeUrl $AdminExeUrl `
+    -DownloadPage $AdminDownloadPage `
+    -MinimumBuild $DefaultMinimumBuild `
+    -ForceUpdate $false `
+    -Channel "stable" `
+      -Rollout 100 `
+      -Changelog $AdminChangelog
+
+  $userVersions = @($userVersion) + (Get-PreviousAppVersions -AppKey "user")
+  $adminVersions = @($adminVersion) + (Get-PreviousAppVersions -AppKey "admin")
+
   $nextManifest = [pscustomobject]([ordered]@{
     updated_at = [DateTime]::UtcNow.ToString("o")
-    user = New-ReleaseInfo `
-      -AppName $UserAppName `
-      -WebUrl $UserWebUrl `
-      -ApkUrl $UserApkUrl `
-      -ExeUrl $UserExeUrl `
-      -DownloadPage $UserDownloadPage `
-      -MinimumBuild $DefaultMinimumBuild `
-      -ForceUpdate $false `
-      -Changelog $UserChangelog
-    admin = New-ReleaseInfo `
-      -AppName $AdminAppName `
-      -WebUrl $AdminWebUrl `
-      -ApkUrl $AdminApkUrl `
-      -ExeUrl $AdminExeUrl `
-      -DownloadPage $AdminDownloadPage `
-      -MinimumBuild $DefaultMinimumBuild `
-      -ForceUpdate $false `
-      -Changelog $AdminChangelog
+    apps = [ordered]@{
+      user = New-AppCatalog `
+        -AppId $UserAppId `
+        -AppName $UserAppName `
+        -Versions $userVersions
+      admin = New-AppCatalog `
+        -AppId $AdminAppId `
+        -AppName $AdminAppName `
+        -Versions $adminVersions
+    }
   })
 
-  $json = ($nextManifest | ConvertTo-Json -Depth 8).Replace("\u0026", "&")
+  $json = ConvertTo-AsciiJson (($nextManifest | ConvertTo-Json -Depth 10).Replace("\u0026", "&"))
   try {
     $null = $json | ConvertFrom-Json
   } catch {
@@ -208,22 +292,33 @@ $AdminApk = Join-Path $Root "dist-app/admin-android/ai-knowledge-admin.apk"
 $UserExe = Join-Path $Root "dist-app/windows/ai-knowledge-chat.exe"
 $AdminExe = Join-Path $Root "dist-app/admin-windows/ai-knowledge-admin-latest.exe"
 
-Copy-ApkToPublic -Source $UserApk -DestinationDirectory (Join-Path $Root "public/downloads") -BaseName "ai-knowledge-chat"
-Copy-ApkToPublic -Source $AdminApk -DestinationDirectory (Join-Path $Root "public/downloads/admin") -BaseName "ai-knowledge-admin"
+Publish-GitHubAsset `
+  -Tag $ReleaseTag `
+  -AssetPath $UserApk `
+  -AssetName "ai-knowledge-chat-latest.apk" `
+  -Title "AI Knowledge $Version" `
+  -Notes "Automated release assets for AI Knowledge $Version."
 
 Publish-GitHubAsset `
-  -Tag $UserWindowsTag `
+  -Tag $ReleaseTag `
+  -AssetPath $AdminApk `
+  -AssetName "ai-knowledge-admin-latest.apk" `
+  -Title "AI Knowledge $Version" `
+  -Notes "Automated release assets for AI Knowledge $Version."
+
+Publish-GitHubAsset `
+  -Tag $ReleaseTag `
   -AssetPath $UserExe `
   -AssetName "ai-knowledge-chat-latest.exe" `
-  -Title "AI Knowledge Assistant Windows" `
-  -Notes "User Windows EXE installer. It opens the user chat page."
+  -Title "AI Knowledge $Version" `
+  -Notes "Automated release assets for AI Knowledge $Version."
 
 Publish-GitHubAsset `
-  -Tag $AdminWindowsTag `
+  -Tag $ReleaseTag `
   -AssetPath $AdminExe `
   -AssetName "ai-knowledge-admin-latest.exe" `
-  -Title "AI Knowledge Admin Windows" `
-  -Notes "Admin Windows EXE installer. It opens the admin login page."
+  -Title "AI Knowledge $Version" `
+  -Notes "Automated release assets for AI Knowledge $Version."
 
 Update-LatestManifest
 
@@ -237,6 +332,6 @@ Write-Host "User download page: $UserDownloadPage"
 Write-Host "Admin download page: $AdminDownloadPage"
 Write-Host ""
 Write-Host "Next staging command:"
-Write-Host 'git add public/releases/latest.json public/downloads/ai-knowledge-chat.apk public/downloads/ai-knowledge-chat-latest.apk public/downloads/admin/ai-knowledge-admin.apk public/downloads/admin/ai-knowledge-admin-latest.apk scripts/release-all-installers.ps1'
+Write-Host 'git add public/releases/latest.json scripts/release-all-installers.ps1'
 Write-Host ""
-Write-Host "Keep dist-app, EXE files, node_modules, .next, .env, certificates, keys, and signing files out of the repository."
+Write-Host "Keep dist, dist-app, APK, EXE, ASAR files, node_modules, .next, .env, certificates, keys, and signing files out of the repository."
