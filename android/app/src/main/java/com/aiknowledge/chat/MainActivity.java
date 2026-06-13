@@ -4,15 +4,19 @@ import android.app.Activity;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Message;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
+import android.webkit.WebViewClient;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
@@ -23,6 +27,8 @@ public class MainActivity extends BridgeActivity {
     private static final String USER_CHAT_URL = APP_ORIGIN + "/chat-ui";
     private static final String ADMIN_INGEST_URL = APP_ORIGIN + "/ingest";
     private static final String ADMIN_APP_PACKAGE = "com.aiknowledge.admin";
+    private static final String UPDATE_STATE_PREFS = "app_update_state";
+    private static final String WEBVIEW_STATE_VERSION_PREFIX = "webview_state_cleared_";
     private static final int FILE_CHOOSER_REQUEST_CODE = 6205;
     private ValueCallback<Uri[]> fileChooserCallback;
 
@@ -33,7 +39,9 @@ public class MainActivity extends BridgeActivity {
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebView webView = getBridge().getWebView();
 
+            clearStaleWebViewState(webView);
             configureSessionPersistence(webView);
+            webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
             webView.setWebViewClient(new AppRouteWebViewClient(getBridge(), isAdminShell()));
             webView.setWebChromeClient(new AppWebChromeClient(getBridge()));
         }
@@ -70,6 +78,24 @@ public class MainActivity extends BridgeActivity {
         return ADMIN_APP_PACKAGE.equals(getPackageName());
     }
 
+    private void clearStaleWebViewState(WebView webView) {
+        SharedPreferences preferences = getSharedPreferences(UPDATE_STATE_PREFS, MODE_PRIVATE);
+        String stateKey = WEBVIEW_STATE_VERSION_PREFIX + BuildConfig.VERSION_NAME;
+
+        if (preferences.getBoolean(stateKey, false)) {
+            return;
+        }
+
+        webView.clearCache(true);
+        webView.clearHistory();
+
+        CookieManager cookieManager = CookieManager.getInstance();
+        cookieManager.removeAllCookies(null);
+        cookieManager.flush();
+
+        preferences.edit().putBoolean(stateKey, true).apply();
+    }
+
     private void configureSessionPersistence(WebView webView) {
         WebSettings settings = webView.getSettings();
 
@@ -79,6 +105,8 @@ public class MainActivity extends BridgeActivity {
         settings.setAllowFileAccess(true);
         settings.setAllowContentAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setSupportMultipleWindows(true);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
 
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
@@ -124,6 +152,65 @@ public class MainActivity extends BridgeActivity {
 
     private static boolean isSameAppOrigin(Uri uri) {
         return APP_ORIGIN.equals(uri.getScheme() + "://" + uri.getHost());
+    }
+
+    private static boolean isHttpUri(Uri uri) {
+        if (uri == null || uri.getScheme() == null) {
+            return false;
+        }
+
+        return "http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme());
+    }
+
+    private static boolean isAllowedShellRoute(Uri uri, boolean adminShell) {
+        if (!isSameAppOrigin(uri)) {
+            return false;
+        }
+
+        String path = uri.getPath();
+        if (path == null) {
+            return false;
+        }
+
+        if (path.equals("/login")) {
+            return true;
+        }
+
+        if (adminShell) {
+            return path.equals("/ingest") || path.startsWith("/ingest/");
+        }
+
+        return path.equals("/chat-ui")
+            || path.startsWith("/chat-ui/")
+            || path.equals("/register")
+            || path.equals("/unlock");
+    }
+
+    private static boolean shouldOpenInExternalBrowser(Uri uri, boolean adminShell) {
+        return isHttpUri(uri) && !isAllowedShellRoute(uri, adminShell);
+    }
+
+    private boolean openExternalBrowser(Uri uri) {
+        if (!isHttpUri(uri)) {
+            return false;
+        }
+
+        Intent intent = new Intent(Intent.ACTION_VIEW, uri);
+        intent.addCategory(Intent.CATEGORY_BROWSABLE);
+
+        try {
+            startActivity(intent);
+            return true;
+        } catch (ActivityNotFoundException error) {
+            return false;
+        }
+    }
+
+    private class AndroidBridge {
+        @JavascriptInterface
+        public void openUrl(String url) {
+            runOnUiThread(() -> openExternalBrowser(Uri.parse(url)));
+        }
     }
 
     private static boolean isForbiddenUserRoute(Uri uri) {
@@ -172,6 +259,49 @@ public class MainActivity extends BridgeActivity {
         }
 
         @Override
+        public boolean onCreateWindow(
+            WebView view,
+            boolean isDialog,
+            boolean isUserGesture,
+            Message resultMsg
+        ) {
+            WebView popupWebView = new WebView(view.getContext());
+            popupWebView.getSettings().setJavaScriptEnabled(true);
+            popupWebView.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView popupView, WebResourceRequest request) {
+                    Uri url = request.getUrl();
+
+                    if (openExternalBrowser(url)) {
+                        popupView.destroy();
+                        return true;
+                    }
+
+                    return true;
+                }
+
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView popupView, String url) {
+                    if (openExternalBrowser(Uri.parse(url))) {
+                        popupView.destroy();
+                    }
+
+                    return true;
+                }
+            });
+
+            WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
+            transport.setWebView(popupWebView);
+            resultMsg.sendToTarget();
+            return true;
+        }
+
+        @Override
+        public void onCloseWindow(WebView window) {
+            window.destroy();
+        }
+
+        @Override
         public boolean onShowFileChooser(
             WebView webView,
             final ValueCallback<Uri[]> filePathCallback,
@@ -206,7 +336,7 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    private static class AppRouteWebViewClient extends BridgeWebViewClient {
+    private class AppRouteWebViewClient extends BridgeWebViewClient {
         private final boolean adminShell;
 
         AppRouteWebViewClient(Bridge bridge, boolean adminShell) {
@@ -216,6 +346,10 @@ public class MainActivity extends BridgeActivity {
 
         @Override
         public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+            if (!request.isForMainFrame()) {
+                return super.shouldOverrideUrlLoading(view, request);
+            }
+
             Uri url = request.getUrl();
             if (adminShell && isForbiddenAdminRoute(url)) {
                 view.loadUrl(ADMIN_INGEST_URL);
@@ -227,7 +361,33 @@ public class MainActivity extends BridgeActivity {
                 return true;
             }
 
+            if (shouldOpenInExternalBrowser(url, adminShell)) {
+                openExternalBrowser(url);
+                return true;
+            }
+
             return super.shouldOverrideUrlLoading(view, request);
+        }
+
+        @Override
+        public boolean shouldOverrideUrlLoading(WebView view, String url) {
+            Uri uri = Uri.parse(url);
+            if (adminShell && isForbiddenAdminRoute(uri)) {
+                view.loadUrl(ADMIN_INGEST_URL);
+                return true;
+            }
+
+            if (!adminShell && isForbiddenUserRoute(uri)) {
+                view.loadUrl(USER_CHAT_URL);
+                return true;
+            }
+
+            if (shouldOpenInExternalBrowser(uri, adminShell)) {
+                openExternalBrowser(uri);
+                return true;
+            }
+
+            return super.shouldOverrideUrlLoading(view, url);
         }
 
         @Override
@@ -242,6 +402,12 @@ public class MainActivity extends BridgeActivity {
             if (!adminShell && isForbiddenUserRoute(uri)) {
                 view.stopLoading();
                 view.loadUrl(USER_CHAT_URL);
+                return;
+            }
+
+            if (shouldOpenInExternalBrowser(uri, adminShell)) {
+                view.stopLoading();
+                openExternalBrowser(uri);
                 return;
             }
 

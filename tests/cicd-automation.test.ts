@@ -9,44 +9,82 @@ const workflow = readFileSync(workflowPath, "utf8");
 const gitignore = readFileSync(".gitignore", "utf8");
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
+function getJobBlock(jobName: string) {
+  const start = workflow.indexOf(`  ${jobName}:`);
+  assert.notEqual(start, -1, `${jobName} job must exist.`);
+
+  const rest = workflow.slice(start + 1);
+  const nextJob = rest.search(/\n  [a-z0-9-]+:/);
+  return nextJob === -1 ? workflow.slice(start) : workflow.slice(start, start + 1 + nextJob);
+}
+
+const androidJob = getJobBlock("build-android-apk");
+const windowsJob = getJobBlock("build-windows-exe");
+const releaseJob = getJobBlock("release");
+
 assert.match(workflow, /on:\s*\n\s+push:/);
 assert.match(workflow, /branches:\s*\n\s+- main/);
 assert.match(workflow, /tags:\s*\n\s+- "v\*"/);
 assert.match(workflow, /permissions:[\s\S]*contents: write/);
 
+assert.match(workflow, /build-web:/);
+assert.match(workflow, /build-android-apk:/);
+assert.match(workflow, /build-windows-exe:/);
+assert.match(workflow, /release:/);
+assert.match(releaseJob, /needs:\s*\n\s+- build-android-apk\s*\n\s+- build-windows-exe/);
+
 assert.match(workflow, /actions\/checkout@v4/);
 assert.match(workflow, /actions\/setup-node@v4/);
 assert.match(workflow, /actions\/setup-java@v4/);
-assert.match(workflow, /npm install/);
+assert.match(workflow, /corepack enable/);
+assert.match(workflow, /pnpm install --frozen-lockfile/);
 
-assert.match(workflow, /npm run build/);
-assert.match(workflow, /npm run lint/);
-assert.match(workflow, /npm run typecheck/);
+assert.match(workflow, /pnpm run build/);
+assert.match(workflow, /pnpm run lint/);
+assert.match(workflow, /pnpm run typecheck/);
 
 assert.match(workflow, /npx cap sync android/);
 assert.match(workflow, /\.\/gradlew assembleRelease/);
 assert.match(workflow, /android\/app\/build\/outputs\/apk\/release\/app-release\.apk/);
 assert.match(workflow, /android\/app\/build\/outputs\/apk\/release\/app-release-unsigned\.apk/);
-assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: android-apk/);
+assert.match(workflow, /apk\/ai-knowledge-chat-latest\.apk/);
+assert.match(workflow, /Collected Android APK is empty or missing/);
+assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: apk/);
+assert.match(androidJob, /\n    needs: build-web/);
+assert.doesNotMatch(androidJob, /\n\s+if:/);
+assert.doesNotMatch(androidJob, /continue-on-error:\s*true/);
+assert.doesNotMatch(androidJob, /build-windows-exe/);
 
-assert.match(workflow, /electron-builder --win --publish never/);
+assert.match(workflow, /pnpm exec electron-builder --win --publish never/);
 assert.match(workflow, /ai-knowledge-chat-latest\.apk/);
-assert.match(workflow, /dist\/ai-knowledge-chat-latest\.exe/);
-assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: windows-exe/);
+assert.match(workflow, /exe\/ai-knowledge-chat-latest\.exe/);
+assert.match(workflow, /actions\/upload-artifact@v4[\s\S]*name: exe/);
+assert.match(windowsJob, /\n    needs: build-web/);
+assert.doesNotMatch(windowsJob, /\n\s+if:/);
+assert.doesNotMatch(windowsJob, /continue-on-error:\s*true/);
+assert.doesNotMatch(windowsJob, /build-android-apk/);
 
-assert.match(workflow, /release-assets\/manifest\/latest\.json/);
+assert.match(workflow, /Download APK/);
+assert.match(workflow, /name: apk/);
+assert.match(workflow, /path: apk/);
+assert.match(workflow, /Download EXE/);
+assert.match(workflow, /name: exe/);
+assert.match(workflow, /path: exe/);
+assert.match(workflow, /Verify APK and EXE assets/);
+assert.match(workflow, /Android APK artifact is missing/);
+assert.match(workflow, /public\/releases\/latest\.json/);
 for (const field of ["version", "build", "apk_url", "exe_url", "web_url", "updated_at"]) {
   assert.match(workflow, new RegExp(field));
 }
-assert.match(workflow, /JSON\.parse\(fs\.readFileSync\("release-assets\/manifest\/latest\.json"/);
+assert.match(workflow, /JSON\.parse\(fs\.readFileSync\("public\/releases\/latest\.json"/);
 
 assert.match(workflow, /gh release create/);
 assert.match(workflow, /gh release edit/);
 assert.match(workflow, /gh release upload/);
 assert.match(workflow, /--clobber/);
-assert.match(workflow, /release-assets\/android-apk\/\*\.apk/);
-assert.match(workflow, /release-assets\/windows-exe\/\*\.exe/);
-assert.match(workflow, /release-assets\/manifest\/latest\.json/);
+assert.match(workflow, /\$\{APK_FILE\}/);
+assert.match(workflow, /\$\{EXE_FILE\}/);
+assert.match(workflow, /public\/releases\/latest\.json/);
 
 assert.doesNotMatch(workflow, /NETLIFY_DEPLOY_HOOK_URL/);
 assert.doesNotMatch(workflow, /VERCEL_DEPLOY_HOOK_URL/);
@@ -55,9 +93,8 @@ assert.doesNotMatch(workflow, /curl -fsS -X POST/);
 assert.match(workflow, /GITHUB_REF_TYPE/);
 assert.match(workflow, /GITHUB_REF_NAME/);
 assert.match(workflow, /GITHUB_RUN_NUMBER/);
-assert.match(workflow, /channel="stable"/);
-assert.match(workflow, /preview/);
-assert.match(workflow, /prerelease="true"/);
+assert.match(workflow, /RELEASE_TAG/);
+assert.match(workflow, /ci-\$\{GITHUB_RUN_NUMBER\}/);
 
 assert.equal(packageJson.scripts.lint, "next lint");
 assert.equal(packageJson.scripts.typecheck, "tsc --noEmit");
@@ -67,6 +104,8 @@ for (const pattern of [
   "dist/",
   "dist-app/",
   "android/app/build/",
+  "public/downloads/",
+  "public/uploads/",
   "*.exe",
   "*.apk",
   "*.asar",

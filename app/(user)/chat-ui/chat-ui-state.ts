@@ -1,3 +1,5 @@
+"use client";
+
 import type {
   AskChatRequest,
   AskChatResponse,
@@ -57,6 +59,14 @@ function getAttachmentUrlMetadata(attachment: ChatAttachmentDraft) {
 const ATTACHMENT_PREVIEW_CACHE_PREFIX = "chat-ui:attachment-preview:";
 const attachmentPreviewCache = new Map<string, string>();
 
+function getSessionStorage() {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window.sessionStorage;
+}
+
 function getAttachmentIdentityValues(attachment: ChatAttachmentDraft) {
   const metadata = attachment.metadata ?? {};
 
@@ -102,7 +112,7 @@ export function rememberChatAttachmentPreviewUrl(attachment: ChatAttachmentDraft
     attachmentPreviewCache.set(value, previewUrl);
 
     try {
-      window.sessionStorage.setItem(getAttachmentPreviewCacheKey(value), previewUrl);
+      getSessionStorage()?.setItem(getAttachmentPreviewCacheKey(value), previewUrl);
     } catch {
       // Session storage is optional; the in-memory cache still covers the active page.
     }
@@ -118,7 +128,7 @@ export function getCachedChatAttachmentPreviewUrl(attachment: ChatAttachmentDraf
     }
 
     try {
-      const stored = window.sessionStorage.getItem(getAttachmentPreviewCacheKey(value));
+      const stored = getSessionStorage()?.getItem(getAttachmentPreviewCacheKey(value));
 
       if (stored) {
         attachmentPreviewCache.set(value, stored);

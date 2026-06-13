@@ -7,27 +7,6 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
-    inputs:
-      mode:
-        description: "release or rollback"
-        required: false
-        default: "release"
-      channel:
-        description: "canary, beta, or stable"
-        required: false
-        default: "stable"
-      rollout:
-        description: "Rollout percentage"
-        required: false
-        default: "100"
-      force_update:
-        description: "Force update flag"
-        required: false
-        default: "false"
-      rollback_tag:
-        description: "Release tag to roll back to"
-        required: false
-        default: ""
 
 permissions:
   contents: write
@@ -38,50 +17,12 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  PNPM_VERSION: "10.12.4"
   WEB_URL: ${{ vars.WEB_URL || secrets.WEB_URL || 'https://stately-sawine-1efd4d.netlify.app' }}
 
 jobs:
-  metadata:
-    name: Release metadata
-    runs-on: ubuntu-latest
-    outputs:
-      channel: ${{ steps.meta.outputs.channel }}
-      prerelease: ${{ steps.meta.outputs.prerelease }}
-      release_tag: ${{ steps.meta.outputs.release_tag }}
-      version: ${{ steps.meta.outputs.version }}
-    steps:
-      - name: Compute release metadata
-        id: meta
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-            version="${GITHUB_REF_NAME#v}"
-            release_tag="${GITHUB_REF_NAME}"
-            channel="stable"
-            prerelease="false"
-          elif [[ -n "${{ github.event.inputs.rollback_tag || '' }}" ]]; then
-            release_tag="${{ github.event.inputs.rollback_tag }}"
-            version="${release_tag#v}"
-            channel="${{ github.event.inputs.channel || 'stable' }}"
-            prerelease="false"
-          else
-            version="0.0.0-main.${GITHUB_RUN_NUMBER}"
-            release_tag="ci-${GITHUB_RUN_NUMBER}"
-            channel="${{ github.event.inputs.channel || 'preview' }}"
-            prerelease="true"
-          fi
-
-          {
-            echo "version=${version}"
-            echo "release_tag=${release_tag}"
-            echo "channel=${channel}"
-            echo "prerelease=${prerelease}"
-          } >> "${GITHUB_OUTPUT}"
-
-  web-check:
-    name: Web build check
+  build-web:
+    name: Build Web
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -91,25 +32,29 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
 
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
       - name: Build Next.js web
-        run: npm run build
+        run: pnpm run build
 
       - name: Run lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Run typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
-  android-apk:
-    name: Android APK
+  build-android-apk:
+    name: Build Android APK
     runs-on: ubuntu-latest
-    needs:
-      - metadata
-      - web-check
+    needs: build-web
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -118,6 +63,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -125,16 +71,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare "pnpm@${PNPM_VERSION}" --activate
+
       - name: Install dependencies
-        run: npm install
+        run: pnpm install --frozen-lockfile
 
-      - name: Build Next.js web
-        run: npm run build
-
-      - name: Sync Android Capacitor project
+      - name: Capacitor sync
         run: npx cap sync android
 
-      - name: Build Android release APK
+      - name: Build APK
         shell: bash
         run: |
           set -euo pipefail
@@ -142,11 +90,11 @@ jobs:
           cd android
           ./gradlew assembleRelease
 
-      - name: Collect Android APK
+      - name: Collect APK
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p release-assets/android
+          mkdir -p apk
 
           apk_source="android/app/build/outputs/apk/release/app-release.apk"
           if [[ ! -f "${apk_source}" ]]; then
@@ -158,21 +106,26 @@ jobs:
             exit 1
           fi
 
-          cp "${apk_source}" "release-assets/android/ai-knowledge-chat-latest.apk"
+          cp "${apk_source}" "apk/ai-knowledge-chat-latest.apk"
 
-      - name: Upload Android APK artifact
+          if [[ ! -s "apk/ai-knowledge-chat-latest.apk" ]]; then
+            echo "Collected Android APK is empty or missing." >&2
+            exit 1
+          fi
+
+          ls -lh "apk/ai-knowledge-chat-latest.apk"
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: android-apk
-          path: release-assets/android/*.apk
+          name: apk
+          path: apk/*.apk
           if-no-files-found: error
 
-  windows-exe:
-    name: Windows EXE
+  build-windows-exe:
+    name: Build Windows EXE
     runs-on: windows-latest
-    needs:
-      - metadata
-      - web-check
+    needs: build-web
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -181,20 +134,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build Next.js web
-        run: npm run build
-
-      - name: Build Windows EXE
-        run: npx electron-builder --win --publish never
-
-      - name: Collect Windows EXE
+      - name: Enable pnpm
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+          corepack enable
+          corepack prepare "pnpm@$env:PNPM_VERSION" --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build EXE
+        run: pnpm exec electron-builder --win --publish never
+
+      - name: Collect EXE
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "exe" | Out-Null
 
           $exe = Get-ChildItem -Path "dist", "dist-app" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch "\\resources\\elevate\.exe$" } |
@@ -205,73 +162,101 @@ jobs:
             throw "Windows EXE was not generated."
           }
 
-          Copy-Item -LiteralPath $exe.FullName -Destination "dist/ai-knowledge-chat-latest.exe" -Force
+          Copy-Item -LiteralPath $exe.FullName -Destination "exe/ai-knowledge-chat-latest.exe" -Force
 
-      - name: Upload Windows EXE artifact
+          $collected = Get-Item -LiteralPath "exe/ai-knowledge-chat-latest.exe"
+          if ($collected.Length -le 0) {
+            throw "Collected Windows EXE is empty or missing."
+          }
+
+          Write-Host "EXE asset: $($collected.FullName) ($($collected.Length) bytes)"
+
+      - name: Upload EXE artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-exe
-          path: dist/*.exe
+          name: exe
+          path: exe/*.exe
           if-no-files-found: error
 
-  publish-release:
+  release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs:
-      - metadata
-      - android-apk
-      - windows-exe
+      - build-android-apk
+      - build-windows-exe
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Download release artifacts
+      - name: Download APK
         uses: actions/download-artifact@v4
         with:
-          path: release-assets
+          name: apk
+          path: apk
+
+      - name: Download EXE
+        uses: actions/download-artifact@v4
+        with:
+          name: exe
+          path: exe
+
+      - name: Verify APK and EXE assets
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apk_file="$(find apk -type f -name '*.apk' | sort | head -n 1)"
+          exe_file="$(find exe -type f -name '*.exe' | sort | head -n 1)"
+
+          if [[ -z "${apk_file}" || ! -s "${apk_file}" ]]; then
+            echo "Android APK artifact is missing. The release cannot continue." >&2
+            exit 1
+          fi
+
+          if [[ -z "${exe_file}" || ! -s "${exe_file}" ]]; then
+            echo "Windows EXE artifact is missing. The release cannot continue." >&2
+            exit 1
+          fi
+
+          echo "APK_FILE=${apk_file}" >> "${GITHUB_ENV}"
+          echo "EXE_FILE=${exe_file}" >> "${GITHUB_ENV}"
+          echo "APK_ASSET=$(basename "${apk_file}")" >> "${GITHUB_ENV}"
+          echo "EXE_ASSET=$(basename "${exe_file}")" >> "${GITHUB_ENV}"
+
+          echo "APK asset: ${apk_file}"
+          echo "EXE asset: ${exe_file}"
+
+      - name: Compute release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+          else
+            release_tag="ci-${GITHUB_RUN_NUMBER}"
+          fi
+
+          echo "RELEASE_TAG=${release_tag}" >> "${GITHUB_ENV}"
 
       - name: Generate latest.json
-        env:
-          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-          RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
         run: |
           node <<'NODE'
           const fs = require("node:fs");
-          const path = require("node:path");
 
           const releaseTag = process.env.RELEASE_TAG;
-          const version = process.env.RELEASE_VERSION;
-          const build = Number(process.env.GITHUB_RUN_NUMBER);
           const repo = process.env.GITHUB_REPOSITORY;
+          const version = process.env.GITHUB_REF_NAME;
+          const build = Number(process.env.GITHUB_RUN_NUMBER);
           const webUrl = process.env.WEB_URL;
           const updatedAt = new Date().toISOString();
+          const apkAsset = process.env.APK_ASSET;
+          const exeAsset = process.env.EXE_ASSET;
 
-          function findAsset(extension) {
-            const matches = [];
-
-            function walk(dir) {
-              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-                const fullPath = path.join(dir, entry.name);
-                if (entry.isDirectory()) {
-                  walk(fullPath);
-                } else if (entry.isFile() && entry.name.endsWith(extension)) {
-                  matches.push(fullPath);
-                }
-              }
-            }
-
-            walk("release-assets");
-
-            if (matches.length === 0) {
-              throw new Error(`No ${extension} release asset was found.`);
-            }
-
-            return matches.sort()[0];
+          if (!releaseTag || !repo || !version || !Number.isFinite(build) || !apkAsset || !exeAsset) {
+            throw new Error("Release metadata is incomplete.");
           }
 
-          const apkAsset = path.basename(findAsset(".apk"));
-          const exeAsset = path.basename(findAsset(".exe"));
           const releaseBase = `https://github.com/${repo}/releases/download/${encodeURIComponent(releaseTag)}`;
           const manifest = {
             version,
@@ -282,64 +267,51 @@ jobs:
             updated_at: updatedAt
           };
 
-          fs.mkdirSync("release-assets/manifest", { recursive: true });
-          fs.writeFileSync("release-assets/manifest/latest.json", `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
-          JSON.parse(fs.readFileSync("release-assets/manifest/latest.json", "utf8"));
+          fs.mkdirSync("public/releases", { recursive: true });
+          const latestJson = `${JSON.stringify(manifest, null, 2)}\n`;
+          fs.writeFileSync("public/releases/latest.json", latestJson, "utf8");
+          JSON.parse(fs.readFileSync("public/releases/latest.json", "utf8"));
           NODE
 
       - name: Create release notes
-        env:
-          RELEASE_CHANNEL: ${{ needs.metadata.outputs.channel }}
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
         run: |
           cat > release-notes.md <<EOF
-          Enterprise GitHub Release deployment
+          Auto CI/CD Release
 
-          Version: ${RELEASE_VERSION}
+          Version: ${GITHUB_REF_NAME}
           Build: ${GITHUB_RUN_NUMBER}
-          Channel: ${RELEASE_CHANNEL}
 
-          APK and EXE are uploaded as GitHub Release assets.
-          Netlify deploys only the Next.js Web app from source.
+          APK and EXE are generated by independent jobs and uploaded together.
           EOF
 
-      - name: Create or update GitHub Release
+      - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
-          RELEASE_VERSION: ${{ needs.metadata.outputs.version }}
-          PRERELEASE: ${{ needs.metadata.outputs.prerelease }}
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
 
-          prerelease_flag=()
-          if [[ "${PRERELEASE}" == "true" ]]; then
-            prerelease_flag+=(--prerelease)
-          fi
-
           if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
             gh release edit "${RELEASE_TAG}" \
-              --title "AI Knowledge ${RELEASE_VERSION}" \
-              --notes-file release-notes.md \
-              "${prerelease_flag[@]}"
+              --title "Release ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
           else
             gh release create "${RELEASE_TAG}" \
               --target "${GITHUB_SHA}" \
-              --title "AI Knowledge ${RELEASE_VERSION}" \
-              --notes-file release-notes.md \
-              "${prerelease_flag[@]}"
+              --title "Release ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md
           fi
 
       - name: Upload APK, EXE, and latest.json
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.metadata.outputs.release_tag }}
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           gh release upload "${RELEASE_TAG}" \
-            release-assets/android-apk/*.apk \
-            release-assets/windows-exe/*.exe \
-            release-assets/manifest/latest.json \
+            "${APK_FILE}" \
+            "${EXE_FILE}" \
+            public/releases/latest.json \
             --clobber

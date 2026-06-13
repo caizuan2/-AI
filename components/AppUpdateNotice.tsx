@@ -5,13 +5,12 @@ import { Download, RefreshCw, X } from "lucide-react";
 import {
   canDismissUpdate,
   checkAppUpdate,
-  detectAppPlatform,
-  resolveUpdateTarget,
   shouldSkipUpdateNotice,
   snoozeUpdateNotice,
   type AppUpdateResult
 } from "@/lib/app-update";
 import { APP_BUILD, APP_VERSION, type AppKind } from "@/lib/app-version";
+import { detectPlatform, openLink, resolveDownload, type UpdatePlatform } from "@/lib/update-core";
 import { Button } from "@/components/ui/button";
 
 interface AppUpdateNoticeProps {
@@ -24,77 +23,45 @@ interface AppUpdateNoticeDialogProps {
   appKind: AppKind;
   update: AppUpdateResult & { latest: NonNullable<AppUpdateResult["latest"]> };
   updateUrl: string;
-  platform: ReturnType<typeof detectAppPlatform>;
+  platform: UpdatePlatform;
   dismissible: boolean;
   onUpdateNow: (event: React.MouseEvent<HTMLAnchorElement>) => void;
   onSnooze: () => void;
 }
 
-interface UpdateWindowLike {
-  open?: (url: string, target: string, features: string) => { opener?: unknown } | null;
-  location?: {
-    href: string;
-  };
-}
-
-const platformUpdateTips: Record<ReturnType<typeof detectAppPlatform>, string> = {
+const platformUpdateTips: Record<UpdatePlatform, string> = {
   android: "Android 安装包需要下载后手动安装；如提示未知来源，请在系统设置中允许安装。",
   windows: "Windows 安装包将通过 EXE 下载链接获取，下载后按提示安装即可。",
   ios: "iOS 端请打开下载页查看当前可用入口。",
   macos: "macOS 端请打开下载页查看当前可用入口。",
   web: "Web 端会打开最新在线地址，无需安装。",
+  electron: "桌面端会打开外部分发链接，下载后按提示安装即可。",
   unknown: "将打开下载页，请选择适合当前设备的安装入口。"
 };
-
-function getBrowserWindow(): UpdateWindowLike | undefined {
-  if (typeof window === "undefined") {
-    return undefined;
-  }
-
-  return {
-    open: window.open.bind(window),
-    location: window.location
-  };
-}
-
-export function openUpdateUrl(url: string, browserWindow = getBrowserWindow()) {
-  const targetUrl = url.trim();
-
-  if (!targetUrl || !browserWindow) {
-    return false;
-  }
-
-  let openedWindow: { opener?: unknown } | null = null;
-
-  try {
-    openedWindow = browserWindow.open?.(targetUrl, "_blank", "noopener,noreferrer") ?? null;
-  } catch {
-    openedWindow = null;
-  }
-
-  if (openedWindow) {
-    try {
-      openedWindow.opener = null;
-    } catch {
-      // Some WebViews expose a read-only opener. The navigation already succeeded.
-    }
-
-    return true;
-  }
-
-  if (browserWindow.location) {
-    browserWindow.location.href = targetUrl;
-    return true;
-  }
-
-  return false;
-}
 
 function getStorage() {
   try {
     return typeof window !== "undefined" ? window.localStorage : undefined;
   } catch {
     return undefined;
+  }
+}
+
+function clearLegacyForceUpdateState() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem("force_update");
+  } catch {
+    // Storage can be unavailable in some WebView privacy modes.
+  }
+
+  try {
+    window.sessionStorage.removeItem("force_update");
+  } catch {
+    // Storage can be unavailable in some WebView privacy modes.
   }
 }
 
@@ -109,6 +76,8 @@ export function AppUpdateNotice({
     let cancelled = false;
 
     async function checkUpdate() {
+      clearLegacyForceUpdateState();
+
       const result = await checkAppUpdate({
         appKind,
         currentVersion,
@@ -144,12 +113,12 @@ export function AppUpdateNotice({
 
   const latest = currentUpdate.latest;
   const dismissible = canDismissUpdate(currentUpdate);
-  const updateTarget = resolveUpdateTarget(latest, appKind);
+  const updateTarget = resolveDownload(latest, appKind, detectPlatform());
   const { platform, url: updateUrl } = updateTarget;
 
   function handleUpdateNow(event: React.MouseEvent<HTMLAnchorElement>) {
     event.preventDefault();
-    openUpdateUrl(updateUrl || latest.download_page);
+    openLink(updateUrl || latest.download_page);
   }
 
   function handleSnooze() {

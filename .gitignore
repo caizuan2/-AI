@@ -7,6 +7,8 @@ out/
 dist/
 dist-app/
 android/app/build/
+public/downloads/
+public/uploads/
 coverage/
 
 .env
@@ -24,10 +26,3 @@ pnpm-debug.log*
 *.exe
 *.asar
 *.app
-
-dist-app/
-android/app/build/
-public/uploads/
-*.exe
-*.asar
-*.apk
