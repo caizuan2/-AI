@@ -1,5 +1,12 @@
 {
-  "updated_at": "2026-06-13T05:04:41.133Z",
+  "updated_at": "2026-06-13T14:59:09.473Z",
+  "version": "1.0.6",
+  "build": 106,
+  "apk": "ai-knowledge-chat-latest.apk",
+  "exe": "ai-knowledge-chat-latest.exe",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+  "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
   "apps": {
     "user": {
       "id": "ai.chat.user",
@@ -12,11 +19,11 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.3",
+      "active_version": "1.0.6",
       "versions": [
         {
-          "version": "1.0.3",
-          "build": 103,
+          "version": "1.0.6",
+          "build": 106,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
@@ -24,30 +31,13 @@
           "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
           "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
           "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
+          "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
           "changelog": [
             "Updated user app",
             "Improved chat experience",
             "Fixed attachment upload"
           ],
-          "created_at": "2026-06-12T18:07:26.236Z"
-        },
-        {
-          "version": "1.0.2",
-          "build": 102,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/user-download.html",
-          "changelog": [
-            "Updated user app",
-            "Improved attachment handling"
-          ],
-          "created_at": "2026-06-10T00:00:00.000Z"
+          "created_at": "2026-06-13T14:59:09.473Z"
         }
       ]
     },
@@ -62,11 +52,11 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.3",
+      "active_version": "1.0.6",
       "versions": [
         {
-          "version": "1.0.3",
-          "build": 103,
+          "version": "1.0.6",
+          "build": 106,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
@@ -74,37 +64,47 @@
           "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
           "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
           "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
+          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
           "changelog": [
             "Updated admin app",
             "Improved packaging workflow",
             "Updated installer links"
           ],
-          "created_at": "2026-06-12T18:07:26.236Z"
-        },
-        {
-          "version": "1.0.2",
-          "build": 102,
-          "channel": "stable",
-          "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download.html",
-          "changelog": [
-            "Updated admin app",
-            "Updated installer links"
-          ],
-          "created_at": "2026-06-10T00:00:00.000Z"
+          "created_at": "2026-06-13T14:59:09.473Z"
         }
       ]
     }
   },
   "user": {
+    "app_name": "AI知识库助手",
+    "version": "1.0.6",
+    "build": 106,
+    "minimum_build": 100,
+    "force_update": false,
+    "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
     "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-    "build": 103,
-    "version": "1.0.103"
+    "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+    "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
+    "changelog": [
+      "Updated user app",
+      "Improved chat experience",
+      "Fixed attachment upload"
+    ]
+  },
+  "admin": {
+    "app_name": "AI知识库管理后台",
+    "version": "1.0.6",
+    "build": 106,
+    "minimum_build": 100,
+    "force_update": false,
+    "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
+    "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
+    "changelog": [
+      "Updated admin app",
+      "Improved packaging workflow",
+      "Updated installer links"
+    ]
   }
 }

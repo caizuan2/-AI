@@ -1,4 +1,23 @@
+import groovy.json.JsonSlurper
+
 apply plugin: 'com.android.application'
+
+def versionFile = file("../../version.json")
+def versionConfig = versionFile.exists() ? new JsonSlurper().parse(versionFile) : [version: "0.0.0", build: 1]
+def appVersionName = (
+    project.findProperty("VERSION")
+        ?: project.findProperty("APP_VERSION")
+        ?: System.getenv("VERSION")
+        ?: System.getenv("APP_VERSION")
+        ?: versionConfig.version
+).toString()
+def appVersionCode = (
+    project.findProperty("BUILD")
+        ?: project.findProperty("APP_BUILD")
+        ?: System.getenv("BUILD")
+        ?: System.getenv("APP_BUILD")
+        ?: versionConfig.build
+).toString().toInteger()
 
 android {
     namespace = "com.aiknowledge.chat"
@@ -7,8 +26,8 @@ android {
         applicationId "com.aiknowledge.chat"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 103
-        versionName "1.0.3"
+        versionCode appVersionCode
+        versionName appVersionName
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

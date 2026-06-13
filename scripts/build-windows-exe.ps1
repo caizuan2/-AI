@@ -41,7 +41,14 @@ if (-not $env:USER_APP_URL) {
   $env:USER_APP_URL = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui"
 }
 
-Invoke-ProjectCommand -FilePath "npx" -Arguments @("electron-builder", "--win")
+$PackageJsonPath = Join-Path $Root "package.json"
+$OriginalPackageJson = Get-Content -LiteralPath $PackageJsonPath -Raw
+try {
+  Invoke-ProjectCommand -FilePath "node" -Arguments @("scripts/sync-version.mjs", "--package")
+  Invoke-ProjectCommand -FilePath "npx" -Arguments @("electron-builder", "--win")
+} finally {
+  Set-Content -LiteralPath $PackageJsonPath -Value $OriginalPackageJson -Encoding UTF8
+}
 
 $GeneratedExe = Get-ChildItem -LiteralPath $OutputDir -File -Filter "*.exe" -ErrorAction SilentlyContinue |
   Where-Object { $_.FullName -ne $OutputExe } |

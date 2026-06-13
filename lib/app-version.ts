@@ -1,5 +1,7 @@
-export const APP_VERSION = "1.0.3";
-export const APP_BUILD = 103;
+import versionInfo from "../version.json";
+
+export const APP_VERSION = versionInfo.version;
+export const APP_BUILD = versionInfo.build;
 
 export const USER_APP_KIND = "user";
 export const ADMIN_APP_KIND = "admin";

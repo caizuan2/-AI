@@ -25,6 +25,7 @@ import {
 } from "../lib/app-store";
 import { normalizeLatestReleaseManifest } from "../lib/app-update";
 import latestRelease from "../public/releases/latest.json";
+import versionInfo from "../version.json";
 
 const userApkUrl = "https://cdn.example.com/user.apk";
 const userExeUrl = "https://cdn.example.com/user.exe";
@@ -156,16 +157,16 @@ assert.equal(rebuiltCatalog.id, "ai.chat.user");
 
 const normalizedLatest = normalizeAppStoreManifest(latestRelease);
 assert.ok(normalizedLatest);
-assert.ok(normalizedLatest.apps.user.versions.length >= 2);
-assert.ok(normalizedLatest.apps.admin.versions.length >= 2);
-assert.equal(normalizedLatest.apps.user.active_version, "1.0.3");
-assert.equal(normalizedLatest.apps.admin.active_version, "1.0.3");
-assert.equal(getManifestAppReleaseSnapshot(normalizedLatest, "user")?.build, 103);
+assert.ok(normalizedLatest.apps.user.versions.length >= 1);
+assert.ok(normalizedLatest.apps.admin.versions.length >= 1);
+assert.equal(normalizedLatest.apps.user.active_version, versionInfo.version);
+assert.equal(normalizedLatest.apps.admin.active_version, versionInfo.version);
+assert.equal(getManifestAppReleaseSnapshot(normalizedLatest, "user")?.build, versionInfo.build);
 
 const legacySnapshot = normalizeLatestReleaseManifest(latestRelease);
 assert.ok(legacySnapshot);
-assert.equal(legacySnapshot.user.build, 103);
-assert.equal(legacySnapshot.admin.build, 103);
+assert.equal(legacySnapshot.user.build, versionInfo.build);
+assert.equal(legacySnapshot.admin.build, versionInfo.build);
 
 const pageSource = readFileSync("app/admin/app-store/page.tsx", "utf8");
 const consoleSource = readFileSync("app/admin/app-store/app-store-console.tsx", "utf8");

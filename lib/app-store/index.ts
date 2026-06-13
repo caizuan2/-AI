@@ -5,15 +5,16 @@ export * from "./update-policy";
 export * from "./rollback-service";
 
 import { getManifestAppReleaseSnapshot, type AppReleaseSnapshot, type AppStoreManifest } from "./version-catalog";
+import versionInfo from "../../version.json";
 
 export const userVersion = {
-  version: "1.0.6",
-  build: 106
+  version: versionInfo.version,
+  build: versionInfo.build
 };
 
 export const adminVersion = {
-  version: "1.0.6",
-  build: 106
+  version: versionInfo.version,
+  build: versionInfo.build
 };
 
 export const appVersions = {

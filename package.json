@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev": "next dev",
+    "prebuild": "node scripts/generate-latest-manifest.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -17,7 +18,9 @@
     "apk:release": "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1",
     "apk:build": "cd android && .\\gradlew.bat assembleRelease",
     "apk:debug": "cd android && .\\gradlew.bat assembleDebug",
-    "update:version": "node scripts/update-apk-json.js",
+    "update:version": "node scripts/generate-latest-manifest.mjs",
+    "version:print": "node scripts/sync-version.mjs",
+    "version:manifest": "node scripts/generate-latest-manifest.mjs",
     "release": "npm run apk:build && npm run update:version",
     "test:security": "tsx tests/rag-prompt-security.test.ts",
     "test:answer-sanitizer": "node scripts/test_answer_sanitizer.js",
