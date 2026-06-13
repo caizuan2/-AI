@@ -1,2 +1,5 @@
-// Preload is intentionally empty. The app disables Node integration and keeps
-// context isolation enabled for the remote user chat page.
+const { contextBridge, ipcRenderer } = require("electron");
+
+contextBridge.exposeInMainWorld("aiKnowledge", {
+  openExternal: (url) => ipcRenderer.invoke("ai-knowledge:open-external", url)
+});

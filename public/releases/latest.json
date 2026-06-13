@@ -2,11 +2,20 @@
   "updated_at": "2026-06-13T14:59:09.473Z",
   "version": "1.0.6",
   "build": 106,
+  "minimum_build": 100,
+  "forceUpdate": false,
+  "force_update": false,
   "apk": "ai-knowledge-chat-latest.apk",
   "exe": "ai-knowledge-chat-latest.exe",
   "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
   "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
   "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+  "download": {
+    "android": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+    "web": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    "page": "https://stately-sawine-1efd4d.netlify.app/download"
+  },
   "apps": {
     "user": {
       "id": "ai.chat.user",

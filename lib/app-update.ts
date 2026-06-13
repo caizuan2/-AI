@@ -77,26 +77,91 @@ function getNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+function getBoolean(value: unknown) {
+  return value === true;
+}
+
+function getAliasValue(value: Record<string, unknown>, ...keys: string[]) {
+  for (const key of keys) {
+    if (key in value) {
+      return value[key];
+    }
+  }
+
+  return undefined;
+}
+
 function normalizeReleaseInfo(value: unknown): AppReleaseInfo | null {
   if (!isRecord(value)) {
     return null;
   }
 
+  const download = isRecord(value.download) ? value.download : {};
   const changelog = Array.isArray(value.changelog)
     ? value.changelog.filter((item): item is string => typeof item === "string")
     : [];
+  const build = getNumber(value.build);
+  const minimumBuild = getNumber(getAliasValue(value, "minimum_build", "minimumBuild")) || build;
 
   return {
     app_name: getString(value.app_name),
     version: getString(value.version),
-    build: getNumber(value.build),
-    minimum_build: getNumber(value.minimum_build),
-    force_update: value.force_update === true,
-    web_url: getString(value.web_url),
-    apk_url: getString(value.apk_url),
-    exe_url: getString(value.exe_url),
-    download_page: getString(value.download_page),
+    build,
+    minimum_build: minimumBuild,
+    force_update: getBoolean(getAliasValue(value, "force_update", "forceUpdate")),
+    web_url: getString(getAliasValue(value, "web_url", "webUrl")) || getString(download.web),
+    apk_url: getString(getAliasValue(value, "apk_url", "apkUrl")) || getString(download.android),
+    exe_url: getString(getAliasValue(value, "exe_url", "exeUrl")) || getString(download.windows),
+    download_page: getString(getAliasValue(value, "download_page", "downloadPage")) || getString(download.page),
     changelog
+  };
+}
+
+function normalizeSingleSourceManifest(value: unknown): LatestReleaseManifest | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const version = getString(value.version);
+  const build = getNumber(value.build);
+
+  if (!version || build <= 0) {
+    return null;
+  }
+
+  const download = isRecord(value.download) ? value.download : {};
+  const forceUpdate = getBoolean(getAliasValue(value, "force_update", "forceUpdate"));
+  const minimumBuild = getNumber(getAliasValue(value, "minimum_build", "minimumBuild")) || build;
+  const changelog = Array.isArray(value.changelog)
+    ? value.changelog.filter((item): item is string => typeof item === "string")
+    : [];
+  const webUrl = getString(getAliasValue(value, "web_url", "webUrl")) || getString(download.web);
+  const apkUrl = getString(getAliasValue(value, "apk_url", "apkUrl")) || getString(download.android);
+  const exeUrl = getString(getAliasValue(value, "exe_url", "exeUrl")) || getString(download.windows);
+  const downloadPage = getString(getAliasValue(value, "download_page", "downloadPage")) || getString(download.page) || webUrl;
+
+  const baseRelease = {
+    version,
+    build,
+    minimum_build: minimumBuild,
+    force_update: forceUpdate,
+    web_url: webUrl,
+    apk_url: apkUrl,
+    exe_url: exeUrl,
+    download_page: downloadPage,
+    changelog
+  };
+
+  return {
+    updated_at: getString(value.updated_at) || getString(value.updatedAt),
+    user: {
+      app_name: "AI知识库助手",
+      ...baseRelease
+    },
+    admin: {
+      app_name: "AI知识库管理后台",
+      ...baseRelease
+    }
   };
 }
 
@@ -164,6 +229,12 @@ export function normalizeLatestReleaseManifest(
 
   if (appStoreManifest) {
     return appStoreManifest;
+  }
+
+  const singleSourceManifest = normalizeSingleSourceManifest(value);
+
+  if (singleSourceManifest) {
+    return singleSourceManifest;
   }
 
   if (!isRecord(value)) {

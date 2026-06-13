@@ -130,11 +130,20 @@ const manifest = {
   updated_at: updatedAt,
   version: versionInfo.version,
   build: versionInfo.build,
+  minimum_build: userVersion.minimum_build,
+  forceUpdate: userVersion.force_update,
+  force_update: userVersion.force_update,
   apk: apkAsset,
   exe: exeAsset,
   apk_url: userVersion.apk_url,
   exe_url: userVersion.exe_url,
   web_url: userVersion.web_url,
+  download: {
+    android: userVersion.apk_url,
+    windows: userVersion.exe_url,
+    web: userVersion.web_url,
+    page: userVersion.download_page
+  },
   apps,
   user: snapshot(apps.user),
   admin: snapshot(apps.admin)

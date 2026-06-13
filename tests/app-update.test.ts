@@ -33,15 +33,38 @@ assert.ok(manifest.user.app_name.trim().length > 0);
 assert.ok(manifest.admin.app_name.trim().length > 0);
 assert.equal(typeof manifest.user.build, "number");
 assert.equal(typeof manifest.admin.build, "number");
-assert.equal(APP_VERSION, "1.0.3");
-assert.equal(APP_BUILD, 103);
+assert.equal(APP_VERSION, releaseInfo.version);
+assert.equal(APP_BUILD, releaseInfo.build);
 assert.equal(manifest.user.build, APP_BUILD);
 assert.equal(manifest.admin.build, APP_BUILD);
-assert.match(manifest.user.apk_url, /\/downloads\/ai-knowledge-chat-latest\.apk$/);
-assert.match(manifest.admin.apk_url, /\/downloads\/admin\/ai-knowledge-admin-latest\.apk$/);
-assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/download\/v1\.0\.1-user-windows/);
-assert.match(manifest.admin.exe_url, /github\.com\/caizuan2\/-AI\/releases\/download\/v1\.0\.0-admin-windows/);
+assert.equal(releaseInfo.forceUpdate, false);
+assert.equal(releaseInfo.force_update, false);
+assert.equal(releaseInfo.download.android, manifest.user.apk_url);
+assert.equal(releaseInfo.download.windows, manifest.user.exe_url);
+assert.equal(releaseInfo.download.web, manifest.user.web_url);
+assert.match(manifest.user.apk_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-chat-latest\.apk$/);
+assert.match(manifest.admin.apk_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.apk$/);
+assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-chat-latest\.exe$/);
+assert.match(manifest.admin.exe_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.exe$/);
 assert.doesNotMatch(JSON.stringify(manifest), /\.(ipa|dmg)"/i);
+
+const singleSourceManifest = normalizeLatestReleaseManifest({
+  version: "9.0.0",
+  build: 900,
+  forceUpdate: true,
+  download: {
+    android: "https://example.com/app.apk",
+    windows: "https://example.com/app.exe",
+    web: "https://example.com/app"
+  },
+  changelog: ["Enterprise update"]
+});
+
+assert.ok(singleSourceManifest, "single-source latest.json shape should be supported.");
+assert.equal(singleSourceManifest.user.version, "9.0.0");
+assert.equal(singleSourceManifest.user.force_update, true);
+assert.equal(singleSourceManifest.user.apk_url, "https://example.com/app.apk");
+assert.equal(singleSourceManifest.user.exe_url, "https://example.com/app.exe");
 
 function createFetch(manifestBody: LatestReleaseManifest): typeof fetch {
   return (async () => ({
@@ -293,6 +316,7 @@ async function main() {
 
   assert.match(adminForceDialogMarkup, new RegExp(manifest.admin.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(adminForceDialogMarkup, new RegExp(manifest.admin.exe_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(adminForceDialogMarkup, /必须更新到最新版本后才能继续使用/);
   assert.doesNotMatch(adminForceDialogMarkup, />稍后提醒</);
 
   const storage = new Map<string, string>();
@@ -308,6 +332,17 @@ async function main() {
   assert.match(appUpdateNotice, /localStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
 
+  const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");
+  assert.match(updateModal, /必须更新到最新版本后才能继续使用/);
+  assert.match(updateModal, /当前版本/);
+  assert.match(updateModal, /最新版本/);
+
+  const enterpriseAutoUpdate = readFileSync("components/EnterpriseAutoUpdate.tsx", "utf8");
+  assert.match(enterpriseAutoUpdate, /AppUpdateNotice/);
+  assert.match(enterpriseAutoUpdate, /\/chat-ui/);
+  assert.match(enterpriseAutoUpdate, /\/ingest/);
+  assert.match(readFileSync("app/layout.tsx", "utf8"), /EnterpriseAutoUpdate/);
+
   const releaseScriptPath = "scripts/release-all-installers.ps1";
   assert.ok(existsSync(releaseScriptPath), "release-all-installers.ps1 should exist.");
   const releaseScript = readFileSync(releaseScriptPath, "utf8");
@@ -316,7 +351,7 @@ async function main() {
   assert.match(releaseScript, /npm" -Arguments @\("run", "app:windows"\)/);
   assert.match(releaseScript, /npm" -Arguments @\("run", "admin:windows"\)/);
   assert.match(releaseScript, /gh release upload/);
-  assert.match(releaseScript, /public\/downloads|public\\downloads/);
+  assert.match(releaseScript, /public\/releases\/latest\.json|public\\releases\\latest\.json/);
   assert.doesNotMatch(releaseScript, /^\s*(?:&\s*)?git\s+(?:add|commit|push)\b/m);
   assert.doesNotMatch(releaseScript, /dist-app.*git add/i);
 
