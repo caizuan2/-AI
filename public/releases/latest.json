@@ -1,10 +1,17 @@
 {
-  "updated_at": "2026-06-13T00:00:00.000Z",
+  "updated_at": "2026-06-13T05:04:41.133Z",
   "apps": {
     "user": {
       "id": "ai.chat.user",
-      "name": "AI\u77e5\u8bc6\u5e93\u52a9\u624b",
-      "platforms": ["android", "windows", "ios", "macos", "web", "electron"],
+      "name": "AI知识库助手",
+      "platforms": [
+        "android",
+        "windows",
+        "ios",
+        "macos",
+        "web",
+        "electron"
+      ],
       "active_version": "1.0.3",
       "versions": [
         {
@@ -46,8 +53,15 @@
     },
     "admin": {
       "id": "ai.chat.admin",
-      "name": "AI\u77e5\u8bc6\u5e93\u7ba1\u7406\u540e\u53f0",
-      "platforms": ["android", "windows", "ios", "macos", "web", "electron"],
+      "name": "AI知识库管理后台",
+      "platforms": [
+        "android",
+        "windows",
+        "ios",
+        "macos",
+        "web",
+        "electron"
+      ],
       "active_version": "1.0.3",
       "versions": [
         {
@@ -87,5 +101,10 @@
         }
       ]
     }
+  },
+  "user": {
+    "apk_url": "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat-latest.apk",
+    "build": 103,
+    "version": "1.0.103"
   }
 }
