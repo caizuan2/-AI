@@ -1,9 +1,21 @@
 import React from "react";
 import { DownloadCopyButton } from "@/components/download-copy-button";
+import { getManifestAppReleaseSnapshot, normalizeAppStoreManifest, type AppReleaseSnapshot } from "@/lib/app-store";
 import releaseInfo from "../../public/releases/latest.json";
 
-const userRelease = releaseInfo.user;
-const userCompatibilityApkUrl = "https://stately-sawine-1efd4d.netlify.app/downloads/ai-knowledge-chat.apk";
+const releaseManifest = normalizeAppStoreManifest(releaseInfo);
+const userCompatibilityApkUrl =
+  "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk";
+
+function requireRelease(release: AppReleaseSnapshot | null) {
+  if (!release) {
+    throw new Error("Invalid user release manifest.");
+  }
+
+  return release;
+}
+
+const userRelease = requireRelease(releaseManifest ? getManifestAppReleaseSnapshot(releaseManifest, "user") : null);
 
 const downloadLinks = [
   {
@@ -39,7 +51,7 @@ const downloadLinks = [
 ];
 
 function getUpdatedDate() {
-  return releaseInfo.updated_at.slice(0, 10);
+  return releaseManifest?.updated_at.slice(0, 10) ?? "";
 }
 
 export default function DownloadPage() {

@@ -5,7 +5,7 @@ $ReleaseTag = "v1.0.0-admin-windows"
 $Repo = "caizuan2/-AI"
 $AssetPath = Join-Path $Root "dist-app/admin-windows/ai-knowledge-admin-latest.exe"
 $FallbackAssetPath = Join-Path $Root "dist-app/admin-windows/ai-knowledge-admin.exe"
-$ReleaseUrl = "https://github.com/caizuan2/-AI/releases/download/v1.0.0-admin-windows/ai-knowledge-admin-latest.exe"
+$ReleaseUrl = "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe"
 
 if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
   throw "GitHub CLI gh was not found. Install gh or upload the EXE manually: $ReleaseUrl"
