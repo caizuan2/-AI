@@ -1,7 +1,7 @@
 name: ai_knowledge_flutter_app
 description: Flutter native client for the AI Knowledge Base app.
 publish_to: "none"
-version: 1.0.8+108
+version: 1.0.9+109
 
 environment:
   sdk: ">=3.5.0 <4.0.0"

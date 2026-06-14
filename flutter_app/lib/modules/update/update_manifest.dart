@@ -67,9 +67,13 @@ class UpdateManifest {
       ...rootDownloads,
       ...legacyUserDownload,
       ...userDownloads,
-      if (apkUrl.isNotEmpty) 'android': apkUrl,
-      if (exeUrl.isNotEmpty) 'windows': exeUrl,
     };
+    if (apkUrl.isNotEmpty) {
+      downloads.putIfAbsent('android', () => apkUrl);
+    }
+    if (exeUrl.isNotEmpty) {
+      downloads.putIfAbsent('windows', () => exeUrl);
+    }
 
     return UpdateManifest(
       version: _stringValue(user['version'],

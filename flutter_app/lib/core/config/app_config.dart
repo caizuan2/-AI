@@ -18,11 +18,11 @@ class AppConfig {
 
   static const currentVersion = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.0.8',
+    defaultValue: '1.0.9',
   );
 
   static const currentBuild = int.fromEnvironment(
     'APP_BUILD',
-    defaultValue: 108,
+    defaultValue: 109,
   );
 }

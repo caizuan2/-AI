@@ -68,6 +68,46 @@ void main() {
     expect(result.shouldPrompt, isTrue);
   });
 
+  test('supports legacy snake_case latest.json fields', () async {
+    final manifest = UpdateManifest.fromJson({
+      'version': '1.0.9',
+      'build': 109,
+      'force_update': true,
+      'minimum_build': 109,
+      'changelog': ['兼容旧字段'],
+      'apk_url': 'https://example.com/legacy.apk',
+      'exe_url': 'https://example.com/legacy.exe',
+    });
+
+    expect(manifest.forceUpdate, isTrue);
+    expect(manifest.minSupportedBuild, 109);
+    expect(manifest.releaseNotes, ['兼容旧字段']);
+    expect(manifest.androidDownloadUrl, 'https://example.com/legacy.apk');
+    expect(manifest.windowsDownloadUrl, 'https://example.com/legacy.exe');
+  });
+
+  test('prefers camelCase downloads over legacy apk and exe URLs', () async {
+    final manifest = UpdateManifest.fromJson({
+      'version': '1.0.9',
+      'build': 109,
+      'forceUpdate': false,
+      'minSupportedBuild': 108,
+      'releaseNotes': ['兼容新字段'],
+      'downloads': {
+        'android': 'https://example.com/new.apk',
+        'windows': 'https://example.com/new.exe',
+      },
+      'apk_url': 'https://example.com/legacy.apk',
+      'exe_url': 'https://example.com/legacy.exe',
+    });
+
+    expect(manifest.forceUpdate, isFalse);
+    expect(manifest.minSupportedBuild, 108);
+    expect(manifest.releaseNotes, ['兼容新字段']);
+    expect(manifest.androidDownloadUrl, 'https://example.com/new.apk');
+    expect(manifest.windowsDownloadUrl, 'https://example.com/new.exe');
+  });
+
   testWidgets('force update dialog cannot be dismissed with later button',
       (tester) async {
     final manifest = UpdateManifest.fromJson({
