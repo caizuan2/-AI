@@ -1,0 +1,16 @@
+{
+    "appName":  "AI知识库助手",
+    "channel":  "user-test",
+    "platform":  "user",
+    "version":  "1.0.10",
+    "buildNumber":  115,
+    "buildTime":  "2026-06-14T17:02:15.1483249Z",
+    "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
+    "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
+    "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
+    "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
+    "changelog":  [
+                      "修复测试版更新检测远程 version.json 读取失败问题"
+                  ],
+    "forceUpdate":  false
+}
