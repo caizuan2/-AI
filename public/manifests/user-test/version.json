@@ -3,15 +3,15 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  118,
-    "buildTime":  "2026-06-14T18:37:23.6213933Z",
+    "buildNumber":  119,
+    "buildTime":  "2026-06-14T19:27:43.9857474Z",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
     "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
     "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "changelog":  [
-                      "优化上传附件输入等待区",
-                      "优化历史抽屉、设置名称和扫码反馈"
+                      "优化图片消息展示顺序和编辑操作",
+                      "精简历史抽屉并调整语音输入体验"
                   ],
     "forceUpdate":  false
 }
