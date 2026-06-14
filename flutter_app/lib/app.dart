@@ -35,6 +35,7 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
     );
     updateService = UpdateService(
       latestManifestUrl: AppConfig.latestManifestUrl,
+      latestManifestUrls: AppConfig.latestManifestUrls,
     );
     bootstrapFuture = apiService.restoreSession();
   }

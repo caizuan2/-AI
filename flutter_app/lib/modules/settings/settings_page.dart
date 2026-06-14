@@ -78,7 +78,14 @@ class SettingsPage extends StatelessWidget {
 
       messenger.showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
     } catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('检查更新失败：$error')));
+      debugPrint('Manual update check failed: $error');
+      if (!context.mounted) {
+        return;
+      }
+      await showUpdateCheckFailedDialog(
+        context,
+        onRetry: () => _checkUpdates(context),
+      );
     }
   }
 }

@@ -16,6 +16,14 @@ void main() {
       AppConfig.latestManifestUrl,
       'https://stately-sawine-1efd4d.netlify.app/releases/latest.json',
     );
+    expect(
+      AppConfig.latestManifestUrls,
+      [
+        'https://stately-sawine-1efd4d.netlify.app/releases/latest.json',
+        'https://github.com/caizuan2/-AI/releases/latest/download/latest.json',
+        'https://raw.githubusercontent.com/caizuan2/-AI/main/public/releases/latest.json',
+      ],
+    );
   });
 
   test('detects update when remote build is greater than current build',
@@ -108,6 +116,65 @@ void main() {
     expect(manifest.windowsDownloadUrl, 'https://example.com/new.exe');
   });
 
+  test('falls back to next latest.json endpoint with no-cache headers',
+      () async {
+    final client = _SequenceClient([
+      _ClientReply.error(Exception('netlify unavailable')),
+      _ClientReply.json({
+        'version': '1.0.10',
+        'build': AppConfig.currentBuild + 1,
+        'forceUpdate': false,
+        'minSupportedBuild': AppConfig.currentBuild,
+        'downloads': {
+          'android': 'https://example.com/app.apk',
+          'windows': 'https://example.com/app.exe',
+        },
+      }),
+    ]);
+    final service = UpdateService(
+      latestManifestUrl: AppConfig.latestManifestUrl,
+      latestManifestUrls: const [
+        'https://stately-sawine-1efd4d.netlify.app/releases/latest.json',
+        'https://github.com/caizuan2/-AI/releases/latest/download/latest.json',
+      ],
+      client: client,
+    );
+    addTearDown(service.dispose);
+
+    final result = await service.checkForUpdate();
+
+    expect(result.needsUpdate, isTrue);
+    expect(client.requests, hasLength(2));
+    expect(
+      client.requests.first.url.host,
+      'stately-sawine-1efd4d.netlify.app',
+    );
+    expect(client.requests.first.url.queryParameters.containsKey('t'), isTrue);
+    expect(client.requests.first.headers['Cache-Control'], 'no-cache');
+    expect(client.requests.first.headers['Pragma'], 'no-cache');
+    expect(client.requests.last.url.host, 'github.com');
+  });
+
+  test('throws friendly update exception when all endpoints fail', () async {
+    final service = UpdateService(
+      latestManifestUrl: AppConfig.latestManifestUrl,
+      latestManifestUrls: const [
+        'https://stately-sawine-1efd4d.netlify.app/releases/latest.json',
+        'https://github.com/caizuan2/-AI/releases/latest/download/latest.json',
+      ],
+      client: _SequenceClient([
+        _ClientReply.error(Exception('dns failed')),
+        _ClientReply.status(500),
+      ]),
+    );
+    addTearDown(service.dispose);
+
+    expect(
+      service.checkForUpdate(),
+      throwsA(isA<UpdateFetchException>()),
+    );
+  });
+
   testWidgets('force update dialog cannot be dismissed with later button',
       (tester) async {
     final manifest = UpdateManifest.fromJson({
@@ -167,6 +234,58 @@ class _JsonClient extends http.BaseClient {
     return http.StreamedResponse(
       Stream<List<int>>.value(bytes),
       200,
+      headers: {'content-type': 'application/json'},
+    );
+  }
+}
+
+class _ClientReply {
+  const _ClientReply._({
+    this.body,
+    this.error,
+    this.statusCode = 200,
+  });
+
+  factory _ClientReply.json(Map<String, Object?> body) {
+    return _ClientReply._(body: body);
+  }
+
+  factory _ClientReply.error(Object error) {
+    return _ClientReply._(error: error);
+  }
+
+  factory _ClientReply.status(int statusCode) {
+    return _ClientReply._(statusCode: statusCode);
+  }
+
+  final Map<String, Object?>? body;
+  final Object? error;
+  final int statusCode;
+}
+
+class _SequenceClient extends http.BaseClient {
+  _SequenceClient(this.replies);
+
+  final List<_ClientReply> replies;
+  final List<http.BaseRequest> requests = [];
+  int _index = 0;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) async {
+    requests.add(request);
+    final currentIndex = _index < replies.length ? _index : replies.length - 1;
+    final reply = replies[currentIndex];
+    _index += 1;
+
+    if (reply.error != null) {
+      throw reply.error!;
+    }
+
+    final body = reply.body ?? <String, Object?>{};
+    final bytes = utf8.encode(jsonEncode(body));
+    return http.StreamedResponse(
+      Stream<List<int>>.value(bytes),
+      reply.statusCode,
       headers: {'content-type': 'application/json'},
     );
   }

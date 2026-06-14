@@ -40,11 +40,24 @@ class _UpdatePageState extends State<UpdatePage> {
 
           if (snapshot.hasError) {
             return _UpdatePanel(
-              title: '检查失败',
-              body: snapshot.error.toString(),
-              action: FilledButton(
-                onPressed: _retry,
-                child: const Text('重试'),
+              title: UpdateFetchException.userTitle,
+              body:
+                  '${UpdateFetchException.userMessage}\n\n${UpdateFetchException.userHint}',
+              action: Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                alignment: WrapAlignment.center,
+                children: [
+                  OutlinedButton(
+                    onPressed: _retry,
+                    child: const Text('重试'),
+                  ),
+                  FilledButton(
+                    onPressed: () =>
+                        openUpdateUrl(context, AppConfig.downloadPageUrl),
+                    child: const Text('打开下载页'),
+                  ),
+                ],
               ),
             );
           }

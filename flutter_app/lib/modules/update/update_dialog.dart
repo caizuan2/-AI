@@ -3,6 +3,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/config/app_config.dart';
 import 'update_manifest.dart';
+import 'update_service.dart';
 
 Future<void> showUpdateDialog(
   BuildContext context, {
@@ -75,6 +76,56 @@ Future<void> showUpdateDialog(
       );
     },
   );
+}
+
+Future<void> showUpdateCheckFailedDialog(
+  BuildContext context, {
+  VoidCallback? onRetry,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text(UpdateFetchException.userTitle),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: const Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(UpdateFetchException.userMessage),
+              SizedBox(height: 10),
+              Text(
+                UpdateFetchException.userHint,
+                style: TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              onRetry?.call();
+            },
+            child: const Text('重试'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                _openDownloadUrl(context, AppConfig.downloadPageUrl),
+            child: const Text('打开下载页'),
+          ),
+        ],
+      );
+    },
+  );
+}
+
+Future<void> openUpdateUrl(BuildContext context, String url) {
+  return _openDownloadUrl(context, url);
 }
 
 Future<void> _openDownloadUrl(BuildContext context, String url) async {

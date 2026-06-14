@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../../core/config/app_config.dart';
@@ -23,13 +24,25 @@ class UpdateCheckResult {
 class UpdateService {
   UpdateService({
     required this.latestManifestUrl,
+    List<String>? latestManifestUrls,
     this.mockMode = false,
     http.Client? client,
-  }) : _client = client ?? http.Client();
+  })  : latestManifestUrls = latestManifestUrls ??
+            <String>[
+              latestManifestUrl,
+            ],
+        _client = client ?? http.Client();
 
   final String latestManifestUrl;
+  final List<String> latestManifestUrls;
   final bool mockMode;
   final http.Client _client;
+
+  static const Duration _requestTimeout = Duration(seconds: 7);
+  static const Map<String, String> _noCacheHeaders = {
+    'Cache-Control': 'no-cache',
+    'Pragma': 'no-cache',
+  };
 
   Future<UpdateManifest> fetchLatest() async {
     if (mockMode) {
@@ -49,18 +62,37 @@ class UpdateService {
       });
     }
 
-    final response = await _client.get(Uri.parse(latestManifestUrl));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('Failed to fetch latest.json: ${response.statusCode}');
+    Object? lastError;
+    for (final url in _effectiveManifestUrls()) {
+      try {
+        final response = await _client
+            .get(_cacheBustingUri(url), headers: _noCacheHeaders)
+            .timeout(_requestTimeout);
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          throw UpdateFetchException(
+            'latest.json request failed with status ${response.statusCode}',
+          );
+        }
+
+        final json = jsonDecode(response.body);
+        if (json is! Map) {
+          throw const UpdateFetchException(
+            'latest.json must be a JSON object.',
+          );
+        }
+
+        return UpdateManifest.fromJson(
+          json.map((key, value) => MapEntry(key?.toString() ?? '', value)),
+        );
+      } catch (error) {
+        lastError = error;
+        debugPrint('Update manifest fetch failed for $url: $error');
+      }
     }
 
-    final json = jsonDecode(response.body);
-    if (json is! Map) {
-      throw Exception('latest.json must be a JSON object.');
-    }
-
-    return UpdateManifest.fromJson(
-      json.map((key, value) => MapEntry(key?.toString() ?? '', value)),
+    throw UpdateFetchException(
+      'All latest.json endpoints failed.',
+      cause: lastError,
     );
   }
 
@@ -84,5 +116,38 @@ class UpdateService {
 
   void dispose() {
     _client.close();
+  }
+
+  List<String> _effectiveManifestUrls() {
+    return {
+      ...latestManifestUrls,
+      latestManifestUrl,
+    }.where((url) => url.trim().isNotEmpty).toList(growable: false);
+  }
+
+  Uri _cacheBustingUri(String url) {
+    final uri = Uri.parse(url);
+    final query = Map<String, String>.from(uri.queryParameters);
+    query['t'] = DateTime.now().millisecondsSinceEpoch.toString();
+    return uri.replace(queryParameters: query);
+  }
+}
+
+class UpdateFetchException implements Exception {
+  const UpdateFetchException(this.message, {this.cause});
+
+  final String message;
+  final Object? cause;
+
+  static const userTitle = '检查更新失败';
+  static const userMessage = '当前网络无法连接更新服务器，请检查网络后重试。';
+  static const userHint = '如果一直失败，请前往下载页手动下载最新版本。';
+
+  @override
+  String toString() {
+    if (cause == null) {
+      return message;
+    }
+    return '$message Cause: $cause';
   }
 }
