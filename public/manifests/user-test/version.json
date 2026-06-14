@@ -3,14 +3,15 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  117,
-    "buildTime":  "2026-06-14T18:30:55.3317410Z",
+    "buildNumber":  118,
+    "buildTime":  "2026-06-14T18:37:23.6213933Z",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
     "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
     "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "changelog":  [
-                      "修复测试版更新检测远程 version.json 读取失败问题"
+                      "优化上传附件输入等待区",
+                      "优化历史抽屉、设置名称和扫码反馈"
                   ],
     "forceUpdate":  false
 }
