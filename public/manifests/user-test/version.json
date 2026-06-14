@@ -3,15 +3,15 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  120,
-    "buildTime":  "2026-06-14T20:13:33.0566593Z",
+    "buildNumber":  121,
+    "buildTime":  "2026-06-14T21:34:08.6836636Z",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
     "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
     "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "changelog":  [
-                      "缩小图片消息缩略图并支持点击放大",
-                      "取消上传成功提示条并优化提示词字号"
+                      "将普通成功提示改为按钮附近的局部小提示",
+                      "取消聊天页底部黑色全局成功提示"
                   ],
     "forceUpdate":  false
 }
