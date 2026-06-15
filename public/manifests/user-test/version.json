@@ -3,15 +3,15 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  121,
-    "buildTime":  "2026-06-14T21:34:08.6836636Z",
+    "buildNumber":  122,
+    "buildTime":  "2026-06-15T03:42:29.4525255Z",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
     "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
     "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "changelog":  [
-                      "将普通成功提示改为按钮附近的局部小提示",
-                      "取消聊天页底部黑色全局成功提示"
+                      "修复 Android 测试版更新读取旧 CDN 缓存的问题",
+                      "Android 测试版更新改为多源读取并选择最大 buildNumber"
                   ],
     "forceUpdate":  false
 }
