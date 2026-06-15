@@ -3,15 +3,29 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  122,
-    "buildTime":  "2026-06-15T03:42:29.4525255Z",
+    "buildNumber":  123,
+    "minSupportedBuildNumber":  123,
+    "forceUpdate":  true,
+    "buildTime":  "2026-06-15T04:30:12.3712212Z",
+    "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
     "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
-    "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
+    "apkMirrors":  [
+                       "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk"
+                   ],
+    "windowsReleaseMirrors":  [
+                                  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip"
+                              ],
+    "manifestMirrors":  [
+                            "https://raw.githubusercontent.com/caizuan2/-AI/user-test-manifest/public/manifests/user-test/version.json",
+                            "https://api.github.com/repos/caizuan2/-AI/contents/public/manifests/user-test/version.json?ref=user-test-manifest",
+                            "https://github.com/caizuan2/-AI/releases/download/user-test/version.json",
+                            "https://cdn.jsdelivr.net/gh/caizuan2/-AI@user-test-manifest/public/manifests/user-test/version.json"
+                        ],
     "changelog":  [
-                      "修复 Android 测试版更新读取旧 CDN 缓存的问题",
-                      "Android 测试版更新改为多源读取并选择最大 buildNumber"
-                  ],
-    "forceUpdate":  false
+                      "新增测试版强制更新机制",
+                      "打开旧版本时自动弹窗更新",
+                      "点击立即更新后显示下载进度"
+                  ]
 }
