@@ -11,9 +11,11 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_CHAT_ATTACHMENT_SIZE_MB = 100;
-const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
+const MAX_CHAT_ATTACHMENT_SIZE_BYTES =
+  MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 const CHAT_ATTACHMENT_STORE_NAME = "chat-attachments";
-const NETLIFY_BLOBS_CONFIG_ERROR = "文件上传服务未配置：缺少 Netlify Blobs 环境变量。";
+const NETLIFY_BLOBS_CONFIG_ERROR =
+  "文件上传服务未配置：缺少 Netlify Blobs 环境变量。";
 const allowedAttachmentMimeTypes = new Map([
   ["image/jpeg", "jpg"],
   ["image/png", "png"],
@@ -23,19 +25,32 @@ const allowedAttachmentMimeTypes = new Map([
   ["text/plain", "txt"],
   ["text/markdown", "md"],
   ["application/msword", "doc"],
-  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "docx"],
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "docx",
+  ],
   ["application/vnd.ms-powerpoint", "ppt"],
-  ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "pptx"],
+  [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pptx",
+  ],
   ["application/vnd.ms-excel", "xls"],
-  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"]
+  ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"],
 ]);
 const allowedAttachmentExtensions = new Map(
-  Array.from(allowedAttachmentMimeTypes.entries()).map(([mimeType, extension]) => [extension, mimeType])
+  Array.from(allowedAttachmentMimeTypes.entries()).map(
+    ([mimeType, extension]) => [extension, mimeType],
+  ),
 );
 allowedAttachmentExtensions.set("jpeg", "image/jpeg");
 
 function safeFileBaseName(name: string) {
-  return path.basename(name).replace(/[^\w.-]+/g, "_").replace(/^_+|_+$/g, "") || "attachment";
+  return (
+    path
+      .basename(name)
+      .replace(/[^\w.-]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "attachment"
+  );
 }
 
 function getAttachmentType(mimeType: string) {
@@ -60,12 +75,12 @@ function getChatAttachmentStore() {
     name: CHAT_ATTACHMENT_STORE_NAME,
     siteID: config.siteID,
     token: config.token,
-    consistency: "strong"
+    consistency: "strong",
   });
 }
 
 function shouldUseLocalUploadFallback() {
-  return process.env.NODE_ENV !== "production" && !getNetlifyBlobsConfig();
+  return process.env.CHAT_ATTACHMENT_STORAGE?.trim() !== "netlify-blobs";
 }
 
 function getSafeUserPrefix(userId: string) {
@@ -75,7 +90,7 @@ function getSafeUserPrefix(userId: string) {
 function getDatePathParts(date = new Date()) {
   return {
     year: String(date.getUTCFullYear()),
-    month: String(date.getUTCMonth() + 1).padStart(2, "0")
+    month: String(date.getUTCMonth() + 1).padStart(2, "0"),
   };
 }
 
@@ -95,7 +110,10 @@ function inferAttachmentMimeType(file: File) {
   const extension = path.extname(file.name).slice(1).toLowerCase();
   const inferredMimeType = allowedAttachmentExtensions.get(extension);
 
-  if (inferredMimeType && (!mimeType || mimeType === "application/octet-stream")) {
+  if (
+    inferredMimeType &&
+    (!mimeType || mimeType === "application/octet-stream")
+  ) {
     return inferredMimeType;
   }
 
@@ -104,11 +122,15 @@ function inferAttachmentMimeType(file: File) {
 
 function validateAttachmentFile(file: File, mimeType: string) {
   if (!allowedAttachmentMimeTypes.has(mimeType)) {
-    throw new ValidationError("附件类型不支持，请重新选择图片、PDF、Office 或文本文件。");
+    throw new ValidationError(
+      "附件类型不支持，请重新选择图片、PDF、Office 或文本文件。",
+    );
   }
 
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
-    throw new ValidationError(`单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`);
+    throw new ValidationError(
+      `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`,
+    );
   }
 }
 
@@ -116,20 +138,81 @@ async function saveAttachmentToLocalPublicUploads(input: {
   actorId: string;
   arrayBuffer: ArrayBuffer;
   extension: string;
+  filename: string;
+  mimeType: string;
+  size: number;
+  publicBaseUrl: string;
 }) {
-  const uploadDirectory = path.join(process.cwd(), "public", "uploads", "chat-attachments");
+  const uploadRoot =
+    process.env.CHAT_ATTACHMENT_UPLOAD_DIR?.trim() ||
+    process.env.UPLOAD_DIR?.trim() ||
+    (process.env.NODE_ENV === "production"
+      ? "/var/www/ai-knowledge/uploads"
+      : path.join(process.cwd(), "public", "uploads"));
+  const uploadDirectory = path.join(uploadRoot, "chat-attachments");
   const storageName = `${getSafeUserPrefix(input.actorId)}-${Date.now()}-${randomUUID()}.${input.extension}`;
-  const publicUrl = `/uploads/chat-attachments/${storageName}`;
+  const publicPath = `/uploads/chat-attachments/${storageName}`;
+  const publicUrl = new URL(publicPath, input.publicBaseUrl).toString();
 
-  await mkdir(uploadDirectory, { recursive: true });
-  await writeFile(path.join(uploadDirectory, storageName), Buffer.from(input.arrayBuffer));
+  const targetPath = path.join(uploadDirectory, storageName);
+
+  try {
+    console.info("chat_attachment.local_upload.start", {
+      actorId: getSafeUserPrefix(input.actorId),
+      filename: input.filename,
+      size: input.size,
+      mimeType: input.mimeType,
+      uploadDirectory,
+      targetPath,
+      publicUrl,
+    });
+    await mkdir(uploadDirectory, { recursive: true });
+    await writeFile(targetPath, Buffer.from(input.arrayBuffer));
+    console.info("chat_attachment.local_upload.success", {
+      actorId: getSafeUserPrefix(input.actorId),
+      filename: input.filename,
+      size: input.size,
+      mimeType: input.mimeType,
+      targetPath,
+      publicUrl,
+    });
+  } catch (error) {
+    console.error("chat_attachment.local_upload.failed", {
+      actorId: getSafeUserPrefix(input.actorId),
+      filename: input.filename,
+      size: input.size,
+      mimeType: input.mimeType,
+      uploadDirectory,
+      targetPath,
+      publicUrl,
+      error,
+    });
+    throw new AppError(
+      "APP_ERROR",
+      "文件上传服务暂不可用：服务器无法保存附件，请检查上传目录权限。",
+      500,
+    );
+  }
 
   return {
     url: publicUrl,
     storage: "local-public",
     referenceId: storageName,
-    blobKey: undefined
+    blobKey: undefined,
   };
+}
+
+function getPublicBaseUrl(request: Request) {
+  const configured =
+    process.env.CHAT_ATTACHMENT_PUBLIC_BASE_URL?.trim() ||
+    process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+    process.env.APP_URL?.trim();
+
+  if (configured) {
+    return configured.endsWith("/") ? configured : `${configured}/`;
+  }
+
+  return new URL(request.url).origin;
 }
 
 async function saveAttachmentToNetlifyBlobs(input: {
@@ -150,8 +233,8 @@ async function saveAttachmentToNetlifyBlobs(input: {
       filename: input.filename,
       size: input.size,
       uploadedAt,
-      userId: input.actorId
-    }
+      userId: input.actorId,
+    },
   });
 
   const downloadUrl = `/api/ai/chat/attachments/download?key=${encodeURIComponent(blobKey)}`;
@@ -160,7 +243,7 @@ async function saveAttachmentToNetlifyBlobs(input: {
     url: downloadUrl,
     storage: "netlify-blobs",
     referenceId: blobKey,
-    blobKey
+    blobKey,
   };
 }
 
@@ -171,10 +254,39 @@ function unauthorizedUploadResponse() {
       success: false,
       code: "UNAUTHORIZED",
       error: "UNAUTHORIZED",
-      message: "请先登录后再上传文件。"
+      message: "请先登录后再上传文件。",
     },
-    { status: 401 }
+    { status: 401 },
   );
+}
+
+function methodNotAllowedResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      success: false,
+      code: "METHOD_NOT_ALLOWED",
+      error: "METHOD_NOT_ALLOWED",
+      message: "请使用 POST multipart/form-data 上传聊天附件。",
+    },
+    { status: 405 },
+  );
+}
+
+function getFirstUploadedFile(formData: FormData) {
+  for (const fieldName of ["file", "files", "attachment", "attachments"]) {
+    for (const value of formData.getAll(fieldName)) {
+      if (value instanceof File) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function GET() {
+  return methodNotAllowedResponse();
 }
 
 export async function POST(request: Request) {
@@ -185,7 +297,7 @@ export async function POST(request: Request) {
       request,
       requireLicense: true,
       deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "ai_chat_attachment"
+      targetType: "ai_chat_attachment",
     });
   } catch (error) {
     if (toAppError(error).code === "UNAUTHORIZED") {
@@ -197,7 +309,7 @@ export async function POST(request: Request) {
 
   try {
     const formData = await request.formData();
-    const file = formData.get("file") ?? formData.get("attachment") ?? formData.get("attachments");
+    const file = getFirstUploadedFile(formData);
 
     if (!(file instanceof File)) {
       throw new ValidationError("请上传聊天附件。");
@@ -214,7 +326,11 @@ export async function POST(request: Request) {
       ? await saveAttachmentToLocalPublicUploads({
           actorId: actor.id,
           arrayBuffer,
-          extension
+          extension,
+          filename: originalName,
+          mimeType,
+          size: file.size,
+          publicBaseUrl: getPublicBaseUrl(request),
         })
       : await saveAttachmentToNetlifyBlobs({
           actorId: actor.id,
@@ -222,7 +338,7 @@ export async function POST(request: Request) {
           extension,
           filename: originalName,
           mimeType,
-          size: file.size
+          size: file.size,
         });
 
     const responseData = {
@@ -243,17 +359,30 @@ export async function POST(request: Request) {
         reference_id: savedAttachment.referenceId,
         metadata: {
           storage: savedAttachment.storage,
-          ...(savedAttachment.blobKey ? { blobKey: savedAttachment.blobKey } : {})
-        }
-      }
+          ...(savedAttachment.blobKey
+            ? { blobKey: savedAttachment.blobKey }
+            : {}),
+        },
+      },
     };
 
-    return NextResponse.json({
-      ok: true,
-      success: true,
-      data: responseData,
-      attachment: responseData.attachment
-    }, { status: 201 });
+    return NextResponse.json(
+      {
+        ok: true,
+        success: true,
+        data: responseData,
+        attachment: responseData.attachment,
+        url: responseData.attachment.url,
+        publicUrl: responseData.attachment.publicUrl,
+        fileUrl: responseData.attachment.fileUrl,
+        downloadUrl: responseData.attachment.downloadUrl,
+        name: responseData.attachment.name,
+        size: responseData.attachment.size,
+        mimeType: responseData.attachment.mimeType,
+        type: responseData.attachment.type,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return apiError(error);
   }
