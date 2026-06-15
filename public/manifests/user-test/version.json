@@ -3,10 +3,10 @@
     "channel":  "user-test",
     "platform":  "user",
     "version":  "1.0.10",
-    "buildNumber":  125,
-    "minSupportedBuildNumber":  125,
+    "buildNumber":  126,
+    "minSupportedBuildNumber":  126,
     "forceUpdate":  true,
-    "buildTime":  "2026-06-15T06:54:29.5413376Z",
+    "buildTime":  "2026-06-15T18:29:59.6431835Z",
     "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
     "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
     "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
@@ -24,8 +24,6 @@
                             "https://cdn.jsdelivr.net/gh/caizuan2/-AI@user-test-manifest/public/manifests/user-test/version.json"
                         ],
     "changelog":  [
-                      "新增测试版强制更新机制",
-                      "打开旧版本时自动弹窗更新",
-                      "点击立即更新后显示下载进度"
+                      "\"整合同账号文字消息同步\",\"整合同账号图片/文件/拍照同步\",\"使用阿里云"
                   ]
 }
