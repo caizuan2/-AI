@@ -31,6 +31,26 @@ const roleMatrix: RoleMatrixItem[] = [
     role: "viewer",
     label: "只读成员",
     permissions: ["knowledge:view"]
+  },
+  {
+    role: "user",
+    label: "普通用户",
+    permissions: ["knowledge:view", "ai:use"]
+  },
+  {
+    role: "ingest_admin",
+    label: "投喂管理员",
+    permissions: ["knowledge:view", "knowledge:create", "knowledge:train"]
+  },
+  {
+    role: "enterprise_admin",
+    label: "企业管理员",
+    permissions: ["tenant:view", "user:manage", "knowledge:manage", "ai:manage", "license:view"]
+  },
+  {
+    role: "super_admin",
+    label: "超级管理员",
+    permissions: ["*"]
   }
 ];
 

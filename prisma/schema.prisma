@@ -62,7 +62,36 @@ enum LicenseKeyStatus {
 enum UserRole {
   user
   kb_admin
+  ingest_admin
   super_admin
+  enterprise_admin
+}
+
+enum TenantPlan {
+  free
+  pro
+  enterprise
+}
+
+enum TenantStatus {
+  active
+  inactive
+  pending
+  disabled
+  archived
+}
+
+enum KnowledgeSource {
+  user
+  ingest
+  system
+}
+
+enum LicenseStatus {
+  active
+  inactive
+  expired
+  revoked
 }
 
 model User {
@@ -73,8 +102,11 @@ model User {
   name             String?
   isActive         Boolean          @default(true)
   licenseActivated Boolean          @default(false)
+  role             UserRole         @default(user)
+  tenantId         String?          @map("tenant_id")
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   sessions         Session[]
   redeemedLicenses LicenseKey[]     @relation("LicenseRedeemer")
   conversations    Conversation[]
@@ -88,9 +120,87 @@ model User {
   uploadedFiles    KnowledgeFile[]
   ingestionJobs    IngestionJob[]
 
+  @@index([tenantId], map: "users_tenant_id_idx")
+  @@index([role])
   @@index([licenseActivated])
   @@index([isActive])
   @@map("users")
+}
+
+model Tenant {
+  id         String       @id @default(cuid())
+  name       String
+  plan       TenantPlan   @default(free)
+  status     TenantStatus @default(active)
+  region     String       @default("global")
+  seatLimit  Int          @default(0) @map("seat_limit")
+  createdAt  DateTime     @default(now()) @map("created_at")
+  updatedAt  DateTime     @updatedAt @map("updated_at")
+  users      User[]
+  knowledge  Knowledge[]
+  aiRequests AIRequest[]
+  licenses   License[]
+
+  @@index([status])
+  @@index([plan])
+  @@map("tenants")
+}
+
+model Knowledge {
+  id        String          @id @default(cuid())
+  tenantId  String          @map("tenant_id")
+  title     String
+  content   String          @db.Text
+  category  String          @default("general")
+  summary   String          @default("") @db.Text
+  source    KnowledgeSource @default(user)
+  status    TenantStatus    @default(active)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([tenantId], map: "saas_knowledge_tenant_id_idx")
+  @@index([source])
+  @@index([status])
+  @@index([createdAt], map: "saas_knowledge_created_at_idx")
+  @@map("saas_knowledge")
+}
+
+model AIRequest {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  prompt    String   @db.Text
+  response  String   @db.Text
+  model     String   @default("gpt-4o-mini")
+  tokens    Int      @default(0)
+  status    String   @default("success")
+  costUsd   Float    @default(0) @map("cost_usd")
+  createdAt DateTime @default(now()) @map("created_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([tenantId], map: "ai_requests_tenant_id_idx")
+  @@index([userId], map: "ai_requests_user_id_idx")
+  @@index([status])
+  @@index([createdAt], map: "ai_requests_created_at_idx")
+  @@map("ai_requests")
+}
+
+model License {
+  id        String        @id @default(cuid())
+  tenantId  String        @map("tenant_id")
+  key       String        @unique
+  status    LicenseStatus @default(active)
+  expiresAt DateTime?     @map("expires_at")
+  plan      TenantPlan    @default(free)
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  tenant    Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([tenantId], map: "saas_licenses_tenant_id_idx")
+  @@index([status])
+  @@index([expiresAt], map: "saas_licenses_expires_at_idx")
+  @@map("saas_licenses")
 }
 
 model UserRoleAssignment {

@@ -2,6 +2,7 @@ import { getDataSource } from "@/lib/saas-core/datasource/datasource.factory";
 import type {
   AIRequestRecord,
   AIStats,
+  DataSourceType,
   LogAIRequestInput,
   PrismaEntityMapping,
   QueryFilter,
@@ -23,30 +24,57 @@ export const aiRequestPrismaMapping: PrismaEntityMapping<"AIRequest"> = {
   }
 };
 
-function success<T>(data: T): RepositoryResult<T> {
-  return { ok: true, data, source: getDataSource().type };
+function success<T>(data: T, source: DataSourceType = getDataSource().type): RepositoryResult<T> {
+  return { ok: true, data, source };
 }
 
-function failure<T>(error: unknown): RepositoryResult<T> {
+function failure<T>(error: unknown, source: DataSourceType = getDataSource().type): RepositoryResult<T> {
   return {
     ok: false,
     error: error instanceof Error ? error.message : "AI repository failed.",
-    source: getDataSource().type
+    source
   };
 }
 
-export async function logAIRequest(input: LogAIRequestInput): Promise<RepositoryResult<AIRequestRecord>> {
+async function logAIRequestWithSource(
+  source: DataSourceType,
+  input: LogAIRequestInput
+): Promise<RepositoryResult<AIRequestRecord>> {
   try {
-    return success(await getDataSource().ai.logAIRequest(input));
+    return success(await getDataSource(source).ai.logAIRequest(input), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
 }
 
-export async function getAIStats(filter?: QueryFilter): Promise<RepositoryResult<AIStats>> {
+async function getAIStatsWithSource(source: DataSourceType, filter?: QueryFilter): Promise<RepositoryResult<AIStats>> {
   try {
-    return success(await getDataSource().ai.getAIStats(filter));
+    return success(await getDataSource(source).ai.getAIStats(filter), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
+}
+
+export function logAIRequest(input: LogAIRequestInput): Promise<RepositoryResult<AIRequestRecord>> {
+  return logAIRequestWithSource(getDataSource().type, input);
+}
+
+export function logAIRequestMock(input: LogAIRequestInput): Promise<RepositoryResult<AIRequestRecord>> {
+  return logAIRequestWithSource("mock", input);
+}
+
+export function logAIRequestPrisma(input: LogAIRequestInput): Promise<RepositoryResult<AIRequestRecord>> {
+  return logAIRequestWithSource("prisma", input);
+}
+
+export function getAIStats(filter?: QueryFilter): Promise<RepositoryResult<AIStats>> {
+  return getAIStatsWithSource(getDataSource().type, filter);
+}
+
+export function getAIStatsMock(filter?: QueryFilter): Promise<RepositoryResult<AIStats>> {
+  return getAIStatsWithSource("mock", filter);
+}
+
+export function getAIStatsPrisma(filter?: QueryFilter): Promise<RepositoryResult<AIStats>> {
+  return getAIStatsWithSource("prisma", filter);
 }

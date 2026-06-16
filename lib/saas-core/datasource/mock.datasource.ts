@@ -3,6 +3,7 @@ import type {
   AIRequestRecord,
   CreateTenantInput,
   KnowledgeRecord,
+  LicenseRecord,
   LogAIRequestInput,
   PaginationParams,
   QueryFilter,
@@ -112,6 +113,8 @@ const aiRequests: AIRequestRecord[] = [
     id: "ai-001",
     tenantId: "tenant-acme",
     userId: "user-001",
+    prompt: "设备巡检 SOP 有哪些关键步骤？",
+    response: "Mock response: 设备巡检应覆盖日检、周检和异常上报。",
     model: "gpt-4.1-mini",
     tokens: 2048,
     status: "success",
@@ -122,6 +125,8 @@ const aiRequests: AIRequestRecord[] = [
     id: "ai-002",
     tenantId: "tenant-nova",
     userId: "user-003",
+    prompt: "退款投诉如何升级？",
+    response: "Mock response: 先记录工单，再按优先级升级。",
     model: "gpt-4.1-mini",
     tokens: 1420,
     status: "success",
@@ -132,11 +137,34 @@ const aiRequests: AIRequestRecord[] = [
     id: "ai-003",
     tenantId: "tenant-acme",
     userId: "user-002",
+    prompt: "质保政策摘要",
+    response: "Mock response failed before completion.",
     model: "gpt-4.1-mini",
     tokens: 980,
     status: "failed",
     costUsd: 0,
     createdAt: "2026-06-17T08:25:00.000Z"
+  }
+];
+
+const licenses: LicenseRecord[] = [
+  {
+    id: "license-001",
+    tenantId: "tenant-acme",
+    key: "ACME-ENT-2026",
+    status: "active",
+    expiresAt: "2027-06-17T00:00:00.000Z",
+    plan: "enterprise",
+    createdAt: "2026-06-01T08:00:00.000Z"
+  },
+  {
+    id: "license-002",
+    tenantId: "tenant-nova",
+    key: "NOVA-PRO-2026",
+    status: "active",
+    expiresAt: "2026-12-31T00:00:00.000Z",
+    plan: "pro",
+    createdAt: "2026-06-03T09:00:00.000Z"
   }
 ];
 
@@ -269,6 +297,8 @@ export const mockDataSource: IDataSource = {
       return {
         id: `ai-mock-${aiRequests.length + 1}`,
         createdAt: "2026-06-17T09:15:00.000Z",
+        prompt: input.prompt ?? "",
+        response: input.response ?? "",
         ...input
       };
     },
@@ -281,6 +311,13 @@ export const mockDataSource: IDataSource = {
         estimatedCostUsd: Number(scoped.reduce((total, item) => total + item.costUsd, 0).toFixed(4)),
         errorCount: scoped.filter((item) => item.status === "failed").length
       };
+    }
+  },
+  licenses: {
+    async listLicensesByTenant(tenantId, pagination) {
+      const scoped = tenantId ? licenses.filter((item) => item.tenantId === tenantId) : licenses;
+
+      return applyPagination(scoped, pagination);
     }
   },
   system: {

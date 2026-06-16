@@ -40,6 +40,9 @@ export async function executeAIGatewayRequest(
 ): Promise<Record<string, unknown>> {
   const query = typeof payload.query === "string" ? payload.query : typeof payload.prompt === "string" ? payload.prompt : "";
   const model = selectAIModel(context, payload);
+  const answer = query
+    ? `Mock AI response for "${query}".`
+    : "Mock AI response generated through the enterprise orchestrator.";
   const citations = await searchTenantKnowledge({
     tenantId: context.tenantId,
     search: query || undefined,
@@ -53,14 +56,14 @@ export async function executeAIGatewayRequest(
     model,
     tokens,
     status: "success",
-    costUsd: Number((tokens * 0.000002).toFixed(6))
+    costUsd: Number((tokens * 0.000002).toFixed(6)),
+    prompt: query,
+    response: answer
   });
 
   return {
     model,
-    answer: query
-      ? `Mock AI response for "${query}".`
-      : "Mock AI response generated through the enterprise orchestrator.",
+    answer,
     citations,
     requestLog
   };

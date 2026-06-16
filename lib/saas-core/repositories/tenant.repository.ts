@@ -1,6 +1,7 @@
 import { getDataSource } from "@/lib/saas-core/datasource/datasource.factory";
 import type {
   CreateTenantInput,
+  DataSourceType,
   PaginationParams,
   PrismaEntityMapping,
   QueryFilter,
@@ -24,46 +25,102 @@ export const tenantPrismaMapping: PrismaEntityMapping<"Tenant"> = {
   }
 };
 
-function success<T>(data: T): RepositoryResult<T> {
-  return { ok: true, data, source: getDataSource().type };
+function success<T>(data: T, source: DataSourceType = getDataSource().type): RepositoryResult<T> {
+  return { ok: true, data, source };
 }
 
-function failure<T>(error: unknown): RepositoryResult<T> {
+function failure<T>(error: unknown, source: DataSourceType = getDataSource().type): RepositoryResult<T> {
   return {
     ok: false,
     error: error instanceof Error ? error.message : "Tenant repository failed.",
-    source: getDataSource().type
+    source
   };
 }
 
-export async function getTenantById(id: string): Promise<RepositoryResult<Tenant | null>> {
+async function getTenantByIdWithSource(source: DataSourceType, id: string): Promise<RepositoryResult<Tenant | null>> {
   try {
-    return success(await getDataSource().tenants.getTenantById(id));
+    return success(await getDataSource(source).tenants.getTenantById(id), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
 }
 
-export async function listTenants(filter?: QueryFilter, pagination?: PaginationParams): Promise<RepositoryResult<Tenant[]>> {
+async function listTenantsWithSource(
+  source: DataSourceType,
+  filter?: QueryFilter,
+  pagination?: PaginationParams
+): Promise<RepositoryResult<Tenant[]>> {
   try {
-    return success(await getDataSource().tenants.listTenants(filter, pagination));
+    return success(await getDataSource(source).tenants.listTenants(filter, pagination), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
 }
 
-export async function createTenant(input: CreateTenantInput): Promise<RepositoryResult<Tenant>> {
+async function createTenantWithSource(source: DataSourceType, input: CreateTenantInput): Promise<RepositoryResult<Tenant>> {
   try {
-    return success(await getDataSource().tenants.createTenant(input));
+    return success(await getDataSource(source).tenants.createTenant(input), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
 }
 
-export async function updateTenant(id: string, input: UpdateTenantInput): Promise<RepositoryResult<Tenant | null>> {
+async function updateTenantWithSource(
+  source: DataSourceType,
+  id: string,
+  input: UpdateTenantInput
+): Promise<RepositoryResult<Tenant | null>> {
   try {
-    return success(await getDataSource().tenants.updateTenant(id, input));
+    return success(await getDataSource(source).tenants.updateTenant(id, input), source);
   } catch (error) {
-    return failure(error);
+    return failure(error, source);
   }
+}
+
+export function getTenantById(id: string): Promise<RepositoryResult<Tenant | null>> {
+  return getTenantByIdWithSource(getDataSource().type, id);
+}
+
+export function getTenantByIdMock(id: string): Promise<RepositoryResult<Tenant | null>> {
+  return getTenantByIdWithSource("mock", id);
+}
+
+export function getTenantByIdPrisma(id: string): Promise<RepositoryResult<Tenant | null>> {
+  return getTenantByIdWithSource("prisma", id);
+}
+
+export function listTenants(filter?: QueryFilter, pagination?: PaginationParams): Promise<RepositoryResult<Tenant[]>> {
+  return listTenantsWithSource(getDataSource().type, filter, pagination);
+}
+
+export function listTenantsMock(filter?: QueryFilter, pagination?: PaginationParams): Promise<RepositoryResult<Tenant[]>> {
+  return listTenantsWithSource("mock", filter, pagination);
+}
+
+export function listTenantsPrisma(filter?: QueryFilter, pagination?: PaginationParams): Promise<RepositoryResult<Tenant[]>> {
+  return listTenantsWithSource("prisma", filter, pagination);
+}
+
+export function createTenant(input: CreateTenantInput): Promise<RepositoryResult<Tenant>> {
+  return createTenantWithSource(getDataSource().type, input);
+}
+
+export function createTenantMock(input: CreateTenantInput): Promise<RepositoryResult<Tenant>> {
+  return createTenantWithSource("mock", input);
+}
+
+export function createTenantPrisma(input: CreateTenantInput): Promise<RepositoryResult<Tenant>> {
+  return createTenantWithSource("prisma", input);
+}
+
+export function updateTenant(id: string, input: UpdateTenantInput): Promise<RepositoryResult<Tenant | null>> {
+  return updateTenantWithSource(getDataSource().type, id, input);
+}
+
+export function updateTenantMock(id: string, input: UpdateTenantInput): Promise<RepositoryResult<Tenant | null>> {
+  return updateTenantWithSource("mock", id, input);
+}
+
+export function updateTenantPrisma(id: string, input: UpdateTenantInput): Promise<RepositoryResult<Tenant | null>> {
+  return updateTenantWithSource("prisma", id, input);
 }

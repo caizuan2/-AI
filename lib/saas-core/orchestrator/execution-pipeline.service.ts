@@ -140,8 +140,9 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
   await runStep(steps, "rbac", () => assertRouteAllowed(request.context, decision));
   const resolvedTenant = await runStep(steps, "tenant resolve", () => resolveTenant(request.context));
   const service = await runStep(steps, "service selection", () => decision.service);
-  const dispatchResult = await runStep(steps, "repository call", () => dispatchService(request, decision));
   const datasource = await runStep(steps, "datasource fetch", () => getConfiguredDataSourceType());
+  const repositoryMode = datasource === "prisma" ? "prisma implementation" : "mock implementation";
+  const dispatchResult = await runStep(steps, "repository call", () => dispatchService(request, decision));
   const data = await runStep(steps, "response transform", () => ({
     requestType: request.context.requestType,
     source: request.context.source,
@@ -149,6 +150,7 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
     flow: decision.flow,
     service,
     datasource,
+    repositoryMode,
     tenant: resolvedTenant,
     auth: "accepted",
     result: dispatchResult

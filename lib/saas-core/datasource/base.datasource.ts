@@ -5,6 +5,7 @@ import type {
   CreateTenantInput,
   DataSourceType,
   KnowledgeRecord,
+  LicenseRecord,
   LogAIRequestInput,
   PaginationParams,
   QueryFilter,
@@ -37,6 +38,9 @@ export interface IDataSource {
   ai: {
     logAIRequest(input: LogAIRequestInput): Promise<AIRequestRecord>;
     getAIStats(filter?: QueryFilter): Promise<AIStats>;
+  };
+  licenses: {
+    listLicensesByTenant(tenantId?: string, pagination?: PaginationParams): Promise<LicenseRecord[]>;
   };
   system: {
     getSystemHealth(): Promise<SystemHealthRecord[]>;

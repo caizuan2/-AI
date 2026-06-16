@@ -30,10 +30,14 @@ export type PaginationParams = {
   pageSize?: number;
 };
 
+export type SaaSPlan = "free" | "pro" | "trial" | "business" | "enterprise";
+
+export type SaaSUserRole = "owner" | "admin" | "member" | "viewer" | "user" | "ingest_admin" | "super_admin" | "enterprise_admin";
+
 export type Tenant = {
   id: string;
   name: string;
-  plan: "trial" | "business" | "enterprise";
+  plan: SaaSPlan;
   status: EntityStatus;
   region: string;
   seatLimit: number;
@@ -46,7 +50,7 @@ export type SaaSUser = {
   tenantId: string;
   name: string;
   email: string;
-  role: "owner" | "admin" | "member" | "viewer";
+  role: SaaSUserRole;
   status: EntityStatus;
   lastActiveAt: string;
 };
@@ -65,6 +69,8 @@ export type AIRequestRecord = {
   id: string;
   tenantId: string;
   userId: string;
+  prompt?: string;
+  response?: string;
   model: string;
   tokens: number;
   status: "success" | "failed";
@@ -94,6 +100,16 @@ export type SystemMetric = {
   status: HealthState;
 };
 
+export type LicenseRecord = {
+  id: string;
+  tenantId: string;
+  key: string;
+  status: "active" | "inactive" | "expired" | "revoked";
+  expiresAt: string | null;
+  plan: SaaSPlan;
+  createdAt: string;
+};
+
 export type CreateTenantInput = Pick<Tenant, "name" | "plan" | "region" | "seatLimit">;
 
 export type UpdateTenantInput = Partial<Pick<Tenant, "name" | "plan" | "status" | "region" | "seatLimit">>;
@@ -107,13 +123,15 @@ export type SearchKnowledgeInput = QueryFilter & PaginationParams;
 
 export type AddKnowledgeInput = Pick<KnowledgeRecord, "tenantId" | "title" | "category" | "summary">;
 
-export type LogAIRequestInput = Pick<AIRequestRecord, "tenantId" | "userId" | "model" | "tokens" | "status" | "costUsd">;
+export type LogAIRequestInput = Pick<AIRequestRecord, "tenantId" | "userId" | "model" | "tokens" | "status" | "costUsd"> &
+  Partial<Pick<AIRequestRecord, "prompt" | "response">>;
 
 export type DatabaseEntityMap = {
   User: SaaSUser;
   Tenant: Tenant;
   Knowledge: KnowledgeRecord;
   AIRequest: AIRequestRecord;
+  License: LicenseRecord;
 };
 
 export type PrismaEntityMapping<T extends keyof DatabaseEntityMap> = {
