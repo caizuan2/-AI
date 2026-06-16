@@ -1,31 +1,31 @@
 {
-    "appName":  "AI知识库助手",
-    "channel":  "user-test",
-    "platform":  "user",
-    "version":  "1.0.10",
-    "buildNumber":  134,
-    "minSupportedBuildNumber":  134,
-    "forceUpdate":  true,
-    "buildTime":  "2026-06-16T09:03:19.4699847Z",
-    "releasePageUrl":  "https://github.com/caizuan2/-AI/releases/tag/user-test",
-    "apkUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
-    "windowsReleaseUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
-    "windowsDebugUrl":  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
-    "apkMirrors":  [
-                       "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk"
-                   ],
-    "windowsReleaseMirrors":  [
-                                  "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip"
-                              ],
-    "manifestMirrors":  [
-                            "https://raw.githubusercontent.com/caizuan2/-AI/user-test-manifest/public/manifests/user-test/version.json",
-                            "https://api.github.com/repos/caizuan2/-AI/contents/public/manifests/user-test/version.json?ref=user-test-manifest",
-                            "https://github.com/caizuan2/-AI/releases/download/user-test/version.json",
-                            "https://cdn.jsdelivr.net/gh/caizuan2/-AI@user-test-manifest/public/manifests/user-test/version.json"
-                        ],
-    "changelog":  [
-                      "整合同账号文字消息同步",
-                      "整合同账号图片/文件/拍照同步",
-                      "使用阿里云 API http://47.238.0.23"
-                  ]
+  "appName": "AI知识库助手",
+  "channel": "user-test",
+  "platform": "user",
+  "version": "1.0.10",
+  "buildNumber": 135,
+  "minSupportedBuildNumber": 135,
+  "forceUpdate": true,
+  "buildTime": "2026-06-16T11:37:05.2574078Z",
+  "releasePageUrl": "https://github.com/caizuan2/-AI/releases/tag/user-test",
+  "apkUrl": "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk",
+  "windowsReleaseUrl": "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip",
+  "windowsDebugUrl": "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-debug.zip",
+  "apkMirrors": [
+    "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-test.apk"
+  ],
+  "windowsReleaseMirrors": [
+    "https://github.com/caizuan2/-AI/releases/download/user-test/ai-knowledge-user-windows-release.zip"
+  ],
+  "manifestMirrors": [
+    "https://raw.githubusercontent.com/caizuan2/-AI/user-test-manifest/public/manifests/user-test/version.json",
+    "https://api.github.com/repos/caizuan2/-AI/contents/public/manifests/user-test/version.json?ref=user-test-manifest",
+    "https://github.com/caizuan2/-AI/releases/download/user-test/version.json",
+    "https://cdn.jsdelivr.net/gh/caizuan2/-AI@user-test-manifest/public/manifests/user-test/version.json"
+  ],
+  "changelog": [
+    "回滚 user-test 到 300MB 上传限制成功时的稳定客户端代码效果",
+    "保留同账号文字/图片/文件/拍照/历史同步",
+    "使用阿里云 API http://47.238.0.23"
+  ]
 }
