@@ -3,14 +3,8 @@
   "version": "1.0.10",
   "build": 110,
   "minimum_build": 100,
-  "minSupportedBuild": 100,
   "forceUpdate": false,
   "force_update": false,
-  "releaseNotes": [
-    "修复 Android 检查更新网络权限问题",
-    "增加更新地址备用通道",
-    "优化检查更新失败提示"
-  ],
   "apk": "ai-knowledge-chat-latest.apk",
   "exe": "ai-knowledge-chat-latest.exe",
   "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
@@ -42,19 +36,12 @@
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
-          "minSupportedBuild": 100,
           "force_update": false,
-          "forceUpdate": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
           "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
           "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
           "changelog": [
-            "修复 Android 检查更新网络权限问题",
-            "增加更新地址备用通道",
-            "优化检查更新失败提示"
-          ],
-          "releaseNotes": [
             "修复 Android 检查更新网络权限问题",
             "增加更新地址备用通道",
             "优化检查更新失败提示"
@@ -74,11 +61,11 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.6",
+      "active_version": "1.0.10",
       "versions": [
         {
-          "version": "1.0.6",
-          "build": 106,
+          "version": "1.0.10",
+          "build": 110,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
@@ -92,7 +79,7 @@
             "Improved packaging workflow",
             "Updated installer links"
           ],
-          "created_at": "2026-06-13T14:59:09.473Z"
+          "created_at": "2026-06-14T09:30:00.000Z"
         }
       ]
     }
@@ -102,9 +89,7 @@
     "version": "1.0.10",
     "build": 110,
     "minimum_build": 100,
-    "minSupportedBuild": 100,
     "force_update": false,
-    "forceUpdate": false,
     "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
     "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
     "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
@@ -113,17 +98,12 @@
       "修复 Android 检查更新网络权限问题",
       "增加更新地址备用通道",
       "优化检查更新失败提示"
-    ],
-    "releaseNotes": [
-      "修复 Android 检查更新网络权限问题",
-      "增加更新地址备用通道",
-      "优化检查更新失败提示"
     ]
   },
   "admin": {
     "app_name": "AI知识库管理后台",
-    "version": "1.0.6",
-    "build": 106,
+    "version": "1.0.10",
+    "build": 110,
     "minimum_build": 100,
     "force_update": false,
     "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
@@ -135,15 +115,5 @@
       "Improved packaging workflow",
       "Updated installer links"
     ]
-  },
-  "downloads": {
-    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
-    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
-    "page": "https://stately-sawine-1efd4d.netlify.app/download"
-  },
-  "changelog": [
-    "修复 Android 检查更新网络权限问题",
-    "增加更新地址备用通道",
-    "优化检查更新失败提示"
-  ]
+  }
 }

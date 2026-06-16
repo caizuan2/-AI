@@ -8,6 +8,7 @@ class ChatMarkdownView extends StatelessWidget {
     required this.isUser,
     required this.textColor,
     this.streaming = false,
+    this.bodyFontSize,
     super.key,
   });
 
@@ -15,6 +16,7 @@ class ChatMarkdownView extends StatelessWidget {
   final bool isUser;
   final Color textColor;
   final bool streaming;
+  final double? bodyFontSize;
 
   @override
   Widget build(BuildContext context) {
@@ -32,16 +34,32 @@ class ChatMarkdownView extends StatelessWidget {
             MarkdownBody(
               data: segment.content,
               selectable: true,
-              styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                p: TextStyle(color: textColor, height: 1.55),
-                h1: TextStyle(color: textColor, fontSize: 22, fontWeight: FontWeight.w800),
-                h2: TextStyle(color: textColor, fontSize: 19, fontWeight: FontWeight.w800),
-                h3: TextStyle(color: textColor, fontSize: 16, fontWeight: FontWeight.w800),
+              styleSheet:
+                  MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
+                p: TextStyle(
+                  color: textColor,
+                  fontSize: bodyFontSize,
+                  height: 1.58,
+                ),
+                h1: TextStyle(
+                    color: textColor,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800),
+                h2: TextStyle(
+                    color: textColor,
+                    fontSize: 19,
+                    fontWeight: FontWeight.w800),
+                h3: TextStyle(
+                    color: textColor,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800),
                 listBullet: TextStyle(color: textColor),
                 tableBody: TextStyle(color: textColor),
-                tableHead: TextStyle(color: textColor, fontWeight: FontWeight.w700),
+                tableHead:
+                    TextStyle(color: textColor, fontWeight: FontWeight.w700),
                 code: TextStyle(
-                  backgroundColor: isUser ? Colors.white12 : const Color(0xFFF1F5F9),
+                  backgroundColor:
+                      isUser ? Colors.white12 : const Color(0xFFF1F5F9),
                   color: textColor,
                   fontFamily: 'monospace',
                 ),
@@ -63,13 +81,15 @@ class ChatMarkdownView extends StatelessWidget {
   }
 
   List<_MarkdownSegment> _splitCodeBlocks(String source) {
-    final regex = RegExp(r'```([A-Za-z0-9_-]+)?\n([\s\S]*?)```', multiLine: true);
+    final regex =
+        RegExp(r'```([A-Za-z0-9_-]+)?\n([\s\S]*?)```', multiLine: true);
     final segments = <_MarkdownSegment>[];
     var cursor = 0;
 
     for (final match in regex.allMatches(source)) {
       if (match.start > cursor) {
-        segments.add(_MarkdownSegment.text(source.substring(cursor, match.start)));
+        segments
+            .add(_MarkdownSegment.text(source.substring(cursor, match.start)));
       }
 
       segments.add(_MarkdownSegment.code(

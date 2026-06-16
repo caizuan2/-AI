@@ -5,6 +5,8 @@ import '../../core/api/api_service.dart';
 import '../../core/config/app_config.dart';
 import '../update/update_dialog.dart';
 import '../update/update_service.dart';
+import '../update/test_update_dialog.dart';
+import '../update/test_update_service.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -47,6 +49,12 @@ class SettingsPage extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           OutlinedButton.icon(
+            onPressed: () => _checkTestUpdates(context),
+            icon: const Icon(Icons.science_outlined),
+            label: const Text('检查测试版更新'),
+          ),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
             onPressed: () =>
                 Navigator.of(context).pushReplacementNamed('/login'),
             icon: const Icon(Icons.logout),
@@ -58,7 +66,6 @@ class SettingsPage extends StatelessWidget {
   }
 
   Future<void> _checkUpdates(BuildContext context) async {
-    final messenger = ScaffoldMessenger.of(context);
     final updateService = context.read<UpdateService>();
 
     try {
@@ -76,7 +83,21 @@ class SettingsPage extends StatelessWidget {
         return;
       }
 
-      messenger.showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+      await showDialog<void>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('当前已是最新版本'),
+            content: const Text('当前安装的用户端已经是最新正式版本。'),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('知道了'),
+              ),
+            ],
+          );
+        },
+      );
     } catch (error) {
       debugPrint('Manual update check failed: $error');
       if (!context.mounted) {
@@ -86,6 +107,33 @@ class SettingsPage extends StatelessWidget {
         context,
         onRetry: () => _checkUpdates(context),
       );
+    }
+  }
+
+  Future<void> _checkTestUpdates(BuildContext context) async {
+    final service = context.read<TestUpdateService>();
+    try {
+      final result = await service.checkForUpdate();
+      if (!context.mounted) {
+        return;
+      }
+
+      final manifest = result.manifest;
+      if (result.shouldPrompt && manifest != null) {
+        await showTestUpdateDialog(
+          context,
+          manifest: manifest,
+          force: result.forceUpdate,
+        );
+        return;
+      }
+
+      await showNoTestUpdateDialog(context, result: result);
+    } catch (error) {
+      debugPrint('Manual user-test update check failed: $error');
+      if (context.mounted) {
+        await showTestUpdateFailedDialog(context, error: error);
+      }
     }
   }
 }
