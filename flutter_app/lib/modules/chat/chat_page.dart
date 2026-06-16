@@ -21,6 +21,11 @@ import 'chat_markdown_view.dart';
 import 'chat_message.dart';
 import 'thinking_indicator.dart';
 
+const _appDisplayName = '小董AI';
+const _appLogoAsset = 'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png';
+const _legacyAppTitle = 'AI 知识库助手';
+const _legacyAppDrawerTitle = 'AI知识库助手';
+
 void _showLocalActionHint(
   BuildContext context,
   String message, {
@@ -154,10 +159,7 @@ bool _isErrorHint(String message) {
 }
 
 class ChatPage extends StatefulWidget {
-  const ChatPage({
-    required this.apiService,
-    super.key,
-  });
+  const ChatPage({required this.apiService, super.key});
 
   static const routeName = '/chat';
 
@@ -176,9 +178,11 @@ class _ChatPageState extends State<ChatPage> {
   Uint8List? _avatarPreviewBytes;
   int _avatarCacheToken = 0;
   bool _uploading = false;
+  bool _desktopSidebarExpanded = true;
   final List<_PendingAttachment> _pendingAttachments = [];
-  static const MethodChannel _speechChannel =
-      MethodChannel('ai_knowledge_flutter_app/speech');
+  static const MethodChannel _speechChannel = MethodChannel(
+    'ai_knowledge_flutter_app/speech',
+  );
 
   @override
   void initState() {
@@ -364,11 +368,9 @@ class _ChatPageState extends State<ChatPage> {
           ? file.name as String
           : '$label-${DateTime.now().millisecondsSinceEpoch}';
       final String? mimeType = file.mimeType as String?;
-      final result = await widget.apiService.upload(UploadFile(
-        name: name,
-        bytes: bytes,
-        mimeType: mimeType,
-      ));
+      final result = await widget.apiService.upload(
+        UploadFile(name: name, bytes: bytes, mimeType: mimeType),
+      );
       final uploadUrl = _extractUploadUrl(result);
       if (uploadUrl == null || uploadUrl.trim().isEmpty) {
         throw ApiException(
@@ -388,11 +390,13 @@ class _ChatPageState extends State<ChatPage> {
         url: uploadUrl,
       );
       setState(() {
-        _pendingAttachments.add(_PendingAttachment(
-          id: '${DateTime.now().microsecondsSinceEpoch}-${_pendingAttachments.length}',
-          sourceLabel: label,
-          attachment: attachment,
-        ));
+        _pendingAttachments.add(
+          _PendingAttachment(
+            id: '${DateTime.now().microsecondsSinceEpoch}-${_pendingAttachments.length}',
+            sourceLabel: label,
+            attachment: attachment,
+          ),
+        );
       });
     } catch (error) {
       await _showUploadFailure(label, error);
@@ -442,21 +446,25 @@ class _ChatPageState extends State<ChatPage> {
       return false;
     }
 
-    final shouldHideAttachmentOnlyText =
-        _isAttachmentOnlyMessage(message.content, message.attachments);
+    final shouldHideAttachmentOnlyText = _isAttachmentOnlyMessage(
+      message.content,
+      message.attachments,
+    );
     final text = shouldHideAttachmentOnlyText ? '' : message.content.trim();
     _inputController.text = text;
     _inputController.selection = TextSelection.collapsed(offset: text.length);
     setState(() {
       _pendingAttachments
         ..clear()
-        ..addAll(message.attachments.map((attachment) {
-          return _PendingAttachment(
-            id: 'edit-${DateTime.now().microsecondsSinceEpoch}-${attachment.name}',
-            sourceLabel: attachment.isImage ? '图片' : '文件',
-            attachment: attachment,
-          );
-        }));
+        ..addAll(
+          message.attachments.map((attachment) {
+            return _PendingAttachment(
+              id: 'edit-${DateTime.now().microsecondsSinceEpoch}-${attachment.name}',
+              sourceLabel: attachment.isImage ? '图片' : '文件',
+              attachment: attachment,
+            );
+          }),
+        );
     });
     return true;
   }
@@ -473,8 +481,9 @@ class _ChatPageState extends State<ChatPage> {
     final int end = selection.isValid ? selection.end : oldText.length;
     final inserted = oldText.replaceRange(start, end, trimmed);
     _inputController.text = inserted;
-    _inputController.selection =
-        TextSelection.collapsed(offset: start + trimmed.length);
+    _inputController.selection = TextSelection.collapsed(
+      offset: start + trimmed.length,
+    );
   }
 
   void _handleRenamePreview(String name) {
@@ -485,10 +494,7 @@ class _ChatPageState extends State<ChatPage> {
       _currentUserFuture = _currentUserFuture.then((data) {
         final user = _extractUser(data);
         return {
-          'user': {
-            ...user,
-            'name': name,
-          },
+          'user': {...user, 'name': name},
         };
       });
     });
@@ -634,10 +640,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   void _showNotifications() {
-    _showInfoDialog(
-      title: '消息通知',
-      message: '暂无通知',
-    );
+    _showInfoDialog(title: '消息通知', message: '暂无通知');
   }
 
   void _showSettingsSheet() {
@@ -812,68 +815,99 @@ class _ChatPageState extends State<ChatPage> {
     return width.clamp(340, 420).toDouble();
   }
 
+  bool _useDesktopSidebar(BuildContext context) {
+    if (kIsWeb || defaultTargetPlatform != TargetPlatform.windows) {
+      return false;
+    }
+    return MediaQuery.sizeOf(context).width >= 900;
+  }
+
+  bool get _useWindowsBrand {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
   void _openHistoryDrawer(BuildContext drawerContext) {
     unawaited(_controller.loadCloudConversations());
     Scaffold.of(drawerContext).openDrawer();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      drawer: Drawer(
-        width: _historyDrawerWidth(context),
-        backgroundColor: Colors.white,
-        child: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
-            return _HistoryDrawer(
-              conversations: _controller.loadedConversations,
-              userFuture: _currentUserFuture,
-              avatarPreviewBytes: _avatarPreviewBytes,
-              avatarCacheToken: _avatarCacheToken,
-              sending: _controller.sending,
-              syncing: _controller.syncing,
-              syncError: _controller.lastSyncError,
-              onNewConversation: () {
-                _clearComposer();
-                _controller.startNewConversation();
-                Navigator.of(context).pop();
-              },
-              onOpenConversation: (id) {
-                _clearComposer();
-                unawaited(_controller.openConversation(id));
-                Navigator.of(context).pop();
-              },
-              onOpenSettings: () {
-                Navigator.of(context).pop();
-                _showSettingsSheet();
-              },
-              onScan: _handleScan,
-              onNotifications: _showNotifications,
-            );
+  Widget _buildHistoryContent({required bool embedded}) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        return _HistoryDrawer(
+          conversations: _controller.loadedConversations,
+          userFuture: _currentUserFuture,
+          avatarPreviewBytes: _avatarPreviewBytes,
+          avatarCacheToken: _avatarCacheToken,
+          sending: _controller.sending,
+          syncing: _controller.syncing,
+          syncError: _controller.lastSyncError,
+          useOfficialBrand: _useWindowsBrand,
+          onNewConversation: () {
+            _clearComposer();
+            _controller.startNewConversation();
+            if (!embedded) {
+              Navigator.of(context).pop();
+            }
           },
-        ),
+          onOpenConversation: (id) {
+            _clearComposer();
+            unawaited(_controller.openConversation(id));
+            if (!embedded) {
+              Navigator.of(context).pop();
+            }
+          },
+          onOpenSettings: () {
+            if (!embedded) {
+              Navigator.of(context).pop();
+            }
+            _showSettingsSheet();
+          },
+          onClose: embedded
+              ? () => setState(() => _desktopSidebarExpanded = false)
+              : () => Navigator.of(context).pop(),
+          onScan: _handleScan,
+          onNotifications: _showNotifications,
+        );
+      },
+    );
+  }
+
+  PreferredSizeWidget _buildAppBar({required bool desktopSidebar}) {
+    return AppBar(
+      leading: Builder(
+        builder: (context) {
+          return IconButton(
+            tooltip: desktopSidebar
+                ? (_desktopSidebarExpanded ? '折叠历史栏' : '展开历史栏')
+                : '历史记录',
+            onPressed: desktopSidebar
+                ? () => setState(
+                      () => _desktopSidebarExpanded = !_desktopSidebarExpanded,
+                    )
+                : () => _openHistoryDrawer(context),
+            icon: Icon(
+              desktopSidebar && _desktopSidebarExpanded
+                  ? Icons.menu_open
+                  : Icons.menu,
+            ),
+          );
+        },
       ),
-      appBar: AppBar(
-        leading: Builder(
-          builder: (context) {
-            return IconButton(
-              tooltip: '历史记录',
-              onPressed: () => _openHistoryDrawer(context),
-              icon: const Icon(Icons.menu),
-            );
-          },
-        ),
-        title: AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) {
+      title: AnimatedBuilder(
+        animation: _controller,
+        builder: (context, _) {
+          final subtitle =
+              '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}';
+          if (!_useWindowsBrand) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('AI 知识库助手'),
+                const Text(_legacyAppTitle),
                 Text(
-                  '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}',
+                  subtitle,
                   style: const TextStyle(
                     color: Color(0xFF64748B),
                     fontSize: 11,
@@ -882,205 +916,275 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ],
             );
-          },
-        ),
-        actions: [
-          PopupMenuButton<String>(
-            tooltip: '选择模型',
-            initialValue: _controller.selectedModel,
-            onSelected: (value) {
-              _controller.setModel(value);
-              setState(() {});
-            },
-            itemBuilder: (context) {
-              return [
-                for (final model in ChatController.modelOptions)
-                  PopupMenuItem<String>(
-                    value: model,
-                    child: Text(_modelLabel(model)),
-                  ),
-              ];
-            },
-            icon: const Icon(Icons.tune),
-          ),
-          IconButton(
-            tooltip: '更新',
-            onPressed: () =>
-                Navigator.of(context).pushNamed(UpdatePage.routeName),
-            icon: const Icon(Icons.system_update_alt),
-          ),
-        ],
-      ),
-      body: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final messages = _controller.messages;
-          return Column(
+          }
+
+          return Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-                  itemCount: messages.length,
-                  itemBuilder: (context, index) {
-                    return TweenAnimationBuilder<double>(
-                      key: ValueKey(
-                          '${messages[index].createdAt.microsecondsSinceEpoch}-$index'),
-                      tween: Tween(begin: 0, end: 1),
-                      duration: const Duration(milliseconds: 260),
-                      curve: Curves.easeOutCubic,
-                      builder: (context, value, child) {
-                        return Opacity(
-                          opacity: value,
-                          child: Transform.translate(
-                            offset: Offset(0, 14 * (1 - value)),
-                            child: child,
-                          ),
-                        );
-                      },
-                      child: _MessageBubble(
-                        message: messages[index],
-                        onCancel: _controller.sending
-                            ? _controller.cancelStreaming
-                            : null,
-                        onRetry: _controller.canRetry
-                            ? _controller.retryLastFailed
-                            : null,
-                        onEdit: messages[index].role == ChatRole.user
-                            ? (_) => _editUserMessage(messages[index])
-                            : null,
+              const _AppBrandLogo(size: 32, radius: 9),
+              const SizedBox(width: 10),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      _appDisplayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF64748B),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w500,
                       ),
-                    );
-                  },
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Container(
-                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    border:
-                        const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.04),
-                        blurRadius: 18,
-                        offset: const Offset(0, -6),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_pendingAttachments.isNotEmpty) ...[
-                        _PendingAttachmentTray(
-                          attachments: _pendingAttachments,
-                          onRemove: _removePendingAttachment,
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF8FAFC),
-                          borderRadius: BorderRadius.circular(24),
-                          border: Border.all(color: const Color(0xFFE2E8F0)),
-                        ),
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              IconButton(
-                                tooltip: '添加',
-                                onPressed:
-                                    _uploading ? null : _showAttachmentMenu,
-                                icon: _uploading
-                                    ? const SizedBox(
-                                        width: 20,
-                                        height: 20,
-                                        child: CircularProgressIndicator(
-                                            strokeWidth: 2),
-                                      )
-                                    : const Icon(Icons.add_circle_outline),
-                                color: const Color(0xFF64748B),
-                              ),
-                              Expanded(
-                                child: TextField(
-                                  controller: _inputController,
-                                  minLines: 1,
-                                  maxLines: 6,
-                                  textInputAction: TextInputAction.newline,
-                                  decoration: const InputDecoration(
-                                    hintText: '发送消息给 AI 知识库...',
-                                    border: InputBorder.none,
-                                    isDense: true,
-                                    contentPadding:
-                                        EdgeInsets.symmetric(vertical: 14),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Builder(
-                                builder: (voiceContext) {
-                                  return IconButton(
-                                    tooltip: '语音输入',
-                                    onPressed: () =>
-                                        _handleVoiceInput(voiceContext),
-                                    icon: const Icon(Icons.mic_none),
-                                    color: const Color(0xFF64748B),
-                                  );
-                                },
-                              ),
-                              const SizedBox(width: 4),
-                              Builder(
-                                builder: (sendContext) {
-                                  return SizedBox(
-                                    width: _sendButtonSize,
-                                    height: _sendButtonSize,
-                                    child: FilledButton(
-                                      onPressed:
-                                          _controller.sending || _uploading
-                                              ? null
-                                              : () => _send(sendContext),
-                                      style: FilledButton.styleFrom(
-                                        padding: EdgeInsets.zero,
-                                        shape: const CircleBorder(),
-                                        backgroundColor:
-                                            const Color(0xFF0F172A),
-                                      ),
-                                      child: _controller.sending
-                                          ? SizedBox(
-                                              width: _sendProgressSize,
-                                              height: _sendProgressSize,
-                                              child:
-                                                  const CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: Colors.white,
-                                              ),
-                                            )
-                                          : Icon(
-                                              Icons.arrow_upward,
-                                              size: _sendButtonSize <= 40
-                                                  ? 19
-                                                  : 21,
-                                            ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ],
           );
         },
       ),
+      actions: [
+        PopupMenuButton<String>(
+          tooltip: '选择模型',
+          initialValue: _controller.selectedModel,
+          onSelected: (value) {
+            _controller.setModel(value);
+            setState(() {});
+          },
+          itemBuilder: (context) {
+            return [
+              for (final model in ChatController.modelOptions)
+                PopupMenuItem<String>(
+                  value: model,
+                  child: Text(_modelLabel(model)),
+                ),
+            ];
+          },
+          icon: const Icon(Icons.tune),
+        ),
+        IconButton(
+          tooltip: '更新',
+          onPressed: () =>
+              Navigator.of(context).pushNamed(UpdatePage.routeName),
+          icon: const Icon(Icons.system_update_alt),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildChatBody() {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, _) {
+        final messages = _controller.messages;
+        return Column(
+          children: [
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+                itemCount: messages.length,
+                itemBuilder: (context, index) {
+                  return TweenAnimationBuilder<double>(
+                    key: ValueKey(
+                      '${messages[index].createdAt.microsecondsSinceEpoch}-$index',
+                    ),
+                    tween: Tween(begin: 0, end: 1),
+                    duration: const Duration(milliseconds: 260),
+                    curve: Curves.easeOutCubic,
+                    builder: (context, value, child) {
+                      return Opacity(
+                        opacity: value,
+                        child: Transform.translate(
+                          offset: Offset(0, 14 * (1 - value)),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: _MessageBubble(
+                      message: messages[index],
+                      onCancel: _controller.sending
+                          ? _controller.cancelStreaming
+                          : null,
+                      onRetry: _controller.canRetry
+                          ? _controller.retryLastFailed
+                          : null,
+                      onEdit: messages[index].role == ChatRole.user
+                          ? (_) => _editUserMessage(messages[index])
+                          : null,
+                    ),
+                  );
+                },
+              ),
+            ),
+            SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  border: const Border(
+                    top: BorderSide(color: Color(0xFFE2E8F0)),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.04),
+                      blurRadius: 18,
+                      offset: const Offset(0, -6),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_pendingAttachments.isNotEmpty) ...[
+                      _PendingAttachmentTray(
+                        attachments: _pendingAttachments,
+                        onRemove: _removePendingAttachment,
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8FAFC),
+                        borderRadius: BorderRadius.circular(24),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            IconButton(
+                              tooltip: '添加',
+                              onPressed:
+                                  _uploading ? null : _showAttachmentMenu,
+                              icon: _uploading
+                                  ? const SizedBox(
+                                      width: 20,
+                                      height: 20,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.add_circle_outline),
+                              color: const Color(0xFF64748B),
+                            ),
+                            Expanded(
+                              child: TextField(
+                                controller: _inputController,
+                                minLines: 1,
+                                maxLines: 6,
+                                textInputAction: TextInputAction.newline,
+                                decoration: const InputDecoration(
+                                  hintText: '发送消息给 AI 知识库...',
+                                  border: InputBorder.none,
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(
+                                    vertical: 14,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Builder(
+                              builder: (voiceContext) {
+                                return IconButton(
+                                  tooltip: '语音输入',
+                                  onPressed: () =>
+                                      _handleVoiceInput(voiceContext),
+                                  icon: const Icon(Icons.mic_none),
+                                  color: const Color(0xFF64748B),
+                                );
+                              },
+                            ),
+                            const SizedBox(width: 4),
+                            Builder(
+                              builder: (sendContext) {
+                                return SizedBox(
+                                  width: _sendButtonSize,
+                                  height: _sendButtonSize,
+                                  child: FilledButton(
+                                    onPressed: _controller.sending || _uploading
+                                        ? null
+                                        : () => _send(sendContext),
+                                    style: FilledButton.styleFrom(
+                                      padding: EdgeInsets.zero,
+                                      shape: const CircleBorder(),
+                                      backgroundColor: const Color(0xFF0F172A),
+                                    ),
+                                    child: _controller.sending
+                                        ? SizedBox(
+                                            width: _sendProgressSize,
+                                            height: _sendProgressSize,
+                                            child:
+                                                const CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: Colors.white,
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.arrow_upward,
+                                            size:
+                                                _sendButtonSize <= 40 ? 19 : 21,
+                                          ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final desktopSidebar = _useDesktopSidebar(context);
+    return Scaffold(
+      drawer: desktopSidebar
+          ? null
+          : Drawer(
+              width: _historyDrawerWidth(context),
+              backgroundColor: Colors.white,
+              child: _buildHistoryContent(embedded: false),
+            ),
+      appBar: _buildAppBar(desktopSidebar: desktopSidebar),
+      body: desktopSidebar
+          ? Row(
+              children: [
+                if (_desktopSidebarExpanded)
+                  SizedBox(
+                    width: _historyDrawerWidth(context),
+                    child: DecoratedBox(
+                      decoration: const BoxDecoration(
+                        color: Colors.white,
+                        border: Border(
+                          right: BorderSide(color: Color(0xFFE2E8F0)),
+                        ),
+                      ),
+                      child: _buildHistoryContent(embedded: true),
+                    ),
+                  ),
+                Expanded(child: _buildChatBody()),
+              ],
+            )
+          : _buildChatBody(),
     );
   }
 
@@ -1093,9 +1197,45 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
-enum _ScanAction {
-  camera,
-  gallery,
+enum _ScanAction { camera, gallery }
+
+class _AppBrandLogo extends StatelessWidget {
+  const _AppBrandLogo({required this.size, this.radius = 12});
+
+  final double size;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: Image.asset(
+        _appLogoAsset,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (context, error, stackTrace) {
+          return Container(
+            width: size,
+            height: size,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0F172A),
+              borderRadius: BorderRadius.circular(radius),
+            ),
+            child: Text(
+              _appDisplayName.characters.first,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: size * 0.42,
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }
 
 class _HistoryDrawer extends StatefulWidget {
@@ -1107,9 +1247,11 @@ class _HistoryDrawer extends StatefulWidget {
     required this.sending,
     required this.syncing,
     required this.syncError,
+    required this.useOfficialBrand,
     required this.onNewConversation,
     required this.onOpenConversation,
     required this.onOpenSettings,
+    required this.onClose,
     required this.onScan,
     required this.onNotifications,
   });
@@ -1121,9 +1263,11 @@ class _HistoryDrawer extends StatefulWidget {
   final bool sending;
   final bool syncing;
   final String? syncError;
+  final bool useOfficialBrand;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
   final VoidCallback onOpenSettings;
+  final VoidCallback onClose;
   final VoidCallback onScan;
   final VoidCallback onNotifications;
 
@@ -1147,8 +1291,12 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     final conversations = normalizedQuery.isEmpty
         ? widget.conversations
         : widget.conversations.where((conversation) {
-            return conversation.title.toLowerCase().contains(normalizedQuery) ||
-                conversation.subtitle.toLowerCase().contains(normalizedQuery);
+            return conversation.title.toLowerCase().contains(
+                      normalizedQuery,
+                    ) ||
+                conversation.subtitle.toLowerCase().contains(
+                      normalizedQuery,
+                    );
           }).toList(growable: false);
 
     return SafeArea(
@@ -1201,13 +1349,16 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                     ),
                     IconButton(
                       tooltip: '关闭',
-                      onPressed: () => Navigator.of(context).pop(),
+                      onPressed: widget.onClose,
                       icon: const Icon(Icons.close),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                _AppInfoCard(onTap: widget.onOpenSettings),
+                _AppInfoCard(
+                  useOfficialBrand: widget.useOfficialBrand,
+                  onTap: widget.onOpenSettings,
+                ),
                 if (widget.syncing || (widget.syncError ?? '').isNotEmpty) ...[
                   const SizedBox(height: 10),
                   _CloudConversationStatus(
@@ -1253,8 +1404,12 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
 }
 
 class _AppInfoCard extends StatelessWidget {
-  const _AppInfoCard({required this.onTap});
+  const _AppInfoCard({
+    required this.useOfficialBrand,
+    required this.onTap,
+  });
 
+  final bool useOfficialBrand;
   final VoidCallback onTap;
 
   @override
@@ -1269,30 +1424,33 @@ class _AppInfoCard extends StatelessWidget {
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Center(
-                  child: Text(
-                    'AI',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w800,
+              if (useOfficialBrand)
+                const _AppBrandLogo(size: 40)
+              else
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Center(
+                    child: Text(
+                      'AI',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                 ),
-              ),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                 child: Text(
-                  'AI知识库助手',
+                  useOfficialBrand ? _appDisplayName : _legacyAppDrawerTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontWeight: FontWeight.w800),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
                 ),
               ),
               const Icon(Icons.chevron_right, color: Color(0xFF94A3B8)),
@@ -1350,8 +1508,10 @@ class _ConversationTile extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 18,
-                backgroundColor:
-                    _conversationIconColor(index, conversation.selected),
+                backgroundColor: _conversationIconColor(
+                  index,
+                  conversation.selected,
+                ),
                 child: Icon(
                   Icons.chat_bubble_outline,
                   size: 18,
@@ -1372,10 +1532,7 @@ class _ConversationTile extends StatelessWidget {
               const SizedBox(width: 8),
               Text(
                 _shortTime(conversation.updatedAt),
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 11,
-                ),
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
               ),
             ],
           ),
@@ -1420,11 +1577,7 @@ class _CloudConversationStatus extends StatelessWidget {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           else
-            const Icon(
-              Icons.info_outline,
-              size: 16,
-              color: Color(0xFFEA580C),
-            ),
+            const Icon(Icons.info_outline, size: 16, color: Color(0xFFEA580C)),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -1700,11 +1853,9 @@ class _UserSettingsSheetState extends State<_UserSettingsSheet> {
         _savingAvatar = true;
       });
 
-      final result = await widget.apiService.updateAvatar(UploadFile(
-        name: name,
-        bytes: bytes,
-        mimeType: mimeType,
-      ));
+      final result = await widget.apiService.updateAvatar(
+        UploadFile(name: name, bytes: bytes, mimeType: mimeType),
+      );
 
       widget.onAvatarUpdated(bytes, result);
       _showSheetSnack('头像已更新');
@@ -2097,10 +2248,7 @@ class _PendingAttachmentTray extends StatelessWidget {
 }
 
 class _PendingAttachmentChip extends StatelessWidget {
-  const _PendingAttachmentChip({
-    required this.pending,
-    required this.onRemove,
-  });
+  const _PendingAttachmentChip({required this.pending, required this.onRemove});
 
   final _PendingAttachment pending;
   final ValueChanged<BuildContext> onRemove;
@@ -2144,9 +2292,7 @@ class _PendingAttachmentChip extends StatelessWidget {
                           attachment.bytes!,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) =>
-                              const _ImagePreviewFallback(
-                            size: Size(116, 74),
-                          ),
+                              const _ImagePreviewFallback(size: Size(116, 74)),
                         ),
                 )
               : Row(
@@ -2395,10 +2541,7 @@ class _LargeImagePreviewFallback extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.white24),
       ),
-      child: const Text(
-        '图片预览失败',
-        style: TextStyle(color: Colors.white70),
-      ),
+      child: const Text('图片预览失败', style: TextStyle(color: Colors.white70)),
     );
   }
 }
@@ -2807,10 +2950,7 @@ double _assistantAnswerFontSize(BuildContext context) {
   return width < 700 ? 15.2 : 15;
 }
 
-Size _imagePreviewSize(
-  BuildContext context, {
-  required bool compact,
-}) {
+Size _imagePreviewSize(BuildContext context, {required bool compact}) {
   final width = MediaQuery.sizeOf(context).width;
   final mobile = (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ||
       width < 700;
@@ -2976,7 +3116,7 @@ String? _extractUploadUrl(Map<String, dynamic> result) {
     'file_url',
     'fileUrl',
     'download_url',
-    'downloadUrl'
+    'downloadUrl',
   ]) {
     final value = result[key];
     if (value is String && value.trim().isNotEmpty) {
@@ -2993,8 +3133,10 @@ String? _extractUploadUrl(Map<String, dynamic> result) {
       }
     } else if (value is Map) {
       final nested = _extractUploadUrl(
-        value.map((itemKey, itemValue) =>
-            MapEntry(itemKey?.toString() ?? '', itemValue)),
+        value.map(
+          (itemKey, itemValue) =>
+              MapEntry(itemKey?.toString() ?? '', itemValue),
+        ),
       );
       if (nested != null) {
         return nested;
@@ -3022,8 +3164,10 @@ String _extractAvatarUrlFromResult(Map<String, dynamic> result) {
       }
     } else if (value is Map) {
       final nested = _extractAvatarUrlFromResult(
-        value.map((itemKey, itemValue) =>
-            MapEntry(itemKey?.toString() ?? '', itemValue)),
+        value.map(
+          (itemKey, itemValue) =>
+              MapEntry(itemKey?.toString() ?? '', itemValue),
+        ),
       );
       if (nested.isNotEmpty) {
         return nested;
