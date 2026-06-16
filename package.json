@@ -1,6 +1,6 @@
 {
   "name": "ai-knowledge-base-app",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "private": true,
   "main": "electron/main.cjs",
   "packageManager": "pnpm@10.12.4",

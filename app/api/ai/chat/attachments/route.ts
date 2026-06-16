@@ -10,7 +10,7 @@ import { AppError, ValidationError, toAppError } from "@/lib/errors";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_CHAT_ATTACHMENT_SIZE_MB = 100;
+const MAX_CHAT_ATTACHMENT_SIZE_MB = 300;
 const MAX_CHAT_ATTACHMENT_SIZE_BYTES =
   MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 const CHAT_ATTACHMENT_STORE_NAME = "chat-attachments";
@@ -145,14 +145,6 @@ function inferAttachmentMimeType(file: File) {
 }
 
 function validateAttachmentFile(file: File, mimeType: string) {
-  if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
-    throw new AppError(
-      "INVALID_INPUT",
-      `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`,
-      413,
-    );
-  }
-
   if (!allowedAttachmentMimeTypes.has(mimeType)) {
     throw new ValidationError(
       "附件类型不支持，请重新选择图片、PDF、Office 或文本文件。",
@@ -299,6 +291,19 @@ function methodNotAllowedResponse() {
   );
 }
 
+function fileTooLargeResponse() {
+  return NextResponse.json(
+    {
+      ok: false,
+      success: false,
+      code: "FILE_TOO_LARGE",
+      error: "FILE_TOO_LARGE",
+      message: `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB`,
+    },
+    { status: 413 },
+  );
+}
+
 function getFirstUploadedFile(formData: FormData) {
   for (const fieldName of ["file", "files", "attachment", "attachments"]) {
     for (const value of formData.getAll(fieldName)) {
@@ -339,6 +344,10 @@ export async function POST(request: Request) {
 
     if (!(file instanceof File)) {
       throw new ValidationError("请上传聊天附件。");
+    }
+
+    if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+      return fileTooLargeResponse();
     }
 
     const mimeType = inferAttachmentMimeType(file);

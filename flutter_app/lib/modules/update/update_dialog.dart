@@ -129,15 +129,32 @@ Future<void> openUpdateUrl(BuildContext context, String url) {
 }
 
 Future<void> _openDownloadUrl(BuildContext context, String url) async {
-  final messenger = ScaffoldMessenger.maybeOf(context);
   final uri = Uri.tryParse(url);
   if (uri == null) {
-    messenger?.showSnackBar(const SnackBar(content: Text('下载地址无效')));
+    await _showUpdateLinkError(context, '下载地址无效');
     return;
   }
 
   final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
-  if (!opened) {
-    messenger?.showSnackBar(const SnackBar(content: Text('无法打开下载地址')));
+  if (!opened && context.mounted) {
+    await _showUpdateLinkError(context, '无法打开下载地址');
   }
+}
+
+Future<void> _showUpdateLinkError(BuildContext context, String message) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) {
+      return AlertDialog(
+        title: const Text('打开更新链接失败'),
+        content: Text(message),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      );
+    },
+  );
 }

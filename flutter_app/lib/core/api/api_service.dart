@@ -20,6 +20,7 @@ class ApiException implements Exception {
 
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
+  static const _maxUploadSizeMb = 300;
   static const _uploadTimeout = Duration(minutes: 5);
 
   ApiService({
@@ -281,15 +282,20 @@ class ApiService {
   }
 
   String _messageFromEnvelope(Map<String, dynamic> envelope, String fallback) {
+    final code = envelope['code'];
+    if (code == 'FILE_TOO_LARGE') {
+      return '文件太大，单个附件不能超过 ${_maxUploadSizeMb}MB';
+    }
+
     final error = envelope['error'];
     if (error is Map && error['message'] is String) {
       return error['message'] as String;
     }
-    if (error is String && error.isNotEmpty) {
-      return error;
-    }
     if (envelope['message'] is String) {
       return envelope['message'] as String;
+    }
+    if (error is String && error.isNotEmpty) {
+      return error;
     }
     return fallback;
   }
@@ -607,8 +613,11 @@ class ApiService {
       return _normalizeAttachmentEnvelope(_unwrap(response));
     } on ApiException catch (error) {
       debugPrint('Attachment upload failed:\n$debugDetails');
+      final message = error.statusCode == 413 || error.message.contains('不能超过')
+          ? '文件太大，单个附件不能超过 ${_maxUploadSizeMb}MB'
+          : error.message;
       throw ApiException(
-        error.message,
+        message,
         statusCode: error.statusCode,
         debugDetails: error.debugDetails ?? debugDetails,
       );

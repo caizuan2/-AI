@@ -1,13 +1,157 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:file_selector/file_selector.dart' as file_selector;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:image_picker/image_picker.dart' as image_picker;
+import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api/api_service.dart';
-import '../settings/settings_page.dart';
+import '../update/test_update_dialog.dart';
+import '../update/test_update_service.dart';
 import '../update/update_page.dart';
+import '../upload/upload_models.dart';
+import 'assistant_answer_card.dart';
 import 'chat_controller.dart';
 import 'chat_markdown_view.dart';
 import 'chat_message.dart';
 import 'thinking_indicator.dart';
+
+void _showLocalActionHint(
+  BuildContext context,
+  String message, {
+  bool error = false,
+}) {
+  final text = message.trim();
+  if (text.isEmpty) {
+    return;
+  }
+
+  final overlay = Overlay.maybeOf(context);
+  final targetObject = context.findRenderObject();
+  final overlayObject = overlay?.context.findRenderObject();
+  if (overlay == null ||
+      targetObject is! RenderBox ||
+      overlayObject is! RenderBox ||
+      !targetObject.attached ||
+      !overlayObject.attached) {
+    debugPrint(text);
+    return;
+  }
+
+  final targetOffset = overlayObject.globalToLocal(
+    targetObject.localToGlobal(Offset.zero),
+  );
+  final targetSize = targetObject.size;
+  final overlaySize = overlayObject.size;
+  final estimatedWidth = (text.length * 13.0 + 28.0).clamp(58.0, 168.0);
+  final maxLeft = overlaySize.width > estimatedWidth + 16.0
+      ? overlaySize.width - estimatedWidth - 8.0
+      : 8.0;
+  final maxTop = overlaySize.height > 50.0 ? overlaySize.height - 42.0 : 8.0;
+  final left = (targetOffset.dx + targetSize.width / 2 - estimatedWidth / 2)
+      .clamp(8.0, maxLeft)
+      .toDouble();
+  final preferredTop = targetOffset.dy - 36.0;
+  final top = (preferredTop < 8.0
+          ? targetOffset.dy + targetSize.height + 8.0
+          : preferredTop)
+      .clamp(8.0, maxTop)
+      .toDouble();
+
+  late final OverlayEntry entry;
+  entry = OverlayEntry(
+    builder: (_) {
+      return Positioned(
+        left: left,
+        top: top,
+        child: IgnorePointer(
+          child: Material(
+            color: Colors.transparent,
+            child: Container(
+              constraints: const BoxConstraints(maxWidth: 168),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color:
+                    error ? const Color(0xFFFEF2F2) : const Color(0xE60F172A),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(
+                  color:
+                      error ? const Color(0xFFFCA5A5) : const Color(0x22000000),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.12),
+                    blurRadius: 12,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: error ? const Color(0xFFB91C1C) : Colors.white,
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+  overlay.insert(entry);
+  Future<void>.delayed(const Duration(milliseconds: 1050), () {
+    entry.remove();
+  });
+}
+
+String _compactHintText(String message) {
+  final text = message.trim();
+  if (text.isEmpty) {
+    return '';
+  }
+  if (text.contains('权限')) {
+    return '权限未开';
+  }
+  if (text.contains('上传失败')) {
+    return '上传失败';
+  }
+  if (text.contains('正在上传')) {
+    return '上传中';
+  }
+  if (text.contains('取消')) {
+    return '已取消';
+  }
+  if (text.contains('待接入')) {
+    return '待接入';
+  }
+  if (text.contains('不支持')) {
+    return '暂不支持';
+  }
+  if (text.contains('失败') || text.contains('不可用')) {
+    return '操作失败';
+  }
+  if (text.length <= 6) {
+    return text;
+  }
+  return '请重试';
+}
+
+bool _isErrorHint(String message) {
+  return message.contains('失败') ||
+      message.contains('权限') ||
+      message.contains('不可用') ||
+      message.contains('不支持') ||
+      message.contains('请重试');
+}
 
 class ChatPage extends StatefulWidget {
   const ChatPage({
@@ -26,12 +170,26 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  final _imagePicker = image_picker.ImagePicker();
   late final ChatController _controller;
+  late Future<Map<String, dynamic>> _currentUserFuture;
+  Uint8List? _avatarPreviewBytes;
+  int _avatarCacheToken = 0;
+  bool _uploading = false;
+  final List<_PendingAttachment> _pendingAttachments = [];
+  static const MethodChannel _speechChannel =
+      MethodChannel('ai_knowledge_flutter_app/speech');
 
   @override
   void initState() {
     super.initState();
     _controller = ChatController(apiService: widget.apiService);
+    _currentUserFuture = _loadCurrentUser();
+    _currentUserFuture
+        .then((_) => _controller.loadCloudConversations())
+        .catchError((error) {
+      debugPrint('Initial cloud conversation sync failed: $error');
+    });
     _controller.addListener(_scrollToBottom);
   }
 
@@ -43,14 +201,23 @@ class _ChatPageState extends State<ChatPage> {
     super.dispose();
   }
 
-  Future<void> _send() async {
+  Future<void> _send([BuildContext? actionContext]) async {
     final text = _inputController.text.trim();
-    if (text.isEmpty || _controller.sending) {
+    if ((text.isEmpty && _pendingAttachments.isEmpty) ||
+        _controller.sending ||
+        _uploading) {
       return;
     }
 
+    final attachments = _pendingAttachments
+        .map((pending) => pending.attachment)
+        .toList(growable: false);
     _inputController.clear();
-    await _controller.send(text);
+    setState(() => _pendingAttachments.clear());
+    if (mounted && actionContext != null) {
+      _showLocalActionHint(actionContext, '已发送');
+    }
+    await _controller.send(text, attachments: attachments);
   }
 
   void _scrollToBottom() {
@@ -67,6 +234,15 @@ class _ChatPageState extends State<ChatPage> {
     });
   }
 
+  Future<Map<String, dynamic>> _loadCurrentUser() async {
+    try {
+      return await widget.apiService.currentUser();
+    } catch (error) {
+      debugPrint('Current user load failed: $error');
+      return <String, dynamic>{};
+    }
+  }
+
   void _showAttachmentMenu() {
     showModalBottomSheet<void>(
       context: context,
@@ -81,17 +257,26 @@ class _ChatPageState extends State<ChatPage> {
                 _AttachmentAction(
                   icon: Icons.image_outlined,
                   label: '图片上传',
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _pickAndUploadImage();
+                  },
                 ),
                 _AttachmentAction(
                   icon: Icons.attach_file,
                   label: '文件上传',
-                  onTap: () => Navigator.pop(context),
+                  onTap: () {
+                    Navigator.pop(context);
+                    _pickAndUploadFile();
+                  },
                 ),
                 _AttachmentAction(
-                  icon: Icons.mic_none,
-                  label: '语音输入',
-                  onTap: () => Navigator.pop(context),
+                  icon: Icons.photo_camera_outlined,
+                  label: '拍照',
+                  onTap: () {
+                    Navigator.pop(context);
+                    _captureAndUploadImage();
+                  },
                 ),
               ],
             ),
@@ -101,10 +286,584 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Future<void> _pickAndUploadImage() async {
+    try {
+      if (_isMobilePlatform) {
+        final file = await _imagePicker.pickImage(
+          source: image_picker.ImageSource.gallery,
+          imageQuality: 92,
+        );
+        await _uploadPickedFile(file, '图片');
+        return;
+      }
+
+      final file = await file_selector.openFile(
+        acceptedTypeGroups: const [
+          file_selector.XTypeGroup(
+            label: 'Images',
+            extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+          ),
+        ],
+      );
+      await _uploadPickedFile(file, '图片');
+    } catch (error) {
+      _showSnack('图片上传失败：$error');
+    }
+  }
+
+  Future<void> _pickAndUploadFile() async {
+    try {
+      final file = await file_selector.openFile();
+      await _uploadPickedFile(file, '文件');
+    } catch (error) {
+      _showSnack('文件上传失败：$error');
+    }
+  }
+
+  Future<void> _captureAndUploadImage() async {
+    try {
+      if (_isMobilePlatform) {
+        final file = await _imagePicker.pickImage(
+          source: image_picker.ImageSource.camera,
+          imageQuality: 92,
+        );
+        await _uploadPickedFile(file, '拍照图片');
+        return;
+      }
+
+      _showSnack('当前平台不支持直接拍照，已切换为选择图片文件。');
+      final file = await file_selector.openFile(
+        acceptedTypeGroups: const [
+          file_selector.XTypeGroup(
+            label: 'Images',
+            extensions: ['jpg', 'jpeg', 'png', 'webp'],
+          ),
+        ],
+      );
+      await _uploadPickedFile(file, '图片');
+    } catch (error) {
+      _showSnack('拍照入口暂不可用：$error');
+    }
+  }
+
+  Future<void> _uploadPickedFile(Object? pickedFile, String label) async {
+    if (pickedFile == null) {
+      _showSnack('已取消选择$label');
+      return;
+    }
+    if (_uploading) {
+      _showSnack('正在上传，请稍候');
+      return;
+    }
+
+    setState(() => _uploading = true);
+    try {
+      final file = pickedFile as dynamic;
+      final Uint8List bytes = await file.readAsBytes() as Uint8List;
+      final String name = (file.name as String?)?.trim().isNotEmpty == true
+          ? file.name as String
+          : '$label-${DateTime.now().millisecondsSinceEpoch}';
+      final String? mimeType = file.mimeType as String?;
+      final result = await widget.apiService.upload(UploadFile(
+        name: name,
+        bytes: bytes,
+        mimeType: mimeType,
+      ));
+      final uploadUrl = _extractUploadUrl(result);
+      if (uploadUrl == null || uploadUrl.trim().isEmpty) {
+        throw ApiException(
+          '服务器未返回附件 URL',
+          debugDetails:
+              'requestUrl=/api/ai/chat/attachments\nfileName=$name\nfileSize=${bytes.length}\nmimeType=${mimeType ?? ''}\nresponse=$result',
+        );
+      }
+      final isImage = _isImageUpload(label, mimeType, name);
+      final attachment = ChatAttachment(
+        type: isImage ? ChatAttachmentType.image : ChatAttachmentType.file,
+        name: name,
+        status: '上传成功',
+        mimeType: mimeType,
+        size: bytes.length,
+        bytes: bytes,
+        url: uploadUrl,
+      );
+      setState(() {
+        _pendingAttachments.add(_PendingAttachment(
+          id: '${DateTime.now().microsecondsSinceEpoch}-${_pendingAttachments.length}',
+          sourceLabel: label,
+          attachment: attachment,
+        ));
+      });
+    } catch (error) {
+      await _showUploadFailure(label, error);
+    } finally {
+      if (mounted) {
+        setState(() => _uploading = false);
+      }
+    }
+  }
+
+  void _removePendingAttachment(String id, [BuildContext? actionContext]) {
+    if (actionContext != null) {
+      _showLocalActionHint(actionContext, '已删除');
+    }
+    setState(() {
+      _pendingAttachments.removeWhere((item) => item.id == id);
+    });
+  }
+
+  void _clearComposer() {
+    _inputController.clear();
+    setState(() {
+      _pendingAttachments.clear();
+    });
+  }
+
+  double get _sendButtonSize {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 48;
+    }
+    return 40;
+  }
+
+  double get _sendProgressSize {
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      return 17;
+    }
+    return 15;
+  }
+
+  bool _editUserMessage(ChatMessage message) {
+    if (message.role != ChatRole.user) {
+      return false;
+    }
+    if (_controller.sending || _uploading) {
+      _showSnack('当前正在处理消息，请稍后再编辑');
+      return false;
+    }
+
+    final shouldHideAttachmentOnlyText =
+        _isAttachmentOnlyMessage(message.content, message.attachments);
+    final text = shouldHideAttachmentOnlyText ? '' : message.content.trim();
+    _inputController.text = text;
+    _inputController.selection = TextSelection.collapsed(offset: text.length);
+    setState(() {
+      _pendingAttachments
+        ..clear()
+        ..addAll(message.attachments.map((attachment) {
+          return _PendingAttachment(
+            id: 'edit-${DateTime.now().microsecondsSinceEpoch}-${attachment.name}',
+            sourceLabel: attachment.isImage ? '图片' : '文件',
+            attachment: attachment,
+          );
+        }));
+    });
+    return true;
+  }
+
+  void _insertTextIntoInput(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) {
+      return;
+    }
+
+    final selection = _inputController.selection;
+    final oldText = _inputController.text;
+    final int start = selection.isValid ? selection.start : oldText.length;
+    final int end = selection.isValid ? selection.end : oldText.length;
+    final inserted = oldText.replaceRange(start, end, trimmed);
+    _inputController.text = inserted;
+    _inputController.selection =
+        TextSelection.collapsed(offset: start + trimmed.length);
+  }
+
+  void _handleRenamePreview(String name) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _currentUserFuture = _currentUserFuture.then((data) {
+        final user = _extractUser(data);
+        return {
+          'user': {
+            ...user,
+            'name': name,
+          },
+        };
+      });
+    });
+  }
+
+  Future<void> _handleVoiceInput([BuildContext? actionContext]) async {
+    final hintContext = actionContext ?? context;
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
+      _showLocalActionHint(hintContext, '语音待接入');
+      return;
+    }
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      _showLocalActionHint(hintContext, '暂不支持', error: true);
+      return;
+    }
+
+    try {
+      final status = await Permission.microphone.status;
+      final nextStatus =
+          status.isGranted ? status : await Permission.microphone.request();
+      if (!nextStatus.isGranted) {
+        if (hintContext.mounted) {
+          _showLocalActionHint(hintContext, '权限未开', error: true);
+        }
+        return;
+      }
+
+      final result = await _speechChannel.invokeMethod<String>('listen');
+      if (!mounted || !hintContext.mounted) {
+        return;
+      }
+      final text = result?.trim() ?? '';
+      if (text.isEmpty) {
+        _showLocalActionHint(hintContext, '未识别到', error: true);
+        return;
+      }
+      final shouldInsert = await showDialog<bool>(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('语音识别结果'),
+            content: SelectableText(text),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('插入输入框'),
+              ),
+            ],
+          );
+        },
+      );
+      if (shouldInsert == true) {
+        _insertTextIntoInput(text);
+      }
+    } on PlatformException catch (error) {
+      if (error.code == 'not_available') {
+        if (hintContext.mounted) {
+          _showLocalActionHint(hintContext, '语音不可用', error: true);
+        }
+        return;
+      }
+      debugPrint('Voice input failed: ${error.message ?? error.code}');
+      if (hintContext.mounted) {
+        _showLocalActionHint(hintContext, '语音失败', error: true);
+      }
+    } catch (error) {
+      debugPrint('Voice input failed: $error');
+      if (hintContext.mounted) {
+        _showLocalActionHint(hintContext, '语音失败', error: true);
+      }
+    }
+  }
+
+  Future<void> _handleScan() async {
+    if (kIsWeb || defaultTargetPlatform == TargetPlatform.windows) {
+      final shouldPick = await _showConfirmDialog(
+        title: '扫码',
+        message: 'Windows 扫码识别待接入，可先选择二维码图片上传，让 AI 识别。',
+        confirmText: '选择二维码图片',
+      );
+      if (shouldPick) {
+        await _pickAndUploadImage();
+      }
+      return;
+    }
+
+    try {
+      if (_isMobilePlatform) {
+        final status = await Permission.camera.status;
+        final nextStatus =
+            status.isGranted ? status : await Permission.camera.request();
+        if (!nextStatus.isGranted) {
+          _showSnack('相机权限未开启，请在系统设置中允许相机权限');
+          return;
+        }
+      }
+
+      final action = await _showScanActionDialog();
+      if (action == _ScanAction.camera) {
+        await _captureAndUploadImage();
+      } else if (action == _ScanAction.gallery) {
+        await _pickAndUploadImage();
+      }
+    } catch (error) {
+      _showSnack('扫码入口暂不可用：$error');
+    }
+  }
+
+  Future<_ScanAction?> _showScanActionDialog() async {
+    if (!mounted) {
+      return null;
+    }
+
+    return showDialog<_ScanAction>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('扫一扫'),
+          content: const Text(
+            '二维码实时识别接口待接入。你可以先拍摄或选择二维码图片，附件会进入输入等待区，再发送给 AI 识别。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(_ScanAction.gallery),
+              child: const Text('选择图片'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(_ScanAction.camera),
+              child: const Text('拍照上传'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showNotifications() {
+    _showInfoDialog(
+      title: '消息通知',
+      message: '暂无通知',
+    );
+  }
+
+  void _showSettingsSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      useSafeArea: true,
+      builder: (context) {
+        return _UserSettingsSheet(
+          apiService: widget.apiService,
+          userFuture: _currentUserFuture,
+          avatarPreviewBytes: _avatarPreviewBytes,
+          avatarCacheToken: _avatarCacheToken,
+          onAvatarUpdated: _handleAvatarUpdated,
+          onNameUpdated: _handleRenamePreview,
+          onLogout: () {
+            Navigator.of(context).pop();
+            Navigator.of(context).pushReplacementNamed('/login');
+          },
+        );
+      },
+    );
+  }
+
+  void _handleAvatarUpdated(Uint8List bytes, Map<String, dynamic> result) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _avatarPreviewBytes = bytes;
+      _avatarCacheToken = DateTime.now().millisecondsSinceEpoch;
+      _currentUserFuture = _loadCurrentUser().then((data) {
+        final user = _extractUser(data);
+        final avatarUrl = _extractAvatarUrlFromResult(result);
+        if (avatarUrl.isNotEmpty) {
+          return {
+            'user': {
+              ...user,
+              'avatar_url': _cacheBustedUrl(avatarUrl, _avatarCacheToken),
+            },
+          };
+        }
+        return data;
+      });
+    });
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    debugPrint(message);
+    _showLocalActionHint(
+      context,
+      _compactHintText(message),
+      error: _isErrorHint(message),
+    );
+  }
+
+  Future<void> _showUploadFailure(String label, Object error) async {
+    if (!mounted) {
+      return;
+    }
+
+    final details = error is ApiException
+        ? (error.debugDetails?.trim().isNotEmpty == true
+            ? error.debugDetails!.trim()
+            : 'statusCode=${error.statusCode ?? ''}\nmessage=${error.message}')
+        : error.toString();
+    final userMessage = error is ApiException ? error.message : '上传失败，请稍后重试';
+    final statusText = error is ApiException && error.statusCode != null
+        ? '状态码：${error.statusCode}'
+        : '请检查网络或稍后重试';
+    debugPrint('$label upload failed:\n$details');
+    _showSnack('上传失败，请稍后重试');
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('$label上传失败'),
+          content: Text('$userMessage\n$statusText'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: details));
+                Navigator.of(context).pop();
+              },
+              child: const Text('复制错误信息'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showInfoDialog({
+    required String title,
+    required String message,
+  }) async {
+    if (!mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text(title),
+          content: Text(message),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<bool> _showConfirmDialog({
+    required String title,
+    required String message,
+    required String confirmText,
+  }) async {
+    if (!mounted) {
+      return false;
+    }
+
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: Text(title),
+              content: Text(message),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(false),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(true),
+                  child: Text(confirmText),
+                ),
+              ],
+            );
+          },
+        ) ??
+        false;
+  }
+
+  bool get _isMobilePlatform {
+    if (kIsWeb) {
+      return false;
+    }
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  double _historyDrawerWidth(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    if (width < 700) {
+      return width * 0.82;
+    }
+    return width.clamp(340, 420).toDouble();
+  }
+
+  void _openHistoryDrawer(BuildContext drawerContext) {
+    unawaited(_controller.loadCloudConversations());
+    Scaffold.of(drawerContext).openDrawer();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      drawer: Drawer(
+        width: _historyDrawerWidth(context),
+        backgroundColor: Colors.white,
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) {
+            return _HistoryDrawer(
+              conversations: _controller.loadedConversations,
+              userFuture: _currentUserFuture,
+              avatarPreviewBytes: _avatarPreviewBytes,
+              avatarCacheToken: _avatarCacheToken,
+              sending: _controller.sending,
+              syncing: _controller.syncing,
+              syncError: _controller.lastSyncError,
+              onNewConversation: () {
+                _clearComposer();
+                _controller.startNewConversation();
+                Navigator.of(context).pop();
+              },
+              onOpenConversation: (id) {
+                _clearComposer();
+                unawaited(_controller.openConversation(id));
+                Navigator.of(context).pop();
+              },
+              onOpenSettings: () {
+                Navigator.of(context).pop();
+                _showSettingsSheet();
+              },
+              onScan: _handleScan,
+              onNotifications: _showNotifications,
+            );
+          },
+        ),
+      ),
       appBar: AppBar(
+        leading: Builder(
+          builder: (context) {
+            return IconButton(
+              tooltip: '历史记录',
+              onPressed: () => _openHistoryDrawer(context),
+              icon: const Icon(Icons.menu),
+            );
+          },
+        ),
         title: AnimatedBuilder(
           animation: _controller,
           builder: (context, _) {
@@ -146,13 +905,9 @@ class _ChatPageState extends State<ChatPage> {
           ),
           IconButton(
             tooltip: '更新',
-            onPressed: () => Navigator.of(context).pushNamed(UpdatePage.routeName),
+            onPressed: () =>
+                Navigator.of(context).pushNamed(UpdatePage.routeName),
             icon: const Icon(Icons.system_update_alt),
-          ),
-          IconButton(
-            tooltip: '设置',
-            onPressed: () => Navigator.of(context).pushNamed(SettingsPage.routeName),
-            icon: const Icon(Icons.settings_outlined),
           ),
         ],
       ),
@@ -169,7 +924,8 @@ class _ChatPageState extends State<ChatPage> {
                   itemCount: messages.length,
                   itemBuilder: (context, index) {
                     return TweenAnimationBuilder<double>(
-                      key: ValueKey('${messages[index].createdAt.microsecondsSinceEpoch}-$index'),
+                      key: ValueKey(
+                          '${messages[index].createdAt.microsecondsSinceEpoch}-$index'),
                       tween: Tween(begin: 0, end: 1),
                       duration: const Duration(milliseconds: 260),
                       curve: Curves.easeOutCubic,
@@ -184,8 +940,15 @@ class _ChatPageState extends State<ChatPage> {
                       },
                       child: _MessageBubble(
                         message: messages[index],
-                        onCancel: _controller.sending ? _controller.cancelStreaming : null,
-                        onRetry: _controller.canRetry ? _controller.retryLastFailed : null,
+                        onCancel: _controller.sending
+                            ? _controller.cancelStreaming
+                            : null,
+                        onRetry: _controller.canRetry
+                            ? _controller.retryLastFailed
+                            : null,
+                        onEdit: messages[index].role == ChatRole.user
+                            ? (_) => _editUserMessage(messages[index])
+                            : null,
                       ),
                     );
                   },
@@ -197,7 +960,8 @@ class _ChatPageState extends State<ChatPage> {
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
                   decoration: BoxDecoration(
                     color: Colors.white,
-                    border: const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+                    border:
+                        const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.04),
@@ -206,63 +970,110 @@ class _ChatPageState extends State<ChatPage> {
                       ),
                     ],
                   ),
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          IconButton(
-                            tooltip: '添加',
-                            onPressed: _showAttachmentMenu,
-                            icon: const Icon(Icons.add_circle_outline),
-                            color: const Color(0xFF64748B),
-                          ),
-                          Expanded(
-                            child: TextField(
-                              controller: _inputController,
-                              minLines: 1,
-                              maxLines: 6,
-                              textInputAction: TextInputAction.newline,
-                              decoration: const InputDecoration(
-                                hintText: '发送消息给 AI 知识库...',
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: EdgeInsets.symmetric(vertical: 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_pendingAttachments.isNotEmpty) ...[
+                        _PendingAttachmentTray(
+                          attachments: _pendingAttachments,
+                          onRemove: _removePendingAttachment,
+                        ),
+                        const SizedBox(height: 8),
+                      ],
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(24),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(6, 4, 8, 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              IconButton(
+                                tooltip: '添加',
+                                onPressed:
+                                    _uploading ? null : _showAttachmentMenu,
+                                icon: _uploading
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2),
+                                      )
+                                    : const Icon(Icons.add_circle_outline),
+                                color: const Color(0xFF64748B),
                               ),
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          SizedBox(
-                            width: 42,
-                            height: 42,
-                            child: FilledButton(
-                              onPressed: _controller.sending ? null : _send,
-                              style: FilledButton.styleFrom(
-                                padding: EdgeInsets.zero,
-                                shape: const CircleBorder(),
-                                backgroundColor: const Color(0xFF0F172A),
+                              Expanded(
+                                child: TextField(
+                                  controller: _inputController,
+                                  minLines: 1,
+                                  maxLines: 6,
+                                  textInputAction: TextInputAction.newline,
+                                  decoration: const InputDecoration(
+                                    hintText: '发送消息给 AI 知识库...',
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                    contentPadding:
+                                        EdgeInsets.symmetric(vertical: 14),
+                                  ),
+                                ),
                               ),
-                              child: _controller.sending
-                                  ? const SizedBox(
-                                      width: 17,
-                                      height: 17,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: Colors.white,
+                              const SizedBox(width: 6),
+                              Builder(
+                                builder: (voiceContext) {
+                                  return IconButton(
+                                    tooltip: '语音输入',
+                                    onPressed: () =>
+                                        _handleVoiceInput(voiceContext),
+                                    icon: const Icon(Icons.mic_none),
+                                    color: const Color(0xFF64748B),
+                                  );
+                                },
+                              ),
+                              const SizedBox(width: 4),
+                              Builder(
+                                builder: (sendContext) {
+                                  return SizedBox(
+                                    width: _sendButtonSize,
+                                    height: _sendButtonSize,
+                                    child: FilledButton(
+                                      onPressed:
+                                          _controller.sending || _uploading
+                                              ? null
+                                              : () => _send(sendContext),
+                                      style: FilledButton.styleFrom(
+                                        padding: EdgeInsets.zero,
+                                        shape: const CircleBorder(),
+                                        backgroundColor:
+                                            const Color(0xFF0F172A),
                                       ),
-                                    )
-                                  : const Icon(Icons.arrow_upward),
-                            ),
+                                      child: _controller.sending
+                                          ? SizedBox(
+                                              width: _sendProgressSize,
+                                              height: _sendProgressSize,
+                                              child:
+                                                  const CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: Colors.white,
+                                              ),
+                                            )
+                                          : Icon(
+                                              Icons.arrow_upward,
+                                              size: _sendButtonSize <= 40
+                                                  ? 19
+                                                  : 21,
+                                            ),
+                                    ),
+                                  );
+                                },
+                              ),
+                            ],
                           ),
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
               ),
@@ -282,16 +1093,1414 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
+enum _ScanAction {
+  camera,
+  gallery,
+}
+
+class _HistoryDrawer extends StatefulWidget {
+  const _HistoryDrawer({
+    required this.conversations,
+    required this.userFuture,
+    required this.avatarPreviewBytes,
+    required this.avatarCacheToken,
+    required this.sending,
+    required this.syncing,
+    required this.syncError,
+    required this.onNewConversation,
+    required this.onOpenConversation,
+    required this.onOpenSettings,
+    required this.onScan,
+    required this.onNotifications,
+  });
+
+  final List<ChatConversationSummary> conversations;
+  final Future<Map<String, dynamic>> userFuture;
+  final Uint8List? avatarPreviewBytes;
+  final int avatarCacheToken;
+  final bool sending;
+  final bool syncing;
+  final String? syncError;
+  final VoidCallback onNewConversation;
+  final ValueChanged<String> onOpenConversation;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onScan;
+  final VoidCallback onNotifications;
+
+  @override
+  State<_HistoryDrawer> createState() => _HistoryDrawerState();
+}
+
+class _HistoryDrawerState extends State<_HistoryDrawer> {
+  final _searchController = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedQuery = _query.trim().toLowerCase();
+    final conversations = normalizedQuery.isEmpty
+        ? widget.conversations
+        : widget.conversations.where((conversation) {
+            return conversation.title.toLowerCase().contains(normalizedQuery) ||
+                conversation.subtitle.toLowerCase().contains(normalizedQuery);
+          }).toList(growable: false);
+
+    return SafeArea(
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: InputDecoration(
+                          hintText: '搜索历史会话',
+                          prefixIcon: const Icon(Icons.search),
+                          filled: true,
+                          fillColor: const Color(0xFFF1F5F9),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide.none,
+                          ),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Tooltip(
+                      message: '新建对话',
+                      child: Material(
+                        color: const Color(0xFF0F172A),
+                        borderRadius: BorderRadius.circular(14),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap:
+                              widget.sending ? null : widget.onNewConversation,
+                          child: const SizedBox(
+                            width: 40,
+                            height: 40,
+                            child: Icon(
+                              Icons.edit_square,
+                              color: Colors.white,
+                              size: 18,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _AppInfoCard(onTap: widget.onOpenSettings),
+                if (widget.syncing || (widget.syncError ?? '').isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _CloudConversationStatus(
+                    syncing: widget.syncing,
+                    message: widget.syncError,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: conversations.isEmpty
+                ? _DrawerEmptyState(
+                    text: widget.conversations.isEmpty ? '暂无历史记录' : '暂无匹配会话',
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+                    itemBuilder: (context, index) {
+                      final conversation = conversations[index];
+                      return _ConversationTile(
+                        conversation: conversation,
+                        index: index,
+                        onTap: () => widget.onOpenConversation(conversation.id),
+                      );
+                    },
+                    separatorBuilder: (context, index) =>
+                        const SizedBox(height: 6),
+                    itemCount: conversations.length,
+                  ),
+          ),
+          _DrawerUserFooter(
+            userFuture: widget.userFuture,
+            avatarPreviewBytes: widget.avatarPreviewBytes,
+            avatarCacheToken: widget.avatarCacheToken,
+            onScan: widget.onScan,
+            onNotifications: widget.onNotifications,
+            onSettings: widget.onOpenSettings,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AppInfoCard extends StatelessWidget {
+  const _AppInfoCard({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Center(
+                  child: Text(
+                    'AI',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'AI知识库助手',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Color(0xFF94A3B8)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerEmptyState extends StatelessWidget {
+  const _DrawerEmptyState({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Text(
+          text,
+          style: const TextStyle(color: Color(0xFF64748B)),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+class _ConversationTile extends StatelessWidget {
+  const _ConversationTile({
+    required this.conversation,
+    required this.index,
+    required this.onTap,
+  });
+
+  final ChatConversationSummary conversation;
+  final int index;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color:
+          conversation.selected ? const Color(0xFFEFF6FF) : Colors.transparent,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor:
+                    _conversationIconColor(index, conversation.selected),
+                child: Icon(
+                  Icons.chat_bubble_outline,
+                  size: 18,
+                  color: conversation.selected
+                      ? const Color(0xFF1D4ED8)
+                      : const Color(0xFF475569),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  conversation.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _shortTime(conversation.updatedAt),
+                style: const TextStyle(
+                  color: Color(0xFF94A3B8),
+                  fontSize: 11,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CloudConversationStatus extends StatelessWidget {
+  const _CloudConversationStatus({
+    required this.syncing,
+    required this.message,
+  });
+
+  final bool syncing;
+  final String? message;
+
+  @override
+  Widget build(BuildContext context) {
+    final text = syncing ? '正在读取云端会话...' : message ?? '';
+    if (text.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: syncing ? const Color(0xFFEFF6FF) : const Color(0xFFFFF7ED),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: syncing ? const Color(0xFFBFDBFE) : const Color(0xFFFED7AA),
+        ),
+      ),
+      child: Row(
+        children: [
+          if (syncing)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            const Icon(
+              Icons.info_outline,
+              size: 16,
+              color: Color(0xFFEA580C),
+            ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color:
+                    syncing ? const Color(0xFF1D4ED8) : const Color(0xFF9A3412),
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DrawerUserFooter extends StatelessWidget {
+  const _DrawerUserFooter({
+    required this.userFuture,
+    required this.avatarPreviewBytes,
+    required this.avatarCacheToken,
+    required this.onScan,
+    required this.onNotifications,
+    required this.onSettings,
+  });
+
+  final Future<Map<String, dynamic>> userFuture;
+  final Uint8List? avatarPreviewBytes;
+  final int avatarCacheToken;
+  final VoidCallback onScan;
+  final VoidCallback onNotifications;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+        color: Colors.white,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 10, 12),
+        child: FutureBuilder<Map<String, dynamic>>(
+          future: userFuture,
+          builder: (context, snapshot) {
+            final user = _extractUser(snapshot.data ?? const {});
+            final account = _displayAccount(user);
+            final name = _displayName(user);
+            return Row(
+              children: [
+                _UserAvatar(
+                  user: user,
+                  radius: 20,
+                  previewBytes: avatarPreviewBytes,
+                  cacheToken: avatarCacheToken,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      Text(
+                        account,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  tooltip: '扫码',
+                  onPressed: onScan,
+                  icon: const Icon(Icons.qr_code_scanner, size: 20),
+                ),
+                IconButton(
+                  tooltip: '通知',
+                  onPressed: onNotifications,
+                  icon: const Icon(Icons.notifications_none, size: 20),
+                ),
+                IconButton(
+                  tooltip: '设置',
+                  onPressed: onSettings,
+                  icon: const Icon(Icons.settings_outlined, size: 20),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _UserSettingsSheet extends StatefulWidget {
+  const _UserSettingsSheet({
+    required this.apiService,
+    required this.userFuture,
+    required this.avatarPreviewBytes,
+    required this.avatarCacheToken,
+    required this.onAvatarUpdated,
+    required this.onNameUpdated,
+    required this.onLogout,
+  });
+
+  final ApiService apiService;
+  final Future<Map<String, dynamic>> userFuture;
+  final Uint8List? avatarPreviewBytes;
+  final int avatarCacheToken;
+  final void Function(Uint8List bytes, Map<String, dynamic> result)
+      onAvatarUpdated;
+  final ValueChanged<String> onNameUpdated;
+  final VoidCallback onLogout;
+
+  @override
+  State<_UserSettingsSheet> createState() => _UserSettingsSheetState();
+}
+
+class _UserSettingsSheetState extends State<_UserSettingsSheet> {
+  Uint8List? _avatarPreviewBytes;
+  String? _localDisplayName;
+  bool _savingAvatar = false;
+  bool _checkingTestUpdate = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _avatarPreviewBytes = widget.avatarPreviewBytes;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String, dynamic>>(
+      future: widget.userFuture,
+      builder: (context, snapshot) {
+        final user = _extractUser(snapshot.data ?? const {});
+        final displayName = _localDisplayName ?? _displayName(user);
+        final account = _displayAccount(user);
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            6,
+            20,
+            20 + MediaQuery.viewInsetsOf(context).bottom,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  _UserAvatar(
+                    user: user,
+                    radius: 34,
+                    previewBytes: _avatarPreviewBytes,
+                    cacheToken: widget.avatarCacheToken,
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          style: Theme.of(context)
+                              .textTheme
+                              .titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          account,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFF64748B)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              _SettingsActionTile(
+                icon: Icons.person_outline,
+                title: '修改头像',
+                subtitle: _savingAvatar ? '正在上传头像...' : '选择图片并上传到现有头像接口',
+                onTap: _savingAvatar ? null : _pickAvatarPreview,
+              ),
+              _SettingsActionTile(
+                icon: Icons.badge_outlined,
+                title: '修改名称',
+                subtitle: '修改名称接口待接入，当前仅本地预览',
+                onTap: () => _showRenameDialog(context, displayName),
+              ),
+              _SettingsActionTile(
+                icon: Icons.lock_outline,
+                title: '修改密码',
+                subtitle: '旧密码、新密码、确认新密码',
+                onTap: () => _showPasswordDialog(context),
+              ),
+              _SettingsActionTile(
+                icon: Icons.science_outlined,
+                title: '检查测试版更新',
+                subtitle: _checkingTestUpdate
+                    ? '正在检查 GitHub user-test...'
+                    : '查看当前测试版 buildNumber 和更新内容',
+                onTap: _checkingTestUpdate ? null : _checkTestUpdate,
+              ),
+              _SettingsActionTile(
+                icon: Icons.logout,
+                title: '退出登录 / 切换账号',
+                subtitle: '返回登录页，保留现有登录流程',
+                onTap: widget.onLogout,
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickAvatarPreview() async {
+    try {
+      Object? pickedFile;
+      if (!kIsWeb &&
+          (defaultTargetPlatform == TargetPlatform.android ||
+              defaultTargetPlatform == TargetPlatform.iOS)) {
+        pickedFile = await image_picker.ImagePicker().pickImage(
+          source: image_picker.ImageSource.gallery,
+          imageQuality: 90,
+        );
+      } else {
+        pickedFile = await file_selector.openFile(
+          acceptedTypeGroups: const [
+            file_selector.XTypeGroup(
+              label: 'Images',
+              extensions: ['jpg', 'jpeg', 'png', 'webp'],
+            ),
+          ],
+        );
+      }
+
+      if (pickedFile == null) {
+        _showSheetSnack('已取消选择头像');
+        return;
+      }
+
+      final file = pickedFile as dynamic;
+      final Uint8List bytes = await file.readAsBytes() as Uint8List;
+      final String name = (file.name as String?)?.trim().isNotEmpty == true
+          ? file.name as String
+          : 'avatar-${DateTime.now().millisecondsSinceEpoch}.png';
+      final String? mimeType = file.mimeType as String?;
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _avatarPreviewBytes = bytes;
+        _savingAvatar = true;
+      });
+
+      final result = await widget.apiService.updateAvatar(UploadFile(
+        name: name,
+        bytes: bytes,
+        mimeType: mimeType,
+      ));
+
+      widget.onAvatarUpdated(bytes, result);
+      _showSheetSnack('头像已更新');
+    } catch (error) {
+      await _showAvatarFailure(error);
+    } finally {
+      if (mounted) {
+        setState(() => _savingAvatar = false);
+      }
+    }
+  }
+
+  Future<void> _showAvatarFailure(Object error) async {
+    if (!mounted) {
+      return;
+    }
+
+    final details = error is ApiException
+        ? (error.debugDetails?.trim().isNotEmpty == true
+            ? error.debugDetails!.trim()
+            : 'statusCode=${error.statusCode ?? ''}\nmessage=${error.message}')
+        : error.toString();
+    final statusText = error is ApiException && error.statusCode != null
+        ? '状态码：${error.statusCode}'
+        : '请检查网络或稍后重试';
+
+    debugPrint('Avatar upload failed:\n$details');
+    _showSheetSnack('头像上传失败');
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('头像上传失败'),
+          content: Text('头像上传失败，请稍后重试。\n$statusText'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: details));
+                Navigator.of(context).pop();
+              },
+              child: const Text('复制错误信息'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showRenameDialog(
+    BuildContext context,
+    String currentName,
+  ) async {
+    final nameController = TextEditingController(text: currentName);
+    String? errorText;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('修改名称'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '当前名称：$currentName',
+                    style: const TextStyle(color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nameController,
+                    autofocus: true,
+                    maxLength: 20,
+                    decoration: const InputDecoration(
+                      labelText: '新名称',
+                      helperText: '2-20 个字符',
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Color(0xFFB91C1C)),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final nextName = nameController.text.trim();
+                    if (nextName.isEmpty) {
+                      setDialogState(() => errorText = '名称不能为空');
+                      return;
+                    }
+                    if (nextName.length < 2 || nextName.length > 20) {
+                      setDialogState(() => errorText = '名称长度需为 2-20 个字符');
+                      return;
+                    }
+                    setState(() => _localDisplayName = nextName);
+                    widget.onNameUpdated(nextName);
+                    Navigator.of(dialogContext).pop();
+                    _showSheetSnack('修改名称接口待接入，当前仅本地预览');
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    nameController.dispose();
+  }
+
+  Future<void> _showPasswordDialog(BuildContext context) async {
+    final oldPasswordController = TextEditingController();
+    final newPasswordController = TextEditingController();
+    final confirmPasswordController = TextEditingController();
+    String? errorText;
+    var saving = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('修改密码'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: oldPasswordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: '旧密码'),
+                  ),
+                  TextField(
+                    controller: newPasswordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: '新密码'),
+                  ),
+                  TextField(
+                    controller: confirmPasswordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: '确认新密码'),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: const TextStyle(color: Color(0xFFB91C1C)),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: saving
+                      ? null
+                      : () async {
+                          final oldPassword = oldPasswordController.text;
+                          final newPassword = newPasswordController.text;
+                          final confirmPassword =
+                              confirmPasswordController.text;
+                          if (oldPassword.isEmpty ||
+                              newPassword.isEmpty ||
+                              confirmPassword.isEmpty) {
+                            setDialogState(() => errorText = '请完整填写密码信息');
+                            return;
+                          }
+                          if (newPassword != confirmPassword) {
+                            setDialogState(() => errorText = '两次新密码不一致');
+                            return;
+                          }
+
+                          setDialogState(() {
+                            saving = true;
+                            errorText = null;
+                          });
+                          try {
+                            await widget.apiService.changePassword(
+                              currentPassword: oldPassword,
+                              newPassword: newPassword,
+                              confirmPassword: confirmPassword,
+                            );
+                            if (dialogContext.mounted) {
+                              Navigator.of(dialogContext).pop();
+                            }
+                            _showSheetSnack('密码已修改');
+                          } catch (error) {
+                            setDialogState(() {
+                              saving = false;
+                              errorText = error.toString();
+                            });
+                          }
+                        },
+                  child: Text(saving ? '提交中...' : '确认'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    oldPasswordController.dispose();
+    newPasswordController.dispose();
+    confirmPasswordController.dispose();
+  }
+
+  Future<void> _checkTestUpdate() async {
+    setState(() => _checkingTestUpdate = true);
+    try {
+      final result = await context.read<TestUpdateService>().checkForUpdate();
+      if (!mounted) {
+        return;
+      }
+
+      final manifest = result.manifest;
+      if (result.shouldPrompt && manifest != null) {
+        await showTestUpdateDialog(
+          context,
+          manifest: manifest,
+          force: result.forceUpdate,
+        );
+      } else {
+        await showNoTestUpdateDialog(context, result: result);
+      }
+    } catch (error) {
+      debugPrint('User-test update check failed: $error');
+      if (mounted) {
+        await showTestUpdateFailedDialog(context, error: error);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _checkingTestUpdate = false);
+      }
+    }
+  }
+
+  void _showSheetSnack(String message) {
+    if (!mounted) {
+      return;
+    }
+    debugPrint(message);
+    _showLocalActionHint(
+      context,
+      _compactHintText(message),
+      error: _isErrorHint(message),
+    );
+  }
+}
+
+class _SettingsActionTile extends StatelessWidget {
+  const _SettingsActionTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 0,
+      color: const Color(0xFFF8FAFC),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: const BorderSide(color: Color(0xFFE2E8F0)),
+      ),
+      child: ListTile(
+        enabled: onTap != null,
+        leading: Icon(icon, color: const Color(0xFF0F172A)),
+        title: Text(title),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+class _UserAvatar extends StatelessWidget {
+  const _UserAvatar({
+    required this.user,
+    required this.radius,
+    this.previewBytes,
+    this.cacheToken = 0,
+  });
+
+  final Map<String, dynamic> user;
+  final double radius;
+  final Uint8List? previewBytes;
+  final int cacheToken;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatarUrl = _avatarUrl(user);
+    final name = _displayName(user);
+    ImageProvider? image;
+    if (previewBytes != null) {
+      image = MemoryImage(previewBytes!);
+    } else if (avatarUrl.isNotEmpty) {
+      image = _avatarImageProvider(avatarUrl, cacheToken);
+    }
+
+    return CircleAvatar(
+      radius: radius,
+      backgroundColor: const Color(0xFFE2E8F0),
+      backgroundImage: image,
+      child: image == null
+          ? Text(
+              _avatarInitial(name),
+              style: TextStyle(
+                color: const Color(0xFF0F172A),
+                fontWeight: FontWeight.w800,
+                fontSize: radius * 0.62,
+              ),
+            )
+          : null,
+    );
+  }
+}
+
+class _PendingAttachment {
+  const _PendingAttachment({
+    required this.id,
+    required this.sourceLabel,
+    required this.attachment,
+  });
+
+  final String id;
+  final String sourceLabel;
+  final ChatAttachment attachment;
+}
+
+class _PendingAttachmentTray extends StatelessWidget {
+  const _PendingAttachmentTray({
+    required this.attachments,
+    required this.onRemove,
+  });
+
+  final List<_PendingAttachment> attachments;
+  final void Function(String id, BuildContext actionContext) onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final pending in attachments)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: _PendingAttachmentChip(
+                  pending: pending,
+                  onRemove: (actionContext) =>
+                      onRemove(pending.id, actionContext),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PendingAttachmentChip extends StatelessWidget {
+  const _PendingAttachmentChip({
+    required this.pending,
+    required this.onRemove,
+  });
+
+  final _PendingAttachment pending;
+  final ValueChanged<BuildContext> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final attachment = pending.attachment;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: attachment.isImage ? 116 : 210,
+          height: 74,
+          padding: EdgeInsets.all(attachment.isImage ? 0 : 10),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFE2E8F0)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: attachment.isImage
+              ? ClipRRect(
+                  borderRadius: BorderRadius.circular(13),
+                  child: attachment.bytes == null
+                      ? const ColoredBox(
+                          color: Color(0xFFF1F5F9),
+                          child: Center(
+                            child: Icon(
+                              Icons.image_outlined,
+                              color: Color(0xFF64748B),
+                            ),
+                          ),
+                        )
+                      : Image.memory(
+                          attachment.bytes!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) =>
+                              const _ImagePreviewFallback(
+                            size: Size(116, 74),
+                          ),
+                        ),
+                )
+              : Row(
+                  children: [
+                    const Icon(
+                      Icons.insert_drive_file_outlined,
+                      color: Color(0xFF475569),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            attachment.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            [
+                              if (attachment.size != null)
+                                _formatBytes(attachment.size!),
+                              attachment.status,
+                            ].join(' · '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        Positioned(
+          right: -6,
+          top: -6,
+          child: Material(
+            color: const Color(0xFF0F172A),
+            shape: const CircleBorder(),
+            child: Builder(
+              builder: (actionContext) {
+                return InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () => onRemove(actionContext),
+                  child: const Padding(
+                    padding: EdgeInsets.all(4),
+                    child: Icon(Icons.close, color: Colors.white, size: 14),
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AttachmentPreviewList extends StatelessWidget {
+  const _AttachmentPreviewList({
+    required this.attachments,
+    required this.isUser,
+  });
+
+  final List<ChatAttachment> attachments;
+  final bool isUser;
+
+  @override
+  Widget build(BuildContext context) {
+    final images = attachments.where((item) => item.isImage).toList();
+    final files = attachments.where((item) => !item.isImage).toList();
+    final compactImages = images.length > 1;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (images.isNotEmpty)
+          Padding(
+            padding: EdgeInsets.only(bottom: files.isEmpty ? 0 : 8),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final attachment in images)
+                  _ImageAttachmentPreview(
+                    attachment: attachment,
+                    compact: compactImages,
+                  ),
+              ],
+            ),
+          ),
+        for (final attachment in files)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: _FileAttachmentPreview(
+              attachment: attachment,
+              isUser: isUser,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _ImageAttachmentPreview extends StatelessWidget {
+  const _ImageAttachmentPreview({
+    required this.attachment,
+    required this.compact,
+  });
+
+  final ChatAttachment attachment;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = _imagePreviewSize(context, compact: compact);
+    final image = _attachmentImage(
+      attachment: attachment,
+      width: size.width,
+      height: size.height,
+      fit: BoxFit.cover,
+      fallback: _ImagePreviewFallback(size: size),
+    );
+
+    return Tooltip(
+      message: '点击预览',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openImagePreview(context, attachment),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: const Color(0xFFF1F5F9),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: image,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ImagePreviewFallback extends StatelessWidget {
+  const _ImagePreviewFallback({required this.size});
+
+  final Size size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size.width,
+      height: size.height,
+      child: const Center(
+        child: Text(
+          '图片已上传，预览失败',
+          style: TextStyle(color: Color(0xFF64748B)),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+class _ImagePreviewDialog extends StatelessWidget {
+  const _ImagePreviewDialog({required this.attachment});
+
+  final ChatAttachment attachment;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.78),
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.of(context).pop(),
+              child: const SizedBox.expand(),
+            ),
+          ),
+          SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(18),
+                child: InteractiveViewer(
+                  minScale: 0.7,
+                  maxScale: 4,
+                  child: GestureDetector(
+                    onTap: () {},
+                    child: _attachmentImage(
+                      attachment: attachment,
+                      fit: BoxFit.contain,
+                      fallback: const _LargeImagePreviewFallback(),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            top: 16,
+            right: 16,
+            child: SafeArea(
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.5),
+                shape: const CircleBorder(),
+                child: IconButton(
+                  tooltip: '关闭',
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: const Icon(Icons.close, color: Colors.white),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LargeImagePreviewFallback extends StatelessWidget {
+  const _LargeImagePreviewFallback();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 260,
+      height: 180,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: const Text(
+        '图片预览失败',
+        style: TextStyle(color: Colors.white70),
+      ),
+    );
+  }
+}
+
+class _FileAttachmentPreview extends StatelessWidget {
+  const _FileAttachmentPreview({
+    required this.attachment,
+    required this.isUser,
+  });
+
+  final ChatAttachment attachment;
+  final bool isUser;
+
+  @override
+  Widget build(BuildContext context) {
+    final meta = [
+      if ((attachment.mimeType ?? '').isNotEmpty) attachment.mimeType!,
+      if (attachment.size != null) _formatBytes(attachment.size!),
+    ].join(' · ');
+
+    final card = Container(
+      constraints: const BoxConstraints(maxWidth: 320),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isUser
+            ? Colors.white.withValues(alpha: 0.08)
+            : const Color(0xFFF8FAFC),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isUser ? Colors.white24 : const Color(0xFFE2E8F0),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.insert_drive_file_outlined,
+            color: isUser ? Colors.white : const Color(0xFF475569),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  attachment.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isUser ? Colors.white : const Color(0xFF0F172A),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  meta.isEmpty
+                      ? attachment.status
+                      : '$meta · ${attachment.status}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isUser ? Colors.white70 : const Color(0xFF64748B),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final url = attachment.url?.trim() ?? '';
+    if (url.isEmpty) {
+      return card;
+    }
+
+    return Tooltip(
+      message: '打开附件',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(14),
+          onTap: () => _openAttachmentUrl(context, url),
+          child: card,
+        ),
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
     this.onRetry,
     this.onCancel,
+    this.onEdit,
   });
 
   final ChatMessage message;
   final VoidCallback? onRetry;
   final VoidCallback? onCancel;
+  final bool Function(BuildContext actionContext)? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -299,15 +2508,27 @@ class _MessageBubble extends StatelessWidget {
     final bubbleColor = isUser ? const Color(0xFF0F172A) : Colors.white;
     final textColor = isUser ? Colors.white : const Color(0xFF0F172A);
     final time = _formatTime(message.createdAt);
-    final isThinking = !isUser && message.status == ChatMessageStatus.sending && message.content.trim().isEmpty;
+    final isThinking = !isUser &&
+        message.status == ChatMessageStatus.sending &&
+        message.content.trim().isEmpty;
+
+    final visibleContent = _visibleMessageContent(message);
 
     return GestureDetector(
-      onLongPress: () => _copyMessage(context),
+      onLongPress: () {
+        if (_copyMessage(context)) {
+          _showLocalActionHint(context, '✅ 已复制');
+        }
+      },
       child: Align(
         alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
         child: ConstrainedBox(
-          constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * (isUser ? 0.82 : 0.92)),
+          constraints: BoxConstraints(
+            maxWidth: MediaQuery.sizeOf(context).width *
+                _messageMaxWidthFactor(context, isUser),
+          ),
           child: Container(
+            width: isUser ? null : double.infinity,
             margin: const EdgeInsets.only(bottom: 12),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
@@ -318,7 +2539,8 @@ class _MessageBubble extends StatelessWidget {
                 bottomLeft: Radius.circular(isUser ? 18 : 6),
                 bottomRight: Radius.circular(isUser ? 6 : 18),
               ),
-              border: isUser ? null : Border.all(color: const Color(0xFFE2E8F0)),
+              border:
+                  isUser ? null : Border.all(color: const Color(0xFFE2E8F0)),
               boxShadow: [
                 if (!isUser)
                   BoxShadow(
@@ -331,15 +2553,36 @@ class _MessageBubble extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (isUser && message.attachments.isNotEmpty) ...[
+                  _AttachmentPreviewList(
+                    attachments: message.attachments,
+                    isUser: isUser,
+                  ),
+                  if (visibleContent.isNotEmpty) const SizedBox(height: 10),
+                ],
                 if (isThinking)
                   ThinkingIndicator(onCancel: onCancel)
-                else
-                  ChatMarkdownView(
-                    data: message.content,
+                else if (visibleContent.isNotEmpty)
+                  isUser
+                      ? ChatMarkdownView(
+                          data: visibleContent,
+                          isUser: true,
+                          textColor: textColor,
+                          streaming: message.isStreaming,
+                          bodyFontSize: _userPromptFontSize(context),
+                        )
+                      : AssistantAnswerCard(
+                          data: visibleContent,
+                          streaming: message.isStreaming,
+                          bodyFontSize: _assistantAnswerFontSize(context),
+                        ),
+                if (!isUser && message.attachments.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _AttachmentPreviewList(
+                    attachments: message.attachments,
                     isUser: isUser,
-                    textColor: textColor,
-                    streaming: message.isStreaming,
                   ),
+                ],
                 const SizedBox(height: 6),
                 Row(
                   mainAxisSize: MainAxisSize.min,
@@ -347,7 +2590,8 @@ class _MessageBubble extends StatelessWidget {
                     Text(
                       '$time · ${_statusLabel(message.status, message.isStreaming)}',
                       style: TextStyle(
-                        color: isUser ? Colors.white70 : const Color(0xFF64748B),
+                        color:
+                            isUser ? Colors.white70 : const Color(0xFF64748B),
                         fontSize: 11,
                       ),
                     ),
@@ -361,7 +2605,35 @@ class _MessageBubble extends StatelessWidget {
                     ],
                   ],
                 ),
-                if (!isUser && message.isStreaming && message.content.trim().isNotEmpty && onCancel != null) ...[
+                if (isUser) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _CompactMessageAction(
+                        tooltip: '复制',
+                        icon: Icons.copy_outlined,
+                        foregroundColor: Colors.white70,
+                        successHint: '✅ 已复制',
+                        onPressed: _copyMessage,
+                      ),
+                      if (onEdit != null) ...[
+                        const SizedBox(width: 2),
+                        _CompactMessageAction(
+                          tooltip: '编辑',
+                          icon: Icons.edit_outlined,
+                          foregroundColor: Colors.white70,
+                          successHint: '✏️ 已编辑',
+                          onPressed: onEdit!,
+                        ),
+                      ],
+                    ],
+                  ),
+                ],
+                if (!isUser &&
+                    message.isStreaming &&
+                    message.content.trim().isNotEmpty &&
+                    onCancel != null) ...[
                   const SizedBox(height: 8),
                   TextButton.icon(
                     onPressed: onCancel,
@@ -375,13 +2647,23 @@ class _MessageBubble extends StatelessWidget {
                 ],
                 if (!isUser && message.content.trim().isNotEmpty) ...[
                   const SizedBox(height: 8),
-                  TextButton.icon(
-                    onPressed: () => _copyMessage(context),
-                    icon: const Icon(Icons.copy, size: 16),
-                    label: const Text('复制'),
+                  Builder(
+                    builder: (copyContext) {
+                      return TextButton.icon(
+                        onPressed: () {
+                          if (_copyMessage(copyContext)) {
+                            _showLocalActionHint(copyContext, '✅ 已复制');
+                          }
+                        },
+                        icon: const Icon(Icons.copy, size: 16),
+                        label: const Text('复制'),
+                      );
+                    },
                   ),
                 ],
-                if (isUser && message.status == ChatMessageStatus.error && onRetry != null) ...[
+                if (isUser &&
+                    message.status == ChatMessageStatus.error &&
+                    onRetry != null) ...[
                   const SizedBox(height: 8),
                   TextButton.icon(
                     onPressed: onRetry,
@@ -419,16 +2701,419 @@ class _MessageBubble extends StatelessWidget {
     }
   }
 
-  void _copyMessage(BuildContext context) {
-    if (message.content.trim().isEmpty) {
-      return;
+  bool _copyMessage(BuildContext context) {
+    final text = _visibleMessageContent(message);
+    final copyText = text.isNotEmpty
+        ? text
+        : message.attachments.map((item) => item.name).join('、').trim();
+    if (copyText.isEmpty) {
+      _showLocalActionHint(context, '无文字', error: true);
+      return false;
     }
 
-    Clipboard.setData(ClipboardData(text: message.content));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('消息已复制')),
+    Clipboard.setData(ClipboardData(text: copyText));
+    return true;
+  }
+}
+
+class _CompactMessageAction extends StatelessWidget {
+  const _CompactMessageAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+    required this.foregroundColor,
+    this.successHint,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final bool Function(BuildContext actionContext) onPressed;
+  final Color foregroundColor;
+  final String? successHint;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkResponse(
+        onTap: () {
+          final ok = onPressed(context);
+          if (ok && successHint != null) {
+            _showLocalActionHint(context, successHint!);
+          }
+        },
+        radius: 16,
+        child: Padding(
+          padding: const EdgeInsets.all(5),
+          child: Icon(icon, size: 16, color: foregroundColor),
+        ),
+      ),
     );
   }
+}
+
+String _visibleMessageContent(ChatMessage message) {
+  if (_isAttachmentOnlyMessage(message.content, message.attachments)) {
+    return '';
+  }
+  return message.content.trim();
+}
+
+bool _isAttachmentOnlyMessage(
+  String content,
+  List<ChatAttachment> attachments,
+) {
+  if (attachments.isEmpty) {
+    return false;
+  }
+  return content.trim() == _attachmentOnlyContent(attachments);
+}
+
+String _attachmentOnlyContent(List<ChatAttachment> attachments) {
+  if (attachments.isEmpty) {
+    return '';
+  }
+  final names = attachments.map((item) => item.name).join('、');
+  return '已上传附件：$names';
+}
+
+double _messageMaxWidthFactor(BuildContext context, bool isUser) {
+  if (!isUser) {
+    return 0.92;
+  }
+  final width = MediaQuery.sizeOf(context).width;
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return 0.82;
+  }
+  if (width < 700) {
+    return 0.84;
+  }
+  return 0.54;
+}
+
+double _userPromptFontSize(BuildContext context) {
+  final width = MediaQuery.sizeOf(context).width;
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return 15.5;
+  }
+  return width < 700 ? 15 : 14.5;
+}
+
+double _assistantAnswerFontSize(BuildContext context) {
+  final width = MediaQuery.sizeOf(context).width;
+  if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+    return 15.5;
+  }
+  return width < 700 ? 15.2 : 15;
+}
+
+Size _imagePreviewSize(
+  BuildContext context, {
+  required bool compact,
+}) {
+  final width = MediaQuery.sizeOf(context).width;
+  final mobile = (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) ||
+      width < 700;
+  if (compact) {
+    return mobile ? const Size(118, 92) : const Size(140, 104);
+  }
+  return mobile ? const Size(184, 136) : const Size(206, 148);
+}
+
+Widget _attachmentImage({
+  required ChatAttachment attachment,
+  double? width,
+  double? height,
+  BoxFit fit = BoxFit.contain,
+  required Widget fallback,
+}) {
+  if (attachment.bytes != null) {
+    return Image.memory(
+      attachment.bytes!,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+  final url = attachment.url?.trim() ?? '';
+  if (url.isNotEmpty) {
+    return Image.network(
+      url,
+      width: width,
+      height: height,
+      fit: fit,
+      errorBuilder: (_, __, ___) => fallback,
+    );
+  }
+  return fallback;
+}
+
+Future<void> _openImagePreview(
+  BuildContext context,
+  ChatAttachment attachment,
+) {
+  return showDialog<void>(
+    context: context,
+    barrierColor: Colors.transparent,
+    builder: (context) => _ImagePreviewDialog(attachment: attachment),
+  );
+}
+
+Future<void> _openAttachmentUrl(BuildContext context, String url) async {
+  final uri = Uri.tryParse(url);
+  if (uri == null || !uri.hasScheme) {
+    await _showAttachmentOpenError(context);
+    return;
+  }
+
+  try {
+    final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!launched && context.mounted) {
+      await _showAttachmentOpenError(context);
+    }
+  } catch (_) {
+    if (context.mounted) {
+      await _showAttachmentOpenError(context);
+    }
+  }
+}
+
+Future<void> _showAttachmentOpenError(BuildContext context) {
+  return showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('附件打开失败'),
+      content: const Text('当前附件地址暂时无法打开，请稍后重试。'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
+}
+
+Map<String, dynamic> _extractUser(Map<String, dynamic> data) {
+  final user = data['user'];
+  if (user is Map<String, dynamic>) {
+    return user;
+  }
+  if (user is Map) {
+    return user.map((key, value) => MapEntry(key?.toString() ?? '', value));
+  }
+  return data;
+}
+
+String _displayName(Map<String, dynamic> user) {
+  for (final key in ['name', 'nickname', 'displayName', 'phone', 'email']) {
+    final value = user[key];
+    if (value is String &&
+        value.trim().isNotEmpty &&
+        !_isPlaceholderUserValue(value)) {
+      return _normalizeAccount(value);
+    }
+  }
+  return '当前用户';
+}
+
+String _displayAccount(Map<String, dynamic> user) {
+  for (final key in ['phone', 'account', 'email', 'username', 'name']) {
+    final value = user[key];
+    if (value is String &&
+        value.trim().isNotEmpty &&
+        !_isPlaceholderUserValue(value)) {
+      return _normalizeAccount(value);
+    }
+  }
+  return '未登录用户';
+}
+
+String _normalizeAccount(String account) {
+  final trimmed = account.trim();
+  if (trimmed.startsWith('+86')) {
+    return trimmed.substring(3).trimLeft();
+  }
+  return trimmed;
+}
+
+String _avatarUrl(Map<String, dynamic> user) {
+  for (final key in ['avatar', 'avatarUrl', 'avatar_url', 'image']) {
+    final value = user[key];
+    if (value is String &&
+        value.trim().isNotEmpty &&
+        (value.startsWith('http://') ||
+            value.startsWith('https://') ||
+            value.startsWith('data:') ||
+            value.startsWith('mock-avatar://'))) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+bool _isPlaceholderUserValue(String value) {
+  final normalized = value.trim();
+  return normalized == '本地演示用户' || normalized == 'mock-user';
+}
+
+bool _isImageUpload(String label, String? mimeType, String name) {
+  final lowerName = name.toLowerCase();
+  final lowerMime = (mimeType ?? '').toLowerCase();
+  return label.contains('图片') ||
+      lowerMime.startsWith('image/') ||
+      lowerName.endsWith('.jpg') ||
+      lowerName.endsWith('.jpeg') ||
+      lowerName.endsWith('.png') ||
+      lowerName.endsWith('.webp') ||
+      lowerName.endsWith('.gif');
+}
+
+String? _extractUploadUrl(Map<String, dynamic> result) {
+  for (final key in [
+    'url',
+    'file_url',
+    'fileUrl',
+    'download_url',
+    'downloadUrl'
+  ]) {
+    final value = result[key];
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+  }
+
+  for (final key in ['attachment', 'file', 'data']) {
+    final value = result[key];
+    if (value is Map<String, dynamic>) {
+      final nested = _extractUploadUrl(value);
+      if (nested != null) {
+        return nested;
+      }
+    } else if (value is Map) {
+      final nested = _extractUploadUrl(
+        value.map((itemKey, itemValue) =>
+            MapEntry(itemKey?.toString() ?? '', itemValue)),
+      );
+      if (nested != null) {
+        return nested;
+      }
+    }
+  }
+
+  return null;
+}
+
+String _extractAvatarUrlFromResult(Map<String, dynamic> result) {
+  for (final key in ['avatarUrl', 'avatar_url', 'avatar', 'url']) {
+    final value = result[key];
+    if (value is String && value.trim().isNotEmpty) {
+      return value.trim();
+    }
+  }
+
+  for (final key in ['user', 'data']) {
+    final value = result[key];
+    if (value is Map<String, dynamic>) {
+      final nested = _extractAvatarUrlFromResult(value);
+      if (nested.isNotEmpty) {
+        return nested;
+      }
+    } else if (value is Map) {
+      final nested = _extractAvatarUrlFromResult(
+        value.map((itemKey, itemValue) =>
+            MapEntry(itemKey?.toString() ?? '', itemValue)),
+      );
+      if (nested.isNotEmpty) {
+        return nested;
+      }
+    }
+  }
+
+  return '';
+}
+
+String _cacheBustedUrl(String url, int token) {
+  if (token <= 0 ||
+      url.startsWith('mock-avatar://') ||
+      url.startsWith('data:') ||
+      url.startsWith('blob:')) {
+    return url;
+  }
+
+  final separator = url.contains('?') ? '&' : '?';
+  return '$url${separator}t=$token';
+}
+
+ImageProvider? _avatarImageProvider(String url, int cacheToken) {
+  final trimmed = url.trim();
+  if (trimmed.isEmpty || trimmed.startsWith('mock-avatar://')) {
+    return null;
+  }
+
+  if (trimmed.startsWith('data:')) {
+    final commaIndex = trimmed.indexOf(',');
+    if (commaIndex <= 0 || commaIndex >= trimmed.length - 1) {
+      return null;
+    }
+    final metadata = trimmed.substring(0, commaIndex).toLowerCase();
+    final payload = trimmed.substring(commaIndex + 1);
+    try {
+      final bytes = metadata.contains(';base64')
+          ? base64Decode(payload)
+          : utf8.encode(Uri.decodeComponent(payload));
+      return MemoryImage(Uint8List.fromList(bytes));
+    } catch (error) {
+      debugPrint('Avatar data URL decode failed: $error');
+      return null;
+    }
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return NetworkImage(_cacheBustedUrl(trimmed, cacheToken));
+  }
+
+  return null;
+}
+
+String _avatarInitial(String name) {
+  final trimmed = name.trim();
+  if (trimmed.isEmpty) {
+    return 'AI';
+  }
+  return trimmed.characters.first.toUpperCase();
+}
+
+Color _conversationIconColor(int index, bool selected) {
+  if (selected) {
+    return const Color(0xFFDBEAFE);
+  }
+  const colors = [
+    Color(0xFFE0F2FE),
+    Color(0xFFEDE9FE),
+    Color(0xFFDCFCE7),
+    Color(0xFFFFF7ED),
+  ];
+  return colors[index % colors.length];
+}
+
+String _shortTime(DateTime time) {
+  final hour = time.hour.toString().padLeft(2, '0');
+  final minute = time.minute.toString().padLeft(2, '0');
+  return '$hour:$minute';
+}
+
+String _formatBytes(int bytes) {
+  if (bytes < 1024) {
+    return '$bytes B';
+  }
+  final kb = bytes / 1024;
+  if (kb < 1024) {
+    return '${kb.toStringAsFixed(kb >= 100 ? 0 : 1)} KB';
+  }
+  final mb = kb / 1024;
+  return '${mb.toStringAsFixed(mb >= 100 ? 0 : 1)} MB';
 }
 
 class _AttachmentAction extends StatelessWidget {
