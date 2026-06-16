@@ -1,25 +1,49 @@
 {
-  "updated_at": "2026-06-14T09:30:00.000Z",
-  "version": "1.0.10",
-  "build": 110,
-  "minimum_build": 100,
-  "forceUpdate": false,
-  "force_update": false,
+  "appName": "小董AI",
+  "channel": "production",
+  "platform": "user",
+  "version": "1.0.11",
+  "build": 136,
+  "buildNumber": 136,
+  "minimum_build": 136,
+  "minSupportedBuild": 136,
+  "minSupportedBuildNumber": 136,
+  "forceUpdate": true,
+  "force_update": true,
+  "apiBaseUrl": "http://47.238.0.23",
+  "useMockApi": false,
+  "updated_at": "2026-06-16T14:36:14.6950719Z",
+  "buildTime": "2026-06-16T14:36:14.6950719Z",
+  "releasePageUrl": "https://github.com/caizuan2/-AI/releases/tag/1.0.11",
   "apk": "ai-knowledge-chat-latest.apk",
-  "exe": "ai-knowledge-chat-latest.exe",
-  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
-  "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+  "exe": "ai-knowledge-chat-latest-windows.zip",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+  "apkUrl": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
+  "windowsReleaseUrl": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
   "download": {
-    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
-    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
     "web": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
     "page": "https://stately-sawine-1efd4d.netlify.app/download"
   },
+  "downloads": {
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
+    "web": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    "page": "https://stately-sawine-1efd4d.netlify.app/download"
+  },
+  "changelog": [
+    "正式版接入阿里云后端",
+    "支持 APK / Windows EXE 同账号云同步",
+    "支持图片、文件、拍照附件同步",
+    "支持 300MB 附件上传限制",
+    "支持强制自动更新"
+  ],
   "apps": {
     "user": {
       "id": "ai.chat.user",
-      "name": "AI知识库助手",
+      "name": "小董AI",
       "platforms": [
         "android",
         "windows",
@@ -28,25 +52,33 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.10",
+      "active_version": "1.0.11",
       "versions": [
         {
-          "version": "1.0.10",
-          "build": 110,
-          "channel": "stable",
+          "version": "1.0.11",
+          "build": 136,
+          "buildNumber": 136,
+          "channel": "production",
           "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
+          "minimum_build": 136,
+          "minSupportedBuild": 136,
+          "minSupportedBuildNumber": 136,
+          "force_update": true,
+          "forceUpdate": true,
+          "apiBaseUrl": "http://47.238.0.23",
+          "useMockApi": false,
           "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
           "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
           "changelog": [
-            "修复 Android 检查更新网络权限问题",
-            "增加更新地址备用通道",
-            "优化检查更新失败提示"
+            "正式版接入阿里云后端",
+            "支持 APK / Windows EXE 同账号云同步",
+            "支持图片、文件、拍照附件同步",
+            "支持 300MB 附件上传限制",
+            "支持强制自动更新"
           ],
-          "created_at": "2026-06-14T09:30:00.000Z"
+          "created_at": "2026-06-16T14:36:14.6950719Z"
         }
       ]
     },
@@ -85,19 +117,27 @@
     }
   },
   "user": {
-    "app_name": "AI知识库助手",
-    "version": "1.0.10",
-    "build": 110,
-    "minimum_build": 100,
-    "force_update": false,
+    "app_name": "小董AI",
+    "version": "1.0.11",
+    "build": 136,
+    "buildNumber": 136,
+    "minimum_build": 136,
+    "minSupportedBuild": 136,
+    "minSupportedBuildNumber": 136,
+    "force_update": true,
+    "forceUpdate": true,
+    "apiBaseUrl": "http://47.238.0.23",
+    "useMockApi": false,
     "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
-    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.10/ai-knowledge-chat-latest.exe",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
     "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
     "changelog": [
-      "修复 Android 检查更新网络权限问题",
-      "增加更新地址备用通道",
-      "优化检查更新失败提示"
+      "正式版接入阿里云后端",
+      "支持 APK / Windows EXE 同账号云同步",
+      "支持图片、文件、拍照附件同步",
+      "支持 300MB 附件上传限制",
+      "支持强制自动更新"
     ]
   },
   "admin": {

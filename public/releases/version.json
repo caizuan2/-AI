@@ -1,0 +1,24 @@
+{
+  "appName": "小董AI",
+  "channel": "production",
+  "platform": "user",
+  "version": "1.0.11",
+  "build": 136,
+  "buildNumber": 136,
+  "minSupportedBuild": 136,
+  "minSupportedBuildNumber": 136,
+  "forceUpdate": true,
+  "apiBaseUrl": "http://47.238.0.23",
+  "useMockApi": false,
+  "buildTime": "2026-06-16T14:36:14.6950719Z",
+  "releasePageUrl": "https://github.com/caizuan2/-AI/releases/tag/1.0.11",
+  "apkUrl": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest.apk",
+  "windowsReleaseUrl": "https://github.com/caizuan2/-AI/releases/download/1.0.11/ai-knowledge-chat-latest-windows.zip",
+  "changelog": [
+    "正式版接入阿里云后端",
+    "支持 APK / Windows EXE 同账号云同步",
+    "支持图片、文件、拍照附件同步",
+    "支持 300MB 附件上传限制",
+    "支持强制自动更新"
+  ]
+}

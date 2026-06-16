@@ -69,12 +69,12 @@ class AppConfig {
 
   static const currentVersion = String.fromEnvironment(
     'APP_VERSION',
-    defaultValue: '1.0.10',
+    defaultValue: '1.0.11',
   );
 
   static const currentBuild = int.fromEnvironment(
     'APP_BUILD',
-    defaultValue: 110,
+    defaultValue: 136,
   );
 
   static const currentTestBuildNumber = int.fromEnvironment(

@@ -30,6 +30,105 @@ $RawManifestDir = Join-Path $Root "public/manifests/user-test"
 $RawManifestPath = Join-Path $RawManifestDir "version.json"
 $BuildStartedAt = Get-Date
 
+function Assert-FlutterAppWorkingDirectory {
+  param([Parameter(Mandatory = $true)][string]$WorkingDirectory)
+
+  $ExpectedPath = (Resolve-Path -LiteralPath $FlutterDir).Path
+  $ActualPath = (Resolve-Path -LiteralPath $WorkingDirectory).Path
+  if ($ActualPath -ne $ExpectedPath) {
+    throw "Refusing to run Flutter outside flutter_app. Expected: $ExpectedPath Actual: $ActualPath"
+  }
+
+  $PubspecPath = Join-Path $ActualPath "pubspec.yaml"
+  $AndroidManifestPath = Join-Path $ActualPath "android/app/src/main/AndroidManifest.xml"
+  if (-not (Test-Path -LiteralPath $PubspecPath)) {
+    throw "flutter_app pubspec.yaml not found: $PubspecPath"
+  }
+  if (-not (Test-Path -LiteralPath $AndroidManifestPath)) {
+    throw "flutter_app AndroidManifest.xml not found: $AndroidManifestPath"
+  }
+}
+
+function Test-AndroidRunnerComplete {
+  $AppGradle = Join-Path $FlutterDir "android/app/build.gradle"
+  $AppGradleKts = Join-Path $FlutterDir "android/app/build.gradle.kts"
+  $ManifestPath = Join-Path $FlutterDir "android/app/src/main/AndroidManifest.xml"
+  $MainSourceRoot = Join-Path $FlutterDir "android/app/src/main"
+  $MainActivity = $null
+  if (Test-Path -LiteralPath $MainSourceRoot) {
+    $MainActivity = Get-ChildItem -Path $MainSourceRoot -Recurse -Include "MainActivity.kt", "MainActivity.java" -ErrorAction SilentlyContinue |
+      Select-Object -First 1
+  }
+
+  return ((Test-Path -LiteralPath $AppGradle) -or (Test-Path -LiteralPath $AppGradleKts)) -and
+    (Test-Path -LiteralPath $ManifestPath) -and
+    ($null -ne $MainActivity)
+}
+
+function Repair-AndroidRunnerIfNeeded {
+  if (Test-AndroidRunnerComplete) {
+    return
+  }
+
+  Write-Warning "flutter_app Android runner is incomplete. Running flutter create in flutter_app to restore Android v2 embedding files."
+  Assert-FlutterAppWorkingDirectory -WorkingDirectory $FlutterDir
+  Push-Location $FlutterDir
+  try {
+    & flutter create . --platforms=android --project-name ai_knowledge_flutter_app
+    $createExitCode = $LASTEXITCODE
+    if ($createExitCode -ne 0 -and -not (Test-AndroidRunnerComplete)) {
+      throw "flutter create failed with exit code $createExitCode and Android runner is still incomplete."
+    }
+    if ($createExitCode -ne 0) {
+      Write-Warning "flutter create returned exit code $createExitCode after restoring Android runner files. Continuing because runner validation passed."
+    }
+  } finally {
+    Pop-Location
+  }
+
+  if (-not (Test-AndroidRunnerComplete)) {
+    throw "flutter_app Android runner is still incomplete after flutter create."
+  }
+}
+
+function Test-WindowsRunnerComplete {
+  $RootCMake = Join-Path $FlutterDir "windows/CMakeLists.txt"
+  $FlutterCMake = Join-Path $FlutterDir "windows/flutter/CMakeLists.txt"
+  $RunnerCMake = Join-Path $FlutterDir "windows/runner/CMakeLists.txt"
+  $RunnerMain = Join-Path $FlutterDir "windows/runner/main.cpp"
+
+  return (Test-Path -LiteralPath $RootCMake) -and
+    (Test-Path -LiteralPath $FlutterCMake) -and
+    (Test-Path -LiteralPath $RunnerCMake) -and
+    (Test-Path -LiteralPath $RunnerMain)
+}
+
+function Repair-WindowsRunnerIfNeeded {
+  if (Test-WindowsRunnerComplete) {
+    return
+  }
+
+  Write-Warning "flutter_app Windows runner is incomplete. Running flutter create in flutter_app to restore Windows runner files."
+  Assert-FlutterAppWorkingDirectory -WorkingDirectory $FlutterDir
+  Push-Location $FlutterDir
+  try {
+    & flutter create . --platforms=windows --project-name ai_knowledge_flutter_app
+    $createExitCode = $LASTEXITCODE
+    if ($createExitCode -ne 0 -and -not (Test-WindowsRunnerComplete)) {
+      throw "flutter create windows failed with exit code $createExitCode and Windows runner is still incomplete."
+    }
+    if ($createExitCode -ne 0) {
+      Write-Warning "flutter create windows returned exit code $createExitCode after restoring Windows runner files. Continuing because runner validation passed."
+    }
+  } finally {
+    Pop-Location
+  }
+
+  if (-not (Test-WindowsRunnerComplete)) {
+    throw "flutter_app Windows runner is still incomplete after flutter create."
+  }
+}
+
 function Get-FlutterVersion {
   $PubspecPath = Join-Path $FlutterDir "pubspec.yaml"
   $VersionLine = Get-Content -LiteralPath $PubspecPath |
@@ -301,6 +400,10 @@ function Invoke-ProjectCommand {
     [Parameter(Mandatory = $true)][string]$WorkingDirectory
   )
 
+  if ($FilePath -eq "flutter") {
+    Assert-FlutterAppWorkingDirectory -WorkingDirectory $WorkingDirectory
+  }
+
   Push-Location $WorkingDirectory
   try {
     & $FilePath @Arguments
@@ -334,6 +437,10 @@ function Invoke-ProjectCommandWithTimeout {
     [Parameter(Mandatory = $true)][string]$WorkingDirectory,
     [Parameter(Mandatory = $true)][int]$TimeoutSeconds
   )
+
+  if ($FilePath -eq "flutter") {
+    Assert-FlutterAppWorkingDirectory -WorkingDirectory $WorkingDirectory
+  }
 
   $startedAt = Get-Date
   $resolvedCommand = (Get-Command $FilePath -ErrorAction Stop).Source
@@ -437,6 +544,7 @@ function Invoke-FlutterWindowsFallbackBuild {
     [string]$Configuration
   )
 
+  Assert-FlutterAppWorkingDirectory -WorkingDirectory $FlutterDir
   Import-FlutterGeneratedEnvironment
 
   $FlutterRoot = Get-FlutterRoot
@@ -547,7 +655,24 @@ function Clear-WindowsBuildArtifacts {
   foreach ($path in $paths) {
     if (Test-Path -LiteralPath $path) {
       Write-Host "Removing stale Windows test build output: $path"
-      Remove-Item -LiteralPath $path -Recurse -Force
+      $removed = $false
+      for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+          Stop-RecentBuildProcesses -StartedAfter ($BuildStartedAt.AddDays(-1))
+          Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop
+          $removed = $true
+          break
+        } catch {
+          if ($attempt -eq 4) {
+            Write-Warning "Could not fully remove stale Windows build output after $attempt attempts: $path. Continuing; package verification will reject stale ZIP output. $($_.Exception.Message)"
+          } else {
+            Start-Sleep -Seconds (2 * $attempt)
+          }
+        }
+      }
+      if (-not $removed) {
+        continue
+      }
     }
   }
 }
@@ -648,6 +773,7 @@ function Build-WindowsPackage {
   }
 
   try {
+    Repair-WindowsRunnerIfNeeded
     Clear-WindowsBuildArtifacts
     try {
       Invoke-ProjectCommandWithTimeout -FilePath "flutter" -Arguments (@("build", "windows", "--$($Configuration.ToLowerInvariant())") + $script:FlutterDartDefines) -WorkingDirectory $FlutterDir -TimeoutSeconds $WindowsBuildTimeoutSeconds
@@ -738,7 +864,8 @@ try {
 }
 Invoke-ProjectCommand -FilePath "flutter" -Arguments @("analyze") -WorkingDirectory $FlutterDir
 
-Invoke-ProjectCommand -FilePath "flutter" -Arguments (@("build", "apk", "--release", "--no-shrink") + $script:FlutterDartDefines) -WorkingDirectory $FlutterDir
+Repair-AndroidRunnerIfNeeded
+Invoke-ProjectCommand -FilePath "flutter" -Arguments (@("build", "apk", "--release", "--no-shrink", "--build-name=$Version", "--build-number=$BuildNumber") + $script:FlutterDartDefines) -WorkingDirectory $FlutterDir
 $SourceApk = Join-Path $FlutterDir "build/app/outputs/flutter-apk/app-release.apk"
 if (-not (Test-Path -LiteralPath $SourceApk)) {
   throw "APK was not generated: $SourceApk"
