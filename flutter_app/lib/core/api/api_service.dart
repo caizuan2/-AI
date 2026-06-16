@@ -1,16 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../storage/session_store.dart';
 import '../../modules/upload/upload_models.dart';
 
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode});
+  const ApiException(this.message, {this.statusCode, this.debugDetails});
 
   final String message;
   final int? statusCode;
+  final String? debugDetails;
 
   @override
   String toString() => message;
@@ -18,6 +20,7 @@ class ApiException implements Exception {
 
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
+  static const _uploadTimeout = Duration(minutes: 5);
 
   ApiService({
     required this.baseUrl,
@@ -31,6 +34,7 @@ class ApiService {
   final SessionStore? sessionStore;
   final http.Client _client;
   String? _cookie;
+  Map<String, dynamic>? _lastUser;
 
   Future<void> restoreSession() async {
     _cookie = await sessionStore?.loadCookie();
@@ -66,12 +70,67 @@ class ApiService {
     }
   }
 
+  String _contentType(http.Response response) {
+    return response.headers['content-type'] ?? '';
+  }
+
+  String _bodyPreview(http.Response response, {int maxLength = 200}) {
+    final text = response.body.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (text.length <= maxLength) {
+      return text;
+    }
+    return '${text.substring(0, maxLength)}...';
+  }
+
+  void _debugApiResponseIssue(http.Response response, String message) {
+    debugPrint(
+      '$message\n'
+      'url=${response.request?.url}\n'
+      'status=${response.statusCode}\n'
+      'content-type=${_contentType(response)}\n'
+      'bodyPreview=${_bodyPreview(response)}',
+    );
+  }
+
+  bool _looksLikeHtml(http.Response response) {
+    final contentType = _contentType(response).toLowerCase();
+    final body = response.body.trimLeft().toLowerCase();
+    return contentType.contains('text/html') ||
+        body.startsWith('<!doctype html') ||
+        body.startsWith('<html');
+  }
+
   Object? _jsonBody(http.Response response) {
-    if (response.body.trim().isEmpty) {
+    final body = response.body.trim();
+    if (body.isEmpty) {
       return null;
     }
 
-    return jsonDecode(response.body);
+    if (_looksLikeHtml(response)) {
+      _debugApiResponseIssue(
+          response, 'API response was HTML instead of JSON.');
+      throw ApiException(
+        '服务器返回了网页，不是 API JSON，请检查 API 地址或后端部署。',
+        statusCode: response.statusCode,
+        debugDetails:
+            'url=${response.request?.url}\nstatus=${response.statusCode}\ncontent-type=${_contentType(response)}\nbody=${_bodyPreview(response, maxLength: 300)}',
+      );
+    }
+
+    try {
+      return jsonDecode(response.body);
+    } on FormatException catch (error) {
+      _debugApiResponseIssue(
+        response,
+        'API response JSON parse failed: ${error.message}',
+      );
+      throw ApiException(
+        '服务器返回的数据不是合法 JSON，请稍后重试。',
+        statusCode: response.statusCode,
+        debugDetails:
+            'url=${response.request?.url}\nstatus=${response.statusCode}\ncontent-type=${_contentType(response)}\nbody=${_bodyPreview(response, maxLength: 300)}',
+      );
+    }
   }
 
   Map<String, dynamic> _asMap(Object? value) {
@@ -84,6 +143,141 @@ class ApiService {
     }
 
     return <String, dynamic>{};
+  }
+
+  List<dynamic> _asList(Object? value) {
+    if (value is List) {
+      return value;
+    }
+
+    return const [];
+  }
+
+  String _absoluteUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty ||
+        trimmed.startsWith('http://') ||
+        trimmed.startsWith('https://') ||
+        trimmed.startsWith('data:') ||
+        trimmed.startsWith('blob:')) {
+      return trimmed;
+    }
+
+    if (!trimmed.startsWith('/')) {
+      return trimmed;
+    }
+
+    return _uri(trimmed).toString();
+  }
+
+  Map<String, dynamic> _normalizeAttachmentUrls(Map<String, dynamic> value) {
+    final normalized = Map<String, dynamic>.from(value);
+    for (final key in const [
+      'url',
+      'publicUrl',
+      'public_url',
+      'fileUrl',
+      'file_url',
+      'downloadUrl',
+      'download_url',
+      'thumbnailUrl',
+      'thumbnail_url',
+      'src',
+    ]) {
+      final url = normalized[key];
+      if (url is String && url.trim().isNotEmpty) {
+        normalized[key] = _absoluteUrl(url);
+      }
+    }
+    return normalized;
+  }
+
+  List<dynamic> _normalizeAttachmentList(Object? value) {
+    return _asList(value).map((item) {
+      if (item is Map<String, dynamic>) {
+        return _normalizeAttachmentUrls(item);
+      }
+      if (item is Map) {
+        return _normalizeAttachmentUrls(
+          item.map((key, value) => MapEntry(key?.toString() ?? '', value)),
+        );
+      }
+      return item;
+    }).toList(growable: false);
+  }
+
+  Map<String, dynamic> _normalizeAttachmentEnvelope(Map<String, dynamic> data) {
+    final normalized = Map<String, dynamic>.from(data);
+
+    for (final key in const ['attachment', 'file']) {
+      final value = normalized[key];
+      if (value is Map<String, dynamic>) {
+        normalized[key] = _normalizeAttachmentUrls(value);
+      } else if (value is Map) {
+        normalized[key] = _normalizeAttachmentUrls(
+          value.map((itemKey, itemValue) =>
+              MapEntry(itemKey?.toString() ?? '', itemValue)),
+        );
+      }
+    }
+
+    final nestedData = normalized['data'];
+    if (nestedData is Map<String, dynamic>) {
+      normalized['data'] = _normalizeAttachmentEnvelope(nestedData);
+    } else if (nestedData is Map) {
+      normalized['data'] = _normalizeAttachmentEnvelope(
+        nestedData.map((key, value) => MapEntry(key?.toString() ?? '', value)),
+      );
+    }
+
+    return normalized;
+  }
+
+  Map<String, dynamic> _normalizeAvatarEnvelope(Map<String, dynamic> data) {
+    final normalized = Map<String, dynamic>.from(data);
+    for (final key in const [
+      'avatar',
+      'avatarUrl',
+      'avatar_url',
+      'image',
+      'url',
+    ]) {
+      final url = normalized[key];
+      if (url is String && url.trim().isNotEmpty) {
+        normalized[key] = _absoluteUrl(url);
+      }
+    }
+
+    for (final key in const ['user', 'data']) {
+      final value = normalized[key];
+      if (value is Map<String, dynamic>) {
+        normalized[key] = _normalizeAvatarEnvelope(value);
+      } else if (value is Map) {
+        normalized[key] = _normalizeAvatarEnvelope(
+          value.map((itemKey, itemValue) =>
+              MapEntry(itemKey?.toString() ?? '', itemValue)),
+        );
+      }
+    }
+
+    return normalized;
+  }
+
+  Map<String, dynamic> _normalizeHistoryAttachments(Map<String, dynamic> data) {
+    final normalized = Map<String, dynamic>.from(data);
+    final messages = _asList(normalized['messages']).map((item) {
+      final message = _asMap(item);
+      if (message.isEmpty) {
+        return item;
+      }
+      return {
+        ...message,
+        if (message.containsKey('attachments'))
+          'attachments': _normalizeAttachmentList(message['attachments']),
+      };
+    }).toList(growable: false);
+    normalized['messages'] = messages;
+    return normalized;
   }
 
   String _messageFromEnvelope(Map<String, dynamic> envelope, String fallback) {
@@ -115,7 +309,21 @@ class ApiService {
     return _asMap(envelope['data'] ?? envelope);
   }
 
-  Future<Map<String, dynamic>> _postJson(String path, Map<String, dynamic> body) async {
+  Map<String, dynamic> _rememberUser(Map<String, dynamic> data) {
+    final user = data['user'];
+    if (user is Map<String, dynamic>) {
+      _lastUser = user;
+    } else if (user is Map) {
+      _lastUser =
+          user.map((key, value) => MapEntry(key?.toString() ?? '', value));
+    } else if (data.containsKey('id') || data.containsKey('phone')) {
+      _lastUser = data;
+    }
+    return data;
+  }
+
+  Future<Map<String, dynamic>> _postJson(
+      String path, Map<String, dynamic> body) async {
     final response = await _client.post(
       _uri(path),
       headers: _headers(),
@@ -139,20 +347,20 @@ class ApiService {
     if (mockMode) {
       await _mockDelay();
       _cookie = 'mock-session=1';
-      return {
+      return _rememberUser({
         'user': {
           'id': 'mock-user',
           'phone': phone,
-          'name': phone.isEmpty ? '本地演示用户' : phone,
+          'name': phone.isEmpty ? '当前用户' : phone,
         },
         'licenseActivated': true,
-      };
+      });
     }
 
-    return _postJson('/api/auth/login', {
+    return _rememberUser(await _postJson('/api/auth/login', {
       'phone': phone,
       'password': password,
-    });
+    }));
   }
 
   Future<Map<String, dynamic>> register({
@@ -163,21 +371,21 @@ class ApiService {
     if (mockMode) {
       await _mockDelay();
       _cookie = 'mock-session=1';
-      return {
+      return _rememberUser({
         'user': {
           'id': 'mock-user',
           'phone': phone,
-          'name': name.isEmpty ? '本地演示用户' : name,
+          'name': name.isEmpty ? '当前用户' : name,
         },
         'licenseActivated': true,
-      };
+      });
     }
 
-    return _postJson('/api/auth/register', {
+    return _rememberUser(await _postJson('/api/auth/register', {
       'phone': phone,
       'password': password,
       'name': name,
-    });
+    }));
   }
 
   Future<Map<String, dynamic>> redeemLicense(String licenseKey) {
@@ -198,14 +406,86 @@ class ApiService {
   Future<Map<String, dynamic>> currentUser() {
     if (mockMode) {
       return Future.value({
-        'user': {
-          'id': 'mock-user',
-          'name': '本地演示用户',
-        },
+        'user': _lastUser ??
+            {
+              'id': 'mock-user',
+              'name': '当前用户',
+            },
       });
     }
 
-    return _getJson('/api/auth/me');
+    return _getJson('/api/auth/me').then(_rememberUser);
+  }
+
+  Future<Map<String, dynamic>> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) {
+    if (mockMode) {
+      return Future.value({'changed': true});
+    }
+
+    return _postJson('/api/auth/change-password', {
+      'current_password': currentPassword,
+      'new_password': newPassword,
+      'confirm_password': confirmPassword,
+    });
+  }
+
+  Future<Map<String, dynamic>> updateAvatar(UploadFile file) async {
+    if (mockMode) {
+      await _mockDelay();
+      return {
+        'avatar_url': 'mock-avatar://${file.name}',
+      };
+    }
+
+    final request = http.MultipartRequest(
+      'POST',
+      _uri('/api/auth/avatar'),
+    );
+    request.headers['Accept'] = 'application/json';
+    request.headers['User-Agent'] = 'ai-knowledge-flutter-avatar-uploader';
+    if (_cookie != null) {
+      request.headers['Cookie'] = _cookie!;
+    }
+    request.fields['mimeType'] = _guessUploadMimeType(file);
+    request.fields['originalName'] = _safeUploadFilename(file, 'avatar.jpg');
+
+    request.files.add(http.MultipartFile.fromBytes(
+      'avatar',
+      file.bytes,
+      filename: _safeUploadFilename(file, 'avatar.jpg'),
+    ));
+    request.files.add(http.MultipartFile.fromBytes(
+      'file',
+      file.bytes,
+      filename: _safeUploadFilename(file, 'avatar.jpg'),
+    ));
+
+    final response = await _sendUploadRequest(
+      request,
+      file,
+      fallbackMessage: '头像上传失败，请稍后重试',
+    );
+    final debugDetails = _uploadDebugDetails(response, file);
+    try {
+      return _normalizeAvatarEnvelope(_unwrap(response));
+    } on ApiException catch (error) {
+      debugPrint('Avatar upload failed:\n$debugDetails');
+      throw ApiException(
+        error.message,
+        statusCode: error.statusCode,
+        debugDetails: error.debugDetails ?? debugDetails,
+      );
+    } catch (error) {
+      debugPrint('Avatar upload failed:\n$debugDetails\nexception=$error');
+      throw ApiException(
+        '头像上传失败，请稍后重试',
+        debugDetails: '$debugDetails\nexception=$error',
+      );
+    }
   }
 
   Future<Map<String, dynamic>> chat({
@@ -217,6 +497,8 @@ class ApiService {
     bool enableWebSearch = false,
     List<Map<String, dynamic>> attachments = const [],
     List<Map<String, String>> contextMessages = const [],
+    String? localClientId,
+    Map<String, dynamic> metadata = const {},
     void Function(String token)? onToken,
     bool Function()? shouldStop,
   }) async {
@@ -237,15 +519,51 @@ class ApiService {
     }
 
     final result = await _postJson('/api/ai/chat/ask', {
+      'question': text,
       'text': text,
       'conversation_id': conversationId,
       'mode': mode,
       'enable_deep_thinking': enableDeepThinking,
       'enable_web_search': enableWebSearch,
       'attachments': attachments,
+      if ((localClientId ?? '').trim().isNotEmpty)
+        'localClientId': localClientId,
+      if (metadata.isNotEmpty) 'metadata': metadata,
     });
     await _emitTokens(_answerFrom(result), onToken, shouldStop: shouldStop);
     return result;
+  }
+
+  Future<List<Map<String, dynamic>>> getConversations() async {
+    if (mockMode) {
+      return const [];
+    }
+
+    final data = await _getJson('/api/ai/chat/conversations');
+    return _asList(data['conversations'])
+        .whereType<Map>()
+        .map((item) => item.map((key, value) => MapEntry('$key', value)))
+        .toList(growable: false);
+  }
+
+  Future<Map<String, dynamic>> getConversationHistory(
+      String conversationId) async {
+    if (mockMode) {
+      return {
+        'conversation': {
+          'id': conversationId,
+          'title': '本地模拟会话',
+          'updated_at': DateTime.now().toIso8601String(),
+        },
+        'messages': const [],
+      };
+    }
+
+    final encodedConversationId = Uri.encodeQueryComponent(conversationId);
+    final data = await _getJson(
+      '/api/ai/chat/history?conversation_id=$encodedConversationId',
+    );
+    return _normalizeHistoryAttachments(data);
   }
 
   Future<Map<String, dynamic>> upload(UploadFile file) async {
@@ -264,25 +582,175 @@ class ApiService {
       'POST',
       _uri('/api/ai/chat/attachments'),
     );
+    request.headers['Accept'] = 'application/json';
+    request.headers['User-Agent'] = 'ai-knowledge-flutter-attachment-uploader';
     if (_cookie != null) {
       request.headers['Cookie'] = _cookie!;
     }
+    request.fields['mimeType'] = _guessUploadMimeType(file);
+    request.fields['originalName'] =
+        _safeUploadFilename(file, 'attachment.bin');
 
     request.files.add(http.MultipartFile.fromBytes(
       'file',
       file.bytes,
-      filename: file.name,
-    ));
-    request.files.add(http.MultipartFile.fromBytes(
-      'attachment',
-      file.bytes,
-      filename: file.name,
+      filename: _safeUploadFilename(file, 'attachment.bin'),
     ));
 
-    final streamed = await _client.send(request);
-    _captureCookie(streamed);
-    final response = await http.Response.fromStream(streamed);
-    return _unwrap(response);
+    final response = await _sendUploadRequest(
+      request,
+      file,
+      fallbackMessage: '上传失败，请稍后重试',
+    );
+    final debugDetails = _uploadDebugDetails(response, file);
+    try {
+      return _normalizeAttachmentEnvelope(_unwrap(response));
+    } on ApiException catch (error) {
+      debugPrint('Attachment upload failed:\n$debugDetails');
+      throw ApiException(
+        error.message,
+        statusCode: error.statusCode,
+        debugDetails: error.debugDetails ?? debugDetails,
+      );
+    } catch (error) {
+      debugPrint('Attachment upload failed:\n$debugDetails\nexception=$error');
+      throw ApiException(
+        '上传失败，请稍后重试',
+        debugDetails: '$debugDetails\nexception=$error',
+      );
+    }
+  }
+
+  String _uploadDebugDetails(http.Response response, UploadFile file) {
+    return [
+      'requestUrl=${response.request?.url}',
+      'statusCode=${response.statusCode}',
+      'contentType=${_contentType(response)}',
+      'bodyPreview=${_bodyPreview(response, maxLength: 300)}',
+      'fileName=${_safeUploadFilename(file, 'attachment.bin')}',
+      'fileSize=${file.bytes.length}',
+      'mimeType=${_guessUploadMimeType(file)}',
+      'platform=$defaultTargetPlatform',
+      'apiBaseUrl=$baseUrl',
+      'useMockApi=$mockMode',
+    ].join('\n');
+  }
+
+  Future<http.Response> _sendUploadRequest(
+    http.MultipartRequest request,
+    UploadFile file, {
+    required String fallbackMessage,
+  }) async {
+    try {
+      final streamed = await _client.send(request).timeout(_uploadTimeout);
+      _captureCookie(streamed);
+      return await http.Response.fromStream(streamed).timeout(_uploadTimeout);
+    } on TimeoutException catch (error) {
+      final details = _uploadExceptionDetails(request, file, error);
+      debugPrint('Upload timed out:\n$details');
+      throw ApiException(
+        '上传超时，请检查网络后重试',
+        debugDetails: details,
+      );
+    } catch (error) {
+      final details = _uploadExceptionDetails(request, file, error);
+      debugPrint('Upload connection failed:\n$details');
+      throw ApiException(
+        _isConnectionInterrupted(error) ? '上传连接中断，请重试' : fallbackMessage,
+        debugDetails: details,
+      );
+    }
+  }
+
+  String _uploadExceptionDetails(
+    http.MultipartRequest request,
+    UploadFile file,
+    Object error,
+  ) {
+    return [
+      'requestUrl=${request.url}',
+      'statusCode=NO_RESPONSE',
+      'contentType=',
+      'bodyPreview=',
+      'fileName=${_safeUploadFilename(file, 'attachment.bin')}',
+      'fileSize=${file.bytes.length}',
+      'mimeType=${_guessUploadMimeType(file)}',
+      'platform=$defaultTargetPlatform',
+      'apiBaseUrl=$baseUrl',
+      'useMockApi=$mockMode',
+      'exception=$error',
+    ].join('\n');
+  }
+
+  bool _isConnectionInterrupted(Object error) {
+    final text = error.toString().toLowerCase();
+    return text.contains('socketexception') ||
+        text.contains('write failed') ||
+        text.contains('connection reset') ||
+        text.contains('connection closed') ||
+        text.contains('forcibly closed') ||
+        text.contains('远程主机强迫关闭');
+  }
+
+  String _safeUploadFilename(UploadFile file, String fallback) {
+    final name = file.name.trim();
+    return name.isEmpty ? fallback : name;
+  }
+
+  String _guessUploadMimeType(UploadFile file) {
+    final explicit = file.mimeType?.trim().toLowerCase();
+    if (explicit != null && explicit.isNotEmpty) {
+      return explicit;
+    }
+
+    final name = file.name.toLowerCase();
+    if (name.endsWith('.jpg') || name.endsWith('.jpeg')) {
+      return 'image/jpeg';
+    }
+    if (name.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (name.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (name.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (name.endsWith('.pdf')) {
+      return 'application/pdf';
+    }
+    if (name.endsWith('.doc')) {
+      return 'application/msword';
+    }
+    if (name.endsWith('.docx')) {
+      return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    }
+    if (name.endsWith('.xls')) {
+      return 'application/vnd.ms-excel';
+    }
+    if (name.endsWith('.xlsx')) {
+      return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    }
+    if (name.endsWith('.ppt')) {
+      return 'application/vnd.ms-powerpoint';
+    }
+    if (name.endsWith('.pptx')) {
+      return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+    }
+    if (name.endsWith('.txt')) {
+      return 'text/plain';
+    }
+    if (name.endsWith('.csv')) {
+      return 'text/csv';
+    }
+    if (name.endsWith('.json')) {
+      return 'application/json';
+    }
+    if (name.endsWith('.zip')) {
+      return 'application/zip';
+    }
+
+    return 'application/octet-stream';
   }
 
   void dispose() {

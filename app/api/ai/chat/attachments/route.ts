@@ -18,12 +18,29 @@ const NETLIFY_BLOBS_CONFIG_ERROR =
   "文件上传服务未配置：缺少 Netlify Blobs 环境变量。";
 const allowedAttachmentMimeTypes = new Map([
   ["image/jpeg", "jpg"],
+  ["image/jpg", "jpg"],
   ["image/png", "png"],
   ["image/webp", "webp"],
   ["image/gif", "gif"],
+  ["application/octet-stream", "bin"],
   ["application/pdf", "pdf"],
   ["text/plain", "txt"],
   ["text/markdown", "md"],
+  ["application/json", "json"],
+  ["text/csv", "csv"],
+  ["application/csv", "csv"],
+  ["text/html", "html"],
+  ["text/css", "css"],
+  ["text/javascript", "js"],
+  ["application/javascript", "js"],
+  ["application/x-javascript", "js"],
+  ["application/typescript", "ts"],
+  ["text/x-dart", "dart"],
+  ["application/xml", "xml"],
+  ["text/xml", "xml"],
+  ["application/zip", "zip"],
+  ["application/x-zip-compressed", "zip"],
+  ["application/x-zip", "zip"],
   ["application/msword", "doc"],
   [
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -43,6 +60,7 @@ const allowedAttachmentExtensions = new Map(
   ),
 );
 allowedAttachmentExtensions.set("jpeg", "image/jpeg");
+allowedAttachmentExtensions.set("jpg", "image/jpeg");
 
 function safeFileBaseName(name: string) {
   return (
@@ -112,24 +130,32 @@ function inferAttachmentMimeType(file: File) {
 
   if (
     inferredMimeType &&
-    (!mimeType || mimeType === "application/octet-stream")
+    (!mimeType ||
+      mimeType === "application/octet-stream" ||
+      !allowedAttachmentMimeTypes.has(mimeType))
   ) {
     return inferredMimeType;
+  }
+
+  if (!mimeType) {
+    return "application/octet-stream";
   }
 
   return mimeType;
 }
 
 function validateAttachmentFile(file: File, mimeType: string) {
-  if (!allowedAttachmentMimeTypes.has(mimeType)) {
-    throw new ValidationError(
-      "附件类型不支持，请重新选择图片、PDF、Office 或文本文件。",
+  if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+    throw new AppError(
+      "INVALID_INPUT",
+      `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`,
+      413,
     );
   }
 
-  if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
+  if (!allowedAttachmentMimeTypes.has(mimeType)) {
     throw new ValidationError(
-      `单个附件不能超过 ${MAX_CHAT_ATTACHMENT_SIZE_MB}MB。`,
+      "附件类型不支持，请重新选择图片、PDF、Office 或文本文件。",
     );
   }
 }
