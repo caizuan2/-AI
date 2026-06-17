@@ -1,5 +1,6 @@
 import "server-only";
 
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
 import { getEffectiveKnowledgeStatus } from "@/lib/knowledge/status";
@@ -94,6 +95,7 @@ export interface RetrievedKnowledgeChunk {
 export interface RetrieveKnowledgeOptions {
   query: string;
   userId: string;
+  tenantId?: string | null;
   topK?: number;
   minSimilarity?: number;
   minResults?: number;
@@ -494,6 +496,7 @@ async function vectorSearch(
   query: string,
   candidateLimit: number,
   userId: string,
+  tenantId?: string | null,
   requestId?: string
 ): Promise<RawCandidate[]> {
   const { createEmbedding } = await import("@/lib/ai/embeddings");
@@ -503,6 +506,9 @@ async function vectorSearch(
     userId
   });
   const vector = toVectorLiteral(embedding);
+  const scopeFilter = tenantId
+    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
+    : Prisma.sql`AND ki."userId" = ${userId}`;
 
   const rows = await prisma.$queryRaw<VectorSearchRow[]>`
     SELECT
@@ -525,7 +531,7 @@ async function vectorSearch(
     FROM "knowledge_chunks" kc
     INNER JOIN "knowledge_items" ki ON ki."id" = kc."knowledgeItemId"
     WHERE kc."embedding" IS NOT NULL
-      AND ki."userId" = ${userId}
+      ${scopeFilter}
       AND ki."deleted_at" IS NULL
     ORDER BY kc."embedding" <=> ${vector}::vector
     LIMIT ${candidateLimit}
@@ -576,7 +582,7 @@ function buildKeywordFilters(query: string) {
   }));
 }
 
-async function keywordSearch(query: string, candidateLimit: number, userId: string): Promise<RawCandidate[]> {
+async function keywordSearch(query: string, candidateLimit: number, userId: string, tenantId?: string | null): Promise<RawCandidate[]> {
   const textFilters = buildKeywordFilters(query);
 
   if (textFilters.length === 0) {
@@ -587,7 +593,7 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
     where: {
       knowledgeItem: {
         is: {
-          userId,
+          ...(tenantId ? { tenantId } : { userId }),
           deletedAt: null
         }
       },
@@ -646,12 +652,16 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
     .filter((candidate) => (candidate.keywordSimilarity ?? 0) > 0);
 }
 
-async function hasIndexedEmbeddings(userId: string) {
+async function hasIndexedEmbeddings(userId: string, tenantId?: string | null) {
+  const scopeFilter = tenantId
+    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
+    : Prisma.sql`AND ki."userId" = ${userId}`;
   const rows = await prisma.$queryRaw<Array<{ count: number }>>`
     SELECT COUNT(*)::int AS "count"
     FROM "knowledge_chunks" kc
     INNER JOIN "knowledge_items" ki ON ki."id" = kc."knowledgeItemId"
-    WHERE ki."userId" = ${userId}
+    WHERE TRUE
+      ${scopeFilter}
       AND ki."deleted_at" IS NULL
       AND kc."embedding" IS NOT NULL
   `;
@@ -698,6 +708,7 @@ async function runSearch(
   topK: number,
   minSimilarity: number,
   userId: string,
+  tenantId?: string | null,
   requestId?: string,
   options: { vectorEnabled?: boolean } = {}
 ): Promise<SearchRun> {
@@ -709,13 +720,13 @@ async function runSearch(
   for (const query of queries) {
     if (vectorEnabled) {
       try {
-        vectorCandidates.push(...await vectorSearch(query, candidateLimit, userId, requestId));
+        vectorCandidates.push(...await vectorSearch(query, candidateLimit, userId, tenantId, requestId));
       } catch {
         vectorSearchFailed = true;
       }
     }
 
-    keywordCandidates.push(...await keywordSearch(query, candidateLimit, userId));
+    keywordCandidates.push(...await keywordSearch(query, candidateLimit, userId, tenantId));
   }
 
   const mergedCandidates = mergeCandidates(vectorCandidates, keywordCandidates);
@@ -826,7 +837,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
     : DEFAULT_MIN_RESULTS;
   const intent = inferIntent(query);
   const queries = buildSearchQueries(query, intent);
-  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(options.userId);
+  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(options.userId, options.tenantId);
   const startedAt = Date.now();
 
   let selectedRun = await runSearch(
@@ -835,6 +846,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
     topK,
     minSimilarity,
     options.userId,
+    options.tenantId,
     options.requestId,
     { vectorEnabled }
   );
@@ -849,6 +861,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       topK,
       relaxedThreshold,
       options.userId,
+      options.tenantId,
       options.requestId,
       { vectorEnabled }
     );
@@ -864,6 +877,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       topK,
       KEYWORD_FALLBACK_MIN_SIMILARITY,
       options.userId,
+      options.tenantId,
       options.requestId,
       { vectorEnabled: false }
     );
