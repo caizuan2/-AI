@@ -6,6 +6,15 @@ import type {
   SuperAdminMenuItem,
   SystemHealth
 } from "@/types/super-admin";
+import type {
+  DeviceRisk,
+  DeviceSession,
+  PlatformDownload,
+  PlatformSyncStatus,
+  PlatformVersion,
+  SyncEvent,
+  SyncMatrixRow
+} from "@/types/super-admin-sync";
 
 export const superAdminMenus: SuperAdminMenuItem[] = [
   {
@@ -26,6 +35,13 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
     href: "/super-admin#users",
     description: "账号、角色、权限策略",
     icon: "Users"
+  },
+  {
+    title: "历史会话控制",
+    href: "/super-admin/conversation-controls",
+    description: "用户端会话菜单开关与审计",
+    icon: "ShieldCheck",
+    badge: "New"
   },
   {
     title: "知识库管理",
@@ -63,6 +79,38 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
     href: "/super-admin/usage",
     description: "租户、用户与系统级用量",
     icon: "LineChart"
+  },
+  {
+    title: "三端同步",
+    href: "/super-admin/sync",
+    description: "Web、APK、EXE 同步状态",
+    icon: "MonitorDown",
+    badge: "Mock"
+  },
+  {
+    title: "设备会话",
+    href: "/super-admin/devices",
+    description: "三端登录设备与风险",
+    icon: "Smartphone"
+  },
+  {
+    title: "平台版本",
+    href: "/super-admin/platforms",
+    description: "超级管理员端发布状态",
+    icon: "Download"
+  },
+  {
+    title: "环境连通性",
+    href: "/super-admin/env-check",
+    description: "数据库、数据源与自测检查",
+    icon: "ServerCog",
+    badge: "检查"
+  },
+  {
+    title: "系统健康状态",
+    href: "/super-admin/system-health",
+    description: "三端数据源和持久化状态",
+    icon: "ServerCog"
   },
   {
     title: "AI 模型配置",
@@ -462,3 +510,318 @@ export const quickActions: QuickAction[] = [
     status: "normal"
   }
 ];
+
+export const superAdminPlatformSyncStatuses: PlatformSyncStatus[] = [
+  {
+    platform: "web",
+    appType: "super_admin",
+    version: "1.8.0-web",
+    onlineStatus: "online",
+    lastSyncAt: "2026-06-17 18:05:24",
+    syncHealth: "healthy",
+    pendingSyncCount: 0,
+    failedSyncCount: 0,
+    latencyMs: 86,
+    conflictCount: 0,
+    dataScopes: [
+      "account_status",
+      "admin_actions",
+      "chat_history",
+      "system_config",
+      "license_status",
+      "tenant_rbac",
+      "commercial_usage",
+      "download_versions",
+      "attachments",
+      "audit_logs"
+    ],
+    downloadUrl: "/super-admin",
+    forceUpdate: false,
+    updateStatus: "latest"
+  },
+  {
+    platform: "android_apk",
+    appType: "super_admin",
+    version: "1.8.0-apk",
+    onlineStatus: "degraded",
+    lastSyncAt: "2026-06-17 18:03:10",
+    syncHealth: "warning",
+    pendingSyncCount: 7,
+    failedSyncCount: 1,
+    latencyMs: 214,
+    conflictCount: 1,
+    dataScopes: [
+      "account_status",
+      "admin_actions",
+      "chat_history",
+      "license_status",
+      "tenant_rbac",
+      "commercial_usage",
+      "attachments",
+      "audit_logs"
+    ],
+    downloadUrl: "/downloads/super-admin/android/latest.apk",
+    forceUpdate: false,
+    updateStatus: "available"
+  },
+  {
+    platform: "windows_exe",
+    appType: "super_admin",
+    version: "1.8.0-exe",
+    onlineStatus: "online",
+    lastSyncAt: "2026-06-17 18:04:48",
+    syncHealth: "healthy",
+    pendingSyncCount: 2,
+    failedSyncCount: 0,
+    latencyMs: 132,
+    conflictCount: 0,
+    dataScopes: [
+      "account_status",
+      "admin_actions",
+      "chat_history",
+      "system_config",
+      "license_status",
+      "tenant_rbac",
+      "commercial_usage",
+      "download_versions",
+      "attachments",
+      "audit_logs"
+    ],
+    downloadUrl: "/downloads/super-admin/windows/latest.exe",
+    forceUpdate: false,
+    updateStatus: "latest"
+  }
+];
+
+export const superAdminSyncMatrixRows: SyncMatrixRow[] = [
+  {
+    scope: "chat_history",
+    label: "聊天记录",
+    web: "synced",
+    android_apk: "pending",
+    windows_exe: "synced"
+  },
+  {
+    scope: "admin_actions",
+    label: "操作日志",
+    web: "synced",
+    android_apk: "synced",
+    windows_exe: "synced"
+  },
+  {
+    scope: "license_status",
+    label: "卡密状态",
+    web: "synced",
+    android_apk: "synced",
+    windows_exe: "synced"
+  },
+  {
+    scope: "tenant_rbac",
+    label: "企业数据",
+    web: "synced",
+    android_apk: "synced",
+    windows_exe: "synced"
+  },
+  {
+    scope: "tenant_rbac",
+    label: "用户权限",
+    web: "synced",
+    android_apk: "pending",
+    windows_exe: "synced"
+  },
+  {
+    scope: "commercial_usage",
+    label: "商业化数据",
+    web: "synced",
+    android_apk: "synced",
+    windows_exe: "synced"
+  },
+  {
+    scope: "attachments",
+    label: "文件 / 图片 / 拍照附件",
+    web: "synced",
+    android_apk: "error",
+    windows_exe: "synced"
+  },
+  {
+    scope: "download_versions",
+    label: "下载版本",
+    web: "synced",
+    android_apk: "pending",
+    windows_exe: "synced"
+  }
+];
+
+export const superAdminSyncEvents: SyncEvent[] = [
+  {
+    id: "sync-event-001",
+    time: "2026-06-17 18:05:24",
+    platform: "web",
+    account: "root@enterprise.local",
+    action: "更新系统配置",
+    scope: "system_config",
+    result: "synced",
+    durationMs: 82
+  },
+  {
+    id: "sync-event-002",
+    time: "2026-06-17 18:04:48",
+    platform: "windows_exe",
+    account: "ops@enterprise.local",
+    action: "查看卡密授权",
+    scope: "license_status",
+    result: "synced",
+    durationMs: 126
+  },
+  {
+    id: "sync-event-003",
+    time: "2026-06-17 18:03:10",
+    platform: "android_apk",
+    account: "support@enterprise.local",
+    action: "上传拍照附件",
+    scope: "attachments",
+    result: "error",
+    durationMs: 1240
+  },
+  {
+    id: "sync-event-004",
+    time: "2026-06-17 18:01:36",
+    platform: "android_apk",
+    account: "support@enterprise.local",
+    action: "同步聊天记录",
+    scope: "chat_history",
+    result: "pending",
+    durationMs: 410
+  }
+];
+
+export const superAdminDeviceSessions: DeviceSession[] = [
+  {
+    deviceId: "web-session-001",
+    account: "root@enterprise.local",
+    platform: "web",
+    appVersion: "1.8.0-web",
+    deviceName: "Chrome / Windows",
+    ip: "10.16.8.21",
+    location: "Shanghai CN",
+    loginAt: "2026-06-17 09:12:10",
+    lastActiveAt: "2026-06-17 18:05:24",
+    sessionStatus: "active",
+    riskLevel: "low",
+    syncStatus: "synced"
+  },
+  {
+    deviceId: "apk-session-014",
+    account: "support@enterprise.local",
+    platform: "android_apk",
+    appVersion: "1.8.0-apk",
+    deviceName: "Pixel 8 Pro",
+    ip: "10.16.10.44",
+    location: "Hangzhou CN",
+    loginAt: "2026-06-17 11:44:02",
+    lastActiveAt: "2026-06-17 18:03:10",
+    sessionStatus: "active",
+    riskLevel: "medium",
+    syncStatus: "error"
+  },
+  {
+    deviceId: "exe-session-009",
+    account: "ops@enterprise.local",
+    platform: "windows_exe",
+    appVersion: "1.8.0-exe",
+    deviceName: "ThinkPad X1",
+    ip: "10.16.8.29",
+    location: "Shanghai CN",
+    loginAt: "2026-06-17 08:50:36",
+    lastActiveAt: "2026-06-17 18:04:48",
+    sessionStatus: "active",
+    riskLevel: "low",
+    syncStatus: "synced"
+  },
+  {
+    deviceId: "web-session-legacy",
+    account: "audit@enterprise.local",
+    platform: "web",
+    appVersion: "1.7.4-web",
+    deviceName: "Edge / Windows",
+    ip: "203.0.113.18",
+    location: "Unknown",
+    loginAt: "2026-06-16 22:18:00",
+    lastActiveAt: "2026-06-17 12:32:18",
+    sessionStatus: "idle",
+    riskLevel: "high",
+    syncStatus: "pending"
+  }
+];
+
+export const superAdminDeviceRisks: DeviceRisk[] = [
+  {
+    id: "risk-001",
+    deviceId: "apk-session-014",
+    account: "support@enterprise.local",
+    riskLevel: "medium",
+    reason: "拍照附件同步失败 1 次，等待重试队列处理。",
+    detectedAt: "2026-06-17 18:03:10",
+    status: "monitoring"
+  },
+  {
+    id: "risk-002",
+    deviceId: "web-session-legacy",
+    account: "audit@enterprise.local",
+    riskLevel: "high",
+    reason: "旧版本 Web 会话来自未知位置，建议后续接入强制下线。",
+    detectedAt: "2026-06-17 12:36:22",
+    status: "open"
+  }
+];
+
+export const superAdminPlatformVersions: PlatformVersion[] = [
+  {
+    appName: "Super Admin Web",
+    appType: "super_admin",
+    platform: "web",
+    currentVersion: "1.8.0-web",
+    latestVersion: "1.8.0-web",
+    downloadUrl: "/super-admin",
+    forceUpdate: false,
+    releasedAt: "2026-06-17 09:00:00",
+    releaseStatus: "stable",
+    syncCapability: "同账号、同后端、同数据源实时读取",
+    dataSourceStatus: "shared_backend"
+  },
+  {
+    appName: "Super Admin Android APK",
+    appType: "super_admin",
+    platform: "android_apk",
+    currentVersion: "1.8.0-apk",
+    latestVersion: "1.8.1-apk",
+    downloadUrl: "/downloads/super-admin/android/latest.apk",
+    forceUpdate: false,
+    releasedAt: "2026-06-16 20:10:00",
+    releaseStatus: "beta",
+    syncCapability: "聊天、配置、卡密、附件、审计日志同步预留",
+    dataSourceStatus: "shared_backend"
+  },
+  {
+    appName: "Super Admin Windows EXE",
+    appType: "super_admin",
+    platform: "windows_exe",
+    currentVersion: "1.8.0-exe",
+    latestVersion: "1.8.0-exe",
+    downloadUrl: "/downloads/super-admin/windows/latest.exe",
+    forceUpdate: false,
+    releasedAt: "2026-06-16 19:30:00",
+    releaseStatus: "stable",
+    syncCapability: "桌面端管理操作和 Web / APK 保持同源状态",
+    dataSourceStatus: "shared_backend"
+  }
+];
+
+export const superAdminPlatformDownloads: PlatformDownload[] = superAdminPlatformVersions.map((item) => ({
+  platform: item.platform,
+  appName: item.appName,
+  version: item.latestVersion,
+  downloadUrl: item.downloadUrl,
+  updateStatus: item.currentVersion === item.latestVersion ? "latest" : "available",
+  forceUpdate: item.forceUpdate
+}));

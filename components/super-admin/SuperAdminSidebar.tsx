@@ -10,8 +10,11 @@ import {
   KeyRound,
   LayoutDashboard,
   LineChart,
+  MonitorDown,
+  ServerCog,
   Settings,
   ShieldCheck,
+  Smartphone,
   Users,
   type LucideIcon
 } from "lucide-react";
@@ -25,8 +28,11 @@ const iconMap: Record<string, LucideIcon> = {
   KeyRound,
   LayoutDashboard,
   LineChart,
+  MonitorDown,
+  ServerCog,
   Settings,
   ShieldCheck,
+  Smartphone,
   Users
 };
 

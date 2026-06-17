@@ -18,6 +18,9 @@ export type AuditAction =
   | "CHAT_BLOCKED_UNSAFE_INPUT"
   | "CHAT_PROVIDER_NOT_CONFIGURED"
   | "CHAT_RETRIEVE"
+  | "archive_conversation"
+  | "create_group_chat"
+  | "delete_conversation"
   | "FILE_UPLOAD"
   | "INGEST_CREATE"
   | "INGEST_CHAT_CONFIRM"
@@ -31,7 +34,10 @@ export type AuditAction =
   | "KNOWLEDGE_SOFT_DELETE_DENIED"
   | "KNOWLEDGE_SOFT_DELETE_SUCCESS"
   | "KNOWLEDGE_VIEW"
-  | "RBAC_ACCESS_DENIED";
+  | "RBAC_ACCESS_DENIED"
+  | "rename_conversation"
+  | "share_conversation"
+  | "update_feature_flag";
 
 export interface AuditRequestContext {
   ip: string | null;

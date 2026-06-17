@@ -5,6 +5,7 @@ import {
   buildCustomerAnswerFromText,
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
+import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
 import { AppError, NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
@@ -515,7 +516,9 @@ export async function listAiChatConversations(actor: AiChatActor, db: AiChatDb =
   });
 
   return {
-    conversations: conversations.map(serializeConversation)
+    conversations: conversations
+      .filter((conversation) => !isConversationSoftDeleted(conversation.metadata))
+      .map(serializeConversation)
   };
 }
 
@@ -547,7 +550,7 @@ export async function getAiChatHistory(actor: AiChatActor, conversationId: strin
     }
   });
 
-  if (!conversation) {
+  if (!conversation || isConversationSoftDeleted(conversation.metadata)) {
     throw new NotFoundError("会话不存在。");
   }
 

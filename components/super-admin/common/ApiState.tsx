@@ -23,7 +23,7 @@ export function ApiState({ title, description, tone = "slate", action }: ApiStat
   );
 }
 
-export function LoadingState({ title = "正在加载商业化数据" }: { title?: string }) {
+export function LoadingState({ title = "正在加载超级管理员数据" }: { title?: string }) {
   return (
     <ApiState
       title={title}
@@ -36,7 +36,7 @@ export function UnauthorizedState() {
   return (
     <ApiState
       tone="amber"
-      title="请使用超级管理员登录后查看商业化数据"
+      title="请使用超级管理员登录后查看此页面数据"
       description="当前请求未通过 super_admin 权限校验。页面已安全拦截数据展示，不会绕过登录或权限系统。"
     />
   );
@@ -46,7 +46,7 @@ export function ErrorState({ message }: { message?: string }) {
   return (
     <ApiState
       tone="rose"
-      title="商业化数据加载失败"
+      title="数据加载失败"
       description={message ?? "请稍后重试，或检查 super-admin API 是否可用。"}
     />
   );

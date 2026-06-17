@@ -5,6 +5,8 @@ import { DownloadUpdateCenter } from "@/components/super-admin/DownloadUpdateCen
 import { HomeCommercialSnapshot } from "@/components/super-admin/commercial/HomeCommercialSnapshot";
 import { QuickActions } from "@/components/super-admin/QuickActions";
 import { StatsCards } from "@/components/super-admin/StatsCards";
+import { HomeSyncSnapshot } from "@/components/super-admin/sync/HomeSyncSnapshot";
+import { HomeEnvironmentSnapshot } from "@/components/super-admin/system/HomeEnvironmentSnapshot";
 import { SystemHealthPanel } from "@/components/super-admin/SystemHealthPanel";
 import { getLicenseSummary } from "@/lib/super-admin/services/license.service";
 
@@ -76,6 +78,10 @@ export default function SuperAdminPage() {
       <StatsCards />
 
       <HomeCommercialSnapshot />
+
+      <HomeSyncSnapshot />
+
+      <HomeEnvironmentSnapshot />
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
