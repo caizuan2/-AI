@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowRight, BarChart3, Building2, Database, LockKeyhole, Settings } from "lucide-react";
 import { AuditLogPreview } from "@/components/super-admin/AuditLogPreview";
 import { DownloadUpdateCenter } from "@/components/super-admin/DownloadUpdateCenter";
+import { HomeCommercialSnapshot } from "@/components/super-admin/commercial/HomeCommercialSnapshot";
 import { QuickActions } from "@/components/super-admin/QuickActions";
 import { StatsCards } from "@/components/super-admin/StatsCards";
 import { SystemHealthPanel } from "@/components/super-admin/SystemHealthPanel";
@@ -73,6 +74,8 @@ export default function SuperAdminPage() {
       </section>
 
       <StatsCards />
+
+      <HomeCommercialSnapshot />
 
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)]">
         <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">

@@ -43,6 +43,14 @@ export type CommercialTenantSummary = {
 };
 
 export type CommercialOverview = {
+  totals: {
+    tenants: number;
+    activeTenants: number;
+    dailyAiRequests: number;
+    monthlyAiRequests: number;
+    tokenUsage: number;
+    quotaWarnings: number;
+  };
   planDistribution: PlanDistribution;
   expiring: {
     within7Days: number;

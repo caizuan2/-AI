@@ -11,12 +11,20 @@ export async function GET(request: Request) {
       getCommercialTenantSummaries(),
       listExpiringSubscriptions(30)
     ]);
+    const now = Date.now();
+    const items = tenants.map((tenant) => ({
+      ...tenant,
+      subscriptionDaysUntilExpiry: tenant.subscription.expiresAt
+        ? Math.ceil((new Date(tenant.subscription.expiresAt).getTime() - now) / 86400000)
+        : null
+    }));
 
     return superAdminSuccess({
       total: tenants.length,
       active: tenants.filter((tenant) => tenant.subscription.status === "active").length,
       expired: tenants.filter((tenant) => tenant.subscription.status === "expired").length,
       pending: tenants.filter((tenant) => tenant.subscription.status === "pending").length,
+      items,
       expiring
     });
   } catch (error) {

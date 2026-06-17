@@ -40,6 +40,31 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
     icon: "KeyRound"
   },
   {
+    title: "商业化概览",
+    href: "/super-admin/commercial",
+    description: "套餐、收入风险与卡密运营",
+    icon: "LineChart",
+    badge: "New"
+  },
+  {
+    title: "订阅与套餐",
+    href: "/super-admin/subscriptions",
+    description: "企业订阅、状态与到期",
+    icon: "KeyRound"
+  },
+  {
+    title: "Quota 限额",
+    href: "/super-admin/quotas",
+    description: "套餐策略与用量控制",
+    icon: "Settings"
+  },
+  {
+    title: "使用量统计",
+    href: "/super-admin/usage",
+    description: "租户、用户与系统级用量",
+    icon: "LineChart"
+  },
+  {
     title: "AI 模型配置",
     href: "/super-admin#models",
     description: "模型、额度、成本与策略",

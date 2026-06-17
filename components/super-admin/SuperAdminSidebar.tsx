@@ -35,11 +35,11 @@ function isActive(href: string, pathname: string) {
     return pathname === "/super-admin";
   }
 
-  if (href.startsWith("/super-admin/downloads")) {
-    return pathname.startsWith("/super-admin/downloads");
+  if (href.includes("#")) {
+    return false;
   }
 
-  return false;
+  return pathname.startsWith(href);
 }
 
 export function SuperAdminSidebar() {

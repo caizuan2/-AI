@@ -71,8 +71,17 @@ export async function getCommercialOverview(): Promise<CommercialOverview> {
   const within7Days = expiring.filter((item) => item.daysUntilExpiry >= 0 && item.daysUntilExpiry <= 7);
   const within30Days = expiring.filter((item) => item.daysUntilExpiry >= 0 && item.daysUntilExpiry <= 30);
   const tokenCost = Number((usageOverview.totalTokenUsage * 0.000002).toFixed(4));
+  const quotaWarnings = summaries.filter((item) => !item.quota.allowed);
 
   return {
+    totals: {
+      tenants: summaries.length,
+      activeTenants: usageOverview.activeTenants,
+      dailyAiRequests: summaries.reduce((sum, item) => sum + item.usage.dailyAiRequests, 0),
+      monthlyAiRequests: usageOverview.totalAIRequests,
+      tokenUsage: usageOverview.totalTokenUsage,
+      quotaWarnings: quotaWarnings.length
+    },
     planDistribution,
     expiring: {
       within7Days: within7Days.length,
@@ -97,7 +106,7 @@ export async function getCommercialOverview(): Promise<CommercialOverview> {
       estimatedTokenCost: tokenCost,
       estimatedModelCost: tokenCost
     },
-    quotaWarnings: summaries.filter((item) => !item.quota.allowed)
+    quotaWarnings
   };
 }
 
