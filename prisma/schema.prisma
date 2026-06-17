@@ -65,8 +65,26 @@ enum UserRole {
   super_admin
 }
 
+model Tenant {
+  id             String              @id @default(cuid())
+  name           String
+  plan           String              @default("starter")
+  status         String              @default("active")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  users          User[]
+  knowledgeItems KnowledgeItem[]
+  ingestionJobs  IngestionJob[]
+  queryLogs      KnowledgeQueryLog[]
+
+  @@index([status])
+  @@index([plan])
+  @@map("tenants")
+}
+
 model User {
   id               String           @id @default(cuid())
+  tenantId         String?          @map("tenant_id")
   email            String?          @unique
   phone            String           @unique
   passwordHash     String           @default("")
@@ -87,7 +105,9 @@ model User {
   auditLogs        AuditLog[]
   uploadedFiles    KnowledgeFile[]
   ingestionJobs    IngestionJob[]
+  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
+  @@index([tenantId], map: "users_tenant_id_idx")
   @@index([licenseActivated])
   @@index([isActive])
   @@map("users")
@@ -138,6 +158,25 @@ model LicenseKey {
   @@index([redeemedByUserId])
   @@index([expiresAt])
   @@map("license_keys")
+}
+
+model License {
+  id          String    @id @default(cuid())
+  code        String    @unique
+  type        String    @default("trial")
+  status      String    @default("unused")
+  userId      String?   @map("user_id")
+  tenantId    String?   @map("tenant_id")
+  expiresAt   DateTime? @map("expires_at")
+  activatedAt DateTime? @map("activated_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([status])
+  @@index([type])
+  @@index([userId], map: "saas_licenses_user_id_idx")
+  @@index([tenantId], map: "saas_licenses_tenant_id_idx")
+  @@index([expiresAt], map: "saas_licenses_expires_at_idx")
+  @@map("saas_licenses")
 }
 
 model ActivationLog {
@@ -214,6 +253,7 @@ model Message {
 model KnowledgeItem {
   id                    String                          @id @default(cuid())
   userId                String
+  tenantId              String?                         @map("tenant_id")
   title                 String
   content               String                          @db.Text
   summary               String                          @db.Text
@@ -224,6 +264,9 @@ model KnowledgeItem {
   completenessScore     Int                             @default(3)
   usefulnessScore       Int                             @default(3)
   confidenceScore       Int                             @default(3)
+  embedding             Json?
+  embeddingModel        String?
+  indexedAt             DateTime?                       @map("indexed_at")
   sourceType            String
   sourceId              String?
   sourceTitle           String?
@@ -240,21 +283,28 @@ model KnowledgeItem {
   createdAt             DateTime                        @default(now())
   updatedAt             DateTime                        @updatedAt
   user                  User                            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tenant                Tenant?                         @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   chunks                KnowledgeChunk[]
   ingestionJobs         IngestionJob[]
   mergeHistories        KnowledgeMergeHistory[]
   completionSuggestions KnowledgeCompletionSuggestion[]
 
   @@index([userId])
+  @@index([tenantId], map: "knowledge_items_tenant_id_idx")
   @@index([category])
   @@index([importance])
   @@index([status])
   @@index([expiresAt])
   @@index([userId, status, expiresAt])
+  @@index([tenantId, status, expiresAt], map: "knowledge_items_tenant_status_expires_idx")
   @@index([reviewStatus])
   @@index([nextReviewAt])
   @@index([userId, reviewStatus, nextReviewAt])
+  @@index([tenantId, reviewStatus, nextReviewAt], map: "knowledge_items_tenant_review_next_idx")
   @@index([clarityScore, completenessScore, usefulnessScore, confidenceScore])
+  @@index([embeddingModel])
+  @@index([indexedAt])
+  @@index([tenantId, indexedAt], map: "knowledge_items_tenant_indexed_at_idx")
   @@index([sourceType, sourceId])
   @@index([sourceType, sourceMessageId])
   @@index([deletedAt], map: "knowledge_items_deleted_at_idx")
@@ -322,15 +372,18 @@ model IngestionJob {
   createdByUserId   String         @map("created_by")
   fileId            String?        @map("file_id")
   knowledgeItemId   String?        @map("knowledge_item_id")
+  tenantId          String?        @map("tenant_id")
   metadata          Json?
   createdAt         DateTime       @default(now()) @map("created_at")
   updatedAt         DateTime       @updatedAt @map("updated_at")
   finishedAt        DateTime?      @map("finished_at")
   createdBy         User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  tenant            Tenant?        @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   file              KnowledgeFile? @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
   knowledgeItem     KnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([createdByUserId], map: "ingestion_jobs_created_by_idx")
+  @@index([tenantId], map: "ingestion_jobs_tenant_id_idx")
   @@index([sourceType], map: "ingestion_jobs_source_type_idx")
   @@index([sourceId], map: "ingestion_jobs_source_id_idx")
   @@index([status])
@@ -419,6 +472,7 @@ model AnalyticsEvent {
 model KnowledgeQueryLog {
   id           String   @id @default(cuid())
   userId       String
+  tenantId     String?  @map("tenant_id")
   query        String   @db.Text
   providerUsed String
   modelUsed    String
@@ -427,8 +481,10 @@ model KnowledgeQueryLog {
   tokenUsage   Json?
   cached       Boolean  @default(false)
   createdAt    DateTime @default(now())
+  tenant       Tenant?  @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([userId])
+  @@index([tenantId], map: "knowledge_query_logs_tenant_id_idx")
   @@index([createdAt])
   @@index([cached])
   @@map("knowledge_query_logs")
