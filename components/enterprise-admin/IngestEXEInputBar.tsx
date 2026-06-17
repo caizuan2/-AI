@@ -1,15 +1,37 @@
 "use client";
 
-import { useState } from "react";
-import { FileText, FileType2, ImagePlus, Link2, Loader2, Mic, Paperclip, Presentation, Save, SendHorizontal, UploadCloud } from "lucide-react";
+import { useRef, useState, type ChangeEvent, type ComponentType } from "react";
+import {
+  ChevronDown,
+  FileText,
+  FileType2,
+  ImagePlus,
+  Link2,
+  ListChecks,
+  Loader2,
+  Mic,
+  Paperclip,
+  Plug,
+  Plus,
+  Presentation,
+  Save,
+  Scissors,
+  SendHorizontal,
+  Sparkles,
+  Tags,
+  UploadCloud
+} from "lucide-react";
 
-const attachActions = [
-  { label: "上传", icon: UploadCloud },
-  { label: "图片", icon: ImagePlus },
-  { label: "PPT", icon: Presentation },
-  { label: "Word", icon: FileText },
+const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: string }> }> = [
+  { label: "图片 OCR", icon: ImagePlus },
   { label: "PDF", icon: FileType2 },
-  { label: "网址", icon: Link2 }
+  { label: "Word", icon: FileText },
+  { label: "PPT", icon: Presentation },
+  { label: "网址", icon: Link2 },
+  { label: "分类标签", icon: Tags },
+  { label: "AI 修正", icon: Scissors },
+  { label: "保存知识", icon: Save },
+  { label: "训练记录", icon: ListChecks }
 ];
 
 interface ApiEnvelope<T> {
@@ -52,11 +74,13 @@ async function readApiData<T>(response: Response): Promise<T> {
 }
 
 export function IngestEXEInputBar() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
   const [statusText, setStatusText] = useState("真实 AI 投喂链路已接入：发送后生成结构化知识，确认后入库。");
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
 
   async function handleSend() {
     const value = input.trim();
@@ -126,6 +150,31 @@ export function IngestEXEInputBar() {
     }
   }
 
+  function handleUploadClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      setStatusText(`已选择文件：${file.name}，后续可进入文档解析流程。`);
+    }
+
+    event.target.value = "";
+  }
+
+  function handleMoreTool(label: string) {
+    setIsMoreOpen(false);
+
+    if (label === "保存知识") {
+      void handleSave();
+      return;
+    }
+
+    setStatusText(`${label}入口已打开，当前阶段保留为投喂工作台快捷入口。`);
+  }
+
   return (
     <div className="shrink-0 border-t border-[#ececea] bg-white px-6 py-4">
       <div className="rounded-[24px] border border-[#e6e6e3] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.08)]">
@@ -139,36 +188,77 @@ export function IngestEXEInputBar() {
             }
           }}
           rows={3}
-          placeholder="输入投喂任务，例如：把这段客服对话整理成标准知识点，并生成可保存的问答..."
+          placeholder="可以描述任务或提问任何问题"
           className="min-h-[84px] w-full resize-none rounded-2xl border-0 bg-[#fbfbfa] px-4 py-3 text-sm leading-6 text-[#202020] outline-none placeholder:text-[#a0a0a0] focus:bg-white"
         />
-        <div className="mt-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-wrap gap-2">
-            {attachActions.map((action) => {
-              const Icon = action.icon;
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".pdf,.doc,.docx,.ppt,.pptx,image/*"
+          onChange={handleFileChange}
+        />
+        <div className="mt-2 flex flex-col gap-2 border-t border-[#f0f0ee] pt-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex min-w-0 flex-wrap items-center gap-2 text-xs font-semibold text-[#555]">
+            <button type="button" onClick={() => setStatusText("当前模型：DeepSeek-V4-Pro。")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+              <Sparkles className="h-3.5 w-3.5 text-[#315bf6]" aria-hidden="true" />
+              DeepSeek-V4-Pro
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button type="button" onClick={() => setStatusText("连接入口已保留，可接入企业知识源或外部系统。")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+              <Plug className="h-3.5 w-3.5" aria-hidden="true" />
+              连接
+              <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+            </button>
+            <button type="button" onClick={handleUploadClick} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+              <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
+              上传
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsMoreOpen((current) => !current)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]"
+                aria-expanded={isMoreOpen}
+              >
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                更多 +
+              </button>
+              {isMoreOpen ? (
+                <div className="absolute bottom-11 left-0 z-30 w-56 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
+                  {moreToolActions.map((action) => {
+                    const Icon = action.icon;
 
-              return (
-                <button key={action.label} type="button" className="flex h-9 items-center gap-2 rounded-2xl border border-[#eeeeeb] bg-[#f8f8f7] px-3 text-xs font-medium text-[#4b4b47] transition hover:bg-white">
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {action.label}
-                </button>
-              );
-            })}
+                    return (
+                      <button
+                        key={action.label}
+                        type="button"
+                        onClick={() => handleMoreTool(action.label)}
+                        disabled={action.label === "保存知识" && isSaving}
+                        className="flex h-9 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-semibold text-[#444] transition hover:bg-[#f5f5f3] disabled:cursor-not-allowed disabled:text-[#aaa]"
+                      >
+                        {action.label === "保存知识" && isSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin text-[#777]" aria-hidden="true" /> : <Icon className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />}
+                        {action.label === "保存知识" && isSaving ? "保存中" : action.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" title="附件" className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+          <div className="flex shrink-0 items-center justify-end gap-1.5">
+            <button type="button" title="AI 修正" onClick={() => setStatusText("AI 修正入口已保留，也可从更多菜单进入。")} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+              <Scissors className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button type="button" title="附件" onClick={handleUploadClick} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
               <Paperclip className="h-4 w-4" aria-hidden="true" />
             </button>
-            <button type="button" title="语音备注" className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+            <button type="button" title="语音备注" onClick={() => setStatusText("语音备注入口已保留，后续可接入语音投喂。")} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
               <Mic className="h-4 w-4" aria-hidden="true" />
             </button>
-            <button type="button" onClick={handleSave} disabled={isSaving || !jobId} className="flex h-10 items-center gap-2 rounded-2xl border border-[#d8d8d5] bg-white px-4 text-sm font-semibold text-[#202020] transition hover:bg-[#f6f6f4] disabled:cursor-not-allowed disabled:text-[#aaa]">
-              {isSaving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-              保存知识
-            </button>
-            <button type="button" onClick={handleSend} disabled={isParsing} className="flex h-10 items-center gap-2 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black disabled:bg-[#777]">
+            <button type="button" onClick={handleSend} disabled={isParsing || !input.trim()} className="flex h-10 items-center gap-2 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#e6e6e3] disabled:text-[#aaa]">
               {isParsing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <SendHorizontal className="h-4 w-4" aria-hidden="true" />}
-              发送AI投喂
+              {isParsing ? "发送中" : "发送AI投喂"}
             </button>
           </div>
         </div>

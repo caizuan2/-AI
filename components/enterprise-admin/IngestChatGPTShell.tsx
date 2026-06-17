@@ -1,12 +1,40 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { BotMessageSquare, Check, Database, FileText, ImagePlus, Link2, Loader2, Save, SendHorizontal, Tags } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentType, type FormEvent } from "react";
+import {
+  Bell,
+  BotMessageSquare,
+  Brain,
+  Check,
+  ChevronDown,
+  CircleUserRound,
+  FileText,
+  FileType2,
+  FlaskConical,
+  FolderOpen,
+  ImagePlus,
+  Link2,
+  ListChecks,
+  Loader2,
+  Mic,
+  Paperclip,
+  Plug,
+  Plus,
+  Presentation,
+  Save,
+  Scissors,
+  Search,
+  SendHorizontal,
+  Settings,
+  Sparkles,
+  Tags,
+  UploadCloud,
+  X
+} from "lucide-react";
 import { IngestTenantSummary } from "@/components/enterprise-admin/IngestTenantSummary";
 import {
   ingestChatAgents,
   ingestChatInitialDraft,
-  ingestChatSeedMessages,
   ingestTrainingRecords,
   type IngestChatAgent,
   type IngestChatMessage,
@@ -22,7 +50,34 @@ const agentToneClasses: Record<IngestChatAgent["tone"], string> = {
   slate: "bg-[#edf0f4] text-[#475569]"
 };
 
-const pipeline = ["用户输入", "AI解析", "结构化", "分类标签", "确认保存", "训练记录"];
+const primaryNav: Array<{ label: string; title: string; icon: ComponentType<{ className?: string }>; active?: boolean; badge?: string }> = [
+  { label: "对话", title: "AI 对话投喂", icon: BotMessageSquare, active: true },
+  { label: "专家", title: "知识专家 Agent", icon: CircleUserRound },
+  { label: "任务", title: "训练任务", icon: Check },
+  { label: "文件", title: "文档投喂", icon: FolderOpen },
+  { label: "连接", title: "网址 / 系统连接", icon: Plug },
+  { label: "记忆", title: "知识记忆", icon: Brain },
+  { label: "Lab", title: "实验功能", icon: FlaskConical }
+];
+
+const quickPrompts = [
+  "把这段客服对话整理成标准问答",
+  "从 PDF 内容提取知识点并分类",
+  "生成售后流程的入库建议",
+  "检查这条知识是否需要 AI 修正"
+];
+
+const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: string }> }> = [
+  { label: "图片 OCR", icon: ImagePlus },
+  { label: "PDF", icon: FileType2 },
+  { label: "Word", icon: FileText },
+  { label: "PPT", icon: Presentation },
+  { label: "网址", icon: Link2 },
+  { label: "分类标签", icon: Tags },
+  { label: "AI 修正", icon: Scissors },
+  { label: "保存知识", icon: Save },
+  { label: "训练记录", icon: ListChecks }
+];
 
 interface ApiEnvelope<T> {
   ok: boolean;
@@ -191,18 +246,30 @@ function toStructuredPayload(draft: IngestKnowledgeDraft) {
 }
 
 export function IngestChatGPTShell() {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [activeAgentId, setActiveAgentId] = useState("chief");
-  const [messages, setMessages] = useState<IngestChatMessage[]>(ingestChatSeedMessages);
+  const [messages, setMessages] = useState<IngestChatMessage[]>([]);
   const [draft, setDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const [records, setRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
   const [input, setInput] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerView, setDrawerView] = useState<"draft" | "records">("draft");
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
 
   const activeAgent = useMemo(
     () => ingestChatAgents.find((agent) => agent.id === activeAgentId) ?? ingestChatAgents[0],
     [activeAgentId]
+  );
+
+  const navItems = useMemo(
+    () => primaryNav.map((item) => item.label === "任务"
+      ? { ...item, badge: records.length > 0 ? String(Math.min(records.length, 99)) : undefined }
+      : item),
+    [records.length]
   );
 
   useEffect(() => {
@@ -243,6 +310,7 @@ export function IngestChatGPTShell() {
 
     setIsParsing(true);
     setErrorMessage("");
+    setNoticeMessage("");
     setInput("");
     setMessages((current) => [
       ...current,
@@ -282,6 +350,7 @@ export function IngestChatGPTShell() {
 
       setDraft(nextDraft);
       setRecords(data.records.map(mapRecord));
+      setDrawerView("draft");
       const vectorText = data.vectorStatus?.indexed
         ? ` → 语义索引已完成（${data.vectorStatus.model}${data.vectorStatus.fallbackUsed ? " / mock" : ""}）`
         : "";
@@ -305,12 +374,13 @@ export function IngestChatGPTShell() {
 
   async function handleSaveDraft() {
     if (!draft.jobId) {
-      setErrorMessage("请先发送一次真实 AI 投喂，再保存知识。");
+      setNoticeMessage("请先发送一次真实 AI 投喂，再保存知识。");
       return;
     }
 
     setIsSaving(true);
     setErrorMessage("");
+    setNoticeMessage("");
 
     try {
       const response = await fetch("/api/admin/kb/save", {
@@ -330,6 +400,9 @@ export function IngestChatGPTShell() {
         saveStatus: "已保存"
       }));
       setRecords(data.records.map(mapRecord));
+      setDrawerView("records");
+      setDrawerOpen(true);
+      setNoticeMessage("已保存到知识库，训练记录已更新。");
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : "保存知识失败，请稍后重试。");
     } finally {
@@ -337,19 +410,108 @@ export function IngestChatGPTShell() {
     }
   }
 
+  function openDrawer(view: "draft" | "records") {
+    setDrawerView(view);
+    setDrawerOpen(true);
+  }
+
+  function handleToolAction(label: string) {
+    setNoticeMessage(`${label}入口已收纳到底部工具区，后续可接入文件选择或解析弹窗。`);
+  }
+
+  function handleUploadClick() {
+    fileInputRef.current?.click();
+  }
+
+  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      setNoticeMessage(`已选择文件：${file.name}，后续可进入解析流程。`);
+      setErrorMessage("");
+    }
+
+    event.target.value = "";
+  }
+
+  async function handleMoreTool(label: string) {
+    setIsMoreOpen(false);
+
+    if (label === "保存知识") {
+      await handleSaveDraft();
+      return;
+    }
+
+    if (label === "训练记录") {
+      openDrawer("records");
+      return;
+    }
+
+    if (label === "AI 修正") {
+      openDrawer("draft");
+      setNoticeMessage("AI 修正入口已打开，可结合结构化结果继续优化。");
+      return;
+    }
+
+    setNoticeMessage(`${label}入口已打开，当前阶段保留为投喂工具快捷入口。`);
+    setErrorMessage("");
+  }
+
+  const hasMessages = messages.length > 0;
+
   return (
-    <main className="flex h-screen overflow-hidden bg-[#f7f7f6] pt-14 text-[#191919]">
-      <aside className="hidden w-[300px] shrink-0 flex-col border-r border-[#e8e8e5] bg-[#fbfbfa] md:flex">
-        <div className="border-b border-[#ececea] p-4">
-          <div className="flex h-10 items-center gap-2 rounded-2xl bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
-            <BotMessageSquare className="h-4 w-4" aria-hidden="true" />
-            <span>搜索 Agent / 知识库</span>
-          </div>
+    <main className="flex h-screen overflow-hidden bg-[#f7f7f6] text-[#191919]">
+      <aside className="flex h-screen w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5">
+        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-white bg-[#d9f8e9] text-sm font-semibold text-[#128246] shadow-sm">
+          AI
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto p-3">
-          <p className="px-2 pb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9b9b96]">Agent 系统</p>
-          <div className="space-y-2">
+        <nav className="mt-7 flex flex-1 flex-col items-center gap-2" aria-label="Admin ingest navigation">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+
+            return (
+              <button
+                key={item.label}
+                title={item.title}
+                type="button"
+                className="group relative flex w-[54px] flex-col items-center gap-1 rounded-xl py-2 text-[11px] font-medium text-[#252525] transition hover:bg-white/80"
+                onClick={() => item.label === "任务" ? openDrawer("records") : setNoticeMessage(`${item.title}入口已保留。`)}
+              >
+                <span className={["relative flex h-8 w-8 items-center justify-center rounded-xl transition", item.active ? "bg-[#191919] text-white shadow-sm" : "text-[#222] group-hover:bg-white"].join(" ")}>
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {item.badge ? <span className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full bg-[#20b25b] px-1 text-[10px] leading-4 text-white">{item.badge}</span> : null}
+                </span>
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="flex flex-col items-center gap-2 text-[#333]">
+          <button type="button" title="更新提示" className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white">
+            <Bell className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <button type="button" title="我的设置" className="flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white">
+            <Settings className="h-5 w-5" aria-hidden="true" />
+          </button>
+        </div>
+      </aside>
+
+      <aside className="hidden h-screen w-[240px] shrink-0 flex-col border-r border-[#ededeb] bg-[#fbfbfa] md:flex">
+        <div className="p-4 pb-3">
+          <div className="flex h-9 items-center gap-2 rounded-full bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
+            <Search className="h-4 w-4" aria-hidden="true" />
+            <span>搜索</span>
+          </div>
+          <button type="button" className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-full border border-[#e4e4e1] bg-white text-sm font-medium text-[#202020] shadow-sm transition hover:bg-[#f7f7f5]">
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            新建 Agent
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+          <div className="space-y-1.5">
             {ingestChatAgents.map((agent) => (
               <button
                 key={agent.id}
@@ -361,7 +523,7 @@ export function IngestChatGPTShell() {
                 ].join(" ")}
               >
                 <div className="flex gap-3">
-                  <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold", agentToneClasses[agent.tone]].join(" ")}>
+                  <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold", agentToneClasses[agent.tone]].join(" ")}>
                     {agent.avatar}
                   </span>
                   <span className="min-w-0">
@@ -374,59 +536,55 @@ export function IngestChatGPTShell() {
             ))}
           </div>
 
-          <div className="mt-5 rounded-2xl border border-[#ececea] bg-white p-3">
-            <p className="text-sm font-semibold text-[#202020]">上传系统入口</p>
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs font-medium text-[#555]">
-              {[
-                ["PDF", FileText],
-                ["Word", FileText],
-                ["PPT", FileText],
-                ["图片 OCR", ImagePlus],
-                ["网址", Link2],
-                ["分类标签", Tags]
-              ].map(([label, Icon]) => {
-                const TypedIcon = Icon as typeof FileText;
-                return (
-                  <button key={label as string} type="button" className="flex items-center gap-2 rounded-xl bg-[#f7f7f6] px-2.5 py-2 transition hover:bg-[#efefed]">
-                    <TypedIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                    {label as string}
-                  </button>
-                );
-              })}
+          <div className="mx-2 mt-4 border-t border-[#eeeeeb] pt-4">
+            <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#9b9b96]">最近投喂</p>
+            <div className="mt-2 space-y-1">
+              {records.slice(0, 3).map((record) => (
+                <button key={record.id} type="button" onClick={() => openDrawer("records")} className="w-full rounded-xl px-2 py-2 text-left hover:bg-[#f0f0ee]">
+                  <span className="block truncate text-xs font-semibold text-[#303030]">{record.resultTitle}</span>
+                  <span className="mt-0.5 block truncate text-[11px] text-[#8c8c88]">{record.category} · {record.time}</span>
+                </button>
+              ))}
             </div>
           </div>
         </div>
       </aside>
 
-      <section className="flex min-w-0 flex-1 flex-col">
-        <div className="flex h-14 shrink-0 items-center justify-between border-b border-[#eeeeeb] bg-white px-6">
-          <div>
-            <h1 className="text-base font-semibold text-[#202020]">ChatGPT 风格 AI 投喂</h1>
-            <p className="text-xs text-[#8b8b86]">普通 AI 问答 / 轻量投喂 / 真实训练闭环</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-2 rounded-2xl bg-[#f0f0ee] px-3 py-2 text-xs font-semibold text-[#555]">
-              <Database className="h-4 w-4" aria-hidden="true" />
-              当前：{activeAgent.role}
-            </div>
-            <IngestTenantSummary compact />
-          </div>
+      <section className="relative flex min-w-0 flex-1 flex-col bg-white">
+        <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-b border-[#f0f0ee] px-5">
+          <button type="button" onClick={() => openDrawer("records")} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
+            训练记录
+          </button>
+          <button type="button" onClick={() => openDrawer("draft")} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
+            结构化结果
+          </button>
+          <IngestTenantSummary compact />
         </div>
 
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex min-w-0 flex-col bg-white">
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6">
-              <div className="mx-auto max-w-3xl space-y-5">
-                <div className="rounded-[26px] border border-[#e7e7e4] bg-[#fbfbfa] p-4">
-                  <div className="flex flex-wrap gap-2">
-                    {pipeline.map((step, index) => (
-                      <span key={step} className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-[#555] ring-1 ring-[#ececea]">
-                        {index + 1}. {step}
-                      </span>
-                    ))}
-                  </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
+          <div className="mx-auto flex min-h-full max-w-4xl flex-col justify-center">
+            {!hasMessages ? (
+              <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
+                <div className={["flex h-20 w-20 items-center justify-center rounded-[30px] text-3xl font-semibold shadow-sm", agentToneClasses[activeAgent.tone]].join(" ")}>
+                  {activeAgent.avatar}
                 </div>
-
+                <h1 className="mt-6 text-4xl font-semibold tracking-tight text-[#181818] max-sm:text-3xl">Hi，我是知识投喂助手</h1>
+                <p className="mt-3 text-lg text-[#9a9a96]">{activeAgent.name} · {activeAgent.role}</p>
+                <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
+                  {quickPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => setInput(prompt)}
+                      className="rounded-full bg-[#f6f6f5] px-4 py-3 text-left text-sm text-[#303030] transition hover:bg-[#ededeb]"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto w-full max-w-3xl space-y-5 pt-8">
                 {messages.map((message) => (
                   <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
                     <div className={[
@@ -441,50 +599,155 @@ export function IngestChatGPTShell() {
                   </div>
                 ))}
 
+                {draft.jobId ? (
+                  <div className="flex justify-start">
+                    <div className="rounded-[24px] border border-[#e7e7e4] bg-white px-4 py-3 text-sm shadow-sm">
+                      <p className="font-semibold text-[#202020]">AI 整理结果已准备好</p>
+                      <p className="mt-1 text-xs text-[#777]">{draft.title} · {draft.category} · {draft.recommendation}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button type="button" onClick={() => openDrawer("draft")} className="rounded-full bg-[#202020] px-3 py-2 text-xs font-semibold text-white">查看结构化结果</button>
+                        <button type="button" onClick={handleSaveDraft} disabled={isSaving || draft.saveStatus === "已保存"} className="rounded-full bg-[#e9f8ef] px-3 py-2 text-xs font-semibold text-[#128246] disabled:text-[#aaa]">
+                          {draft.saveStatus === "已保存" ? "已保存" : "保存知识"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+
                 {isParsing ? (
                   <div className="flex items-center gap-2 rounded-2xl bg-[#f8f8f7] px-4 py-3 text-sm text-[#666]">
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
                     AI 正在解析并生成知识结构...
                   </div>
                 ) : null}
-
-                {errorMessage ? (
-                  <div className="rounded-2xl border border-[#ffd6dc] bg-[#fff6f7] px-4 py-3 text-sm leading-6 text-[#b93b4a]">
-                    {errorMessage}
-                  </div>
-                ) : null}
               </div>
-            </div>
+            )}
+          </div>
+        </div>
 
-            <form onSubmit={handleSubmit} className="shrink-0 border-t border-[#ececea] bg-white px-5 py-4">
-              <div className="mx-auto max-w-3xl rounded-[24px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
-                <textarea
-                  value={input}
-                  onChange={(event) => setInput(event.target.value)}
-                  rows={3}
-                  placeholder="输入要投喂的内容，例如：客户申请退款前需要先核对订单状态..."
-                  className="min-h-[88px] w-full resize-none rounded-2xl border-0 bg-[#fbfbfa] px-4 py-3 text-sm leading-6 outline-none placeholder:text-[#aaa] focus:bg-white"
-                />
-                <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="flex flex-wrap gap-2 text-xs font-medium text-[#555]">
-                    <button type="button" className="rounded-full bg-[#f3f3f1] px-3 py-2 hover:bg-[#ececea]">上传文件</button>
-                    <button type="button" className="rounded-full bg-[#f3f3f1] px-3 py-2 hover:bg-[#ececea]">图片 OCR</button>
-                    <button type="button" className="rounded-full bg-[#f3f3f1] px-3 py-2 hover:bg-[#ececea]">网址投喂</button>
-                  </div>
-                  <button type="submit" className="flex h-10 items-center justify-center gap-2 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black">
-                    {isParsing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <SendHorizontal className="h-4 w-4" aria-hidden="true" />}
-                    发送AI投喂
+        <div className="shrink-0 bg-white px-5 pb-7">
+          <form onSubmit={handleSubmit} className="mx-auto max-w-4xl rounded-[28px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
+            <textarea
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              rows={3}
+              placeholder="可以描述任务或提问任何问题"
+              className="min-h-[88px] w-full resize-none rounded-2xl border-0 bg-white px-3 py-3 text-sm leading-6 outline-none placeholder:text-[#aaa]"
+            />
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,image/*"
+              onChange={handleFileChange}
+            />
+            <div className="flex flex-col gap-2 border-t border-[#f0f0ee] pt-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs font-semibold text-[#555]">
+                <button type="button" onClick={() => setNoticeMessage("当前模型：DeepSeek-V4-Pro。")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+                  <Sparkles className="h-3.5 w-3.5 text-[#315bf6]" aria-hidden="true" />
+                  DeepSeek-V4-Pro
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => setNoticeMessage("连接入口已保留，可接入企业知识源或外部系统。")} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+                  <Plug className="h-3.5 w-3.5" aria-hidden="true" />
+                  连接
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+                <button type="button" onClick={handleUploadClick} className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]">
+                  <UploadCloud className="h-3.5 w-3.5" aria-hidden="true" />
+                  上传
+                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setIsMoreOpen((current) => !current)}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]"
+                    aria-expanded={isMoreOpen}
+                  >
+                    <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                    更多 +
                   </button>
+                  {isMoreOpen ? (
+                    <div className="absolute bottom-11 left-0 z-30 w-56 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
+                      {moreToolActions.map((action) => {
+                        const Icon = action.icon;
+
+                        return (
+                          <button
+                            key={action.label}
+                            type="button"
+                            onClick={() => void handleMoreTool(action.label)}
+                            className="flex h-9 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-semibold text-[#444] transition hover:bg-[#f5f5f3]"
+                          >
+                            <Icon className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+                            {action.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
                 </div>
               </div>
-            </form>
-          </div>
+              <div className="flex shrink-0 items-center justify-end gap-1.5">
+                <button type="button" title="AI 修正" onClick={() => void handleMoreTool("AI 修正")} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+                  <Scissors className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <button type="button" title="附件" onClick={handleUploadClick} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+                  <Paperclip className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <button type="button" title="语音" onClick={() => handleToolAction("麦克风")} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+                  <Mic className="h-4 w-4" aria-hidden="true" />
+                </button>
+                <button
+                  type="submit"
+                  disabled={isParsing || !input.trim()}
+                  className={[
+                    "flex h-10 items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
+                    isParsing ? "w-auto px-3 text-xs font-semibold" : "w-10"
+                  ].join(" ")}
+                >
+                  {isParsing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      发送中
+                    </>
+                  ) : (
+                    <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </form>
 
-          <aside className="hidden min-h-0 overflow-y-auto border-l border-[#ececea] bg-[#fbfbfa] p-4 lg:block">
-            <KnowledgeDraftPanel draft={draft} isSaving={isSaving} onSave={handleSaveDraft} />
-            <TrainingRecords records={records} />
-          </aside>
+          {noticeMessage || errorMessage ? (
+            <p className={errorMessage ? "mx-auto mt-2 max-w-4xl text-center text-xs text-[#b93b4a]" : "mx-auto mt-2 max-w-4xl text-center text-xs text-[#8a8a86]"}>
+              {errorMessage || noticeMessage}
+            </p>
+          ) : (
+            <p className="mx-auto mt-2 max-w-4xl text-center text-[11px] text-[#aaa]">内容由AI生成，请仔细甄别</p>
+          )}
         </div>
+
+        {drawerOpen ? (
+          <div className="absolute inset-y-0 right-0 z-40 flex w-full justify-end bg-black/10">
+            <aside className="h-full w-full max-w-[390px] overflow-y-auto border-l border-[#ececea] bg-[#fbfbfa] p-4 shadow-[-18px_0_45px_rgba(15,23,42,0.08)]">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="flex rounded-full bg-[#ededeb] p-1 text-xs font-semibold text-[#555]">
+                  <button type="button" onClick={() => setDrawerView("draft")} className={drawerView === "draft" ? "rounded-full bg-white px-3 py-1.5 text-[#202020] shadow-sm" : "px-3 py-1.5"}>结构化结果</button>
+                  <button type="button" onClick={() => setDrawerView("records")} className={drawerView === "records" ? "rounded-full bg-white px-3 py-1.5 text-[#202020] shadow-sm" : "px-3 py-1.5"}>训练记录</button>
+                </div>
+                <button type="button" aria-label="关闭详情抽屉" onClick={() => setDrawerOpen(false)} className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-[#555] shadow-sm hover:bg-[#f3f3f1]">
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+              {drawerView === "draft" ? (
+                <KnowledgeDraftPanel draft={draft} isSaving={isSaving} onSave={handleSaveDraft} />
+              ) : (
+                <TrainingRecords records={records} />
+              )}
+            </aside>
+          </div>
+        ) : null}
       </section>
     </main>
   );
