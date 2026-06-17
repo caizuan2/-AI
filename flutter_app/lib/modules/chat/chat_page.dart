@@ -895,61 +895,63 @@ class _ChatPageState extends State<ChatPage> {
           );
         },
       ),
-      title: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final subtitle =
-              '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}';
-          if (!_useWindowsBrand) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(_legacyAppTitle),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            );
-          }
+      title: desktopSidebar
+          ? const SizedBox.shrink()
+          : AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final subtitle =
+                    '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}';
+                if (!_useWindowsBrand) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(_legacyAppTitle),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  );
+                }
 
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const _AppBrandLogo(size: 32, radius: 9),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                return Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      _appDisplayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF64748B),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                    const _AppBrandLogo(size: 32, radius: 9),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            _appDisplayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+                );
+              },
+            ),
       actions: [
         PopupMenuButton<String>(
           tooltip: '选择模型',
