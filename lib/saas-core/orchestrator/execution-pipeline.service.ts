@@ -1,16 +1,20 @@
 import { billingEngine } from "@/lib/billing/billing.engine";
+import { checkTenantQuota } from "@/lib/quota/quota.engine";
 import { executeAIGatewayRequest, getAIGatewayStats } from "@/lib/saas-core/ai-gateway.service";
 import { getConfiguredDataSourceType } from "@/lib/saas-core/datasource/datasource.factory";
 import { createKnowledge, getTenantKnowledge } from "@/lib/saas-core/knowledge.service";
 import { getSaaSCoreMetrics, getSaaSSystemHealth } from "@/lib/saas-core/system.service";
 import { getTenant } from "@/lib/saas-core/tenant.service";
 import type { AccessResult, BillingResource, QuotaType } from "@/types/billing";
+import type { QuotaAction, QuotaCheckResult } from "@/types/quota";
 import type { Tenant } from "@/types/saas-core";
 import type { OrchestratorRequest, PipelineStep, PipelineStepName, RequestContext, RouteDecision } from "@/types/orchestrator";
 
 type PipelineOutput = {
   success: boolean;
-  error?: "billing_limit";
+  error?: "billing_limit" | "quota_exceeded";
+  reason?: string;
+  billing?: unknown;
   data: Record<string, unknown>;
   steps: PipelineStep[];
 };
@@ -41,6 +45,28 @@ function getQuotaType(decision: RouteDecision): QuotaType {
   }
 
   return "user_seat";
+}
+
+function getQuotaAction(request: OrchestratorRequest, decision: RouteDecision): QuotaAction {
+  const requestType = request.context.requestType.toLowerCase();
+
+  if (requestType.includes("upload")) {
+    return "upload_document";
+  }
+
+  if (requestType.includes("add_user") || requestType.includes("user.add") || requestType.includes("user.create")) {
+    return "add_user";
+  }
+
+  if (decision.route === "ingest" || requestType.includes("knowledge") || requestType.includes("train")) {
+    return "add_knowledge";
+  }
+
+  if (decision.route === "user" || requestType.includes("ai") || requestType.includes("chat")) {
+    return "ai_request";
+  }
+
+  return "unknown";
 }
 
 async function runStep<T>(steps: PipelineStep[], name: PipelineStepName, action: () => Promise<T> | T): Promise<T> {
@@ -102,6 +128,10 @@ async function checkBillingAccess(request: OrchestratorRequest, decision: RouteD
     },
     resource
   );
+}
+
+function checkQuotaAccess(request: OrchestratorRequest, decision: RouteDecision): Promise<QuotaCheckResult> {
+  return checkTenantQuota(request.context.tenantId, getQuotaAction(request, decision));
 }
 
 async function resolveTenant(context: RequestContext): Promise<Tenant> {
@@ -180,12 +210,33 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
     return {
       success: false,
       error: "billing_limit",
+      reason: billing.reason,
+      billing,
       data: {
         requestType: request.context.requestType,
         source: request.context.source,
         route: decision.route,
         flow: decision.flow,
         billing
+      },
+      steps
+    };
+  }
+
+  const quota = await runStep(steps, "quota", () => checkQuotaAccess(request, decision));
+
+  if (!quota.allowed) {
+    return {
+      success: false,
+      error: "quota_exceeded",
+      reason: quota.reason,
+      billing: quota,
+      data: {
+        requestType: request.context.requestType,
+        source: request.context.source,
+        route: decision.route,
+        flow: decision.flow,
+        billing: quota
       },
       steps
     };
@@ -206,6 +257,7 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
     repositoryMode,
     tenant: resolvedTenant,
     billing,
+    quota,
     auth: "accepted",
     result: dispatchResult
   }));

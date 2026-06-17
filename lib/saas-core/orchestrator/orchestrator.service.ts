@@ -12,7 +12,9 @@ export async function handleOrchestratedRequest(request: OrchestratorRequest): P
   if (!pipeline.success) {
     return {
       success: false,
-      error: "billing_limit",
+      error: pipeline.error ?? "billing_limit",
+      reason: pipeline.reason,
+      billing: pipeline.billing,
       data: pipeline.data,
       route: decision.route,
       flow: decision.flow,

@@ -24,6 +24,7 @@ export type PipelineStepName =
   | "auth"
   | "rbac"
   | "billing"
+  | "quota"
   | "tenant resolve"
   | "service selection"
   | "repository call"
@@ -56,7 +57,9 @@ export type ExecutionSuccessResult<TData = unknown> = {
 
 export type ExecutionDeniedResult<TData = unknown> = {
   success: false;
-  error: "billing_limit";
+  error: "billing_limit" | "quota_exceeded";
+  reason?: string;
+  billing?: unknown;
   data: TData;
   route: RouteType;
   flow: SystemFlowType;

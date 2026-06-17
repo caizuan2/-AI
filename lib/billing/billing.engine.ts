@@ -1,8 +1,11 @@
 import { alipayProvider } from "@/lib/billing/alipay.provider";
-import type { BillingProvider } from "@/lib/billing/billing.provider";
+import { resolvePlan, type BillingProvider } from "@/lib/billing/billing.provider";
 import { licenseProvider } from "@/lib/billing/license.provider";
 import { stripeProvider } from "@/lib/billing/stripe.provider";
 import { wechatProvider } from "@/lib/billing/wechat.provider";
+import { getQuotaPolicy } from "@/lib/quota/quota.policy";
+import { getQuotaUsage } from "@/lib/quota/quota.service";
+import { getSubscriptionByTenant } from "@/lib/subscription/subscription.service";
 import type { AccessResult, BillingProviderType, BillingResource, BillingUser, Plan, QuotaCheckResult, SubscriptionStatus } from "@/types/billing";
 
 const providers: Record<BillingProviderType, BillingProvider> = {
@@ -28,6 +31,16 @@ export async function validateSubscription(user: BillingUser, providerType = get
 
 export async function getUserPlan(user: BillingUser, providerType = getConfiguredProviderType()): Promise<Plan> {
   return getBillingProvider(providerType).getPlan(user);
+}
+
+export async function getPlan(userOrTenant: BillingUser | { tenantId: string }, providerType = getConfiguredProviderType()): Promise<Plan> {
+  if ("id" in userOrTenant) {
+    return getUserPlan(userOrTenant, providerType);
+  }
+
+  const subscription = await getSubscriptionByTenant(userOrTenant.tenantId);
+
+  return resolvePlan(subscription.plan);
 }
 
 export async function checkQuota(
@@ -98,10 +111,29 @@ export async function getBillingProviderStatus(user: BillingUser, providerType =
   };
 }
 
+export async function getBillingSummary(tenantId: string) {
+  const [subscription, usage] = await Promise.all([
+    getSubscriptionByTenant(tenantId),
+    getQuotaUsage(tenantId)
+  ]);
+  const policy = getQuotaPolicy(subscription.plan);
+
+  return {
+    tenantId,
+    provider: getConfiguredProviderType(),
+    subscription,
+    plan: subscription.plan,
+    policy,
+    usage
+  };
+}
+
 export const billingEngine = {
   checkAccess,
   checkQuota,
+  getPlan,
   getUserPlan,
   validateSubscription,
-  getBillingProviderStatus
+  getBillingProviderStatus,
+  getBillingSummary
 };
