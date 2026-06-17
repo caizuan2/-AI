@@ -844,6 +844,8 @@ class _ChatPageState extends State<ChatPage> {
           syncing: _controller.syncing,
           syncError: _controller.lastSyncError,
           useOfficialBrand: _useWindowsBrand,
+          onRenameConversation: _controller.renameConversationLocally,
+          onSetConversationPinned: _controller.setConversationPinned,
           onNewConversation: () {
             _clearComposer();
             _controller.startNewConversation();
@@ -1250,6 +1252,8 @@ class _HistoryDrawer extends StatefulWidget {
     required this.syncing,
     required this.syncError,
     required this.useOfficialBrand,
+    required this.onRenameConversation,
+    required this.onSetConversationPinned,
     required this.onNewConversation,
     required this.onOpenConversation,
     required this.onOpenSettings,
@@ -1266,6 +1270,8 @@ class _HistoryDrawer extends StatefulWidget {
   final bool syncing;
   final String? syncError;
   final bool useOfficialBrand;
+  final bool Function(String id, String title) onRenameConversation;
+  final bool Function(String id, bool pinned) onSetConversationPinned;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
   final VoidCallback onOpenSettings;
@@ -1285,6 +1291,128 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _handleConversationMenu(
+    _ConversationMenuAction action,
+    ChatConversationSummary conversation,
+  ) async {
+    switch (action) {
+      case _ConversationMenuAction.share:
+        await Clipboard.setData(
+          ClipboardData(
+            text:
+                '${conversation.title}\n${conversation.subtitle}\n会话 ID：${conversation.id}',
+          ),
+        );
+        if (!mounted) return;
+        _showLocalActionHint(context, '已复制');
+        return;
+      case _ConversationMenuAction.startGroupChat:
+        _showLocalActionHint(context, '群聊功能暂未开放');
+        return;
+      case _ConversationMenuAction.rename:
+        await _showRenameConversationDialog(conversation);
+        return;
+      case _ConversationMenuAction.togglePinned:
+        final nextPinned = !conversation.pinned;
+        final updated = widget.onSetConversationPinned(
+          conversation.id,
+          nextPinned,
+        );
+        if (!mounted) return;
+        _showLocalActionHint(
+          context,
+          updated ? (nextPinned ? '已置顶聊天' : '已取消置顶') : '当前会话暂时无法置顶',
+          error: !updated,
+        );
+        return;
+      case _ConversationMenuAction.archive:
+        _showLocalActionHint(context, '归档功能暂未开放');
+        return;
+      case _ConversationMenuAction.delete:
+        await _confirmUnavailableDelete(conversation);
+        return;
+    }
+  }
+
+  Future<void> _showRenameConversationDialog(
+    ChatConversationSummary conversation,
+  ) async {
+    final controller = TextEditingController(text: conversation.title);
+    final nextTitle = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('重命名'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 40,
+            decoration: const InputDecoration(
+              labelText: '会话名称',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    controller.dispose();
+    if (!mounted || nextTitle == null) {
+      return;
+    }
+
+    final updated = widget.onRenameConversation(
+      conversation.id,
+      nextTitle,
+    );
+    _showLocalActionHint(
+      context,
+      updated ? '已重命名（仅本地显示）' : '请输入会话名称',
+      error: !updated,
+    );
+  }
+
+  Future<void> _confirmUnavailableDelete(
+    ChatConversationSummary conversation,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('确认删除该会话？'),
+          content: Text('“${conversation.title}” 暂不支持可靠删除，确认后不会删除云端数据或附件文件。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFFDC2626),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除'),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+    _showLocalActionHint(context, '删除功能暂未开放', error: true);
   }
 
   @override
@@ -1384,6 +1512,8 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                         conversation: conversation,
                         index: index,
                         onTap: () => widget.onOpenConversation(conversation.id),
+                        onMenuSelected: (action) =>
+                            _handleConversationMenu(action, conversation),
                       );
                     },
                     separatorBuilder: (context, index) =>
@@ -1484,62 +1614,262 @@ class _DrawerEmptyState extends StatelessWidget {
   }
 }
 
-class _ConversationTile extends StatelessWidget {
+enum _ConversationMenuAction {
+  share,
+  startGroupChat,
+  rename,
+  togglePinned,
+  archive,
+  delete,
+}
+
+class _ConversationTile extends StatefulWidget {
   const _ConversationTile({
     required this.conversation,
     required this.index,
     required this.onTap,
+    required this.onMenuSelected,
   });
 
   final ChatConversationSummary conversation;
   final int index;
   final VoidCallback onTap;
+  final ValueChanged<_ConversationMenuAction> onMenuSelected;
+
+  @override
+  State<_ConversationTile> createState() => _ConversationTileState();
+}
+
+class _ConversationTileState extends State<_ConversationTile> {
+  bool _hovering = false;
+
+  bool get _showsDesktopMenuButton {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  Future<void> _showMenuAt(Offset globalPosition) async {
+    final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (overlay is! RenderBox) {
+      return;
+    }
+    final action = await showMenu<_ConversationMenuAction>(
+      context: context,
+      color: Colors.white,
+      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        overlay.size.width - globalPosition.dx,
+        overlay.size.height - globalPosition.dy,
+      ),
+      items: _conversationMenuItems(widget.conversation),
+    );
+    if (action != null && mounted) {
+      widget.onMenuSelected(action);
+    }
+  }
+
+  Future<void> _showMenuFromButton(BuildContext buttonContext) async {
+    final button = buttonContext.findRenderObject();
+    if (button is! RenderBox) {
+      return;
+    }
+    final origin = button.localToGlobal(Offset(button.size.width, 0));
+    await _showMenuAt(origin);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color:
-          conversation.selected ? const Color(0xFFEFF6FF) : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-          child: Row(
-            children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: _conversationIconColor(
-                  index,
-                  conversation.selected,
-                ),
-                child: Icon(
-                  Icons.chat_bubble_outline,
-                  size: 18,
-                  color: conversation.selected
-                      ? const Color(0xFF1D4ED8)
-                      : const Color(0xFF475569),
-                ),
+    final conversation = widget.conversation;
+    final showMenuButton =
+        _showsDesktopMenuButton && (_hovering || conversation.selected);
+    return MouseRegion(
+      onEnter: _showsDesktopMenuButton
+          ? (_) => setState(() => _hovering = true)
+          : null,
+      onExit: _showsDesktopMenuButton
+          ? (_) => setState(() => _hovering = false)
+          : null,
+      child: GestureDetector(
+        onSecondaryTapDown: _showsDesktopMenuButton
+            ? (details) => _showMenuAt(details.globalPosition)
+            : null,
+        onLongPressStart: _showsDesktopMenuButton
+            ? null
+            : (details) => _showMenuAt(details.globalPosition),
+        child: Material(
+          color: conversation.selected
+              ? const Color(0xFFEFF6FF)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: widget.onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _conversationIconColor(
+                      widget.index,
+                      conversation.selected,
+                    ),
+                    child: Icon(
+                      Icons.chat_bubble_outline,
+                      size: 18,
+                      color: conversation.selected
+                          ? const Color(0xFF1D4ED8)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        if (conversation.pinned) ...[
+                          const Icon(
+                            Icons.push_pin,
+                            size: 13,
+                            color: Color(0xFF64748B),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _shortTime(conversation.updatedAt),
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11,
+                    ),
+                  ),
+                  if (_showsDesktopMenuButton)
+                    Visibility(
+                      visible: showMenuButton,
+                      maintainAnimation: true,
+                      maintainSize: true,
+                      maintainState: true,
+                      child: Builder(
+                        builder: (buttonContext) {
+                          return IconButton(
+                            tooltip: '更多',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 30,
+                              height: 30,
+                            ),
+                            onPressed: () => _showMenuFromButton(
+                              buttonContext,
+                            ),
+                            icon: const Icon(Icons.more_horiz, size: 18),
+                            color: const Color(0xFF64748B),
+                          );
+                        },
+                      ),
+                    ),
+                ],
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  conversation.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _shortTime(conversation.updatedAt),
-                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
-              ),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+}
+
+List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
+  ChatConversationSummary conversation,
+) {
+  return [
+    const PopupMenuItem(
+      value: _ConversationMenuAction.share,
+      child: _ConversationMenuItemRow(
+        icon: Icons.ios_share,
+        label: '分享',
+      ),
+    ),
+    const PopupMenuItem(
+      value: _ConversationMenuAction.startGroupChat,
+      child: _ConversationMenuItemRow(
+        icon: Icons.group_add_outlined,
+        label: '开始群聊',
+      ),
+    ),
+    const PopupMenuItem(
+      value: _ConversationMenuAction.rename,
+      child: _ConversationMenuItemRow(
+        icon: Icons.drive_file_rename_outline,
+        label: '重命名',
+      ),
+    ),
+    PopupMenuItem(
+      value: _ConversationMenuAction.togglePinned,
+      child: _ConversationMenuItemRow(
+        icon: Icons.push_pin_outlined,
+        label: conversation.pinned ? '取消置顶聊天' : '置顶聊天',
+      ),
+    ),
+    const PopupMenuItem(
+      value: _ConversationMenuAction.archive,
+      child: _ConversationMenuItemRow(
+        icon: Icons.archive_outlined,
+        label: '归档',
+      ),
+    ),
+    const PopupMenuDivider(height: 6),
+    const PopupMenuItem(
+      value: _ConversationMenuAction.delete,
+      child: _ConversationMenuItemRow(
+        icon: Icons.delete_outline,
+        label: '删除',
+        danger: true,
+      ),
+    ),
+  ];
+}
+
+class _ConversationMenuItemRow extends StatelessWidget {
+  const _ConversationMenuItemRow({
+    required this.icon,
+    required this.label,
+    this.danger = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool danger;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = danger ? const Color(0xFFDC2626) : const Color(0xFF0F172A);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 19, color: color),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: TextStyle(
+            color: color,
+            fontWeight: danger ? FontWeight.w700 : FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 }

@@ -54,10 +54,37 @@ class ChatController extends ChangeNotifier {
             updatedAt: conversation.updatedAt,
             selected: identical(conversation, _activeConversation),
             cloudSynced: conversation.remoteConversationId != null,
+            pinned: conversation.pinned,
           ),
     ];
-    summaries.sort((left, right) => right.updatedAt.compareTo(left.updatedAt));
+    summaries.sort((left, right) {
+      if (left.pinned != right.pinned) {
+        return left.pinned ? -1 : 1;
+      }
+      return right.updatedAt.compareTo(left.updatedAt);
+    });
     return summaries;
+  }
+
+  bool renameConversationLocally(String id, String title) {
+    final conversation = _findConversation(id);
+    final nextTitle = title.trim();
+    if (conversation == null || nextTitle.isEmpty) {
+      return false;
+    }
+    conversation.localTitle = nextTitle;
+    notifyListeners();
+    return true;
+  }
+
+  bool setConversationPinned(String id, bool pinned) {
+    final conversation = _findConversation(id);
+    if (conversation == null || conversation.pinned == pinned) {
+      return conversation != null;
+    }
+    conversation.pinned = pinned;
+    notifyListeners();
+    return true;
   }
 
   void setModel(String model) {
@@ -116,10 +143,7 @@ class ChatController extends ChangeNotifier {
       return;
     }
 
-    final conversation = _conversations
-        .where((item) => item.id == id)
-        .cast<_ChatConversationState?>()
-        .firstWhere((item) => item != null, orElse: () => null);
+    final conversation = _findConversation(id);
     if (conversation == null) {
       return;
     }
@@ -138,6 +162,13 @@ class ChatController extends ChangeNotifier {
     _thinking = false;
     _cancelRequested = false;
     notifyListeners();
+  }
+
+  _ChatConversationState? _findConversation(String id) {
+    return _conversations
+        .where((item) => item.id == id || item.remoteConversationId == id)
+        .cast<_ChatConversationState?>()
+        .firstWhere((item) => item != null, orElse: () => null);
   }
 
   Future<void> loadCloudConversationHistory(String conversationId) async {
@@ -803,6 +834,7 @@ class ChatConversationSummary {
     required this.updatedAt,
     required this.selected,
     this.cloudSynced = false,
+    this.pinned = false,
   });
 
   final String id;
@@ -811,6 +843,7 @@ class ChatConversationSummary {
   final DateTime updatedAt;
   final bool selected;
   final bool cloudSynced;
+  final bool pinned;
 }
 
 class _ChatConversationState {
@@ -831,6 +864,8 @@ class _ChatConversationState {
   String? cloudTitle;
   String? cloudSubtitle;
   DateTime? cloudUpdatedAt;
+  String? localTitle;
+  bool pinned = false;
 
   bool get hasVisibleContent {
     if (remoteConversationId != null) {
@@ -846,6 +881,9 @@ class _ChatConversationState {
   }
 
   String get title {
+    if (localTitle != null && localTitle!.trim().isNotEmpty) {
+      return _clip(localTitle!.trim(), 28);
+    }
     if (cloudTitle != null && cloudTitle!.trim().isNotEmpty) {
       return _clip(cloudTitle!.trim(), 28);
     }
