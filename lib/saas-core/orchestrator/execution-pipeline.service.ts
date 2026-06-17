@@ -1,12 +1,16 @@
+import { billingEngine } from "@/lib/billing/billing.engine";
 import { executeAIGatewayRequest, getAIGatewayStats } from "@/lib/saas-core/ai-gateway.service";
 import { getConfiguredDataSourceType } from "@/lib/saas-core/datasource/datasource.factory";
 import { createKnowledge, getTenantKnowledge } from "@/lib/saas-core/knowledge.service";
 import { getSaaSCoreMetrics, getSaaSSystemHealth } from "@/lib/saas-core/system.service";
 import { getTenant } from "@/lib/saas-core/tenant.service";
+import type { AccessResult, BillingResource, QuotaType } from "@/types/billing";
 import type { Tenant } from "@/types/saas-core";
 import type { OrchestratorRequest, PipelineStep, PipelineStepName, RequestContext, RouteDecision } from "@/types/orchestrator";
 
 type PipelineOutput = {
+  success: boolean;
+  error?: "billing_limit";
   data: Record<string, unknown>;
   steps: PipelineStep[];
 };
@@ -25,6 +29,18 @@ function readNumber(payload: Record<string, unknown>, key: string, fallback: num
   const value = payload[key];
 
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function getQuotaType(decision: RouteDecision): QuotaType {
+  if (decision.route === "user") {
+    return "ai_request";
+  }
+
+  if (decision.route === "ingest") {
+    return "knowledge_item";
+  }
+
+  return "user_seat";
 }
 
 async function runStep<T>(steps: PipelineStep[], name: PipelineStepName, action: () => Promise<T> | T): Promise<T> {
@@ -66,6 +82,26 @@ function assertRouteAllowed(context: RequestContext, decision: RouteDecision): v
   if (!allowed) {
     throw new Error("Orchestrator RBAC failed: role is not allowed for this route.");
   }
+}
+
+async function checkBillingAccess(request: OrchestratorRequest, decision: RouteDecision): Promise<AccessResult> {
+  const payload = getPayload(request);
+  const licenseActivated = typeof payload.licenseActivated === "boolean" ? payload.licenseActivated : undefined;
+  const resource: BillingResource = {
+    key: decision.flow,
+    action: request.context.requestType,
+    quotaType: getQuotaType(decision)
+  };
+
+  return billingEngine.checkAccess(
+    {
+      id: request.context.userId,
+      tenantId: request.context.tenantId,
+      role: request.context.role,
+      licenseActivated
+    },
+    resource
+  );
 }
 
 async function resolveTenant(context: RequestContext): Promise<Tenant> {
@@ -138,6 +174,23 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
 
   await runStep(steps, "auth", () => assertAuthenticated(request.context));
   await runStep(steps, "rbac", () => assertRouteAllowed(request.context, decision));
+  const billing = await runStep(steps, "billing", () => checkBillingAccess(request, decision));
+
+  if (!billing.allowed) {
+    return {
+      success: false,
+      error: "billing_limit",
+      data: {
+        requestType: request.context.requestType,
+        source: request.context.source,
+        route: decision.route,
+        flow: decision.flow,
+        billing
+      },
+      steps
+    };
+  }
+
   const resolvedTenant = await runStep(steps, "tenant resolve", () => resolveTenant(request.context));
   const service = await runStep(steps, "service selection", () => decision.service);
   const datasource = await runStep(steps, "datasource fetch", () => getConfiguredDataSourceType());
@@ -152,11 +205,13 @@ export async function executePipeline(request: OrchestratorRequest, decision: Ro
     datasource,
     repositoryMode,
     tenant: resolvedTenant,
+    billing,
     auth: "accepted",
     result: dispatchResult
   }));
 
   return {
+    success: true,
     data,
     steps
   };

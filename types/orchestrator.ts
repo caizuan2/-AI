@@ -23,6 +23,7 @@ export type OrchestratorRequest<TPayload = Record<string, unknown>> = {
 export type PipelineStepName =
   | "auth"
   | "rbac"
+  | "billing"
   | "tenant resolve"
   | "service selection"
   | "repository call"
@@ -43,7 +44,7 @@ export type RouteDecision = {
   service: "ai-gateway" | "knowledge-service" | "system-service";
 };
 
-export type ExecutionResult<TData = unknown> = {
+export type ExecutionSuccessResult<TData = unknown> = {
   success: true;
   data: TData;
   route: RouteType;
@@ -52,3 +53,16 @@ export type ExecutionResult<TData = unknown> = {
   timestamp: number;
   steps: PipelineStep[];
 };
+
+export type ExecutionDeniedResult<TData = unknown> = {
+  success: false;
+  error: "billing_limit";
+  data: TData;
+  route: RouteType;
+  flow: SystemFlowType;
+  executionTime: number;
+  timestamp: number;
+  steps: PipelineStep[];
+};
+
+export type ExecutionResult<TData = unknown> = ExecutionSuccessResult<TData> | ExecutionDeniedResult<TData>;

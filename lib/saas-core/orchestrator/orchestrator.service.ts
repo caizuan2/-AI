@@ -9,6 +9,19 @@ export async function handleOrchestratedRequest(request: OrchestratorRequest): P
   const decision = decideRoute(normalizedRequest.context);
   const pipeline = await executePipeline(normalizedRequest, decision);
 
+  if (!pipeline.success) {
+    return {
+      success: false,
+      error: "billing_limit",
+      data: pipeline.data,
+      route: decision.route,
+      flow: decision.flow,
+      executionTime: Date.now() - startedAt,
+      timestamp: Date.now(),
+      steps: pipeline.steps
+    };
+  }
+
   return {
     success: true,
     data: pipeline.data,
