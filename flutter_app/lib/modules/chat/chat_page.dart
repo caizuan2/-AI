@@ -844,7 +844,6 @@ class _ChatPageState extends State<ChatPage> {
           syncing: _controller.syncing,
           syncError: _controller.lastSyncError,
           useOfficialBrand: _useWindowsBrand,
-          onRenameConversation: _controller.renameConversationLocally,
           onSetConversationPinned: _controller.setConversationPinned,
           onNewConversation: () {
             _clearComposer();
@@ -1252,7 +1251,6 @@ class _HistoryDrawer extends StatefulWidget {
     required this.syncing,
     required this.syncError,
     required this.useOfficialBrand,
-    required this.onRenameConversation,
     required this.onSetConversationPinned,
     required this.onNewConversation,
     required this.onOpenConversation,
@@ -1270,7 +1268,6 @@ class _HistoryDrawer extends StatefulWidget {
   final bool syncing;
   final String? syncError;
   final bool useOfficialBrand;
-  final bool Function(String id, String title) onRenameConversation;
   final bool Function(String id, bool pinned) onSetConversationPinned;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
@@ -1299,20 +1296,13 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
   ) async {
     switch (action) {
       case _ConversationMenuAction.share:
-        await Clipboard.setData(
-          ClipboardData(
-            text:
-                '${conversation.title}\n${conversation.subtitle}\n会话 ID：${conversation.id}',
-          ),
-        );
-        if (!mounted) return;
-        _showLocalActionHint(context, '已复制');
+        _showLocalActionHint(context, '分享接口未接入', error: true);
         return;
       case _ConversationMenuAction.startGroupChat:
-        _showLocalActionHint(context, '群聊功能暂未开放');
+        _showLocalActionHint(context, '群聊功能暂未开放', error: true);
         return;
       case _ConversationMenuAction.rename:
-        await _showRenameConversationDialog(conversation);
+        _showLocalActionHint(context, '重命名接口未接入', error: true);
         return;
       case _ConversationMenuAction.togglePinned:
         final nextPinned = !conversation.pinned;
@@ -1323,96 +1313,17 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
         if (!mounted) return;
         _showLocalActionHint(
           context,
-          updated ? (nextPinned ? '已置顶聊天' : '已取消置顶') : '当前会话暂时无法置顶',
+          updated ? (nextPinned ? '已本地置顶' : '已取消本地置顶') : '当前会话暂时无法置顶',
           error: !updated,
         );
         return;
       case _ConversationMenuAction.archive:
-        _showLocalActionHint(context, '归档功能暂未开放');
+        _showLocalActionHint(context, '归档功能暂未开放', error: true);
         return;
       case _ConversationMenuAction.delete:
-        await _confirmUnavailableDelete(conversation);
+        _showLocalActionHint(context, '删除接口未接入', error: true);
         return;
     }
-  }
-
-  Future<void> _showRenameConversationDialog(
-    ChatConversationSummary conversation,
-  ) async {
-    final controller = TextEditingController(text: conversation.title);
-    final nextTitle = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('重命名'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            maxLength: 40,
-            decoration: const InputDecoration(
-              labelText: '会话名称',
-              border: OutlineInputBorder(),
-            ),
-            onSubmitted: (value) => Navigator.of(dialogContext).pop(value),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-              child: const Text('保存'),
-            ),
-          ],
-        );
-      },
-    );
-    controller.dispose();
-    if (!mounted || nextTitle == null) {
-      return;
-    }
-
-    final updated = widget.onRenameConversation(
-      conversation.id,
-      nextTitle,
-    );
-    _showLocalActionHint(
-      context,
-      updated ? '已重命名（仅本地显示）' : '请输入会话名称',
-      error: !updated,
-    );
-  }
-
-  Future<void> _confirmUnavailableDelete(
-    ChatConversationSummary conversation,
-  ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('确认删除该会话？'),
-          content: Text('“${conversation.title}” 暂不支持可靠删除，确认后不会删除云端数据或附件文件。'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFDC2626),
-              ),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('删除'),
-            ),
-          ],
-        );
-      },
-    );
-    if (!mounted || confirmed != true) {
-      return;
-    }
-    _showLocalActionHint(context, '删除功能暂未开放', error: true);
   }
 
   @override
@@ -1428,6 +1339,34 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                       normalizedQuery,
                     );
           }).toList(growable: false);
+    final pinnedConversations = conversations
+        .where((conversation) => conversation.pinned)
+        .toList(growable: false);
+    final normalConversations = conversations
+        .where((conversation) => !conversation.pinned)
+        .toList(growable: false);
+
+    List<Widget> buildConversationTiles(
+      List<ChatConversationSummary> items,
+    ) {
+      final tiles = <Widget>[];
+      for (var index = 0; index < items.length; index += 1) {
+        if (index > 0) {
+          tiles.add(const SizedBox(height: 6));
+        }
+        final conversation = items[index];
+        tiles.add(
+          _ConversationTile(
+            conversation: conversation,
+            index: conversations.indexOf(conversation),
+            onTap: () => widget.onOpenConversation(conversation.id),
+            onMenuSelected: (action) =>
+                _handleConversationMenu(action, conversation),
+          ),
+        );
+      }
+      return tiles;
+    }
 
     return SafeArea(
       child: Column(
@@ -1504,21 +1443,25 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                 ? _DrawerEmptyState(
                     text: widget.conversations.isEmpty ? '暂无历史记录' : '暂无匹配会话',
                   )
-                : ListView.separated(
+                : ListView(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    itemBuilder: (context, index) {
-                      final conversation = conversations[index];
-                      return _ConversationTile(
-                        conversation: conversation,
-                        index: index,
-                        onTap: () => widget.onOpenConversation(conversation.id),
-                        onMenuSelected: (action) =>
-                            _handleConversationMenu(action, conversation),
-                      );
-                    },
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(height: 6),
-                    itemCount: conversations.length,
+                    children: [
+                      ...buildConversationTiles(pinnedConversations),
+                      if (pinnedConversations.isNotEmpty &&
+                          normalConversations.isNotEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          child: Divider(
+                            height: 1,
+                            thickness: 0.7,
+                            color: Color(0xFFE5E7EB),
+                          ),
+                        ),
+                      ...buildConversationTiles(normalConversations),
+                    ],
                   ),
           ),
           _DrawerUserFooter(
@@ -1621,6 +1564,28 @@ enum _ConversationMenuAction {
   togglePinned,
   archive,
   delete,
+}
+
+class _ConversationFeatureKeys {
+  static const share = 'conversation.share.enabled';
+  static const groupChat = 'conversation.group_chat.enabled';
+  static const rename = 'conversation.rename.enabled';
+  static const archive = 'conversation.archive.enabled';
+  static const delete = 'conversation.delete.enabled';
+  static const pinCloudSync = 'conversation.pin.cloud_sync_enabled';
+}
+
+const _conversationFeatureDefaults = <String, bool>{
+  _ConversationFeatureKeys.share: false,
+  _ConversationFeatureKeys.groupChat: false,
+  _ConversationFeatureKeys.rename: false,
+  _ConversationFeatureKeys.archive: false,
+  _ConversationFeatureKeys.delete: false,
+  _ConversationFeatureKeys.pinCloudSync: false,
+};
+
+bool _isConversationFeatureEnabled(String key) {
+  return _conversationFeatureDefaults[key] ?? false;
 }
 
 class _ConversationTile extends StatefulWidget {
@@ -1751,7 +1716,7 @@ class _ConversationTileState extends State<_ConversationTile> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    _shortTime(conversation.updatedAt),
+                    _formatBeijingConversationTime(conversation.updatedAt),
                     style: const TextStyle(
                       color: Color(0xFF94A3B8),
                       fontSize: 11,
@@ -1796,26 +1761,26 @@ List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
   ChatConversationSummary conversation,
 ) {
   return [
-    const PopupMenuItem(
-      value: _ConversationMenuAction.share,
-      child: _ConversationMenuItemRow(
-        icon: Icons.ios_share,
-        label: '分享',
-      ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.share,
+      featureKey: _ConversationFeatureKeys.share,
+      icon: Icons.ios_share,
+      label: '分享',
+      badge: '未开放',
     ),
-    const PopupMenuItem(
-      value: _ConversationMenuAction.startGroupChat,
-      child: _ConversationMenuItemRow(
-        icon: Icons.group_add_outlined,
-        label: '开始群聊',
-      ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.startGroupChat,
+      featureKey: _ConversationFeatureKeys.groupChat,
+      icon: Icons.group_add_outlined,
+      label: '开始群聊',
+      badge: '未开放',
     ),
-    const PopupMenuItem(
-      value: _ConversationMenuAction.rename,
-      child: _ConversationMenuItemRow(
-        icon: Icons.drive_file_rename_outline,
-        label: '重命名',
-      ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.rename,
+      featureKey: _ConversationFeatureKeys.rename,
+      icon: Icons.drive_file_rename_outline,
+      label: '重命名',
+      badge: '未开放',
     ),
     PopupMenuItem(
       value: _ConversationMenuAction.togglePinned,
@@ -1824,52 +1789,133 @@ List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
         label: conversation.pinned ? '取消置顶聊天' : '置顶聊天',
       ),
     ),
-    const PopupMenuItem(
-      value: _ConversationMenuAction.archive,
-      child: _ConversationMenuItemRow(
-        icon: Icons.archive_outlined,
-        label: '归档',
-      ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.archive,
+      featureKey: _ConversationFeatureKeys.archive,
+      icon: Icons.archive_outlined,
+      label: '归档',
+      badge: '未开放',
     ),
     const PopupMenuDivider(height: 6),
-    const PopupMenuItem(
-      value: _ConversationMenuAction.delete,
-      child: _ConversationMenuItemRow(
-        icon: Icons.delete_outline,
-        label: '删除',
-        danger: true,
-      ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.delete,
+      featureKey: _ConversationFeatureKeys.delete,
+      icon: Icons.delete_outline,
+      label: '删除',
+      badge: '未开放',
     ),
   ];
+}
+
+PopupMenuEntry<_ConversationMenuAction> _unavailableConversationMenuItem({
+  required _ConversationMenuAction action,
+  required String featureKey,
+  required IconData icon,
+  required String label,
+  required String badge,
+}) {
+  final featureEnabled = _isConversationFeatureEnabled(featureKey);
+  return PopupMenuItem<_ConversationMenuAction>(
+    enabled: featureEnabled,
+    padding: EdgeInsets.zero,
+    height: 42,
+    child: _UnavailableConversationMenuItem(
+      action: action,
+      featureEnabled: featureEnabled,
+      icon: icon,
+      label: label,
+      badge: badge,
+    ),
+  );
 }
 
 class _ConversationMenuItemRow extends StatelessWidget {
   const _ConversationMenuItemRow({
     required this.icon,
     required this.label,
-    this.danger = false,
   });
 
   final IconData icon;
   final String label;
-  final bool danger;
 
   @override
   Widget build(BuildContext context) {
-    final color = danger ? const Color(0xFFDC2626) : const Color(0xFF0F172A);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 19, color: color),
+        Icon(icon, size: 19, color: const Color(0xFF0F172A)),
         const SizedBox(width: 12),
         Text(
           label,
-          style: TextStyle(
-            color: color,
-            fontWeight: danger ? FontWeight.w700 : FontWeight.w500,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
+    );
+  }
+}
+
+class _UnavailableConversationMenuItem extends StatelessWidget {
+  const _UnavailableConversationMenuItem({
+    required this.action,
+    required this.featureEnabled,
+    required this.icon,
+    required this.label,
+    required this.badge,
+  });
+
+  final _ConversationMenuAction action;
+  final bool featureEnabled;
+  final IconData icon;
+  final String label;
+  final String badge;
+
+  @override
+  Widget build(BuildContext context) {
+    const disabledColor = Color(0xFF94A3B8);
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: featureEnabled ? null : () => Navigator.of(context).pop(action),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 19, color: disabledColor),
+              const SizedBox(width: 12),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: disabledColor,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 18),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Text(
+                  badge,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -3574,10 +3620,39 @@ Color _conversationIconColor(int index, bool selected) {
   return colors[index % colors.length];
 }
 
-String _shortTime(DateTime time) {
-  final hour = time.hour.toString().padLeft(2, '0');
-  final minute = time.minute.toString().padLeft(2, '0');
-  return '$hour:$minute';
+DateTime _toBeijingTime(DateTime value) {
+  return value.toUtc().add(const Duration(hours: 8));
+}
+
+String _formatBeijingConversationTime(DateTime time) {
+  final beijingTime = _toBeijingTime(time);
+  final beijingNow = _toBeijingTime(DateTime.now());
+  final beijingDate = DateTime.utc(
+    beijingTime.year,
+    beijingTime.month,
+    beijingTime.day,
+  );
+  final today = DateTime.utc(
+    beijingNow.year,
+    beijingNow.month,
+    beijingNow.day,
+  );
+  final dayDelta = today.difference(beijingDate).inDays;
+  if (dayDelta == 0) {
+    final hour = beijingTime.hour.toString().padLeft(2, '0');
+    final minute = beijingTime.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+  if (dayDelta == 1) {
+    return '昨天';
+  }
+  final month = beijingTime.month.toString().padLeft(2, '0');
+  final day = beijingTime.day.toString().padLeft(2, '0');
+  if (beijingTime.year == beijingNow.year) {
+    return '$month-$day';
+  }
+  final year = beijingTime.year.toString().padLeft(4, '0');
+  return '$year-$month-$day';
 }
 
 String _formatBytes(int bytes) {

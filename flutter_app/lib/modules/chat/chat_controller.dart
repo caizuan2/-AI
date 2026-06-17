@@ -66,17 +66,6 @@ class ChatController extends ChangeNotifier {
     return summaries;
   }
 
-  bool renameConversationLocally(String id, String title) {
-    final conversation = _findConversation(id);
-    final nextTitle = title.trim();
-    if (conversation == null || nextTitle.isEmpty) {
-      return false;
-    }
-    conversation.localTitle = nextTitle;
-    notifyListeners();
-    return true;
-  }
-
   bool setConversationPinned(String id, bool pinned) {
     final conversation = _findConversation(id);
     if (conversation == null || conversation.pinned == pinned) {
@@ -864,7 +853,6 @@ class _ChatConversationState {
   String? cloudTitle;
   String? cloudSubtitle;
   DateTime? cloudUpdatedAt;
-  String? localTitle;
   bool pinned = false;
 
   bool get hasVisibleContent {
@@ -881,9 +869,6 @@ class _ChatConversationState {
   }
 
   String get title {
-    if (localTitle != null && localTitle!.trim().isNotEmpty) {
-      return _clip(localTitle!.trim(), 28);
-    }
     if (cloudTitle != null && cloudTitle!.trim().isNotEmpty) {
       return _clip(cloudTitle!.trim(), 28);
     }
