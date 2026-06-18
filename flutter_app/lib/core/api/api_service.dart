@@ -18,6 +18,32 @@ class ApiException implements Exception {
   String toString() => message;
 }
 
+enum LicenseStatus {
+  unknown,
+  checking,
+  active,
+  inactive,
+  expired,
+  disabled,
+  invalid,
+  used,
+  serviceUnavailable,
+}
+
+class LicenseStatusResult {
+  const LicenseStatusResult({
+    required this.status,
+    required this.message,
+    this.raw = const <String, dynamic>{},
+  });
+
+  final LicenseStatus status;
+  final String message;
+  final Map<String, dynamic> raw;
+
+  bool get canEnterApp => status == LicenseStatus.active;
+}
+
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
   static const _maxUploadSizeMb = 300;
@@ -359,7 +385,7 @@ class ApiService {
           'phone': phone,
           'name': phone.isEmpty ? '当前用户' : phone,
         },
-        'licenseActivated': true,
+        'licenseActivated': false,
       });
     }
 
@@ -383,7 +409,7 @@ class ApiService {
           'phone': phone,
           'name': name.isEmpty ? '当前用户' : name,
         },
-        'licenseActivated': true,
+        'licenseActivated': false,
       });
     }
 
@@ -396,17 +422,87 @@ class ApiService {
 
   Future<Map<String, dynamic>> redeemLicense(String licenseKey) {
     if (mockMode) {
-      return Future.value({
-        'license': {
-          'key': licenseKey,
-          'status': 'active',
-        },
-      });
+      throw const ApiException('卡密验证服务未接入，请联系超级管理员');
     }
 
     return _postJson('/api/license/redeem', {
       'licenseKey': licenseKey,
     });
+  }
+
+  Future<LicenseStatusResult> licenseStatus({
+    Map<String, dynamic>? authData,
+  }) async {
+    if (mockMode) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+      );
+    }
+
+    final authStatus = _licenseStatusFromEnvelope(authData);
+    if (authStatus.status != LicenseStatus.unknown) {
+      return authStatus;
+    }
+
+    try {
+      final userData = await currentUser();
+      final userStatus = _licenseStatusFromEnvelope(userData);
+      if (userStatus.status != LicenseStatus.unknown) {
+        return userStatus;
+      }
+      return LicenseStatusResult(
+        status: LicenseStatus.unknown,
+        message: _licenseMessageFromData(userData) ?? '请先完成卡密激活',
+        raw: userData,
+      );
+    } on ApiException catch (error) {
+      return _licenseStatusFromError(error);
+    } catch (error) {
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<LicenseStatusResult> activateLicense(String licenseKey) async {
+    final normalizedKey = licenseKey.trim();
+    if (normalizedKey.isEmpty) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.invalid,
+        message: '请输入卡密',
+      );
+    }
+
+    if (mockMode) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+      );
+    }
+
+    try {
+      final data = await redeemLicense(normalizedKey);
+      final status = _licenseStatusFromEnvelope(data);
+      if (status.status != LicenseStatus.unknown) {
+        return status;
+      }
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: data,
+      );
+    } on ApiException catch (error) {
+      return _licenseStatusFromError(error);
+    } catch (error) {
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: {'error': error.toString()},
+      );
+    }
   }
 
   Future<Map<String, dynamic>> currentUser() {
@@ -421,6 +517,232 @@ class ApiService {
     }
 
     return _getJson('/api/auth/me').then(_rememberUser);
+  }
+
+  LicenseStatusResult _licenseStatusFromEnvelope(Map<String, dynamic>? data) {
+    if (data == null || data.isEmpty) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.unknown,
+        message: '请先完成卡密激活',
+      );
+    }
+
+    final message = _licenseMessageFromData(data) ?? '请先完成卡密激活';
+    final status = _readLicenseStatus(data);
+    if (status == LicenseStatus.unknown) {
+      return LicenseStatusResult(status: status, message: message, raw: data);
+    }
+    return LicenseStatusResult(
+      status: status,
+      message: _messageForLicenseStatus(status, fallback: message),
+      raw: data,
+    );
+  }
+
+  LicenseStatus _readLicenseStatus(Map<String, dynamic> data) {
+    for (final key in const [
+      'licenseActivated',
+      'license_activated',
+      'activationActivated',
+      'activation_activated',
+      'cardActivated',
+      'card_activated',
+      'isLicenseActive',
+      'is_license_active',
+      'isActivated',
+      'is_activated',
+    ]) {
+      final value = data[key];
+      if (value is bool) {
+        return value ? LicenseStatus.active : LicenseStatus.inactive;
+      }
+    }
+
+    for (final key in const [
+      'licenseStatus',
+      'license_status',
+      'activationStatus',
+      'activation_status',
+      'cardStatus',
+      'card_status',
+      'licenseState',
+      'license_state',
+      'activationState',
+      'activation_state',
+    ]) {
+      final status = _licenseStatusFromValue(data[key]);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+    }
+
+    for (final key in const ['license', 'activation', 'card', 'subscription']) {
+      final nested = _asMap(data[key]);
+      if (nested.isEmpty) {
+        continue;
+      }
+      final status = _readLicenseStatus(nested);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+      final nestedStatus = _licenseStatusFromValue(nested['status']);
+      if (nestedStatus != LicenseStatus.unknown) {
+        return nestedStatus;
+      }
+    }
+
+    for (final key in const ['user', 'profile', 'data']) {
+      final nested = _asMap(data[key]);
+      if (nested.isEmpty || identical(nested, data)) {
+        continue;
+      }
+      final status = _readLicenseStatus(nested);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+    }
+
+    return LicenseStatus.unknown;
+  }
+
+  LicenseStatus _licenseStatusFromValue(Object? value) {
+    if (value is bool) {
+      return value ? LicenseStatus.active : LicenseStatus.inactive;
+    }
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    if (text.isEmpty) {
+      return LicenseStatus.unknown;
+    }
+    final normalized = text.replaceAll(RegExp(r'[\s_-]+'), '');
+
+    if (normalized.contains('expired') || normalized.contains('过期')) {
+      return LicenseStatus.expired;
+    }
+    if (normalized.contains('disabled') ||
+        normalized.contains('banned') ||
+        normalized.contains('suspended') ||
+        normalized.contains('禁用') ||
+        normalized.contains('停用')) {
+      return LicenseStatus.disabled;
+    }
+    if (normalized.contains('used') ||
+        normalized.contains('redeemed') ||
+        normalized.contains('bound') ||
+        normalized.contains('已使用') ||
+        normalized.contains('已绑定')) {
+      return LicenseStatus.used;
+    }
+    if (normalized.contains('invalid') ||
+        normalized.contains('notfound') ||
+        normalized.contains('notexist') ||
+        normalized.contains('无效') ||
+        normalized.contains('不存在')) {
+      return LicenseStatus.invalid;
+    }
+    if (normalized.contains('unavailable') ||
+        normalized.contains('notimplemented') ||
+        normalized.contains('未接入')) {
+      return LicenseStatus.serviceUnavailable;
+    }
+    if (normalized.contains('inactive') ||
+        normalized.contains('unactivated') ||
+        normalized.contains('pending') ||
+        normalized.contains('required') ||
+        normalized.contains('未激活') ||
+        normalized.contains('待激活')) {
+      return LicenseStatus.inactive;
+    }
+    if (normalized.contains('active') ||
+        normalized.contains('activated') ||
+        normalized.contains('valid') ||
+        normalized.contains('已激活') ||
+        normalized.contains('有效')) {
+      return LicenseStatus.active;
+    }
+
+    return LicenseStatus.unknown;
+  }
+
+  LicenseStatusResult _licenseStatusFromError(ApiException error) {
+    final status = _licenseStatusFromValue(error.message);
+    if (status != LicenseStatus.unknown) {
+      return LicenseStatusResult(
+        status: status,
+        message: _messageForLicenseStatus(status, fallback: error.message),
+        raw: {
+          'message': error.message,
+          if (error.statusCode != null) 'statusCode': error.statusCode,
+          if (error.debugDetails != null) 'debugDetails': error.debugDetails,
+        },
+      );
+    }
+
+    final mappedStatus = switch (error.statusCode) {
+      400 => LicenseStatus.invalid,
+      401 => LicenseStatus.inactive,
+      403 => LicenseStatus.disabled,
+      404 => LicenseStatus.serviceUnavailable,
+      409 => LicenseStatus.used,
+      410 => LicenseStatus.expired,
+      501 || 503 => LicenseStatus.serviceUnavailable,
+      _ => LicenseStatus.serviceUnavailable,
+    };
+    return LicenseStatusResult(
+      status: mappedStatus,
+      message: _messageForLicenseStatus(mappedStatus, fallback: error.message),
+      raw: {
+        'message': error.message,
+        if (error.statusCode != null) 'statusCode': error.statusCode,
+        if (error.debugDetails != null) 'debugDetails': error.debugDetails,
+      },
+    );
+  }
+
+  String? _licenseMessageFromData(Map<String, dynamic> data) {
+    for (final key in const ['message', 'reason', 'error', 'detail']) {
+      final value = data[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+      if (value is Map) {
+        final nested = _licenseMessageFromData(
+          value.map((key, item) => MapEntry(key?.toString() ?? '', item)),
+        );
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+
+    for (final key in const ['license', 'activation', 'card', 'user', 'data']) {
+      final value = data[key];
+      if (value is Map) {
+        final nested = _licenseMessageFromData(
+          value.map((key, item) => MapEntry(key?.toString() ?? '', item)),
+        );
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+    return null;
+  }
+
+  String _messageForLicenseStatus(
+    LicenseStatus status, {
+    required String fallback,
+  }) {
+    return switch (status) {
+      LicenseStatus.active => '激活成功',
+      LicenseStatus.inactive => '请先完成卡密激活',
+      LicenseStatus.expired => '卡密已过期',
+      LicenseStatus.disabled => '卡密已禁用',
+      LicenseStatus.invalid => '卡密无效',
+      LicenseStatus.used => '卡密已使用',
+      LicenseStatus.serviceUnavailable => '卡密验证服务未接入，请联系超级管理员',
+      LicenseStatus.checking => '正在验证卡密...',
+      LicenseStatus.unknown => fallback,
+    };
   }
 
   Future<Map<String, dynamic>> changePassword({
