@@ -1,14 +1,1065 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageSquareText, MonitorCog } from "lucide-react";
+import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
+import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
+import {
+  IngestCreateAgentDialog,
+  type IngestCreateAgentPayload
+} from "@/components/enterprise-admin/IngestCreateAgentDialog";
 import { IngestChatGPTShell } from "@/components/enterprise-admin/IngestChatGPTShell";
 import { IngestEXEShell } from "@/components/enterprise-admin/IngestEXEShell";
+import { IngestNotificationPanel } from "@/components/enterprise-admin/IngestNotificationPanel";
+import {
+  IngestSettingsPanel,
+  type IngestSettingsState
+} from "@/components/enterprise-admin/IngestSettingsPanel";
+import {
+  checkLicenseStatus,
+  createUploadState,
+  ingestSyncTarget,
+  saveKnowledgeDraft,
+  sendCoreIngest,
+  sendUrlIngestPreview,
+  type IngestConnectionStatus,
+  type IngestNotification,
+  type IngestPlatform,
+  type IngestSyncTarget,
+  type IngestVoiceState,
+  type IngestUploadState
+} from "@/lib/enterprise/ingest-client";
+import {
+  defaultAdminIngestPlatformContext,
+  resolveAdminIngestPlatformContext,
+  type AdminIngestPlatformContext
+} from "@/lib/enterprise/admin-ingest-platform";
+import {
+  ingestChatAgents,
+  ingestChatInitialDraft,
+  ingestTrainingRecords,
+  type IngestChatMessage,
+  type IngestChatAgent,
+  type IngestKnowledgeDraft,
+  type IngestTrainingRecord
+} from "@/lib/enterprise/mock-chat";
+import {
+  DEFAULT_GPT_MODEL_SELECTION,
+  getGptModelSelectionByDisplayName,
+  GPT_MODEL_DISPLAY_NAMES,
+  isGptModelDisplayName
+} from "@/lib/enterprise/gpt-model-options";
 
 type IngestMode = "chat" | "workbench";
+type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
+type IngestActionResult = Awaited<ReturnType<typeof sendCoreIngest>>;
+type OpenPanel = "notifications" | "settings" | null;
+type GptFallbackToast = {
+  id: string;
+  title: string;
+  description: string;
+};
+type IngestActionToast = {
+  id: string;
+  title: string;
+  description?: string;
+  type?: "success" | "warning" | "info";
+};
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort?: () => void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: {
+    resultIndex: number;
+    results: ArrayLike<ArrayLike<{ transcript: string }>>;
+  }) => void) | null;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type SpeechWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor;
+  webkitSpeechRecognition?: SpeechRecognitionConstructor;
+};
+
+const tenantId: string | null = null;
+const userId: string | null = null;
+const GPT_FALLBACK_TOAST = {
+  title: "GPT 接口暂不可用",
+  description: "当前未检测到可用 GPT 接口，已临时使用本地预览结果。本地配置 OPENAI_API_KEY 或部署环境变量后即可使用真实 GPT。"
+};
+const initialConnectionStatus: IngestConnectionStatus = {
+  enterpriseSpace: "本地预览",
+  knowledgeBase: "默认知识库",
+  licenseStatus: "未检查"
+};
+const initialVoiceState: IngestVoiceState = {
+  isVoiceSupported: false,
+  isRecording: false,
+  transcript: "",
+  error: "",
+  platform: "web",
+  syncTarget: [...ingestSyncTarget]
+};
+const initialSettingsState: IngestSettingsState = {
+  autoSaveStructuredResult: false,
+  uploadPreference: "composer",
+  localPreviewMode: true,
+  platform: "web",
+  syncTarget: [...ingestSyncTarget]
+};
+
+function createNotification(input: Pick<IngestNotification, "type" | "title" | "description"> & {
+  read?: boolean;
+  platform?: IngestPlatform;
+  syncTarget?: IngestSyncTarget[];
+}): IngestNotification {
+  return {
+    id: `notice-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    type: input.type,
+    title: input.title,
+    description: input.description,
+    read: input.read ?? false,
+    source: "admin_ingest",
+    platform: input.platform ?? defaultAdminIngestPlatformContext.platform,
+    syncTarget: input.syncTarget ?? [...defaultAdminIngestPlatformContext.syncTarget],
+    createdAt: new Date().toISOString()
+  };
+}
+
+function mergeTrainingRecords(incoming: IngestTrainingRecord[], current: IngestTrainingRecord[]) {
+  const seen = new Set<string>();
+
+  return [...incoming, ...current].filter((record) => {
+    const key = record.jobId ?? record.id;
+
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function isOpenAIModelLabel(model: string) {
+  return isGptModelDisplayName(model);
+}
+
+function isGptUnavailableMessage(message: string) {
+  return /gpt\s*接口暂不可用|openai|未配置\s*openai|api key/i.test(message);
+}
+
+function isHttpUrl(value: string) {
+  try {
+    const url = new URL(value);
+
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function normalizeInitialAgents() {
+  return ingestChatAgents.map((agent) => ({
+    ...agent,
+    status: "active" as const,
+    isSystem: true,
+    platform: "web" as const,
+    syncTarget: [...ingestSyncTarget],
+    source: agent.source ?? ("super_admin_category" as const),
+    managedBySuperAdmin: agent.managedBySuperAdmin ?? true,
+    editableByIngestAdmin: agent.editableByIngestAdmin ?? false,
+    deletableByIngestAdmin: agent.deletableByIngestAdmin ?? false,
+    visibleToUserClient: agent.visibleToUserClient ?? true
+  }));
+}
 
 export function IngestModeToggle() {
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
+  const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
+  const [activeAgentId, setActiveAgentId] = useState("chief");
+  const [activeRailKey, setActiveRailKey] = useState<IngestRailKey>("chat");
+  const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
+  const [isAgentDetailOpen, setIsAgentDetailOpen] = useState(false);
+  const [deleteCandidateAgent, setDeleteCandidateAgent] = useState<IngestChatAgent | null>(null);
+  const [searchKeyword, setSearchKeyword] = useState("");
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
+  const [resolvedModel, setResolvedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
+  const [connectionStatus, setConnectionStatus] = useState<IngestConnectionStatus>(initialConnectionStatus);
+  const [uploadedFiles, setUploadedFiles] = useState<IngestUploadState[]>([]);
+  const [voiceState, setVoiceState] = useState<IngestVoiceState>(initialVoiceState);
+  const [notifications, setNotifications] = useState<IngestNotification[]>([
+    createNotification({
+      type: "sync",
+      title: "三端同步字段已就绪",
+      description: "当前 /admin-ingest 交互会预留 Web / EXE / APK 同步目标。",
+      read: false
+    }),
+    createNotification({
+      type: "license",
+      title: "卡密状态待检查",
+      description: "点击连接或设置可查看当前账号授权状态，本地预览不会改动卡密核心逻辑。",
+      read: false
+    })
+  ]);
+  const [settingsState, setSettingsState] = useState<IngestSettingsState>(initialSettingsState);
+  const [isCreateAgentOpen, setIsCreateAgentOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<IngestChatMessage[]>([]);
+  const [draft, setDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
+  const [records, setRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
+  const [lastInput, setLastInput] = useState("");
+  const [noticeMessage, setNoticeMessage] = useState("本地预览模式，登录后将同步企业知识库。");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isParsing, setIsParsing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
+  const [isGptFallbackToastDismissed, setIsGptFallbackToastDismissed] = useState(false);
+  const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
+  const [isUrlDialogOpen, setIsUrlDialogOpen] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [urlError, setUrlError] = useState("");
+  const [isUrlIngesting, setIsUrlIngesting] = useState(false);
+  const uploadState = uploadedFiles[0] ?? null;
+  const modelOptions = GPT_MODEL_DISPLAY_NAMES;
+  const selectedModelLabel = selectedModel;
+  const selectedGptModel = useMemo(() => getGptModelSelectionByDisplayName(selectedModelLabel), [selectedModelLabel]);
+  const visibleAgents = useMemo(
+    () => agents.filter((agent) => agent.status !== "deleted_local" && agent.status !== "archived"),
+    [agents]
+  );
+
+  const activeAgent = useMemo(
+    () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents.find((agent) => agent.id === "chief") ?? visibleAgents[0] ?? normalizeInitialAgents()[0],
+    [activeAgentId, visibleAgents]
+  );
+  useEffect(() => {
+    const nextContext = resolveAdminIngestPlatformContext({
+      search: window.location.search,
+      userAgent: navigator.userAgent
+    });
+
+    setPlatformContext(nextContext);
+    setAgents((current) => current.map((agent) => ({
+      ...agent,
+      platform: nextContext.platform,
+      syncTarget: [...nextContext.syncTarget]
+    })));
+    setVoiceState((current) => ({
+      ...current,
+      platform: nextContext.platform,
+      syncTarget: [...nextContext.syncTarget]
+    }));
+    setSettingsState((current) => ({
+      ...current,
+      platform: nextContext.platform,
+      syncTarget: [...nextContext.syncTarget]
+    }));
+    setNotifications((current) => current.map((notification) => ({
+      ...notification,
+      platform: nextContext.platform,
+      syncTarget: [...nextContext.syncTarget]
+    })));
+  }, []);
+
+  useEffect(() => {
+    const speechWindow = window as SpeechWindow;
+    const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+    setVoiceState((current) => ({
+      ...current,
+      isVoiceSupported: Boolean(SpeechRecognition)
+    }));
+
+    return () => {
+      recognitionRef.current?.abort?.();
+      recognitionRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!actionToast) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setActionToast(null), 3000);
+
+    return () => window.clearTimeout(timeout);
+  }, [actionToast]);
+
+  function pushNotification(input: Pick<IngestNotification, "type" | "title" | "description">) {
+    setNotifications((current) => [createNotification({
+      ...input,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget]
+    }), ...current].slice(0, 8));
+  }
+
+  function showActionToast(input: Omit<IngestActionToast, "id">) {
+    setActionToast({
+      id: `toast-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      ...input
+    });
+  }
+
+  function showGptFallbackToast() {
+    if (isGptFallbackToastDismissed) {
+      return;
+    }
+
+    setGptFallbackToast({
+      id: `gpt-fallback-${Date.now()}`,
+      ...GPT_FALLBACK_TOAST
+    });
+  }
+
+  function handleRailChange(nextKey: IngestRailKey) {
+    setActiveRailKey(nextKey);
+    setErrorMessage("");
+    setOpenPanel(nextKey === "notifications" || nextKey === "settings" ? nextKey : null);
+
+    if (nextKey === "chat") {
+      setMode("chat");
+      setNoticeMessage("已切回 AI 对话投喂首页。");
+      return;
+    }
+
+    const railMessages: Record<Exclude<IngestRailKey, "chat">, string> = {
+      experts: "专家 Agent 工作区已打开，可通过搜索和新建 Agent 管理知识生产角色。",
+      tasks: `训练记录 / 投喂任务摘要已打开，目前共 ${records.length} 条记录。`,
+      files: uploadedFiles.length > 0
+        ? `文件状态面板已打开，最近文件：${uploadedFiles[0].fileName}。`
+        : "文件状态面板已打开，可通过文件上传或附件入口选择文件。",
+      connections: `连接状态：企业空间 ${connectionStatus.enterpriseSpace}，知识库 ${connectionStatus.knowledgeBase}，卡密 ${connectionStatus.licenseStatus}。`,
+      memory: `记忆 / 知识沉淀区已打开，最近保存知识：${draft.title}。`,
+      lab: "实验功能区已打开：AI 修正 / OCR / 网址抓取将在下一阶段增强。",
+      notifications: "通知中心已打开：最近投喂、保存、授权状态会在这里汇总。",
+      settings: `当前 Agent 设置：${activeAgent.name} · ${activeAgent.role}。`
+    };
+
+    setNoticeMessage(railMessages[nextKey]);
+  }
+
+  function handleAgentSelect(agentId: string) {
+    const nextAgent = visibleAgents.find((agent) => agent.id === agentId);
+
+    if (!nextAgent) {
+      return;
+    }
+
+    setCurrentAgent(nextAgent);
+    setIsAgentDetailOpen(false);
+    setNoticeMessage(`已切换到 ${nextAgent.name}，当前使用中。`);
+  }
+
+  function setCurrentAgent(agent: IngestChatAgent) {
+    setActiveAgentId(agent.id);
+    setOpenPanel(null);
+    setErrorMessage("");
+  }
+
+  function createAgentLifecycleRecord(agent: IngestChatAgent, action: "archived" | "deleted_local"): IngestTrainingRecord {
+    const now = new Date().toISOString();
+    const title = action === "archived" ? "Agent 已归档" : "Agent 已移除";
+
+    return {
+      id: `record-agent-${action}-${Date.now()}`,
+      jobId: null,
+      tenantId,
+      userId,
+      agentId: agent.id,
+      agentName: agent.name,
+      input: `${title}：${agent.name}`,
+      resultTitle: title,
+      saveStatus: "待确认",
+      category: agent.role,
+      time: "刚刚",
+      hits: 0,
+      sourceType: "admin_ingest",
+      source: "admin_ingest",
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget],
+      createdAt: now,
+      updatedAt: now,
+      aiOutput: null
+    };
+  }
+
+  function findVisibleAgent(agentId: string) {
+    return visibleAgents.find((agent) => agent.id === agentId) ?? activeAgent;
+  }
+
+  function handleViewAgentDetail(agentId: string) {
+    const target = findVisibleAgent(agentId);
+
+    setCurrentAgent(target);
+    setIsAgentDetailOpen(true);
+    setNoticeMessage(`${target.name} 详情已打开，当前使用中。`);
+  }
+
+  function handleEditAgent(agentId = activeAgent.id) {
+    const target = findVisibleAgent(agentId);
+
+    setCurrentAgent(target);
+
+    if (target.editableByIngestAdmin === false || target.managedBySuperAdmin) {
+      setNoticeMessage("系统分类由超级管理员配置，编辑请到超级管理员后台处理。");
+      return;
+    }
+
+    setNoticeMessage(`编辑 ${target.name} 入口已响应，下一阶段接入统一 Agent API。`);
+  }
+
+  function handleArchiveAgent(agentId = activeAgent.id) {
+    const target = findVisibleAgent(agentId);
+
+    setCurrentAgent(target);
+
+    if (target.managedBySuperAdmin || target.editableByIngestAdmin === false) {
+      setNoticeMessage("系统分类由超级管理员配置，不能在投喂端归档。");
+      return;
+    }
+
+    setAgents((current) => current.map((agent) => agent.id === target.id
+      ? { ...agent, status: "archived" as const }
+      : agent));
+    setRecords((current) => [createAgentLifecycleRecord(target, "archived"), ...current]);
+    pushNotification({
+      type: "info",
+      title: "Agent 已归档",
+      description: `${target.name} 已标记为已归档，未来可通过统一 Agent API 同步。`
+    });
+
+    if (activeAgentId === target.id) {
+      setActiveAgentId("chief");
+      setIsAgentDetailOpen(false);
+    }
+
+    setNoticeMessage(`${target.name} 已归档，三端同步字段已保留。`);
+  }
+
+  function handleRequestDeleteAgent(agentId = activeAgent.id) {
+    const target = findVisibleAgent(agentId);
+
+    setCurrentAgent(target);
+    setDeleteCandidateAgent(target);
+  }
+
+  function handleConfirmDeleteAgent() {
+    const target = deleteCandidateAgent;
+
+    if (!target) {
+      return;
+    }
+
+    if (target.deletableByIngestAdmin !== true) {
+      setDeleteCandidateAgent(null);
+      setNoticeMessage("系统分类由超级管理员配置，不能在投喂端删除。");
+      return;
+    }
+
+    setAgents((current) => current.filter((agent) => agent.id !== target.id));
+    setRecords((current) => [createAgentLifecycleRecord(target, "deleted_local"), ...current]);
+    pushNotification({
+      type: "fallback",
+      title: "Agent 已从当前工作台移除",
+      description: `${target.name} 已移除；已保存知识不会被删除，未来可在后台恢复或重新同步。`
+    });
+
+    if (activeAgentId === target.id) {
+      setActiveAgentId("chief");
+    }
+
+    setDeleteCandidateAgent(null);
+    setIsAgentDetailOpen(false);
+    setNoticeMessage(`${target.name} 已从当前投喂工作台移除，已新增训练记录。`);
+  }
+
+  async function handleSend(textOverride?: string): Promise<IngestActionResult | null> {
+    const value = (textOverride ?? input).trim();
+    const currentModelLabel = selectedModelLabel;
+    const outgoingAttachments = uploadedFiles.map((file) => ({
+      ...file,
+      status: "attached" as const,
+      agentId: activeAgent.id,
+      tenantId,
+      userId,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget]
+    }));
+    const effectiveInput = value || (outgoingAttachments.length > 0
+      ? `附件投喂：${outgoingAttachments.map((file) => file.fileName).join("、")}`
+      : "");
+
+    if (!effectiveInput) {
+      setNoticeMessage("请输入投喂任务或先选择附件后再发送。");
+      setErrorMessage("");
+      return null;
+    }
+
+    setIsParsing(true);
+    setNoticeMessage(outgoingAttachments.length > 0
+      ? "已收到附件，准备解析并生成结构化知识..."
+      : "AI 正在解析并生成结构化知识...");
+    setErrorMessage("");
+    setMessages((current) => [
+      ...current,
+      {
+        id: `user-${Date.now()}`,
+        role: "user",
+        content: value || "附件投喂",
+        time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        attachments: outgoingAttachments,
+        source: "admin_ingest",
+        platform: platformContext.platform,
+        syncTarget: [...platformContext.syncTarget],
+        tenantId,
+        userId,
+        agentId: activeAgent.id,
+        model: currentModelLabel,
+        provider: "admin_ingest"
+      },
+      {
+        id: `assistant-pending-${Date.now()}`,
+        role: "assistant",
+        content: outgoingAttachments.length > 0
+          ? "已收到附件，准备解析并生成结构化知识。文件已加入投喂队列，真实解析将在下一阶段接入。"
+          : "AI 正在解析投喂内容，并准备生成结构化知识。",
+        time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+        source: "admin_ingest",
+        platform: platformContext.platform,
+        syncTarget: [...platformContext.syncTarget],
+        tenantId,
+        userId,
+        agentId: activeAgent.id,
+        model: currentModelLabel,
+        provider: "openai"
+      }
+    ]);
+    setInput("");
+    setUploadedFiles([]);
+
+    try {
+      const result = await sendCoreIngest({
+        text: effectiveInput,
+        agent: activeAgent,
+        category: activeAgent.role,
+        model: selectedModelLabel,
+        gptTier: selectedGptModel.tier,
+        gptTierLabel: selectedGptModel.tierLabel,
+        gptVersion: selectedGptModel.version,
+        selectedModelLabel: selectedGptModel.displayName,
+        tenantId,
+        userId,
+        attachments: outgoingAttachments,
+        platform: platformContext.platform
+      });
+      const nextRecords = mergeTrainingRecords(result.records, records);
+
+      setDraft(result.draft);
+      setRecords(nextRecords);
+      setResolvedModel(result.model ?? currentModelLabel);
+      setLastInput(effectiveInput);
+
+      const isGptFallback = isOpenAIModelLabel(currentModelLabel) && (result.preview || result.provider === "local-fallback" || result.model === "core-engine-fallback" || isGptUnavailableMessage(result.message));
+
+      if (isGptFallback) {
+        showGptFallbackToast();
+      }
+
+      setNoticeMessage(isGptFallback
+        ? "已生成本地预览结构化结果，可继续保存知识入库。"
+        : result.preview
+          ? `${result.message}（本地预览，不会跨端同步）`
+          : `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
+      setMessages((current) => [
+        ...current,
+        {
+          id: `assistant-result-${Date.now()}`,
+          role: "assistant",
+          content: result.replyMarkdown || (result.preview
+            ? `${result.message} 已生成本地预览结构化结果：${result.draft.title}。`
+            : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`),
+          time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          model: isGptFallback ? currentModelLabel : result.model ?? currentModelLabel,
+          provider: result.provider,
+          saveSuggestion: result.saveSuggestion
+        }
+      ]);
+      pushNotification({
+        type: result.preview ? "fallback" : "success",
+        title: result.preview ? "投喂已进入本地预览" : "最近投喂完成",
+        description: outgoingAttachments.length > 0
+          ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
+          : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`
+      });
+
+      return {
+        ...result,
+        records: nextRecords
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "接口暂不可用，已使用本地预览结果。";
+
+      if (isOpenAIModelLabel(currentModelLabel) && isGptUnavailableMessage(message)) {
+        showGptFallbackToast();
+        setNoticeMessage("AI 投喂暂未完成，请检查 GPT 配置后重试。");
+        setErrorMessage("");
+      } else {
+        setErrorMessage(message);
+      }
+      return null;
+    } finally {
+      setIsParsing(false);
+    }
+  }
+
+  async function handleSave(): Promise<Awaited<ReturnType<typeof saveKnowledgeDraft>> | null> {
+    if (!draft.jobId) {
+      setNoticeMessage("请先生成结构化结果，再保存知识入库。");
+      setErrorMessage("");
+      return null;
+    }
+
+    if (draft.saveStatus === "已保存") {
+      setNoticeMessage("当前知识已保存入库，训练记录已更新。");
+      setErrorMessage("");
+      return null;
+    }
+
+    setIsSaving(true);
+    setNoticeMessage("正在保存知识入库并更新训练记录...");
+    setErrorMessage("");
+
+    try {
+      const result = await saveKnowledgeDraft({
+        draft,
+        agent: activeAgent,
+        originalInput: lastInput || draft.summary || draft.standardQuestion,
+        tenantId,
+        userId,
+        platform: platformContext.platform
+      });
+      const nextRecords = mergeTrainingRecords(result.records, records);
+
+      setDraft(result.draft);
+      setRecords(nextRecords);
+      setNoticeMessage(result.preview
+        ? `${result.message}（本地预览状态）`
+        : `${result.message} · 已携带 Web / EXE / APK 同步字段`);
+      pushNotification({
+        type: result.preview ? "fallback" : "success",
+        title: "知识保存状态已更新",
+        description: result.preview
+          ? "保存接口暂不可用，已在本地预览中标记为已保存。"
+          : `「${result.draft.title}」已保存到统一知识库。`
+      });
+
+      return {
+        ...result,
+        records: nextRecords
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "保存知识入库失败，请稍后重试。";
+
+      setErrorMessage(message);
+      return null;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function handleUpload(files: File[]) {
+    const states = files.map((file) => createUploadState(file, {
+      tenantId,
+      userId,
+      agentId: activeAgent.id,
+      platform: platformContext.platform
+    }));
+
+    if (states.length === 0) {
+      return;
+    }
+
+    setUploadedFiles((current) => [...states, ...current].slice(0, 8));
+    setErrorMessage("");
+    showActionToast({
+      type: "success",
+      title: `已添加 ${states.length} 个附件`
+    });
+    pushNotification({
+      type: "file",
+      title: "文件等待解析",
+      description: `${states.map((state) => state.fileName).join("、")} 已加入当前 composer，发送后进入统一投喂队列。`
+    });
+  }
+
+  function handleRemoveUpload(fileId: string) {
+    const target = uploadedFiles.find((file) => file.id === fileId);
+
+    if (target?.previewUrl && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(target.previewUrl);
+    }
+
+    setUploadedFiles((current) => current.filter((file) => file.id !== fileId));
+    showActionToast({
+      type: "info",
+      title: "已移除附件"
+    });
+  }
+
+  function handleModelChange(model: string) {
+    const nextModel = getGptModelSelectionByDisplayName(model);
+
+    setSelectedModel(nextModel.displayName);
+    setResolvedModel(nextModel.displayName);
+    setErrorMessage("");
+    setNoticeMessage(`当前模型已切换为 ${nextModel.displayName}，下一次 GPT 投喂会携带档位、版本和三端同步字段。`);
+  }
+
+  async function handleCheckConnection() {
+    setErrorMessage("");
+    setNoticeMessage("正在检查企业空间 / 知识库 / 卡密连接状态...");
+    const nextStatus = await checkLicenseStatus();
+
+    setConnectionStatus(nextStatus);
+    setNoticeMessage(`连接状态已更新：企业空间 ${nextStatus.enterpriseSpace}，知识库 ${nextStatus.knowledgeBase}，卡密 ${nextStatus.licenseStatus}。`);
+    pushNotification({
+      type: nextStatus.licenseStatus === "已激活" ? "license" : "fallback",
+      title: "卡密状态提醒",
+      description: `当前卡密状态：${nextStatus.licenseStatus}；企业空间：${nextStatus.enterpriseSpace}。`
+    });
+    return nextStatus;
+  }
+
+  async function handleVoiceToggle() {
+    const speechWindow = window as SpeechWindow;
+    const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      const message = "当前浏览器暂不支持语音输入，EXE / APK 端将在后续接入系统级语音。";
+      setVoiceState((current) => ({ ...current, isVoiceSupported: false, isRecording: false, error: message }));
+      setErrorMessage("");
+      setNoticeMessage(message);
+      return;
+    }
+
+    if (voiceState.isRecording) {
+      recognitionRef.current?.stop();
+      setVoiceState((current) => ({ ...current, isRecording: false }));
+      setNoticeMessage("语音输入已停止。");
+      return;
+    }
+
+    try {
+      if (navigator.mediaDevices?.getUserMedia) {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      const recognition = new SpeechRecognition();
+      recognitionRef.current = recognition;
+      recognition.continuous = false;
+      recognition.interimResults = true;
+      recognition.lang = "zh-CN";
+      recognition.onstart = () => {
+        setErrorMessage("");
+        setVoiceState((current) => ({ ...current, isVoiceSupported: true, isRecording: true, error: "" }));
+        setNoticeMessage("正在听写...");
+      };
+      recognition.onresult = (event) => {
+        let transcript = "";
+
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          transcript += event.results[index][0]?.transcript ?? "";
+        }
+
+        const nextTranscript = transcript.trim();
+
+        if (nextTranscript) {
+          setVoiceState((current) => ({ ...current, transcript: nextTranscript, error: "" }));
+          setInput((current) => current.trim()
+            ? `${current.trim()} ${nextTranscript}`
+            : nextTranscript);
+        }
+      };
+      recognition.onerror = (event) => {
+        const message = event.error === "not-allowed" || event.error === "service-not-allowed"
+          ? "麦克风权限被拒绝，请在浏览器或系统设置中允许麦克风。"
+          : "语音识别失败，请稍后重试或改用键盘输入。";
+
+        setVoiceState((current) => ({ ...current, isRecording: false, error: message }));
+        setErrorMessage(message);
+      };
+      recognition.onend = () => {
+        setVoiceState((current) => ({ ...current, isRecording: false }));
+      };
+      recognition.start();
+    } catch {
+      const message = "麦克风权限被拒绝，请在浏览器或系统设置中允许麦克风。";
+
+      setVoiceState((current) => ({ ...current, isVoiceSupported: true, isRecording: false, error: message }));
+      setErrorMessage(message);
+    }
+  }
+
+  function handleCreateAgent(payload: IngestCreateAgentPayload) {
+    if (!payload.name.trim()) {
+      setErrorMessage("请输入 Agent 名称");
+      return false;
+    }
+
+    const now = new Date().toISOString();
+    const id = `agent-${Date.now()}`;
+    const nextAgent: IngestChatAgent = {
+      id,
+      name: payload.name,
+      role: payload.category || payload.type,
+      category: payload.category || payload.type,
+      description: payload.description,
+      avatar: payload.name.slice(0, 1) || "新",
+      tone: "green",
+      tenantId,
+      userId,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget],
+      createdAt: now,
+      status: "active",
+      isSystem: false,
+      knowledgeCount: 0,
+      source: "ingest_custom",
+      managedBySuperAdmin: false,
+      editableByIngestAdmin: true,
+      deletableByIngestAdmin: true,
+      visibleToUserClient: false
+    };
+
+    const nextRecord: IngestTrainingRecord = {
+      id: `record-agent-${Date.now()}`,
+      jobId: null,
+      tenantId,
+      userId,
+      agentId: nextAgent.id,
+      agentName: nextAgent.name,
+      input: `新建 Agent：${nextAgent.name}`,
+      resultTitle: `新建 Agent：${nextAgent.name}`,
+      saveStatus: "待确认",
+      category: nextAgent.category ?? nextAgent.role,
+      time: "刚刚",
+      hits: 0,
+      sourceType: "admin_ingest",
+      source: "admin_ingest",
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget],
+      createdAt: now,
+      updatedAt: now,
+      aiOutput: null
+    };
+
+    setAgents((current) => [nextAgent, ...current]);
+    setActiveAgentId(nextAgent.id);
+    setRecords((current) => [nextRecord, ...current]);
+    setActiveRailKey("experts");
+    setIsAgentDetailOpen(true);
+    setErrorMessage("");
+    setNoticeMessage(`已创建 ${nextAgent.name}，当前为本地预览 Agent，已预留统一 API 字段。`);
+    return true;
+  }
+
+  async function handleUrlIngestSubmit() {
+    const url = urlInput.trim();
+
+    if (!url) {
+      setUrlError("URL 不能为空。");
+      return;
+    }
+
+    if (!isHttpUrl(url)) {
+      setUrlError("网址必须以 http:// 或 https:// 开头。");
+      return;
+    }
+
+    setIsUrlIngesting(true);
+    setUrlError("");
+    setErrorMessage("");
+    setNoticeMessage("正在生成网页投喂本地预览...");
+
+    try {
+      const result = await sendUrlIngestPreview({
+        url,
+        agent: activeAgent,
+        category: activeAgent.role,
+        model: selectedModelLabel,
+        gptTier: selectedGptModel.tier,
+        gptTierLabel: selectedGptModel.tierLabel,
+        gptVersion: selectedGptModel.version,
+        selectedModelLabel: selectedGptModel.displayName,
+        tenantId,
+        userId,
+        platform: platformContext.platform
+      });
+      const nextRecords = mergeTrainingRecords(result.records, records);
+      const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+
+      setDraft(result.draft);
+      setRecords(nextRecords);
+      setLastInput(`网址投喂：${url}`);
+      setMessages((current) => [
+        ...current,
+        {
+          id: `user-url-${Date.now()}`,
+          role: "user",
+          content: `网址投喂：${url}`,
+          time: now,
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          model: selectedModelLabel,
+          provider: "admin_ingest"
+        },
+        {
+          id: `assistant-url-${Date.now()}`,
+          role: "assistant",
+          content: result.replyMarkdown || `${result.message} 已生成结构化预览：${result.draft.title}。`,
+          time: now,
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          model: selectedModelLabel,
+          provider: result.provider,
+          saveSuggestion: result.saveSuggestion
+        }
+      ]);
+      setNoticeMessage(result.message);
+      pushNotification({
+        type: "fallback",
+        title: "网页投喂本地预览已生成",
+        description: `${result.draft.title} · ${result.draft.category}。真实网页抓取接入后可生成正式知识。`
+      });
+      setUrlInput("");
+      setIsUrlDialogOpen(false);
+    } catch (error) {
+      setUrlError(error instanceof Error ? error.message : "网页投喂接口暂不可用，请稍后重试。");
+      setNoticeMessage("网页投喂接口待接入真实抓取，当前为本地预览。");
+    } finally {
+      setIsUrlIngesting(false);
+    }
+  }
+
+  function handleToolAction(label: string) {
+    setErrorMessage("");
+
+    if (["提取重点", "改写为标准问答", "生成分类标签", "检查是否需要 AI 修正"].includes(label)) {
+      if (!input.trim()) {
+        setNoticeMessage("请输入内容后使用 AI 修正工具。");
+        return;
+      }
+
+      setInput(`${label}：${input.trim()}`);
+      setNoticeMessage(`已生成本地预览整理指令：${label}。`);
+      return;
+    }
+
+    if (label === "语音备注" || label === "麦克风") {
+      void handleVoiceToggle();
+      return;
+    }
+
+    if (label === "通知") {
+      handleRailChange("notifications");
+      return;
+    }
+
+    if (label === "设置") {
+      handleRailChange("settings");
+      return;
+    }
+
+    if (label === "图片 OCR") {
+      setNoticeMessage("图片 OCR 入口已响应：请选择图片文件，下一阶段接入真实 OCR 解析。");
+      return;
+    }
+
+    if (label === "网址投喂") {
+      setIsUrlDialogOpen(true);
+      setUrlError("");
+      setNoticeMessage("网址投喂弹窗已打开，可输入 http:// 或 https:// 链接生成本地预览。");
+      return;
+    }
+
+    if (label === "连接状态") {
+      void handleCheckConnection();
+      return;
+    }
+
+    setNoticeMessage(`${label}入口已响应，当前阶段预留解析状态和三端同步字段。`);
+  }
+
+  const sharedProps = {
+    agents: visibleAgents,
+    activeAgent,
+    activeAgentId,
+    onAgentChange: handleAgentSelect,
+    activeRailKey,
+    onRailChange: handleRailChange,
+    searchKeyword,
+    onSearchKeywordChange: setSearchKeyword,
+    selectedModel: selectedModelLabel,
+    resolvedModel,
+    modelOptions,
+    onModelChange: handleModelChange,
+    connectionStatus,
+    onCheckConnection: handleCheckConnection,
+    input,
+    onInputChange: setInput,
+    messages,
+    onMessagesChange: setMessages,
+    draft,
+    records,
+    noticeMessage,
+    errorMessage,
+    uploadState,
+    uploadedFiles,
+    voiceState,
+    notifications,
+    settingsState,
+    isParsing,
+    isSaving,
+    onOpenCreateAgent: () => setIsCreateAgentOpen(true),
+    onAgentViewDetails: handleViewAgentDetail,
+    onAgentEdit: handleEditAgent,
+    onAgentArchive: handleArchiveAgent,
+    onAgentDelete: handleRequestDeleteAgent,
+    onNoticeChange: setNoticeMessage,
+    onErrorChange: setErrorMessage,
+    onSend: handleSend,
+    onSave: handleSave,
+    onUpload: handleUpload,
+    onRemoveUpload: handleRemoveUpload,
+    onVoiceToggle: handleVoiceToggle,
+    onSettingsChange: setSettingsState,
+    onToolAction: handleToolAction,
+    onToast: showActionToast
+  };
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919]">
@@ -37,7 +1088,215 @@ export function IngestModeToggle() {
         </button>
       </div>
 
-      {mode === "chat" ? <IngestChatGPTShell /> : <IngestEXEShell />}
+      {mode === "chat" ? <IngestChatGPTShell {...sharedProps} /> : <IngestEXEShell {...sharedProps} />}
+      <IngestCreateAgentDialog
+        open={isCreateAgentOpen}
+        onClose={() => setIsCreateAgentOpen(false)}
+        onCreate={handleCreateAgent}
+      />
+      <IngestNotificationPanel
+        open={openPanel === "notifications"}
+        notifications={notifications}
+        onClose={() => setOpenPanel(null)}
+        onMarkAllRead={() => {
+          setNotifications((current) => current.map((notification) => ({ ...notification, read: true })));
+          setNoticeMessage("通知已全部标记为已读。");
+        }}
+      />
+      <IngestSettingsPanel
+        open={openPanel === "settings"}
+        activeAgent={activeAgent}
+        selectedModel={selectedModelLabel}
+        connectionStatus={connectionStatus}
+        uploadedFiles={uploadedFiles}
+        voiceState={voiceState}
+        settingsState={settingsState}
+        onSettingsChange={setSettingsState}
+        onClose={() => setOpenPanel(null)}
+      />
+      <IngestAgentDetailPanel
+        open={isAgentDetailOpen}
+        agent={activeAgent}
+        records={records}
+        onClose={() => setIsAgentDetailOpen(false)}
+      />
+      <IngestAgentDeleteDialog
+        agent={deleteCandidateAgent}
+        onClose={() => setDeleteCandidateAgent(null)}
+        onConfirm={handleConfirmDeleteAgent}
+      />
+      <UrlIngestDialog
+        open={isUrlDialogOpen}
+        url={urlInput}
+        error={urlError}
+        activeAgent={activeAgent}
+        isSubmitting={isUrlIngesting}
+        onUrlChange={setUrlInput}
+        onClose={() => {
+          if (!isUrlIngesting) {
+            setIsUrlDialogOpen(false);
+            setUrlError("");
+          }
+        }}
+        onSubmit={() => void handleUrlIngestSubmit()}
+      />
+      <ActionToastView toast={actionToast} onClose={() => setActionToast(null)} />
+      <GptFallbackToastView
+        toast={gptFallbackToast}
+        onClose={() => {
+          setIsGptFallbackToastDismissed(true);
+          setGptFallbackToast(null);
+        }}
+      />
+    </div>
+  );
+}
+
+function ActionToastView({
+  toast,
+  onClose
+}: {
+  toast: IngestActionToast | null;
+  onClose: () => void;
+}) {
+  if (!toast) {
+    return null;
+  }
+
+  const tone = toast.type === "warning"
+    ? "border-[#ffe1a6] bg-[#fffaf0] text-[#9a6500]"
+    : toast.type === "success"
+      ? "border-[#ccefd9] bg-[#f6fff9] text-[#128246]"
+      : "border-[#e5e5e2] bg-white text-[#333]";
+
+  return (
+    <div className={["absolute right-5 top-16 z-[85] w-[min(320px,calc(100vw-40px))] rounded-[20px] border p-3 shadow-[0_18px_60px_rgba(15,23,42,0.14)]", tone].join(" ")}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold">{toast.title}</p>
+          {toast.description ? <p className="mt-1 text-xs leading-5 text-[#555]">{toast.description}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/70 text-sm font-semibold transition hover:bg-white"
+          aria-label="关闭提示"
+        >
+          ×
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UrlIngestDialog({
+  open,
+  url,
+  error,
+  activeAgent,
+  isSubmitting,
+  onUrlChange,
+  onClose,
+  onSubmit
+}: {
+  open: boolean;
+  url: string;
+  error: string;
+  activeAgent: IngestChatAgent;
+  isSubmitting: boolean;
+  onUrlChange: (value: string) => void;
+  onClose: () => void;
+  onSubmit: () => void;
+}) {
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-0 z-[70] flex items-center justify-center bg-black/20 px-4" onMouseDown={onClose}>
+      <div className="w-full max-w-[460px] rounded-[28px] border border-[#e7e7e4] bg-white p-5 shadow-[0_24px_80px_rgba(15,23,42,0.18)]" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-[#202020]">网址投喂</h2>
+            <p className="mt-1 text-xs leading-5 text-[#777]">网页投喂接口待接入真实抓取，当前为本地预览。</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-[#f4f4f2] text-sm font-semibold text-[#666] transition hover:bg-[#ececea] disabled:opacity-50"
+            aria-label="关闭网址投喂弹窗"
+          >
+            ×
+          </button>
+        </div>
+
+        <label className="mt-5 block text-xs font-semibold text-[#555]" htmlFor="admin-ingest-url-input">URL</label>
+        <input
+          id="admin-ingest-url-input"
+          value={url}
+          onChange={(event) => onUrlChange(event.target.value)}
+          placeholder="https://example.com/article"
+          className="mt-2 h-11 w-full rounded-2xl border border-[#e3e3df] bg-[#fbfbfa] px-4 text-sm text-[#202020] outline-none transition focus:border-[#128246] focus:bg-white"
+        />
+        {error ? <p className="mt-2 text-xs font-semibold text-[#b93b4a]">{error}</p> : null}
+
+        <div className="mt-4 grid gap-2 rounded-2xl bg-[#f8f8f7] p-3 text-xs text-[#666]">
+          <p><span className="font-semibold text-[#202020]">目标 Agent：</span>{activeAgent.name}</p>
+          <p><span className="font-semibold text-[#202020]">分类：</span>{activeAgent.role}</p>
+          <p><span className="font-semibold text-[#202020]">同步目标：</span>Web / EXE / APK</p>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={isSubmitting}
+            className="h-10 rounded-2xl bg-[#f3f3f1] px-4 text-sm font-semibold text-[#555] transition hover:bg-[#ececea] disabled:opacity-50"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onSubmit}
+            disabled={isSubmitting}
+            className="h-10 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black disabled:bg-[#d9d9d6] disabled:text-[#777]"
+          >
+            {isSubmitting ? "正在投喂..." : "开始投喂"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function GptFallbackToastView({
+  toast,
+  onClose
+}: {
+  toast: GptFallbackToast | null;
+  onClose: () => void;
+}) {
+  if (!toast) {
+    return null;
+  }
+
+  return (
+    <div className="absolute right-5 top-32 z-[80] w-[min(360px,calc(100vw-40px))] rounded-[22px] border border-[#ffd7de] bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.16)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-semibold text-[#b93b4a]">{toast.title}</p>
+          <p className="mt-1 text-xs leading-5 text-[#555]">{toast.description}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fff3f4] text-sm font-semibold text-[#b93b4a] transition hover:bg-[#ffe5e9]"
+          aria-label="关闭 GPT 接口提示"
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 }
