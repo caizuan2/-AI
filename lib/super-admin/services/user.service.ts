@@ -7,8 +7,9 @@ const userMetrics: UserMetrics = {
   disabledUsers: 18,
   roleBreakdown: [
     { role: "super_admin", count: 3 },
-    { role: "kb_admin", count: 42 },
-    { role: "user", count: 3437 }
+    { role: "enterprise_admin", count: 12 },
+    { role: "ingest_admin", count: 42 },
+    { role: "user", count: 3425 }
   ]
 };
 

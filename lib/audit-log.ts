@@ -35,9 +35,17 @@ export type AuditAction =
   | "KNOWLEDGE_SOFT_DELETE_SUCCESS"
   | "KNOWLEDGE_VIEW"
   | "RBAC_ACCESS_DENIED"
+  | "disable_user"
+  | "demote_user_role"
+  | "enable_user"
+  | "last_super_admin_protected"
+  | "promote_to_enterprise_admin"
+  | "promote_to_ingest_admin"
+  | "promote_to_super_admin"
   | "rename_conversation"
   | "share_conversation"
-  | "update_feature_flag";
+  | "update_feature_flag"
+  | "update_user_role";
 
 export interface AuditRequestContext {
   ip: string | null;

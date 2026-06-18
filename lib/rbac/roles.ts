@@ -1,11 +1,13 @@
-export const appRoles = ["user", "kb_admin", "super_admin"] as const;
+export const appRoles = ["user", "kb_admin", "ingest_admin", "enterprise_admin", "super_admin"] as const;
 
 export type AppRole = (typeof appRoles)[number];
 
 const roleRank: Record<AppRole, number> = {
   user: 0,
   kb_admin: 1,
-  super_admin: 2
+  ingest_admin: 1,
+  enterprise_admin: 2,
+  super_admin: 3
 };
 
 export function isAppRole(value: unknown): value is AppRole {

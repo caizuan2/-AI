@@ -32,9 +32,15 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   },
   {
     title: "用户与权限",
-    href: "/super-admin#users",
-    description: "账号、角色、权限策略",
+    href: "/super-admin/users",
+    description: "账号、角色、授权与状态",
     icon: "Users"
+  },
+  {
+    title: "角色权限",
+    href: "/super-admin/roles",
+    description: "角色矩阵与三端边界",
+    icon: "ShieldCheck"
   },
   {
     title: "历史会话控制",
