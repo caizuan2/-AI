@@ -25,7 +25,7 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   },
   {
     title: "企业管理",
-    href: "/super-admin#enterprise",
+    href: "/super-admin/organizations",
     description: "企业组织、部门与租户",
     icon: "Building2",
     badge: "规划中"
@@ -51,13 +51,13 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   },
   {
     title: "知识库管理",
-    href: "/super-admin#knowledge",
+    href: "/super-admin/knowledge",
     description: "文档、分类、审核与索引",
     icon: "Database"
   },
   {
     title: "卡密授权",
-    href: "/super-admin#licenses",
+    href: "/super-admin/licenses",
     description: "授权、激活与到期管理",
     icon: "KeyRound"
   },
@@ -120,7 +120,7 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   },
   {
     title: "AI 模型配置",
-    href: "/super-admin#models",
+    href: "/super-admin/model-config",
     description: "模型、额度、成本与策略",
     icon: "Bot"
   },
@@ -133,19 +133,19 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   },
   {
     title: "安全审计日志",
-    href: "/super-admin#audit",
+    href: "/super-admin/audit",
     description: "登录、异常、权限操作",
     icon: "ShieldCheck"
   },
   {
     title: "运营管理",
-    href: "/super-admin#operations",
+    href: "/super-admin/operations",
     description: "公告、反馈与运营动作",
     icon: "LineChart"
   },
   {
     title: "系统设置",
-    href: "/super-admin#settings",
+    href: "/super-admin/settings",
     description: "全局参数和运行配置",
     icon: "Settings"
   }
@@ -476,28 +476,28 @@ export const quickActions: QuickAction[] = [
   {
     title: "新增企业",
     description: "创建企业组织、部门与初始管理员。",
-    href: "/super-admin#enterprise",
+    href: "/super-admin/organizations",
     icon: "Building2",
     status: "pending"
   },
   {
     title: "查看用户",
     description: "进入用户与权限中心查看账号状态。",
-    href: "/super-admin#users",
+    href: "/super-admin/users",
     icon: "Users",
     status: "normal"
   },
   {
     title: "生成卡密",
     description: "打开授权管理入口，准备席位与到期策略。",
-    href: "/super-admin#licenses",
+    href: "/super-admin/licenses",
     icon: "KeyRound",
     status: "normal"
   },
   {
     title: "配置模型",
     description: "检查模型供应商、额度和成本策略。",
-    href: "/super-admin#models",
+    href: "/super-admin/model-config",
     icon: "Bot",
     status: "warning"
   },
@@ -511,7 +511,7 @@ export const quickActions: QuickAction[] = [
   {
     title: "查看日志",
     description: "预览安全审计和异常请求记录。",
-    href: "/super-admin#audit",
+    href: "/super-admin/audit",
     icon: "ShieldCheck",
     status: "normal"
   }

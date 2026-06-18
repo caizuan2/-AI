@@ -102,13 +102,30 @@ function extractFlagsFromMetadata(metadata: unknown) {
   return normalizeFlags(metadata.after);
 }
 
-export function buildConversationFeatureFlagResponse(flags: ConversationFeatureFlags): ConversationFeatureFlagResponse {
+function buildDisabledReasons(flags: ConversationFeatureFlags) {
+  return flagDefinitions.reduce<Partial<Record<keyof ConversationFeatureFlags, string>>>((reasons, definition) => {
+    if (!flags[definition.name]) {
+      reasons[definition.name] = "FEATURE_DISABLED";
+    }
+
+    return reasons;
+  }, {});
+}
+
+export function buildConversationFeatureFlagResponse(
+  flags: ConversationFeatureFlags,
+  reasons?: ConversationFeatureFlagResponse["reasons"]
+): ConversationFeatureFlagResponse {
   return {
     ...flags,
     items: flagDefinitions.map((definition) => ({
       ...definition,
       enabled: flags[definition.name]
-    }))
+    })),
+    reasons: {
+      ...buildDisabledReasons(flags),
+      ...(reasons ?? {})
+    }
   };
 }
 

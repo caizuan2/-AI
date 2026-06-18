@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, BarChart3, Building2, Database, LockKeyhole, Settings } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { AuditLogPreview } from "@/components/super-admin/AuditLogPreview";
 import { DownloadUpdateCenter } from "@/components/super-admin/DownloadUpdateCenter";
 import { HomeCommercialSnapshot } from "@/components/super-admin/commercial/HomeCommercialSnapshot";
@@ -8,50 +8,8 @@ import { StatsCards } from "@/components/super-admin/StatsCards";
 import { HomeSyncSnapshot } from "@/components/super-admin/sync/HomeSyncSnapshot";
 import { HomeEnvironmentSnapshot } from "@/components/super-admin/system/HomeEnvironmentSnapshot";
 import { SystemHealthPanel } from "@/components/super-admin/SystemHealthPanel";
-import { getLicenseSummary } from "@/lib/super-admin/services/license.service";
-
-const centerPlaceholders = [
-  {
-    id: "enterprise",
-    title: "企业组织 / 部门 / 角色",
-    description: "企业、部门、角色矩阵和租户治理入口占位。",
-    icon: Building2
-  },
-  {
-    id: "users",
-    title: "用户与权限中心",
-    description: "账号状态、角色分配、访问策略与风险账号占位。",
-    icon: LockKeyhole
-  },
-  {
-    id: "knowledge",
-    title: "知识库管理中心",
-    description: "文档数量、审核、索引、分类、标签与质量治理占位。",
-    icon: Database
-  },
-  {
-    id: "models",
-    title: "AI 模型配置中心",
-    description: "模型供应商、额度、成本、降级策略与安全策略占位。",
-    icon: Settings
-  },
-  {
-    id: "operations",
-    title: "运营管理中心",
-    description: "公告、反馈、活动、客户成功动作与运营数据占位。",
-    icon: BarChart3
-  },
-  {
-    id: "settings",
-    title: "系统设置中心",
-    description: "企业级全局参数、环境标识、告警阈值与基础配置占位。",
-    icon: Settings
-  }
-];
 
 export default function SuperAdminPage() {
-  const licenseSummary = getLicenseSummary();
-
   return (
     <div className="mx-auto max-w-[1600px] space-y-6">
       <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
@@ -118,50 +76,8 @@ export default function SuperAdminPage() {
 
       <DownloadUpdateCenter mode="compact" />
 
-      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)]">
         <AuditLogPreview />
-
-        <section id="licenses" className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <h2 className="text-xl font-semibold tracking-normal text-slate-950">卡密 / 授权 / 到期管理</h2>
-          <p className="mt-2 text-sm leading-6 text-slate-500">
-            第一阶段仅展示授权管理入口占位，不修改现有卡密生成、验证、激活逻辑。
-          </p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs text-slate-500">已激活</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-950">
-                {licenseSummary.activated.toLocaleString("zh-CN")}
-              </p>
-            </div>
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="text-xs text-amber-700">即将到期</p>
-              <p className="mt-2 text-2xl font-semibold text-amber-900">{licenseSummary.expiringSoon}</p>
-            </div>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-              <p className="text-xs text-slate-500">待配置策略</p>
-              <p className="mt-2 text-2xl font-semibold text-slate-950">{licenseSummary.pendingPolicies}</p>
-            </div>
-          </div>
-        </section>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {centerPlaceholders.map((item) => {
-          const Icon = item.icon;
-
-          return (
-            <article key={item.id} id={item.id} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-              <span className="grid h-10 w-10 place-items-center rounded-lg bg-slate-100 text-slate-700">
-                <Icon className="h-5 w-5" />
-              </span>
-              <h2 className="mt-4 text-lg font-semibold tracking-normal text-slate-950">{item.title}</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">{item.description}</p>
-              <span className="mt-4 inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
-                第一阶段占位
-              </span>
-            </article>
-          );
-        })}
       </section>
     </div>
   );

@@ -26,6 +26,7 @@ export type ConversationFeatureFlagItem = {
 
 export type ConversationFeatureFlagResponse = ConversationFeatureFlags & {
   items: ConversationFeatureFlagItem[];
+  reasons?: Partial<Record<keyof ConversationFeatureFlags, string>>;
 };
 
 export type ConversationControlAuditAction =
