@@ -14,7 +14,8 @@
   [int]$WindowsBuildTimeoutSeconds = 900,
   [switch]$SkipWindowsRelease,
   [switch]$SkipGitHubUpload,
-  [switch]$SkipManifestBranchUpdate
+  [switch]$SkipManifestBranchUpdate,
+  [switch]$LocalUserSelfTest
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,82 @@ $VersionJsonPath = Join-Path $TestOutputDir "version.json"
 $RawManifestDir = Join-Path $Root "public/manifests/user-test"
 $RawManifestPath = Join-Path $RawManifestDir "version.json"
 $BuildStartedAt = Get-Date
+
+if ($LocalUserSelfTest) {
+  $ErrorActionPreference = "Stop"
+
+  $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
+  Set-Location $Root
+
+  $branch = (git branch --show-current).Trim()
+  if ($branch -ne "feature-user-client") {
+    throw "当前分支不是 feature-user-client，禁止继续。当前分支：$branch"
+  }
+
+  Get-Process ai_knowledge_flutter_app -ErrorAction SilentlyContinue |
+    Stop-Process -Force
+
+  if ([string]::IsNullOrWhiteSpace($env:PUB_HOSTED_URL)) {
+    $env:PUB_HOSTED_URL = "https://pub.flutter-io.cn"
+  }
+  if ([string]::IsNullOrWhiteSpace($env:FLUTTER_STORAGE_BASE_URL)) {
+    $env:FLUTTER_STORAGE_BASE_URL = "https://storage.flutter-io.cn"
+  }
+
+  Set-Location (Join-Path $Root "flutter_app")
+
+  flutter pub get
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter pub get 失败"
+  }
+
+  flutter analyze
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter analyze 失败"
+  }
+
+  flutter test
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter test 失败"
+  }
+
+  flutter build apk --release
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter build apk --release 失败"
+  }
+
+  flutter build windows --release
+  if ($LASTEXITCODE -ne 0) {
+    throw "flutter build windows --release 失败"
+  }
+
+  $apk = Join-Path $Root "flutter_app\build\app\outputs\flutter-apk\app-release.apk"
+  $exe = Join-Path $Root "flutter_app\build\windows\x64\runner\Release\ai_knowledge_flutter_app.exe"
+
+  if (!(Test-Path $apk)) {
+    throw "APK 未生成：$apk"
+  }
+
+  if (!(Test-Path $exe)) {
+    throw "Windows EXE 未生成：$exe"
+  }
+
+  Write-Host "用户端本地自测通过"
+  Write-Host "APK: $apk"
+  Write-Host "EXE: $exe"
+
+  Set-Location $Root
+  git status --short
+
+  Write-Host ""
+  Write-Host "不要提交 Flutter 自动生成文件："
+  Write-Host "flutter_app/ios/Runner/GeneratedPluginRegistrant.h"
+  Write-Host "flutter_app/ios/Runner/GeneratedPluginRegistrant.m"
+  Write-Host "flutter_app/windows/flutter/generated_plugin_registrant.cc"
+  Write-Host "flutter_app/windows/flutter/generated_plugin_registrant.h"
+  Write-Host "flutter_app/windows/flutter/generated_plugins.cmake"
+  return
+}
 
 function Get-FlutterVersion {
   $PubspecPath = Join-Path $FlutterDir "pubspec.yaml"

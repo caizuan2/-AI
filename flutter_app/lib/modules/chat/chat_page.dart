@@ -25,6 +25,8 @@ const _appDisplayName = '小董AI';
 const _appLogoAsset = 'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png';
 const _legacyAppTitle = 'AI 知识库助手';
 const _legacyAppDrawerTitle = 'AI知识库助手';
+const _initialWelcomeMessageContent =
+    '你好，我是 AI 知识库助手。你可以输入问题，也可以通过加号菜单上传图片、文件或拍照。';
 
 void _showLocalActionHint(
   BuildContext context,
@@ -224,6 +226,17 @@ class _ChatPageState extends State<ChatPage> {
     await _controller.send(text, attachments: attachments);
   }
 
+  void _applyWelcomePrompt(String prompt) {
+    final text = prompt.trim();
+    if (text.isEmpty) {
+      return;
+    }
+
+    _inputController.text = text;
+    _inputController.selection = TextSelection.collapsed(offset: text.length);
+    _showLocalActionHint(context, '已填入');
+  }
+
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) {
@@ -293,15 +306,23 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _pickAndUploadImage() async {
     try {
       if (_isMobilePlatform) {
-        final file = await _imagePicker.pickImage(
-          source: image_picker.ImageSource.gallery,
-          imageQuality: 92,
-        );
-        await _uploadPickedFile(file, '图片');
+        try {
+          final files = await _imagePicker.pickMultiImage(
+            imageQuality: 92,
+          );
+          await _uploadPickedFiles(files, '图片');
+        } catch (error) {
+          debugPrint('Multi image picker failed, fallback to single: $error');
+          final file = await _imagePicker.pickImage(
+            source: image_picker.ImageSource.gallery,
+            imageQuality: 92,
+          );
+          await _uploadPickedFile(file, '图片');
+        }
         return;
       }
 
-      final file = await file_selector.openFile(
+      final files = await file_selector.openFiles(
         acceptedTypeGroups: const [
           file_selector.XTypeGroup(
             label: 'Images',
@@ -309,7 +330,7 @@ class _ChatPageState extends State<ChatPage> {
           ),
         ],
       );
-      await _uploadPickedFile(file, '图片');
+      await _uploadPickedFiles(files, '图片');
     } catch (error) {
       _showSnack('图片上传失败：$error');
     }
@@ -317,8 +338,8 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _pickAndUploadFile() async {
     try {
-      final file = await file_selector.openFile();
-      await _uploadPickedFile(file, '文件');
+      final files = await file_selector.openFiles();
+      await _uploadPickedFiles(files, '文件');
     } catch (error) {
       _showSnack('文件上传失败：$error');
     }
@@ -362,42 +383,7 @@ class _ChatPageState extends State<ChatPage> {
 
     setState(() => _uploading = true);
     try {
-      final file = pickedFile as dynamic;
-      final Uint8List bytes = await file.readAsBytes() as Uint8List;
-      final String name = (file.name as String?)?.trim().isNotEmpty == true
-          ? file.name as String
-          : '$label-${DateTime.now().millisecondsSinceEpoch}';
-      final String? mimeType = file.mimeType as String?;
-      final result = await widget.apiService.upload(
-        UploadFile(name: name, bytes: bytes, mimeType: mimeType),
-      );
-      final uploadUrl = _extractUploadUrl(result);
-      if (uploadUrl == null || uploadUrl.trim().isEmpty) {
-        throw ApiException(
-          '服务器未返回附件 URL',
-          debugDetails:
-              'requestUrl=/api/ai/chat/attachments\nfileName=$name\nfileSize=${bytes.length}\nmimeType=${mimeType ?? ''}\nresponse=$result',
-        );
-      }
-      final isImage = _isImageUpload(label, mimeType, name);
-      final attachment = ChatAttachment(
-        type: isImage ? ChatAttachmentType.image : ChatAttachmentType.file,
-        name: name,
-        status: '上传成功',
-        mimeType: mimeType,
-        size: bytes.length,
-        bytes: bytes,
-        url: uploadUrl,
-      );
-      setState(() {
-        _pendingAttachments.add(
-          _PendingAttachment(
-            id: '${DateTime.now().microsecondsSinceEpoch}-${_pendingAttachments.length}',
-            sourceLabel: label,
-            attachment: attachment,
-          ),
-        );
-      });
+      await _uploadPickedFileToPending(pickedFile, label);
     } catch (error) {
       await _showUploadFailure(label, error);
     } finally {
@@ -405,6 +391,144 @@ class _ChatPageState extends State<ChatPage> {
         setState(() => _uploading = false);
       }
     }
+  }
+
+  Future<void> _uploadPickedFiles(
+      List<Object> pickedFiles, String label) async {
+    if (pickedFiles.isEmpty) {
+      _showSnack('已取消选择$label');
+      return;
+    }
+    if (_uploading) {
+      _showSnack('正在上传，请稍候');
+      return;
+    }
+
+    final files = _uniquePickedFiles(pickedFiles);
+    final total = files.length;
+    if (total == 0) {
+      _showSnack('已取消选择$label');
+      return;
+    }
+
+    var successCount = 0;
+    var failureCount = 0;
+    _showUploadHint('已选择 $total 个附件');
+    setState(() => _uploading = true);
+    try {
+      for (var index = 0; index < total; index += 1) {
+        if (!mounted) {
+          return;
+        }
+        _showUploadHint('正在上传 ${index + 1}/$total');
+        try {
+          await _uploadPickedFileToPending(files[index], label);
+          successCount += 1;
+        } catch (error) {
+          failureCount += 1;
+          debugPrint('$label upload failed (${index + 1}/$total): $error');
+        }
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _uploading = false);
+      }
+    }
+
+    if (!mounted) {
+      return;
+    }
+    if (failureCount == 0) {
+      _showUploadHint('上传完成 $successCount/$total');
+    } else {
+      _showUploadHint('上传完成 $successCount/$total，失败 $failureCount',
+          error: true);
+    }
+  }
+
+  Future<void> _uploadPickedFileToPending(
+      Object pickedFile, String label) async {
+    final file = pickedFile as dynamic;
+    final Uint8List bytes = await file.readAsBytes() as Uint8List;
+    final String name = (file.name as String?)?.trim().isNotEmpty == true
+        ? file.name as String
+        : '$label-${DateTime.now().millisecondsSinceEpoch}';
+    final String? mimeType = file.mimeType as String?;
+    final result = await widget.apiService.upload(
+      UploadFile(name: name, bytes: bytes, mimeType: mimeType),
+    );
+    final uploadUrl = _extractUploadUrl(result);
+    if (uploadUrl == null || uploadUrl.trim().isEmpty) {
+      throw ApiException(
+        '服务器未返回附件 URL',
+        debugDetails:
+            'requestUrl=/api/ai/chat/attachments\nfileName=$name\nfileSize=${bytes.length}\nmimeType=${mimeType ?? ''}\nresponse=$result',
+      );
+    }
+    final isImage = _isImageUpload(label, mimeType, name);
+    final attachment = ChatAttachment(
+      type: isImage ? ChatAttachmentType.image : ChatAttachmentType.file,
+      name: name,
+      status: '上传成功',
+      mimeType: mimeType,
+      size: bytes.length,
+      bytes: bytes,
+      url: uploadUrl,
+    );
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _pendingAttachments.add(
+        _PendingAttachment(
+          id: '${DateTime.now().microsecondsSinceEpoch}-${_pendingAttachments.length}',
+          sourceLabel: label,
+          attachment: attachment,
+        ),
+      );
+    });
+  }
+
+  List<Object> _uniquePickedFiles(List<Object> pickedFiles) {
+    final seen = <String>{};
+    final files = <Object>[];
+    for (final pickedFile in pickedFiles) {
+      final key = _pickedFileIdentity(pickedFile);
+      if (key != null && !seen.add(key)) {
+        continue;
+      }
+      files.add(pickedFile);
+    }
+    return files;
+  }
+
+  String? _pickedFileIdentity(Object pickedFile) {
+    final file = pickedFile as dynamic;
+    try {
+      final path = file.path as String?;
+      if (path != null && path.trim().isNotEmpty) {
+        return path.trim();
+      }
+    } catch (_) {
+      // Some pickers do not expose a filesystem path.
+    }
+    try {
+      final name = file.name as String?;
+      if (name != null && name.trim().isNotEmpty) {
+        return name.trim();
+      }
+    } catch (_) {
+      return null;
+    }
+    return null;
+  }
+
+  void _showUploadHint(String message, {bool error = false}) {
+    if (!mounted) {
+      debugPrint(message);
+      return;
+    }
+    _showLocalActionHint(context, message, error: error);
   }
 
   void _removePendingAttachment(String id, [BuildContext? actionContext]) {
@@ -844,6 +968,7 @@ class _ChatPageState extends State<ChatPage> {
           syncing: _controller.syncing,
           syncError: _controller.lastSyncError,
           useOfficialBrand: _useWindowsBrand,
+          onSetConversationPinned: _controller.setConversationPinned,
           onNewConversation: () {
             _clearComposer();
             _controller.startNewConversation();
@@ -895,61 +1020,63 @@ class _ChatPageState extends State<ChatPage> {
           );
         },
       ),
-      title: AnimatedBuilder(
-        animation: _controller,
-        builder: (context, _) {
-          final subtitle =
-              '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}';
-          if (!_useWindowsBrand) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(_legacyAppTitle),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ],
-            );
-          }
+      title: desktopSidebar
+          ? const SizedBox.shrink()
+          : AnimatedBuilder(
+              animation: _controller,
+              builder: (context, _) {
+                final subtitle =
+                    '${_modelLabel(_controller.selectedModel)} · ${_controller.sessionId}';
+                if (!_useWindowsBrand) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(_legacyAppTitle),
+                      Text(
+                        subtitle,
+                        style: const TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  );
+                }
 
-          return Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const _AppBrandLogo(size: 32, radius: 9),
-              const SizedBox(width: 10),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                return Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      _appDisplayName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Color(0xFF64748B),
-                        fontSize: 11,
-                        fontWeight: FontWeight.w500,
+                    const _AppBrandLogo(size: 32, radius: 9),
+                    const SizedBox(width: 10),
+                    Flexible(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Text(
+                            _appDisplayName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            subtitle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Color(0xFF64748B),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
-                ),
-              ),
-            ],
-          );
-        },
-      ),
+                );
+              },
+            ),
       actions: [
         PopupMenuButton<String>(
           tooltip: '选择模型',
@@ -983,46 +1110,52 @@ class _ChatPageState extends State<ChatPage> {
     return AnimatedBuilder(
       animation: _controller,
       builder: (context, _) {
-        final messages = _controller.messages;
+        final messages = _visibleChatMessages(_controller.messages);
+        final showWelcome = messages.isEmpty;
         return Column(
           children: [
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
-                itemCount: messages.length,
-                itemBuilder: (context, index) {
-                  return TweenAnimationBuilder<double>(
-                    key: ValueKey(
-                      '${messages[index].createdAt.microsecondsSinceEpoch}-$index',
+              child: showWelcome
+                  ? _UserWelcomeEmptyState(
+                      role: _welcomeRoleForSession(_controller.sessionId),
+                      onPromptSelected: _applyWelcomePrompt,
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 120),
+                      itemCount: messages.length,
+                      itemBuilder: (context, index) {
+                        return TweenAnimationBuilder<double>(
+                          key: ValueKey(
+                            '${messages[index].createdAt.microsecondsSinceEpoch}-$index',
+                          ),
+                          tween: Tween(begin: 0, end: 1),
+                          duration: const Duration(milliseconds: 260),
+                          curve: Curves.easeOutCubic,
+                          builder: (context, value, child) {
+                            return Opacity(
+                              opacity: value,
+                              child: Transform.translate(
+                                offset: Offset(0, 14 * (1 - value)),
+                                child: child,
+                              ),
+                            );
+                          },
+                          child: _MessageBubble(
+                            message: messages[index],
+                            onCancel: _controller.sending
+                                ? _controller.cancelStreaming
+                                : null,
+                            onRetry: _controller.canRetry
+                                ? _controller.retryLastFailed
+                                : null,
+                            onEdit: messages[index].role == ChatRole.user
+                                ? (_) => _editUserMessage(messages[index])
+                                : null,
+                          ),
+                        );
+                      },
                     ),
-                    tween: Tween(begin: 0, end: 1),
-                    duration: const Duration(milliseconds: 260),
-                    curve: Curves.easeOutCubic,
-                    builder: (context, value, child) {
-                      return Opacity(
-                        opacity: value,
-                        child: Transform.translate(
-                          offset: Offset(0, 14 * (1 - value)),
-                          child: child,
-                        ),
-                      );
-                    },
-                    child: _MessageBubble(
-                      message: messages[index],
-                      onCancel: _controller.sending
-                          ? _controller.cancelStreaming
-                          : null,
-                      onRetry: _controller.canRetry
-                          ? _controller.retryLastFailed
-                          : null,
-                      onEdit: messages[index].role == ChatRole.user
-                          ? (_) => _editUserMessage(messages[index])
-                          : null,
-                    ),
-                  );
-                },
-              ),
             ),
             SafeArea(
               top: false,
@@ -1153,6 +1286,29 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  List<ChatMessage> _visibleChatMessages(List<ChatMessage> messages) {
+    final hasRealContent = messages.any((message) {
+      return !_isInitialWelcomeMessage(message) &&
+          (message.content.trim().isNotEmpty ||
+              message.attachments.isNotEmpty ||
+              message.isStreaming);
+    });
+    if (!hasRealContent) {
+      return const [];
+    }
+
+    return messages
+        .where((message) => !_isInitialWelcomeMessage(message))
+        .toList(growable: false);
+  }
+
+  bool _isInitialWelcomeMessage(ChatMessage message) {
+    return message.role == ChatRole.assistant &&
+        message.attachments.isEmpty &&
+        !message.isStreaming &&
+        message.content.trim() == _initialWelcomeMessageContent;
+  }
+
   @override
   Widget build(BuildContext context) {
     final desktopSidebar = _useDesktopSidebar(context);
@@ -1248,6 +1404,7 @@ class _HistoryDrawer extends StatefulWidget {
     required this.syncing,
     required this.syncError,
     required this.useOfficialBrand,
+    required this.onSetConversationPinned,
     required this.onNewConversation,
     required this.onOpenConversation,
     required this.onOpenSettings,
@@ -1264,6 +1421,7 @@ class _HistoryDrawer extends StatefulWidget {
   final bool syncing;
   final String? syncError;
   final bool useOfficialBrand;
+  final bool Function(String id, bool pinned) onSetConversationPinned;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
   final VoidCallback onOpenSettings;
@@ -1285,6 +1443,42 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     super.dispose();
   }
 
+  Future<void> _handleConversationMenu(
+    _ConversationMenuAction action,
+    ChatConversationSummary conversation,
+  ) async {
+    switch (action) {
+      case _ConversationMenuAction.share:
+        _showLocalActionHint(context, '分享接口未接入', error: true);
+        return;
+      case _ConversationMenuAction.startGroupChat:
+        _showLocalActionHint(context, '群聊功能暂未开放', error: true);
+        return;
+      case _ConversationMenuAction.rename:
+        _showLocalActionHint(context, '重命名接口未接入', error: true);
+        return;
+      case _ConversationMenuAction.togglePinned:
+        final nextPinned = !conversation.pinned;
+        final updated = widget.onSetConversationPinned(
+          conversation.id,
+          nextPinned,
+        );
+        if (!mounted) return;
+        _showLocalActionHint(
+          context,
+          updated ? (nextPinned ? '已本地置顶' : '已取消本地置顶') : '当前会话暂时无法置顶',
+          error: !updated,
+        );
+        return;
+      case _ConversationMenuAction.archive:
+        _showLocalActionHint(context, '归档功能暂未开放', error: true);
+        return;
+      case _ConversationMenuAction.delete:
+        _showLocalActionHint(context, '删除接口未接入', error: true);
+        return;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final normalizedQuery = _query.trim().toLowerCase();
@@ -1298,6 +1492,34 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                       normalizedQuery,
                     );
           }).toList(growable: false);
+    final pinnedConversations = conversations
+        .where((conversation) => conversation.pinned)
+        .toList(growable: false);
+    final normalConversations = conversations
+        .where((conversation) => !conversation.pinned)
+        .toList(growable: false);
+
+    List<Widget> buildConversationTiles(
+      List<ChatConversationSummary> items,
+    ) {
+      final tiles = <Widget>[];
+      for (var index = 0; index < items.length; index += 1) {
+        if (index > 0) {
+          tiles.add(const SizedBox(height: 6));
+        }
+        final conversation = items[index];
+        tiles.add(
+          _ConversationTile(
+            conversation: conversation,
+            index: conversations.indexOf(conversation),
+            onTap: () => widget.onOpenConversation(conversation.id),
+            onMenuSelected: (action) =>
+                _handleConversationMenu(action, conversation),
+          ),
+        );
+      }
+      return tiles;
+    }
 
     return SafeArea(
       child: Column(
@@ -1374,19 +1596,29 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
                 ? _DrawerEmptyState(
                     text: widget.conversations.isEmpty ? '暂无历史记录' : '暂无匹配会话',
                   )
-                : ListView.separated(
+                : ListView(
                     padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                    itemBuilder: (context, index) {
-                      final conversation = conversations[index];
-                      return _ConversationTile(
-                        conversation: conversation,
-                        index: index,
-                        onTap: () => widget.onOpenConversation(conversation.id),
-                      );
-                    },
-                    separatorBuilder: (context, index) =>
-                        const SizedBox(height: 6),
-                    itemCount: conversations.length,
+                    children: [
+                      if (pinnedConversations.isNotEmpty)
+                        const _ConversationGroupTitle('已置顶'),
+                      ...buildConversationTiles(pinnedConversations),
+                      if (pinnedConversations.isNotEmpty &&
+                          normalConversations.isNotEmpty)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
+                          child: Divider(
+                            height: 1,
+                            thickness: 0.7,
+                            color: Color(0xFFE5E7EB),
+                          ),
+                        ),
+                      if (normalConversations.isNotEmpty)
+                        const _ConversationGroupTitle('最近'),
+                      ...buildConversationTiles(normalConversations),
+                    ],
                   ),
           ),
           _DrawerUserFooter(
@@ -1482,57 +1714,738 @@ class _DrawerEmptyState extends StatelessWidget {
   }
 }
 
-class _ConversationTile extends StatelessWidget {
+class _UserWelcomeRole {
+  const _UserWelcomeRole({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.color,
+    required this.prompts,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color color;
+  final List<String> prompts;
+}
+
+const _welcomeRoles = [
+  _UserWelcomeRole(
+    icon: Icons.workspace_premium_outlined,
+    title: 'Hi，我是销售教练',
+    subtitle: '销售辅导、异议处理、成交技巧，帮你把话术说到客户心里。',
+    color: Color(0xFF2563EB),
+    prompts: [
+      '帮我设计一套客户开场话术',
+      '如何处理客户说价格贵？',
+      '帮我优化这段销售话术',
+      '客户已读不回怎么跟进？',
+    ],
+  ),
+  _UserWelcomeRole(
+    icon: Icons.handshake_outlined,
+    title: 'Hi，我是成交顾问',
+    subtitle: '帮你拆解客户顾虑，生成更容易成交的沟通方案。',
+    color: Color(0xFF059669),
+    prompts: [
+      '客户一直犹豫怎么推进成交？',
+      '帮我写一段成交收口话术',
+      '客户说再考虑下怎么回复？',
+      '怎么把产品价值讲清楚？',
+    ],
+  ),
+  _UserWelcomeRole(
+    icon: Icons.record_voice_over_outlined,
+    title: 'Hi，我是客户沟通教练',
+    subtitle: '帮你把问题问准，把回复说顺，把客户重新聊回来。',
+    color: Color(0xFF7C3AED),
+    prompts: [
+      '帮我分析客户这句话的真实顾虑',
+      '怎么让客户愿意继续聊？',
+      '帮我把回复说得更自然',
+      '给我一套跟进节奏',
+    ],
+  ),
+  _UserWelcomeRole(
+    icon: Icons.edit_note_outlined,
+    title: 'Hi，我是朋友圈文案助手',
+    subtitle: '帮你写更有吸引力的朋友圈、私域转化和种草文案。',
+    color: Color(0xFFEA580C),
+    prompts: [
+      '帮我写一条朋友圈成交文案',
+      '把这段产品介绍改得更吸引人',
+      '帮我设计三条私域种草内容',
+      '朋友圈怎么写不硬广？',
+    ],
+  ),
+  _UserWelcomeRole(
+    icon: Icons.psychology_alt_outlined,
+    title: 'Hi，我是异议处理专家',
+    subtitle: '客户说贵、考虑下、不需要时，我帮你组织回应话术。',
+    color: Color(0xFFDC2626),
+    prompts: [
+      '客户说太贵了怎么回答？',
+      '客户说不需要怎么继续沟通？',
+      '客户拿竞品对比怎么办？',
+      '帮我整理常见异议回复',
+    ],
+  ),
+  _UserWelcomeRole(
+    icon: Icons.trending_up_outlined,
+    title: 'Hi，我是复购增长顾问',
+    subtitle: '帮你设计复购提醒、老客维护和业绩增长动作。',
+    color: Color(0xFF0F766E),
+    prompts: [
+      '老客户多久跟进一次合适？',
+      '帮我写复购提醒话术',
+      '怎么做客户分层维护？',
+      '帮我设计一周跟进计划',
+    ],
+  ),
+];
+
+_UserWelcomeRole _welcomeRoleForSession(String sessionId) {
+  if (_welcomeRoles.isEmpty) {
+    throw StateError('Welcome roles cannot be empty.');
+  }
+  final seed = sessionId.trim().isEmpty
+      ? DateTime.now().millisecondsSinceEpoch
+      : sessionId.hashCode.abs();
+  return _welcomeRoles[seed % _welcomeRoles.length];
+}
+
+class _UserWelcomeEmptyState extends StatelessWidget {
+  const _UserWelcomeEmptyState({
+    required this.role,
+    required this.onPromptSelected,
+  });
+
+  final _UserWelcomeRole role;
+  final ValueChanged<String> onPromptSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final compact = constraints.maxWidth < 520;
+        return Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              compact ? 18 : 24,
+              24,
+              compact ? 18 : 24,
+              42,
+            ),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 620),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 320),
+                    switchInCurve: Curves.easeOutCubic,
+                    child: _SalesCoachFigure(
+                      key: ValueKey(role.title),
+                      role: role,
+                      compact: compact,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 20 : 24),
+                  Text(
+                    role.title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: const Color(0xFF0F172A),
+                      fontSize: compact ? 24 : 30,
+                      fontWeight: FontWeight.w800,
+                      height: 1.18,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    role.subtitle,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: const Color(0xFF475569),
+                      fontSize: compact ? 14.5 : 15.5,
+                      height: 1.6,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  SizedBox(height: compact ? 18 : 22),
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      for (final prompt in role.prompts.take(compact ? 3 : 4))
+                        _WelcomePromptButton(
+                          prompt: prompt,
+                          color: role.color,
+                          onPressed: () => onPromptSelected(prompt),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _SalesCoachFigure extends StatelessWidget {
+  const _SalesCoachFigure({
+    required this.role,
+    required this.compact,
+    super.key,
+  });
+
+  final _UserWelcomeRole role;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = compact ? 132.0 : 156.0;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 520),
+      curve: Curves.easeOutBack,
+      builder: (context, value, child) {
+        return Opacity(
+          opacity: value.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - value)),
+            child: Transform.scale(scale: 0.92 + value * 0.08, child: child),
+          ),
+        );
+      },
+      child: SizedBox(
+        width: size,
+        height: size,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      role.color.withValues(alpha: 0.16),
+                      role.color.withValues(alpha: 0.06),
+                      Colors.transparent,
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned(
+              top: size * 0.11,
+              child: Container(
+                width: size * 0.46,
+                height: size * 0.46,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: role.color.withValues(alpha: 0.24),
+                    width: 2,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: role.color.withValues(alpha: 0.18),
+                      blurRadius: 24,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: Icon(role.icon, color: role.color, size: size * 0.24),
+              ),
+            ),
+            Positioned(
+              bottom: size * 0.16,
+              child: Container(
+                width: size * 0.68,
+                height: size * 0.44,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(999),
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      role.color.withValues(alpha: 0.92),
+                      const Color(0xFF0F172A),
+                    ],
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: role.color.withValues(alpha: 0.22),
+                      blurRadius: 28,
+                      offset: const Offset(0, 14),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            Positioned(
+              right: size * 0.08,
+              top: size * 0.22,
+              child: _FigureBadge(color: role.color, label: '增长'),
+            ),
+            Positioned(
+              left: size * 0.07,
+              bottom: size * 0.22,
+              child: _FigureBadge(color: role.color, label: '成交'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FigureBadge extends StatelessWidget {
+  const _FigureBadge({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.08),
+            blurRadius: 14,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _WelcomePromptButton extends StatelessWidget {
+  const _WelcomePromptButton({
+    required this.prompt,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final String prompt;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton(
+      onPressed: onPressed,
+      style: OutlinedButton.styleFrom(
+        foregroundColor: const Color(0xFF0F172A),
+        backgroundColor: Colors.white,
+        side: BorderSide(color: color.withValues(alpha: 0.18)),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+      ),
+      child: Text(prompt),
+    );
+  }
+}
+
+class _ConversationGroupTitle extends StatelessWidget {
+  const _ConversationGroupTitle(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 7, 8, 5),
+      child: Text(
+        title,
+        style: const TextStyle(
+          color: Color(0xFF64748B),
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+}
+
+enum _ConversationMenuAction {
+  share,
+  startGroupChat,
+  rename,
+  togglePinned,
+  archive,
+  delete,
+}
+
+class _ConversationFeatureKeys {
+  static const share = 'conversation.share.enabled';
+  static const groupChat = 'conversation.group_chat.enabled';
+  static const rename = 'conversation.rename.enabled';
+  static const archive = 'conversation.archive.enabled';
+  static const delete = 'conversation.delete.enabled';
+  static const pinCloudSync = 'conversation.pin.cloud_sync_enabled';
+}
+
+const _conversationFeatureDefaults = <String, bool>{
+  _ConversationFeatureKeys.share: false,
+  _ConversationFeatureKeys.groupChat: false,
+  _ConversationFeatureKeys.rename: false,
+  _ConversationFeatureKeys.archive: false,
+  _ConversationFeatureKeys.delete: false,
+  _ConversationFeatureKeys.pinCloudSync: false,
+};
+
+bool _isConversationFeatureEnabled(String key) {
+  return _conversationFeatureDefaults[key] ?? false;
+}
+
+class _ConversationTile extends StatefulWidget {
   const _ConversationTile({
     required this.conversation,
     required this.index,
     required this.onTap,
+    required this.onMenuSelected,
   });
 
   final ChatConversationSummary conversation;
   final int index;
   final VoidCallback onTap;
+  final ValueChanged<_ConversationMenuAction> onMenuSelected;
+
+  @override
+  State<_ConversationTile> createState() => _ConversationTileState();
+}
+
+class _ConversationTileState extends State<_ConversationTile> {
+  bool _hovering = false;
+
+  bool get _showsDesktopMenuButton {
+    return !kIsWeb && defaultTargetPlatform == TargetPlatform.windows;
+  }
+
+  Future<void> _showMenuAt(Offset globalPosition) async {
+    final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (overlay is! RenderBox) {
+      return;
+    }
+    final action = await showMenu<_ConversationMenuAction>(
+      context: context,
+      color: Colors.white,
+      elevation: 10,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        overlay.size.width - globalPosition.dx,
+        overlay.size.height - globalPosition.dy,
+      ),
+      items: _conversationMenuItems(widget.conversation),
+    );
+    if (action != null && mounted) {
+      widget.onMenuSelected(action);
+    }
+  }
+
+  Future<void> _showMenuFromButton(BuildContext buttonContext) async {
+    final button = buttonContext.findRenderObject();
+    if (button is! RenderBox) {
+      return;
+    }
+    final origin = button.localToGlobal(Offset(button.size.width, 0));
+    await _showMenuAt(origin);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color:
-          conversation.selected ? const Color(0xFFEFF6FF) : Colors.transparent,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
+    final conversation = widget.conversation;
+    final showMenuButton =
+        _showsDesktopMenuButton && (_hovering || conversation.selected);
+    return MouseRegion(
+      onEnter: _showsDesktopMenuButton
+          ? (_) => setState(() => _hovering = true)
+          : null,
+      onExit: _showsDesktopMenuButton
+          ? (_) => setState(() => _hovering = false)
+          : null,
+      child: GestureDetector(
+        onSecondaryTapDown: _showsDesktopMenuButton
+            ? (details) => _showMenuAt(details.globalPosition)
+            : null,
+        onLongPressStart: _showsDesktopMenuButton
+            ? null
+            : (details) => _showMenuAt(details.globalPosition),
+        child: Material(
+          color: conversation.selected
+              ? const Color(0xFFEFF6FF)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: widget.onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _conversationIconColor(
+                      widget.index,
+                      conversation.selected,
+                    ),
+                    child: Icon(
+                      Icons.chat_bubble_outline,
+                      size: 18,
+                      color: conversation.selected
+                          ? const Color(0xFF1D4ED8)
+                          : const Color(0xFF475569),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        if (conversation.pinned) ...[
+                          const Icon(
+                            Icons.push_pin,
+                            size: 13,
+                            color: Color(0xFF64748B),
+                          ),
+                          const SizedBox(width: 4),
+                        ],
+                        Expanded(
+                          child: Text(
+                            conversation.title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    _formatBeijingConversationTime(conversation.updatedAt),
+                    style: const TextStyle(
+                      color: Color(0xFF94A3B8),
+                      fontSize: 11,
+                    ),
+                  ),
+                  if (_showsDesktopMenuButton)
+                    Visibility(
+                      visible: showMenuButton,
+                      maintainAnimation: true,
+                      maintainSize: true,
+                      maintainState: true,
+                      child: Builder(
+                        builder: (buttonContext) {
+                          return IconButton(
+                            tooltip: '更多',
+                            visualDensity: VisualDensity.compact,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 30,
+                              height: 30,
+                            ),
+                            onPressed: () => _showMenuFromButton(
+                              buttonContext,
+                            ),
+                            icon: const Icon(Icons.more_horiz, size: 18),
+                            color: const Color(0xFF64748B),
+                          );
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
+  ChatConversationSummary conversation,
+) {
+  return [
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.share,
+      featureKey: _ConversationFeatureKeys.share,
+      icon: Icons.ios_share,
+      label: '分享',
+      badge: '未开放',
+    ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.startGroupChat,
+      featureKey: _ConversationFeatureKeys.groupChat,
+      icon: Icons.group_add_outlined,
+      label: '开始群聊',
+      badge: '未开放',
+    ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.rename,
+      featureKey: _ConversationFeatureKeys.rename,
+      icon: Icons.drive_file_rename_outline,
+      label: '重命名',
+      badge: '未开放',
+    ),
+    PopupMenuItem(
+      value: _ConversationMenuAction.togglePinned,
+      child: _ConversationMenuItemRow(
+        icon: Icons.push_pin_outlined,
+        label: conversation.pinned ? '取消置顶聊天' : '置顶聊天',
+      ),
+    ),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.archive,
+      featureKey: _ConversationFeatureKeys.archive,
+      icon: Icons.archive_outlined,
+      label: '归档',
+      badge: '未开放',
+    ),
+    const PopupMenuDivider(height: 6),
+    _unavailableConversationMenuItem(
+      action: _ConversationMenuAction.delete,
+      featureKey: _ConversationFeatureKeys.delete,
+      icon: Icons.delete_outline,
+      label: '删除',
+      badge: '未开放',
+    ),
+  ];
+}
+
+PopupMenuEntry<_ConversationMenuAction> _unavailableConversationMenuItem({
+  required _ConversationMenuAction action,
+  required String featureKey,
+  required IconData icon,
+  required String label,
+  required String badge,
+}) {
+  final featureEnabled = _isConversationFeatureEnabled(featureKey);
+  return PopupMenuItem<_ConversationMenuAction>(
+    enabled: featureEnabled,
+    padding: EdgeInsets.zero,
+    height: 42,
+    child: _UnavailableConversationMenuItem(
+      action: action,
+      featureEnabled: featureEnabled,
+      icon: icon,
+      label: label,
+      badge: badge,
+    ),
+  );
+}
+
+class _ConversationMenuItemRow extends StatelessWidget {
+  const _ConversationMenuItemRow({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 19, color: const Color(0xFF0F172A)),
+        const SizedBox(width: 12),
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFF0F172A),
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UnavailableConversationMenuItem extends StatelessWidget {
+  const _UnavailableConversationMenuItem({
+    required this.action,
+    required this.featureEnabled,
+    required this.icon,
+    required this.label,
+    required this.badge,
+  });
+
+  final _ConversationMenuAction action;
+  final bool featureEnabled;
+  final IconData icon;
+  final String label;
+  final String badge;
+
+  @override
+  Widget build(BuildContext context) {
+    const disabledColor = Color(0xFF94A3B8);
+    return MouseRegion(
+      cursor: SystemMouseCursors.basic,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: featureEnabled ? null : () => Navigator.of(context).pop(action),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           child: Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              CircleAvatar(
-                radius: 18,
-                backgroundColor: _conversationIconColor(
-                  index,
-                  conversation.selected,
-                ),
-                child: Icon(
-                  Icons.chat_bubble_outline,
-                  size: 18,
-                  color: conversation.selected
-                      ? const Color(0xFF1D4ED8)
-                      : const Color(0xFF475569),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  conversation.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-              ),
-              const SizedBox(width: 8),
+              Icon(icon, size: 19, color: disabledColor),
+              const SizedBox(width: 12),
               Text(
-                _shortTime(conversation.updatedAt),
-                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
+                label,
+                style: const TextStyle(
+                  color: disabledColor,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 18),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF1F5F9),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Text(
+                  badge,
+                  style: const TextStyle(
+                    color: Color(0xFF64748B),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    height: 1,
+                  ),
+                ),
               ),
             ],
           ),
@@ -3242,10 +4155,39 @@ Color _conversationIconColor(int index, bool selected) {
   return colors[index % colors.length];
 }
 
-String _shortTime(DateTime time) {
-  final hour = time.hour.toString().padLeft(2, '0');
-  final minute = time.minute.toString().padLeft(2, '0');
-  return '$hour:$minute';
+DateTime _toBeijingTime(DateTime value) {
+  return value.toUtc().add(const Duration(hours: 8));
+}
+
+String _formatBeijingConversationTime(DateTime time) {
+  final beijingTime = _toBeijingTime(time);
+  final beijingNow = _toBeijingTime(DateTime.now());
+  final beijingDate = DateTime.utc(
+    beijingTime.year,
+    beijingTime.month,
+    beijingTime.day,
+  );
+  final today = DateTime.utc(
+    beijingNow.year,
+    beijingNow.month,
+    beijingNow.day,
+  );
+  final dayDelta = today.difference(beijingDate).inDays;
+  if (dayDelta == 0) {
+    final hour = beijingTime.hour.toString().padLeft(2, '0');
+    final minute = beijingTime.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+  if (dayDelta == 1) {
+    return '昨天';
+  }
+  final month = beijingTime.month.toString().padLeft(2, '0');
+  final day = beijingTime.day.toString().padLeft(2, '0');
+  if (beijingTime.year == beijingNow.year) {
+    return '$month-$day';
+  }
+  final year = beijingTime.year.toString().padLeft(4, '0');
+  return '$year-$month-$day';
 }
 
 String _formatBytes(int bytes) {
