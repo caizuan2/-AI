@@ -11,6 +11,7 @@ import type {
   IngestKnowledgeDraft,
   IngestTrainingRecord
 } from "@/lib/enterprise/mock-chat";
+import type { AdminIngestDisplayProfile } from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 import {
@@ -37,6 +38,8 @@ interface IngestEXEShellProps {
   hasActiveAgent: boolean;
   activeAgentId: string;
   adminAvatar?: string;
+  appName?: string;
+  displayProfile?: AdminIngestDisplayProfile;
   onAgentChange: (agentId: string) => void;
   agentConversations: IngestAgentConversation[];
   activeConversationId: string;
@@ -87,6 +90,8 @@ export function IngestEXEShell({
   hasActiveAgent,
   activeAgentId,
   adminAvatar = "",
+  appName,
+  displayProfile,
   onAgentChange,
   agentConversations,
   activeConversationId,
@@ -161,6 +166,8 @@ export function IngestEXEShell({
           collections={ingestEXECollections}
           tasks={ingestEXETasks}
           activeAgentId={activeAgentId}
+          adminAvatar={adminAvatar}
+          appName={appName}
           onAgentChange={onAgentChange}
           agentConversations={agentConversations}
           activeConversationId={activeConversationId}
@@ -185,6 +192,9 @@ export function IngestEXEShell({
         <IngestEXEWorkspace
           activeAgent={activeAgent}
           hasActiveAgent={hasActiveAgent}
+          adminAvatar={adminAvatar}
+          appName={appName}
+          displayProfile={displayProfile}
           activeRailKey={activeRailKey}
           blocks={ingestEXEGeneratedBlocks}
           reviewItems={ingestEXEReviewItems}

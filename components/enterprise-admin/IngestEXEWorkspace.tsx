@@ -3,6 +3,11 @@ import { IngestExpertMarketplace } from "@/components/enterprise-admin/IngestExp
 import { IngestEXEInputBar } from "@/components/enterprise-admin/IngestEXEInputBar";
 import { IngestTenantSummary } from "@/components/enterprise-admin/IngestTenantSummary";
 import { IngestEXETools } from "@/components/enterprise-admin/IngestEXETools";
+import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
+import {
+  resolveAdminIngestDisplayProfile,
+  type AdminIngestDisplayProfile
+} from "@/lib/enterprise/admin-ingest-profile";
 import type {
   IngestConnectionStatus,
   IngestVoiceState,
@@ -29,6 +34,9 @@ const blockTone: Record<IngestEXEGeneratedBlock["tone"], string> = {
 export function IngestEXEWorkspace({
   activeAgent,
   hasActiveAgent,
+  adminAvatar,
+  appName,
+  displayProfile,
   activeRailKey,
   blocks,
   reviewItems,
@@ -59,6 +67,9 @@ export function IngestEXEWorkspace({
 }: {
   activeAgent: IngestChatAgent;
   hasActiveAgent: boolean;
+  adminAvatar?: string;
+  appName?: string;
+  displayProfile?: AdminIngestDisplayProfile;
   activeRailKey: IngestRailKey;
   blocks: IngestEXEGeneratedBlock[];
   reviewItems: IngestEXEReviewItem[];
@@ -94,6 +105,11 @@ export function IngestEXEWorkspace({
 }) {
   const selectedModelLabel = selectedModel;
   const isExpertMarketplace = activeRailKey === "experts";
+  const activeDisplayProfile = displayProfile ?? resolveAdminIngestDisplayProfile({
+    currentAgent: hasActiveAgent ? activeAgent : null,
+    appName,
+    adminAvatar
+  });
 
   return (
     <section className="flex h-screen min-w-0 flex-1 flex-col bg-white">
@@ -138,18 +154,12 @@ export function IngestEXEWorkspace({
           ) : (
           <div className="mx-auto max-w-5xl pt-8">
             <div className="text-center">
-              <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-[28px] bg-[#dff8e8] text-3xl font-semibold text-[#128246] shadow-sm">{activeAgent.avatar}</div>
-              <h1 className="mt-5 text-3xl font-semibold tracking-tight text-[#181818]">AI 知识生产工作站</h1>
-              <p className="mt-2 text-base text-[#9a9a96]">
-                {hasActiveAgent
-                  ? `${activeAgent.name} · ${activeAgent.role} · 把对话、文档、图片和网址加工成可审核、可保存、可引用的知识资产。`
-                  : "请先到专家广场添加专家 Agent，再开始企业知识生产。"}
-              </p>
-              {!hasActiveAgent ? (
-                <button type="button" onClick={onOpenExperts} className="mt-5 rounded-full bg-[#202020] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black">
-                  打开专家广场
-                </button>
-              ) : null}
+              <IngestWelcomeHero
+                profile={activeDisplayProfile}
+                canIngest={hasActiveAgent}
+                onOpenExperts={onOpenExperts}
+                compact
+              />
               <div className="mx-auto mt-4 max-w-xl">
                 <IngestTenantSummary />
               </div>

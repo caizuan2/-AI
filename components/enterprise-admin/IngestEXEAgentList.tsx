@@ -1,24 +1,20 @@
 import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
 import { IngestAgentConversationList } from "@/components/enterprise-admin/IngestAgentConversationList";
 import { IngestAgentMoreMenu } from "@/components/enterprise-admin/IngestAgentMoreMenu";
+import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
 import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResizableSidebar";
+import { resolveAdminIngestDisplayProfile } from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import type { IngestEXEAgent, IngestEXECollection, IngestEXETask } from "@/lib/enterprise/mock-ingest";
 import type { IngestTrainingRecord } from "@/lib/enterprise/mock-chat";
 
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
 
-const toneClasses: Record<IngestEXEAgent["tone"], string> = {
-  green: "bg-[#dff8e8] text-[#128246]",
-  blue: "bg-[#e7f0ff] text-[#2d5fa8]",
-  amber: "bg-[#fff3d6] text-[#9a6500]",
-  rose: "bg-[#ffe8ea] text-[#b93b4a]",
-  slate: "bg-[#eceff3] text-[#475569]"
-};
-
 export function IngestEXEAgentList({
   agents,
   activeAgentId,
+  adminAvatar,
+  appName,
   onAgentChange,
   agentConversations = [],
   activeConversationId = "",
@@ -43,6 +39,8 @@ export function IngestEXEAgentList({
   collections: IngestEXECollection[];
   tasks: IngestEXETask[];
   activeAgentId?: string;
+  adminAvatar?: string;
+  appName?: string;
   onAgentChange?: (agentId: string) => void;
   agentConversations?: IngestAgentConversation[];
   activeConversationId?: string;
@@ -117,6 +115,11 @@ export function IngestEXEAgentList({
             const isExpanded = expandedAgentIds.includes(agent.id);
             const isPinned = pinnedAgentIds.includes(agent.id);
             const conversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
+            const agentProfile = resolveAdminIngestDisplayProfile({
+              currentAgent: agent,
+              appName,
+              adminAvatar
+            });
 
             return (
               <div key={agent.id} className="mx-2">
@@ -139,7 +142,7 @@ export function IngestEXEAgentList({
                 >
                   {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
                   <div className="flex min-h-[56px] items-center gap-3">
-                    <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl text-sm font-semibold", toneClasses[agent.tone]].join(" ")}>{agent.avatar}</span>
+                    <IngestAgentAvatar profile={agentProfile} size="sm" />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#1f1f1f]"].join(" ")}>{agent.name}</span>
