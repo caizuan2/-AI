@@ -25,6 +25,7 @@ export type ConversationFeatureFlagItem = {
 };
 
 export type ConversationFeatureFlagResponse = ConversationFeatureFlags & {
+  features: Record<ConversationFeatureFlagKey, boolean>;
   items: ConversationFeatureFlagItem[];
   reasons?: Partial<Record<keyof ConversationFeatureFlags, string>>;
 };

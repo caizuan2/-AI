@@ -112,12 +112,21 @@ function buildDisabledReasons(flags: ConversationFeatureFlags) {
   }, {});
 }
 
+function buildFeatureMap(flags: ConversationFeatureFlags) {
+  return flagDefinitions.reduce<ConversationFeatureFlagResponse["features"]>((features, definition) => {
+    features[definition.key] = flags[definition.name];
+
+    return features;
+  }, {} as ConversationFeatureFlagResponse["features"]);
+}
+
 export function buildConversationFeatureFlagResponse(
   flags: ConversationFeatureFlags,
   reasons?: ConversationFeatureFlagResponse["reasons"]
 ): ConversationFeatureFlagResponse {
   return {
     ...flags,
+    features: buildFeatureMap(flags),
     items: flagDefinitions.map((definition) => ({
       ...definition,
       enabled: flags[definition.name]
