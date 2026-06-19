@@ -1,14 +1,17 @@
 "use client";
 
 import { ImagePlus, KeyRound, LogOut, Settings, X } from "lucide-react";
-import { useRef, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { IngestGPTStatusPanel } from "@/components/enterprise-admin/IngestGPTStatusPanel";
 import type {
   IngestConnectionStatus,
+  IngestGptHealthStatus,
   IngestPlatform,
   IngestUploadState,
   IngestVoiceState
 } from "@/lib/enterprise/ingest-client";
 import { getAdminIngestPlatformLabel } from "@/lib/enterprise/admin-ingest-platform";
+import { DEFAULT_ADMIN_INGEST_ASSISTANT_NAME } from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestChatAgent } from "@/lib/enterprise/mock-chat";
 
 export interface IngestSettingsState {
@@ -28,9 +31,15 @@ export function IngestSettingsPanel({
   voiceState,
   settingsState,
   adminAvatar,
+  appName,
+  gptHealthStatus,
+  isCheckingGptStatus,
   onSettingsChange,
   onAvatarChange,
+  onAppNameChange,
   onAccountAction,
+  onCheckGptStatus,
+  onReconnectGpt,
   onClose
 }: {
   open: boolean;
@@ -41,12 +50,23 @@ export function IngestSettingsPanel({
   voiceState: IngestVoiceState;
   settingsState: IngestSettingsState;
   adminAvatar: string;
+  appName: string;
+  gptHealthStatus: IngestGptHealthStatus | null;
+  isCheckingGptStatus: boolean;
   onSettingsChange: (nextState: IngestSettingsState) => void;
   onAvatarChange: (nextAvatar: string) => void;
+  onAppNameChange: (nextName: string) => void;
   onAccountAction: (action: "password" | "switch") => void;
+  onCheckGptStatus: () => void;
+  onReconnectGpt: () => void;
   onClose: () => void;
 }) {
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const [draftAppName, setDraftAppName] = useState(appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
+
+  useEffect(() => {
+    setDraftAppName(appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
+  }, [appName]);
 
   if (!open) {
     return null;
@@ -110,6 +130,28 @@ export function IngestSettingsPanel({
             />
           </div>
           <div className="mt-3 grid gap-2">
+            <div className="rounded-2xl bg-white p-3 shadow-sm">
+              <label className="text-xs font-semibold text-[#888]" htmlFor="admin-ingest-app-name">
+                应用 / 助手名称
+              </label>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  id="admin-ingest-app-name"
+                  value={draftAppName}
+                  onChange={(event) => setDraftAppName(event.target.value)}
+                  placeholder={DEFAULT_ADMIN_INGEST_ASSISTANT_NAME}
+                  className="h-10 min-w-0 flex-1 rounded-2xl border border-[#e7e7e4] bg-[#f8f8f7] px-3 text-sm font-semibold text-[#202020] outline-none transition focus:border-[#b8dec7] focus:bg-white"
+                />
+                <button
+                  type="button"
+                  onClick={() => onAppNameChange(draftAppName)}
+                  className="h-10 shrink-0 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black"
+                >
+                  保存
+                </button>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-[#888]">同步到新对话欢迎区、Agent 工作区和 EXE 投喂端显示。</p>
+            </div>
             <button
               type="button"
               onClick={() => avatarInputRef.current?.click()}
@@ -137,7 +179,16 @@ export function IngestSettingsPanel({
           </div>
         </div>
 
+        <IngestGPTStatusPanel
+          selectedModel={selectedModel}
+          status={gptHealthStatus}
+          isChecking={isCheckingGptStatus}
+          onCheck={onCheckGptStatus}
+          onReconnect={onReconnectGpt}
+        />
+
         <div className="mt-4 space-y-3 text-sm">
+          <InfoRow label="应用名称" value={appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME} />
           <InfoRow label="当前 Agent" value={`${activeAgent.name} · ${activeAgent.role}`} />
           <InfoRow label="当前模型" value={selectedModel} />
           <InfoRow label="当前端" value={getAdminIngestPlatformLabel(settingsState.platform)} />

@@ -17,12 +17,14 @@ import {
 } from "@/components/enterprise-admin/IngestSettingsPanel";
 import {
   checkLicenseStatus,
+  checkGptHealthStatus,
   createUploadState,
   ingestSyncTarget,
   saveKnowledgeDraft,
   sendCoreIngest,
   sendUrlIngestPreview,
   type IngestConnectionStatus,
+  type IngestGptHealthStatus,
   type IngestNotification,
   type IngestPlatform,
   type IngestSyncTarget,
@@ -54,6 +56,11 @@ import {
   GPT_MODEL_DISPLAY_NAMES,
   isGptModelDisplayName
 } from "@/lib/enterprise/gpt-model-options";
+import {
+  ADMIN_INGEST_APP_NAME_STORAGE_KEY,
+  DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
+  resolveAdminIngestDisplayProfile
+} from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
 type IngestMode = "chat" | "workbench";
@@ -255,6 +262,8 @@ export function IngestModeToggle() {
   const [selectedModel, setSelectedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
   const [resolvedModel, setResolvedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
   const [connectionStatus, setConnectionStatus] = useState<IngestConnectionStatus>(initialConnectionStatus);
+  const [gptHealthStatus, setGptHealthStatus] = useState<IngestGptHealthStatus | null>(null);
+  const [isCheckingGptHealth, setIsCheckingGptHealth] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<IngestUploadState[]>([]);
   const [voiceState, setVoiceState] = useState<IngestVoiceState>(initialVoiceState);
   const [notifications, setNotifications] = useState<IngestNotification[]>([
@@ -273,6 +282,7 @@ export function IngestModeToggle() {
   ]);
   const [settingsState, setSettingsState] = useState<IngestSettingsState>(initialSettingsState);
   const [adminAvatar, setAdminAvatar] = useState("");
+  const [appName, setAppName] = useState(DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
   const [isCreateAgentOpen, setIsCreateAgentOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<IngestChatMessage[]>([]);
@@ -284,7 +294,6 @@ export function IngestModeToggle() {
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
-  const [isGptFallbackToastDismissed, setIsGptFallbackToastDismissed] = useState(false);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
   const [isUrlDialogOpen, setIsUrlDialogOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
@@ -314,6 +323,15 @@ export function IngestModeToggle() {
     () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents[0] ?? createEmptyAgent(platformContext),
     [activeAgentId, platformContext, visibleAgents]
   );
+  const displayProfile = useMemo(
+    () => resolveAdminIngestDisplayProfile({
+      currentAgent: hasActiveAgent ? activeAgent : null,
+      appName,
+      adminAvatar
+    }),
+    [activeAgent, adminAvatar, appName, hasActiveAgent]
+  );
+
   useEffect(() => {
     const nextContext = resolveAdminIngestPlatformContext({
       search: window.location.search,
@@ -348,6 +366,7 @@ export function IngestModeToggle() {
     })));
 
     setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
+    setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
   }, []);
 
   useEffect(() => {
@@ -390,14 +409,11 @@ export function IngestModeToggle() {
     });
   }
 
-  function showGptFallbackToast() {
-    if (isGptFallbackToastDismissed) {
-      return;
-    }
-
+  function showGptFallbackToast(description = GPT_FALLBACK_TOAST.description) {
     setGptFallbackToast({
       id: `gpt-fallback-${Date.now()}`,
-      ...GPT_FALLBACK_TOAST
+      title: GPT_FALLBACK_TOAST.title,
+      description
     });
   }
 
@@ -408,6 +424,19 @@ export function IngestModeToggle() {
     showActionToast({
       type: "success",
       title: "头像已更新"
+    });
+  }
+
+  function handleAppNameChange(nextName: string) {
+    const normalizedName = nextName.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME;
+
+    setAppName(normalizedName);
+    window.localStorage.setItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY, normalizedName);
+    setNoticeMessage(`应用名称已更新为 ${normalizedName}。`);
+    showActionToast({
+      type: "success",
+      title: "应用名称已更新",
+      description: normalizedName
     });
   }
 
@@ -884,7 +913,9 @@ export function IngestModeToggle() {
       const isGptFallback = isOpenAIModelLabel(currentModelLabel) && (result.preview || result.provider === "local-fallback" || result.model === "core-engine-fallback" || isGptUnavailableMessage(result.message));
 
       if (isGptFallback) {
-        showGptFallbackToast();
+        showGptFallbackToast(result.message);
+      } else {
+        setGptFallbackToast(null);
       }
 
       setNoticeMessage(isGptFallback
@@ -932,7 +963,7 @@ export function IngestModeToggle() {
       const message = error instanceof Error ? error.message : "接口暂不可用，已使用本地预览结果。";
 
       if (isOpenAIModelLabel(currentModelLabel) && isGptUnavailableMessage(message)) {
-        showGptFallbackToast();
+        showGptFallbackToast(message);
         setNoticeMessage("AI 投喂暂未完成，请检查 GPT 配置后重试。");
         setErrorMessage("");
       } else {
@@ -1073,6 +1104,49 @@ export function IngestModeToggle() {
       description: `当前卡密状态：${nextStatus.licenseStatus}；企业空间：${nextStatus.enterpriseSpace}。`
     });
     return nextStatus;
+  }
+
+  async function handleCheckGptStatus(action: "check" | "reconnect" = "check") {
+    setIsCheckingGptHealth(true);
+    setErrorMessage("");
+    setNoticeMessage(action === "reconnect" ? "正在重新连接 GPT..." : "正在检查 GPT 接口状态...");
+
+    try {
+      const nextStatus = await checkGptHealthStatus({
+        selectedModelLabel: selectedGptModel.displayName,
+        preferredModel: selectedGptModel.apiModel
+      });
+
+      setGptHealthStatus(nextStatus);
+
+      if (nextStatus.ok) {
+        setGptFallbackToast(null);
+        setNoticeMessage(action === "reconnect" ? "GPT 接口已连接，可重新生成。" : "GPT 接口检测通过。");
+        showActionToast({
+          type: "success",
+          title: action === "reconnect" ? "GPT 接口已连接，可重新生成" : "GPT 接口检测通过",
+          description: nextStatus.selectedModelLabel
+        });
+      } else {
+        setNoticeMessage(nextStatus.message);
+        showActionToast({
+          type: "warning",
+          title: "GPT 接口暂不可用",
+          description: nextStatus.message
+        });
+        showGptFallbackToast(nextStatus.message);
+      }
+
+      pushNotification({
+        type: nextStatus.ok ? "success" : "fallback",
+        title: nextStatus.ok ? "GPT 接口检测通过" : "GPT 接口诊断提醒",
+        description: `${nextStatus.selectedModelLabel} · ${nextStatus.message}`
+      });
+
+      return nextStatus;
+    } finally {
+      setIsCheckingGptHealth(false);
+    }
   }
 
   async function handleVoiceToggle() {
@@ -1507,6 +1581,8 @@ export function IngestModeToggle() {
     hasActiveAgent,
     activeAgentId,
     adminAvatar,
+    appName,
+    displayProfile,
     onAgentChange: handleAgentSelect,
     agentConversations,
     activeConversationId,
@@ -1525,6 +1601,7 @@ export function IngestModeToggle() {
     searchKeyword,
     onSearchKeywordChange: setSearchKeyword,
     selectedModel: selectedModelLabel,
+    regenerateInput: lastInput,
     resolvedModel,
     modelOptions,
     onModelChange: handleModelChange,
@@ -1556,6 +1633,7 @@ export function IngestModeToggle() {
     onErrorChange: setErrorMessage,
     onSend: handleSend,
     onSave: handleSave,
+    onReconnectGpt: () => handleCheckGptStatus("reconnect"),
     onUpload: handleUpload,
     onRemoveUpload: handleRemoveUpload,
     onVoiceToggle: handleVoiceToggle,
@@ -1617,9 +1695,15 @@ export function IngestModeToggle() {
         voiceState={voiceState}
         settingsState={settingsState}
         adminAvatar={adminAvatar}
+        appName={appName}
+        gptHealthStatus={gptHealthStatus}
+        isCheckingGptStatus={isCheckingGptHealth}
         onSettingsChange={setSettingsState}
         onAvatarChange={handleAdminAvatarChange}
+        onAppNameChange={handleAppNameChange}
         onAccountAction={handleAccountSettingAction}
+        onCheckGptStatus={() => void handleCheckGptStatus("check")}
+        onReconnectGpt={() => void handleCheckGptStatus("reconnect")}
         onClose={() => setOpenPanel(null)}
       />
       <IngestAgentDetailPanel
@@ -1652,7 +1736,6 @@ export function IngestModeToggle() {
       <GptFallbackToastView
         toast={gptFallbackToast}
         onClose={() => {
-          setIsGptFallbackToastDismissed(true);
           setGptFallbackToast(null);
         }}
       />

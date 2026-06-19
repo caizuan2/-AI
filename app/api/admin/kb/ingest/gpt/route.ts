@@ -1,3 +1,4 @@
+import { NextResponse } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireKbAdmin } from "@/lib/auth/guards";
@@ -31,6 +32,91 @@ function readSyncTarget(value: unknown): Array<"web" | "exe" | "apk"> {
 
 function readPlatform(value: unknown): AdminIngestPlatform {
   return normalizeAdminIngestPlatform(readString(value)) ?? "web";
+}
+
+function toGptFallbackErrorCode(error: unknown) {
+  const record = error && typeof error === "object" ? error as { code?: unknown; message?: unknown; name?: unknown } : {};
+  const code = typeof record.code === "string" ? record.code : "";
+  const message = typeof record.message === "string" ? record.message.toLowerCase() : "";
+  const name = typeof record.name === "string" ? record.name : "";
+
+  if (code === "MISSING_AI_API_KEY" || message.includes("api key") || message.includes("openai_api_key") || message.includes("未配置")) {
+    return "OPENAI_API_KEY_MISSING" as const;
+  }
+
+  if (name === "AbortError" || message.includes("timeout") || message.includes("超时")) {
+    return "OPENAI_TIMEOUT" as const;
+  }
+
+  if (message.includes("model") || message.includes("模型不可用")) {
+    return "OPENAI_MODEL_UNAVAILABLE" as const;
+  }
+
+  return "OPENAI_REQUEST_FAILED" as const;
+}
+
+function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCode>, error: unknown) {
+  const record = error && typeof error === "object" ? error as { message?: unknown } : {};
+  const message = typeof record.message === "string" ? record.message.trim() : "";
+
+  if (errorCode === "OPENAI_API_KEY_MISSING") {
+    return "缺少 OPENAI_API_KEY，已使用本地预览结果";
+  }
+
+  if (errorCode === "OPENAI_TIMEOUT") {
+    return "GPT 请求超时，已使用本地预览结果";
+  }
+
+  if (errorCode === "OPENAI_MODEL_UNAVAILABLE") {
+    return "当前 GPT 模型不可用，已使用本地预览结果";
+  }
+
+  return message || "GPT 接口暂不可用，已使用本地预览结果";
+}
+
+function buildLocalPreview(input: ReturnType<typeof readRequest>, errorCode: ReturnType<typeof toGptFallbackErrorCode>) {
+  const category = input.category || input.agentName || "默认知识库";
+  const normalized = input.input.replace(/\s+/g, " ").trim();
+  const title = normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized || "本地预览结构化结果";
+  const summary = normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
+  const question = `关于“${title}”，应该如何沉淀为知识？`;
+  const answer = summary
+    ? `建议先按当前 ${input.agentName || "Agent"} 的知识口径整理，再补充来源、适用场景和标准回复。原始投喂：${summary}`
+    : "建议补充原始投喂内容后再进行结构化。";
+
+  return {
+    jobId: `preview-${Date.now()}`,
+    title: title || "本地预览结构化结果",
+    category,
+    tags: [category.replace("知识库", ""), "本地预览", errorCode].filter(Boolean),
+    summary: summary || "当前为本地预览结果，配置 OPENAI_API_KEY 后可重新生成真实 GPT 结果。",
+    qa_pairs: [{ q: question, a: answer }],
+    confidence: errorCode === "OPENAI_API_KEY_MISSING" ? 72 : 68,
+    should_save: true,
+    providerUsed: "local-fallback",
+    model: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
+    fallbackUsed: true,
+    saveStatus: "pending" as const
+  };
+}
+
+function buildLocalPreviewReply(localPreview: ReturnType<typeof buildLocalPreview>, message: string) {
+  return [
+    "## 本地预览结构化结果",
+    "",
+    message,
+    "",
+    `- 标题：${localPreview.title}`,
+    `- 分类：${localPreview.category}`,
+    `- 标签：${localPreview.tags.join("、")}`,
+    `- 训练价值评分：${localPreview.confidence}/100`,
+    "",
+    "### 标准问答",
+    `Q：${localPreview.qa_pairs[0]?.q ?? localPreview.title}`,
+    `A：${localPreview.qa_pairs[0]?.a ?? localPreview.summary}`,
+    "",
+    "配置 OPENAI_API_KEY 后，可点击“重新连接 GPT”再“重新生成”。"
+  ].join("\n");
 }
 
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
@@ -151,6 +237,19 @@ export async function POST(request: Request) {
 
     return apiSuccess(result);
   } catch (error) {
-    return apiError(error);
+    const errorCode = toGptFallbackErrorCode(error);
+    const message = toGptFallbackMessage(errorCode, error);
+    const localPreview = buildLocalPreview(input, errorCode);
+
+    return NextResponse.json({
+      ok: false,
+      fallback: true,
+      errorCode,
+      message,
+      selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || "GPT-5.5 超高",
+      model: input.preferredModel,
+      localPreview,
+      replyMarkdown: buildLocalPreviewReply(localPreview, message)
+    }, { status: 200 });
   }
 }

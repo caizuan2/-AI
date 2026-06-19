@@ -40,12 +40,18 @@ import { IngestAgentMoreMenu } from "@/components/enterprise-admin/IngestAgentMo
 import { IngestExpertMarketplace } from "@/components/enterprise-admin/IngestExpertMarketplace";
 import { IngestGPTModelPicker } from "@/components/enterprise-admin/IngestGPTModelPicker";
 import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResizableSidebar";
+import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
+import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
 import {
   ingestPrimaryRailFeatures,
   type IngestRailKey
 } from "@/components/enterprise-admin/IngestRailConfig";
 import { IngestTenantSummary } from "@/components/enterprise-admin/IngestTenantSummary";
 import { getAdminIngestPlatformLabel } from "@/lib/enterprise/admin-ingest-platform";
+import {
+  resolveAdminIngestDisplayProfile,
+  type AdminIngestDisplayProfile
+} from "@/lib/enterprise/admin-ingest-profile";
 import type {
   IngestConnectionStatus,
   IngestVoiceState,
@@ -65,14 +71,6 @@ import {
   type IngestTrainingRecord
 } from "@/lib/enterprise/mock-chat";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
-
-const agentToneClasses: Record<IngestChatAgent["tone"], string> = {
-  green: "bg-[#ddf7e6] text-[#128246]",
-  blue: "bg-[#e7f0ff] text-[#2d5fa8]",
-  amber: "bg-[#fff2d6] text-[#9a6500]",
-  rose: "bg-[#ffe5e9] text-[#b93b4a]",
-  slate: "bg-[#edf0f4] text-[#475569]"
-};
 
 const quickPrompts = [
   "把这段客服对话整理成标准问答",
@@ -105,6 +103,8 @@ interface IngestChatGPTShellProps {
   hasActiveAgent?: boolean;
   activeAgentId?: string;
   adminAvatar?: string;
+  appName?: string;
+  displayProfile?: AdminIngestDisplayProfile;
   onAgentChange?: (agentId: string) => void;
   agentConversations?: IngestAgentConversation[];
   activeConversationId?: string;
@@ -123,6 +123,7 @@ interface IngestChatGPTShellProps {
   searchKeyword?: string;
   onSearchKeywordChange?: (value: string) => void;
   selectedModel?: string;
+  regenerateInput?: string;
   modelOptions?: string[];
   onModelChange?: (model: string) => void;
   connectionStatus?: IngestConnectionStatus;
@@ -151,6 +152,7 @@ interface IngestChatGPTShellProps {
   onErrorChange?: (message: string) => void;
   onSend?: (value?: string) => Promise<IngestActionResult | null>;
   onSave?: () => Promise<IngestActionResult | null>;
+  onReconnectGpt?: () => Promise<unknown>;
   onUpload?: (files: File[]) => void;
   onRemoveUpload?: (fileId: string) => void;
   onVoiceToggle?: () => void;
@@ -336,6 +338,8 @@ export function IngestChatGPTShell({
   hasActiveAgent: controlledHasActiveAgent,
   activeAgentId: controlledActiveAgentId,
   adminAvatar = "",
+  appName,
+  displayProfile,
   onAgentChange,
   agentConversations = [],
   activeConversationId = "",
@@ -354,6 +358,7 @@ export function IngestChatGPTShell({
   searchKeyword: controlledSearchKeyword,
   onSearchKeywordChange,
   selectedModel = DEFAULT_GPT_MODEL_SELECTION.displayName,
+  regenerateInput = "",
   onModelChange,
   connectionStatus = {
     enterpriseSpace: "本地预览",
@@ -388,6 +393,7 @@ export function IngestChatGPTShell({
   onErrorChange,
   onSend,
   onSave,
+  onReconnectGpt,
   onUpload,
   onRemoveUpload,
   onVoiceToggle,
@@ -457,6 +463,14 @@ export function IngestChatGPTShell({
     [activeAgentId, agents, controlledActiveAgent, fallbackAgent]
   );
   const canIngest = controlledHasActiveAgent ?? agents.length > 0;
+  const activeDisplayProfile = useMemo(
+    () => displayProfile ?? resolveAdminIngestDisplayProfile({
+      currentAgent: canIngest ? activeAgent : null,
+      appName,
+      adminAvatar
+    }),
+    [activeAgent, adminAvatar, appName, canIngest, displayProfile]
+  );
 
   const navItems = useMemo(
     () => ingestPrimaryRailFeatures.map((item) => ({
@@ -476,6 +490,10 @@ export function IngestChatGPTShell({
   const hasSearchResults = filteredAgents.length > 0;
   const agentLabelById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, `${agent.name} · ${agent.role}`])),
+    [agents]
+  );
+  const agentById = useMemo(
+    () => new Map(agents.map((agent) => [agent.id, agent])),
     [agents]
   );
 
@@ -626,13 +644,25 @@ export function IngestChatGPTShell({
         id: `user-${Date.now()}`,
         role: "user",
         content: value || "附件投喂",
-        time: now
+        time: now,
+        agentId: activeAgent.id,
+        expertId: activeAgent.expertId ?? null,
+        agentName: activeAgent.name,
+        expertName: activeAgent.expertId ? activeAgent.name : null,
+        model: selectedModelLabel,
+        provider: "admin_ingest"
       },
       {
         id: `assistant-${Date.now()}`,
         role: "assistant",
         content: "AI 正在解析投喂内容，并准备生成结构化知识。",
-        time: now
+        time: now,
+        agentId: activeAgent.id,
+        expertId: activeAgent.expertId ?? null,
+        agentName: activeAgent.name,
+        expertName: activeAgent.expertId ? activeAgent.name : null,
+        model: selectedModelLabel,
+        provider: "openai"
       }
     ]);
 
@@ -706,7 +736,14 @@ export function IngestChatGPTShell({
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
           content: data.replyMarkdown || `GPT 已完成解析：AI解析 → 结构化为「${nextDraft.title}」→ 分类到「${nextDraft.category}」→ 等待保存确认。`,
-          time: getTimeLabel()
+          time: getTimeLabel(),
+          agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
+          model: data.modelDisplayName || data.model,
+          provider: data.provider,
+          saveSuggestion: data.structured.saveSuggestion
         }
       ]);
     } catch (error) {
@@ -767,6 +804,38 @@ export function IngestChatGPTShell({
       setErrorMessage(error instanceof Error ? error.message : "保存知识入库失败，请稍后重试。");
     } finally {
       setInternalIsSaving(false);
+    }
+  }
+
+  async function handleReconnectGpt() {
+    if (!onReconnectGpt) {
+      setNoticeMessage("GPT 重新连接入口已响应，请在设置面板检查 GPT 状态。");
+      return;
+    }
+
+    setNoticeMessage("正在重新连接 GPT...");
+    await onReconnectGpt();
+  }
+
+  async function handleRegenerate(messageContent: string) {
+    const nextInput = (regenerateInput || draft.standardQuestion || draft.title || messageContent).trim();
+
+    if (!nextInput) {
+      setNoticeMessage("没有可重新生成的投喂内容。");
+      return;
+    }
+
+    if (!onSend) {
+      setInput(nextInput);
+      setNoticeMessage("已将当前结构化结果放回输入框，可再次发送重新生成。");
+      return;
+    }
+
+    setNoticeMessage("正在重新请求 GPT 生成结构化结果...");
+    const result = await onSend(nextInput);
+
+    if (result && !result.preview) {
+      showToast("GPT 已重新生成", result.draft.title, "success");
     }
   }
 
@@ -1002,6 +1071,11 @@ export function IngestChatGPTShell({
               const isExpanded = expandedAgentIds.includes(agent.id);
               const isPinned = pinnedAgentIds.includes(agent.id);
               const conversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
+              const agentProfile = resolveAdminIngestDisplayProfile({
+                currentAgent: agent,
+                appName,
+                adminAvatar
+              });
 
               return (
                 <div key={agent.id} className="mx-2">
@@ -1024,9 +1098,7 @@ export function IngestChatGPTShell({
                   >
                     {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
                     <div className="flex min-h-[56px] items-center gap-3">
-                      <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold", agentToneClasses[agent.tone]].join(" ")}>
-                        {agent.avatar}
-                      </span>
+                      <IngestAgentAvatar profile={agentProfile} size="sm" />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
                           <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#202020]"].join(" ")}>{agent.name}</span>
@@ -1119,24 +1191,11 @@ export function IngestChatGPTShell({
             ) : null}
             {!hasMessages ? (
               <div className="mx-auto flex w-full max-w-[980px] flex-col items-center text-center">
-                <div className={["flex h-20 w-20 items-center justify-center rounded-[30px] text-3xl font-semibold shadow-sm", agentToneClasses[activeAgent.tone]].join(" ")}>
-                  {activeAgent.avatar}
-                </div>
-                <h1 className="mt-6 text-4xl font-semibold tracking-tight text-[#181818] max-sm:text-3xl">
-                  {canIngest ? "Hi，我是知识投喂助手" : "请先添加专家 Agent"}
-                </h1>
-                <p className="mt-3 text-lg text-[#9a9a96]">
-                  {canIngest ? `${activeAgent.name} · ${activeAgent.role}` : "到专家广场添加后再开始对话投喂。"}
-                </p>
-                {!canIngest ? (
-                  <button
-                    type="button"
-                    onClick={() => onRailChange?.("experts")}
-                    className="mt-6 rounded-full bg-[#202020] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black"
-                  >
-                    打开专家广场
-                  </button>
-                ) : null}
+                <IngestWelcomeHero
+                  profile={activeDisplayProfile}
+                  canIngest={canIngest}
+                  onOpenExperts={() => onRailChange?.("experts")}
+                />
                 <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
                   {quickPrompts.map((prompt) => (
                     <button
@@ -1159,6 +1218,13 @@ export function IngestChatGPTShell({
               <div className="mx-auto w-full max-w-[980px] space-y-5 pt-8">
                 {messages.map((message) => {
                   const isStructuredResult = message.role === "assistant" && message.id.startsWith("assistant-result");
+                  const messageAgent = agentById.get(message.agentId ?? "") ?? activeAgent;
+                  const messageProfile = resolveAdminIngestDisplayProfile({
+                    currentAgent: messageAgent,
+                    appName,
+                    adminAvatar
+                  });
+                  const messageAgentLabel = message.agentName ?? agentLabelById.get(message.agentId ?? activeAgent.id) ?? messageProfile.agentName;
 
                   return (
                   <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
@@ -1167,6 +1233,13 @@ export function IngestChatGPTShell({
                       isStructuredResult ? "w-full max-w-full" : "max-w-[82%]",
                       message.role === "user" ? "bg-[#202020] text-white" : "border border-[#ececea] bg-[#f8f8f7] text-[#303030]"
                     ].join(" ")}>
+                      {message.role === "assistant" ? (
+                        <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
+                          <IngestAgentAvatar profile={messageProfile} size="xs" />
+                          <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[#888] shadow-sm">{message.model ?? selectedModelLabel}</span>
+                        </div>
+                      ) : null}
                       {message.role === "assistant" ? (
                         <MarkdownOutput content={message.content} />
                       ) : (
@@ -1182,7 +1255,7 @@ export function IngestChatGPTShell({
                       ) : null}
                       {message.role === "user" ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/70">
-                          <span className="rounded-full bg-white/10 px-2 py-1">Agent：{agentLabelById.get(message.agentId ?? activeAgent.id) ?? activeAgent.name}</span>
+                          <span className="rounded-full bg-white/10 px-2 py-1">Agent：{messageAgentLabel}</span>
                           <span className="rounded-full bg-white/10 px-2 py-1">模型：{message.model ?? selectedModelLabel}</span>
                           <span className="rounded-full bg-white/10 px-2 py-1">Web / EXE / APK</span>
                         </div>
@@ -1210,6 +1283,9 @@ export function IngestChatGPTShell({
                       {message.role === "assistant" && (message.model || message.saveSuggestion !== undefined) ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                           {message.model ? <span className="rounded-full bg-white px-2 py-1 font-semibold text-[#555] shadow-sm">模型：{message.model}</span> : null}
+                          {message.provider === "local-fallback" ? (
+                            <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">本地预览</span>
+                          ) : null}
                           {message.saveSuggestion !== undefined ? (
                             <span className={message.saveSuggestion ? "rounded-full bg-[#e9f8ef] px-2 py-1 font-semibold text-[#128246]" : "rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]"}>
                               {message.saveSuggestion ? "建议入库" : "建议复核"}
@@ -1229,13 +1305,18 @@ export function IngestChatGPTShell({
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              setInput(draft.standardQuestion || draft.title || message.content);
-                              setNoticeMessage("已将当前结构化结果放回输入框，可再次发送重新生成。");
-                            }}
+                            onClick={() => void handleReconnectGpt()}
                             className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#555] shadow-sm"
                           >
-                            重新生成
+                            重新连接 GPT
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleRegenerate(message.content)}
+                            disabled={isParsing}
+                            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#555] shadow-sm"
+                          >
+                            {isParsing ? "生成中..." : "重新生成"}
                           </button>
                         </div>
                       ) : null}

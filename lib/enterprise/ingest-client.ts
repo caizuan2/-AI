@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  createMockKnowledgeDraft,
   type IngestChatAgent,
   type IngestKnowledgeDraft,
   type IngestTrainingRecord
@@ -27,6 +26,24 @@ export interface IngestConnectionStatus {
   knowledgeBase: string;
   licenseStatus: IngestLicenseStatus;
   checkedAt?: string;
+}
+
+export interface IngestGptHealthStatus {
+  ok: boolean;
+  configured: boolean;
+  provider: "openai";
+  baseUrlConfigured: boolean;
+  baseUrlSource?: "configured" | "default";
+  modelConfigured: boolean;
+  modelSource?: "configured" | "preferred" | "default";
+  apiKeyConfigured: boolean;
+  selectedModelLabel: string;
+  model: string;
+  mode: "highest" | "fixed";
+  message: string;
+  diagnostics: string[];
+  checkedAt?: string;
+  requestTested?: boolean;
 }
 
 export interface IngestUploadState {
@@ -99,6 +116,17 @@ interface GptIngestResponse {
     syncTarget?: IngestSyncTarget[];
   };
   fallbackUsed?: boolean;
+}
+
+interface GptFallbackResponse {
+  ok: false;
+  fallback: true;
+  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_REQUEST_FAILED" | "OPENAI_MODEL_UNAVAILABLE" | "OPENAI_TIMEOUT";
+  message: string;
+  selectedModelLabel?: string;
+  model?: string;
+  localPreview?: unknown;
+  replyMarkdown?: string;
 }
 
 interface UrlIngestPreviewResponse {
@@ -216,6 +244,14 @@ function readQaPairs(value: unknown) {
       return q && a ? { q, a } : null;
     })
     .filter((item): item is { q: string; a: string } => Boolean(item));
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function isGptFallbackResponse(value: unknown): value is GptFallbackResponse {
+  return isPlainRecord(value) && value.ok === false && value.fallback === true;
 }
 
 function toRecordTime(value?: string) {
@@ -348,6 +384,56 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
   }, originalInput, agent, "待确认");
 }
 
+function createLocalPreviewResult(input: {
+  text: string;
+  agent: IngestChatAgent;
+  selectedModelLabel: string;
+  tenantId?: string | null;
+  userId?: string | null;
+  platform: IngestPlatform;
+  message: string;
+  localPreview?: unknown;
+  replyMarkdown?: string;
+}) {
+  const draft = normalizeDraftFromUnknown(input.localPreview, input.text, input.agent, "待确认");
+
+  draft.jobId = draft.jobId ?? `preview-${Date.now()}`;
+  draft.fallbackUsed = true;
+  draft.providerUsed = "local-fallback";
+  draft.model = input.selectedModelLabel;
+  draft.replyMarkdown = input.replyMarkdown;
+
+  return {
+    draft,
+    records: [createTrainingRecord({
+      originalInput: input.text,
+      draft,
+      agent: input.agent,
+      tenantId: input.tenantId ?? null,
+      userId: input.userId ?? null,
+      platform: input.platform
+    })],
+    preview: true,
+    provider: "local-fallback",
+    model: input.selectedModelLabel,
+    modelMode: "highest" as const,
+    replyMarkdown: input.replyMarkdown || [
+      "## 本地预览结构化结果",
+      "",
+      input.message,
+      "",
+      "### 本地预览整理",
+      `- 标题：${draft.title}`,
+      `- 分类：${draft.category}`,
+      `- 入库建议：${draft.recommendation}`,
+      "",
+      draft.summary ?? draft.standardAnswer
+    ].join("\n"),
+    saveSuggestion: draft.recommendation === "建议入库",
+    message: input.message
+  };
+}
+
 export async function sendCoreIngest(input: {
   text: string;
   agent: IngestChatAgent;
@@ -365,6 +451,22 @@ export async function sendCoreIngest(input: {
   const platform = input.platform ?? "web";
   const gptSelection = getGptModelSelectionByDisplayName(input.selectedModelLabel ?? input.model);
   const selectedModelLabel = input.selectedModelLabel ?? gptSelection.displayName;
+  const health = await checkGptHealthStatus({
+    selectedModelLabel,
+    preferredModel: gptSelection.apiModel
+  });
+
+  if (!health.ok && !health.apiKeyConfigured) {
+    return createLocalPreviewResult({
+      text: input.text,
+      agent: input.agent,
+      selectedModelLabel,
+      tenantId: input.tenantId ?? null,
+      userId: input.userId ?? null,
+      platform,
+      message: `${health.message}，已使用本地预览结果。`
+    });
+  }
 
   try {
     const response = await fetch("/api/admin/kb/ingest/gpt", {
@@ -396,7 +498,27 @@ export async function sendCoreIngest(input: {
         autoSave: false
       })
     });
-    const data = await readApiData<GptIngestResponse>(response);
+    const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFallbackResponse | null;
+
+    if (isGptFallbackResponse(payload)) {
+      return createLocalPreviewResult({
+        text: input.text,
+        agent: input.agent,
+        selectedModelLabel: payload.selectedModelLabel ?? selectedModelLabel,
+        tenantId: input.tenantId ?? null,
+        userId: input.userId ?? null,
+        platform,
+        message: payload.message,
+        localPreview: payload.localPreview,
+        replyMarkdown: payload.replyMarkdown
+      });
+    }
+
+    if (!response.ok || !payload?.ok || !payload.data) {
+      throw new Error(getFriendlyIngestError(response, payload));
+    }
+
+    const data = payload.data;
     const draft = gptResponseToDraft(data, input.text, input.agent);
 
     draft.jobId = draft.jobId ?? `gpt-${Date.now()}`;
@@ -422,42 +544,18 @@ export async function sendCoreIngest(input: {
       saveSuggestion: draft.recommendation === "建议入库",
       message: `GPT 已生成结构化知识：${draft.title}`
     };
-  } catch {
-    const draft = createMockKnowledgeDraft(input.text, input.agent);
-    draft.jobId = `preview-${Date.now()}`;
-    draft.fallbackUsed = true;
-    draft.providerUsed = "local-fallback";
-    draft.model = selectedModelLabel;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "GPT 接口暂不可用，已使用本地预览结果。";
 
-    return {
-      draft,
-      records: [createTrainingRecord({
-        originalInput: input.text,
-        draft,
-        agent: input.agent,
-        tenantId: input.tenantId ?? null,
-        userId: input.userId ?? null,
-        platform
-      })],
-      preview: true,
-      provider: "local-fallback",
-      model: selectedModelLabel,
-      modelMode: "highest" as const,
-      replyMarkdown: [
-        "## 本地预览结构化结果",
-        "",
-        "当前结果由本地预览链路生成，真实 GPT 接入后可重新生成。",
-        "",
-        "### 本地预览整理",
-        `- 标题：${draft.title}`,
-        `- 分类：${draft.category}`,
-        `- 入库建议：${draft.recommendation}`,
-        "",
-        draft.summary ?? draft.standardAnswer
-      ].join("\n"),
-      saveSuggestion: draft.recommendation === "建议入库",
-      message: "GPT 接口暂不可用，已使用本地预览结果。"
-    };
+    return createLocalPreviewResult({
+      text: input.text,
+      agent: input.agent,
+      selectedModelLabel,
+      tenantId: input.tenantId ?? null,
+      userId: input.userId ?? null,
+      platform,
+      message
+    });
   }
 }
 
@@ -713,6 +811,72 @@ export async function checkLicenseStatus(): Promise<IngestConnectionStatus> {
       knowledgeBase: "默认知识库",
       licenseStatus: "本地预览",
       checkedAt: new Date().toISOString()
+    };
+  }
+}
+
+export async function checkGptHealthStatus(input: {
+  selectedModelLabel?: string;
+  preferredModel?: string;
+} = {}): Promise<IngestGptHealthStatus> {
+  const params = new URLSearchParams();
+
+  if (input.selectedModelLabel) {
+    params.set("selectedModelLabel", input.selectedModelLabel);
+  }
+
+  if (input.preferredModel) {
+    params.set("preferredModel", input.preferredModel);
+  }
+
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+
+  try {
+    const response = await fetch(`/api/admin/kb/ingest/gpt/health${suffix}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => null) as IngestGptHealthStatus | ApiEnvelope<IngestGptHealthStatus> | null;
+
+    if (isPlainRecord(payload) && typeof payload.provider === "string") {
+      return payload as IngestGptHealthStatus;
+    }
+
+    if (isPlainRecord(payload) && payload.ok === true && "data" in payload && payload.data) {
+      return payload.data as IngestGptHealthStatus;
+    }
+
+    return {
+      ok: false,
+      configured: false,
+      provider: "openai",
+      baseUrlConfigured: true,
+      baseUrlSource: "default",
+      modelConfigured: true,
+      modelSource: "default",
+      apiKeyConfigured: false,
+      selectedModelLabel: input.selectedModelLabel ?? "GPT-5.5 超高",
+      model: input.preferredModel ?? "gpt-5.5",
+      mode: "highest",
+      message: "GPT 健康检查接口暂不可用",
+      diagnostics: ["请确认 /api/admin/kb/ingest/gpt/health 可以访问。"],
+      checkedAt: new Date().toISOString(),
+      requestTested: false
+    };
+  } catch {
+    return {
+      ok: false,
+      configured: false,
+      provider: "openai",
+      baseUrlConfigured: true,
+      baseUrlSource: "default",
+      modelConfigured: true,
+      modelSource: "default",
+      apiKeyConfigured: false,
+      selectedModelLabel: input.selectedModelLabel ?? "GPT-5.5 超高",
+      model: input.preferredModel ?? "gpt-5.5",
+      mode: "highest",
+      message: "GPT 健康检查请求失败",
+      diagnostics: ["请检查 Web 服务是否启动，或稍后重新连接 GPT。"],
+      checkedAt: new Date().toISOString(),
+      requestTested: false
     };
   }
 }
