@@ -27,6 +27,7 @@ export function IngestGPTModelPicker({
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedSelection = useMemo(() => getGptModelSelectionByDisplayName(selectedModel), [selectedModel]);
   const [isOpen, setIsOpen] = useState(false);
+  const [isVersionOpen, setIsVersionOpen] = useState(false);
   const [activeTier, setActiveTier] = useState<GptTier>(selectedSelection.tier);
   const [activeVersion, setActiveVersion] = useState<GptVersion>(selectedSelection.version);
 
@@ -46,11 +47,13 @@ export function IngestGPTModelPicker({
       }
 
       setIsOpen(false);
+      setIsVersionOpen(false);
     }
 
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         setIsOpen(false);
+        setIsVersionOpen(false);
       }
     }
 
@@ -73,6 +76,7 @@ export function IngestGPTModelPicker({
     setActiveVersion(next.version);
     onModelChange?.(next);
     setIsOpen(false);
+    setIsVersionOpen(false);
   }
 
   return (
@@ -80,7 +84,8 @@ export function IngestGPTModelPicker({
       <button
         type="button"
         onClick={() => {
-          setIsOpen((current) => !current);
+          setIsOpen(!isOpen);
+          setIsVersionOpen(false);
           onOpen?.();
         }}
         className="inline-flex h-9 max-w-[220px] items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 text-xs font-semibold text-[#303030] transition hover:bg-[#ededeb]"
@@ -119,34 +124,46 @@ export function IngestGPTModelPicker({
               })}
             </div>
             <div className="my-1 border-t border-[#eeeeeb]" />
-            <div className="flex h-9 items-center justify-between rounded-xl px-3 text-[#444]">
-              <span>GPT-{activeVersion}</span>
+            <button
+              type="button"
+              onMouseEnter={() => setIsVersionOpen(true)}
+              onFocus={() => setIsVersionOpen(true)}
+              onClick={() => setIsVersionOpen(true)}
+              className={["flex h-9 w-full items-center justify-between rounded-xl px-3 text-left transition hover:bg-[#f5f5f3]", isVersionOpen ? "bg-[#f7f7f5] text-[#202020]" : "text-[#444]"].join(" ")}
+              aria-expanded={isVersionOpen}
+            >
+              <span>GPT 模型</span>
               <ChevronRight className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
-            </div>
+            </button>
           </div>
-          <div className="w-36 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
-            {GPT_MODEL_VERSIONS.map((option) => {
-              const isSelected = selectedSelection.version === option.version;
+          {isVersionOpen ? (
+            <div
+              className="w-36 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]"
+              onMouseEnter={() => setIsVersionOpen(true)}
+            >
+              {GPT_MODEL_VERSIONS.map((option) => {
+                const isSelected = selectedSelection.version === option.version;
 
-              return (
-                <button
-                  key={option.version}
-                  type="button"
-                  onMouseEnter={() => setActiveVersion(option.version)}
-                  onFocus={() => setActiveVersion(option.version)}
-                  onClick={() => commitSelection({ version: option.version })}
-                  className={[
-                    "flex h-9 w-full items-center justify-between rounded-xl px-3 text-left transition hover:bg-[#f5f5f3]",
-                    activeVersion === option.version ? "bg-[#f7f7f5] text-[#202020]" : "text-[#444]",
-                    isSelected ? "font-bold text-[#128246]" : ""
-                  ].join(" ")}
-                >
-                  <span>{option.version}</span>
-                  {isSelected ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
-                </button>
-              );
-            })}
-          </div>
+                return (
+                  <button
+                    key={option.version}
+                    type="button"
+                    onMouseEnter={() => setActiveVersion(option.version)}
+                    onFocus={() => setActiveVersion(option.version)}
+                    onClick={() => commitSelection({ version: option.version })}
+                    className={[
+                      "flex h-9 w-full items-center justify-between rounded-xl px-3 text-left transition hover:bg-[#f5f5f3]",
+                      activeVersion === option.version ? "bg-[#f7f7f5] text-[#202020]" : "text-[#444]",
+                      isSelected ? "font-bold text-[#128246]" : ""
+                    ].join(" ")}
+                  >
+                    <span>{option.version}</span>
+                    {isSelected ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : null}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

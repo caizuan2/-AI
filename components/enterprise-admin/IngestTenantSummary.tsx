@@ -42,7 +42,7 @@ async function readApiData<T>(response: Response): Promise<T> {
 export function IngestTenantSummary({ compact = false }: { compact?: boolean }) {
   const [analytics, setAnalytics] = useState<TenantAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [statusMessage, setStatusMessage] = useState("本地预览模式，登录后加载企业知识库");
+  const [statusMessage, setStatusMessage] = useState("本地预览模式，登录后将同步企业知识库。");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,11 +54,11 @@ export function IngestTenantSummary({ compact = false }: { compact?: boolean }) 
 
         if (!cancelled) {
           setAnalytics(data);
-          setStatusMessage("本地预览模式，登录后加载企业知识库");
+          setStatusMessage("本地预览模式，登录后将同步企业知识库。");
         }
       } catch {
         if (!cancelled) {
-          setStatusMessage("本地预览模式，登录后加载企业知识库");
+          setStatusMessage("本地预览模式，登录后将同步企业知识库。");
         }
       } finally {
         if (!cancelled) {

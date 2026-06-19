@@ -46,6 +46,7 @@ type IngestActionResult = {
 
 interface IngestEXEInputBarProps {
   activeAgent: IngestChatAgent;
+  hasActiveAgent: boolean;
   input: string;
   onInputChange: (value: string) => void;
   noticeMessage: string;
@@ -64,6 +65,7 @@ interface IngestEXEInputBarProps {
   onRemoveUpload: (fileId: string) => void;
   onVoiceToggle: () => void;
   onToolAction: (label: string) => void;
+  onOpenExperts: () => void;
 }
 
 const uploadAcceptByTool: Record<string, string> = {
@@ -73,6 +75,7 @@ const uploadAcceptByTool: Record<string, string> = {
 
 export function IngestEXEInputBar({
   activeAgent,
+  hasActiveAgent,
   input,
   onInputChange,
   uploadedFiles,
@@ -86,10 +89,12 @@ export function IngestEXEInputBar({
   onUpload,
   onRemoveUpload,
   onVoiceToggle,
-  onToolAction
+  onToolAction,
+  onOpenExperts
 }: IngestEXEInputBarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
@@ -126,12 +131,50 @@ export function IngestEXEInputBar({
     };
   }, [isMoreOpen, isConnectionOpen]);
 
+  useEffect(() => {
+    if (!isOrganizeOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (organizeMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setIsOrganizeOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOrganizeOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOrganizeOpen]);
+
   async function handleSend() {
+    if (!hasActiveAgent) {
+      onOpenExperts();
+      return;
+    }
+
     const value = input.trim();
     await onSend(value);
   }
 
   function handleUploadClick() {
+    if (!hasActiveAgent) {
+      onOpenExperts();
+      return;
+    }
+
     setFileAccept(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
     fileInputRef.current?.click();
   }
@@ -147,6 +190,11 @@ export function IngestEXEInputBar({
   }
 
   function openTypedUpload(label: string) {
+    if (!hasActiveAgent) {
+      onOpenExperts();
+      return;
+    }
+
     setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
     onToolAction(label);
     setTimeout(() => fileInputRef.current?.click(), 0);
@@ -197,8 +245,9 @@ export function IngestEXEInputBar({
             }
           }}
           rows={3}
-          placeholder={`可以向${activeAgent.name}描述任务或提问任何问题`}
-          className="min-h-[84px] w-full resize-none rounded-2xl border-0 bg-[#fbfbfa] px-4 py-3 text-sm leading-6 text-[#202020] outline-none placeholder:text-[#a0a0a0] focus:bg-white"
+          disabled={!hasActiveAgent}
+          placeholder={hasActiveAgent ? `可以向${activeAgent.name}描述任务或提问任何问题` : "请先到专家广场添加专家 Agent"}
+          className="min-h-[84px] w-full resize-none rounded-2xl border-0 bg-[#fbfbfa] px-4 py-3 text-sm leading-6 text-[#202020] outline-none placeholder:text-[#a0a0a0] focus:bg-white disabled:cursor-not-allowed disabled:text-[#aaa]"
         />
         <input
           ref={fileInputRef}
@@ -216,6 +265,7 @@ export function IngestEXEInputBar({
               onOpen={() => {
                 setIsMoreOpen(false);
                 setIsConnectionOpen(false);
+                setIsOrganizeOpen(false);
               }}
             />
             <div ref={moreMenuRef} className="relative">
@@ -223,6 +273,8 @@ export function IngestEXEInputBar({
                 type="button"
                 onClick={() => {
                   setIsMoreOpen((current) => !current);
+                  setIsConnectionOpen(false);
+                  setIsOrganizeOpen(false);
                 }}
                 className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]"
                 aria-expanded={isMoreOpen}
@@ -265,8 +317,19 @@ export function IngestEXEInputBar({
             </div>
           </div>
           <div className="flex shrink-0 items-center justify-end gap-1.5">
-            <div className="relative">
-              <button type="button" title="AI 修正 / 整理工具" aria-label="AI 修正 / 整理工具" onClick={() => setIsOrganizeOpen((current) => !current)} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]" aria-expanded={isOrganizeOpen}>
+            <div ref={organizeMenuRef} className="relative">
+              <button
+                type="button"
+                title="AI 修正 / 整理工具"
+                aria-label="AI 修正 / 整理工具"
+                onClick={() => {
+                  setIsOrganizeOpen((current) => !current);
+                  setIsMoreOpen(false);
+                  setIsConnectionOpen(false);
+                }}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]"
+                aria-expanded={isOrganizeOpen}
+              >
                 <Scissors className="h-4 w-4" aria-hidden="true" />
               </button>
               {isOrganizeOpen ? (
@@ -293,6 +356,7 @@ export function IngestEXEInputBar({
             <button
               type="button"
               title={voiceState.isRecording ? "停止语音输入" : "语音备注"}
+              aria-label={voiceState.isRecording ? "停止语音输入" : "语音备注"}
               onClick={onVoiceToggle}
               className={[
                 "flex h-9 w-9 items-center justify-center rounded-full transition",
@@ -301,7 +365,7 @@ export function IngestEXEInputBar({
             >
               <Mic className="h-4 w-4" aria-hidden="true" />
             </button>
-            <button type="button" onClick={handleSend} disabled={isParsing || (!input.trim() && uploadedFiles.length === 0)} className="flex h-10 items-center gap-2 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#e6e6e3] disabled:text-[#aaa]">
+            <button type="button" onClick={handleSend} disabled={!hasActiveAgent || isParsing || (!input.trim() && uploadedFiles.length === 0)} className="flex h-10 items-center gap-2 rounded-2xl bg-[#202020] px-4 text-sm font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#e6e6e3] disabled:text-[#aaa]">
               {isParsing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <SendHorizontal className="h-4 w-4" aria-hidden="true" />}
               {isParsing ? "发送中" : "发送AI投喂"}
             </button>

@@ -1,0 +1,27 @@
+{
+  "appId": "com.aiknowledge.ingestadmin",
+  "appName": "AI知识库投喂端",
+  "defaultUrl": "http://10.0.2.2:3015/admin-ingest?app=ingest-admin&platform=apk",
+  "blockedPaths": [
+    "/chat-ui",
+    "/chat-ui/"
+  ],
+  "webView": {
+    "javaScript": true,
+    "domStorage": true,
+    "cookies": true,
+    "fileUploadChooser": true,
+    "localStorage": true
+  },
+  "permissionsPlanned": [
+    "android.permission.INTERNET",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.CAMERA",
+    "android.permission.RECORD_AUDIO"
+  ],
+  "syncTarget": [
+    "web",
+    "exe",
+    "apk"
+  ]
+}

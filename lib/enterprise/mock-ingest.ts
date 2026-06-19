@@ -1,6 +1,7 @@
 export type IngestEXENavId = "feed" | "knowledge" | "files" | "tasks" | "review" | "fix" | "settings";
 
 export type IngestEXETone = "green" | "blue" | "amber" | "rose" | "slate";
+export type IngestEXESource = "super_admin_category" | "ingest_custom" | "expert_marketplace";
 
 export interface IngestEXENavItem {
   id: IngestEXENavId;
@@ -19,6 +20,13 @@ export interface IngestEXEAgent {
   active?: boolean;
   stats: string;
   tone: IngestEXETone;
+  status?: "active" | "archived" | "deleted_local";
+  isSystem?: boolean;
+  source?: IngestEXESource;
+  managedBySuperAdmin?: boolean;
+  editableByIngestAdmin?: boolean;
+  deletableByIngestAdmin?: boolean;
+  visibleToUserClient?: boolean;
 }
 
 export interface IngestEXECollection {
@@ -27,6 +35,11 @@ export interface IngestEXECollection {
   kind: "知识库" | "分类" | "训练";
   count: number;
   status: string;
+  source?: IngestEXESource;
+  managedBySuperAdmin?: boolean;
+  editableByIngestAdmin?: boolean;
+  deletableByIngestAdmin?: boolean;
+  visibleToUserClient?: boolean;
 }
 
 export interface IngestEXETask {
@@ -69,6 +82,14 @@ export const ingestEXENavItems: IngestEXENavItem[] = [
   { id: "settings", label: "设置", title: "我的设置" }
 ];
 
+const superAdminCategoryMeta = {
+  source: "super_admin_category" as const,
+  managedBySuperAdmin: true,
+  editableByIngestAdmin: false,
+  deletableByIngestAdmin: false,
+  visibleToUserClient: true
+};
+
 export const ingestEXEAgents: IngestEXEAgent[] = [
   {
     id: "chief",
@@ -78,7 +99,8 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     avatar: "知",
     active: true,
     stats: "今日 24 条",
-    tone: "green"
+    tone: "green",
+    ...superAdminCategoryMeta
   },
   {
     id: "product",
@@ -87,7 +109,8 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     description: "沉淀功能说明、版本差异、FAQ 和使用边界。",
     avatar: "产",
     stats: "86 条知识",
-    tone: "blue"
+    tone: "blue",
+    ...superAdminCategoryMeta
   },
   {
     id: "service",
@@ -96,7 +119,8 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     description: "整理客户沟通话术、异议处理和可复制回复。",
     avatar: "客",
     stats: "213 条知识",
-    tone: "amber"
+    tone: "amber",
+    ...superAdminCategoryMeta
   },
   {
     id: "after-sale",
@@ -105,7 +129,8 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     description: "管理退款、换货、保修和工单处理流程。",
     avatar: "售",
     stats: "74 条知识",
-    tone: "rose"
+    tone: "rose",
+    ...superAdminCategoryMeta
   },
   {
     id: "policy",
@@ -114,7 +139,8 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     description: "维护内部制度、审批规范和执行口径。",
     avatar: "制",
     stats: "51 条知识",
-    tone: "slate"
+    tone: "slate",
+    ...superAdminCategoryMeta
   },
   {
     id: "sales",
@@ -123,15 +149,16 @@ export const ingestEXEAgents: IngestEXEAgent[] = [
     description: "沉淀销售话术、案例材料和报价说明。",
     avatar: "销",
     stats: "97 条知识",
-    tone: "green"
+    tone: "green",
+    ...superAdminCategoryMeta
   }
 ];
 
 export const ingestEXECollections: IngestEXECollection[] = [
-  { id: "default", name: "默认知识库", kind: "知识库", count: 128, status: "同步完成" },
-  { id: "tag-service", name: "客服 / 售后", kind: "分类", count: 54, status: "待复核 6" },
-  { id: "tag-product", name: "产品功能", kind: "分类", count: 39, status: "稳定" },
-  { id: "training-queue", name: "训练任务队列", kind: "训练", count: 12, status: "运行中" }
+  { id: "default", name: "默认知识库", kind: "知识库", count: 128, status: "同步完成", ...superAdminCategoryMeta },
+  { id: "tag-service", name: "客服 / 售后", kind: "分类", count: 54, status: "待复核 6", ...superAdminCategoryMeta },
+  { id: "tag-product", name: "产品功能", kind: "分类", count: 39, status: "稳定", ...superAdminCategoryMeta },
+  { id: "training-queue", name: "训练任务队列", kind: "训练", count: 12, status: "运行中", ...superAdminCategoryMeta }
 ];
 
 export const ingestEXETasks: IngestEXETask[] = [
