@@ -1121,10 +1121,10 @@ export function IngestModeToggle() {
 
       if (nextStatus.ok) {
         setGptFallbackToast(null);
-        setNoticeMessage(action === "reconnect" ? "GPT 接口已连接，可重新生成。" : "GPT 接口检测通过。");
+        setNoticeMessage(action === "reconnect" ? "GPT 接口已连接，可重新生成。" : "GPT 接口已连接。");
         showActionToast({
           type: "success",
-          title: action === "reconnect" ? "GPT 接口已连接，可重新生成" : "GPT 接口检测通过",
+          title: action === "reconnect" ? "GPT 接口已连接，可重新生成" : "GPT 接口已连接",
           description: nextStatus.selectedModelLabel
         });
       } else {
@@ -1139,7 +1139,7 @@ export function IngestModeToggle() {
 
       pushNotification({
         type: nextStatus.ok ? "success" : "fallback",
-        title: nextStatus.ok ? "GPT 接口检测通过" : "GPT 接口诊断提醒",
+        title: nextStatus.ok ? "GPT 接口已连接" : "GPT 接口诊断提醒",
         description: `${nextStatus.selectedModelLabel} · ${nextStatus.message}`
       });
 

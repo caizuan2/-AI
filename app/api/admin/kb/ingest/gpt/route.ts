@@ -1,5 +1,4 @@
-import { NextResponse } from "next/server";
-import { apiError, apiSuccess } from "@/lib/api-response";
+import { apiError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireKbAdmin } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
@@ -12,12 +11,33 @@ import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
+import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function jsonUtf8(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isLocalDevWithoutDatabase(request: Request) {
+  if (process.env.NODE_ENV === "production" || hasDatabaseUrl()) {
+    return false;
+  }
+
+  const hostname = new URL(request.url).hostname;
+
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function readSyncTarget(value: unknown): Array<"web" | "exe" | "apk"> {
@@ -40,19 +60,27 @@ function toGptFallbackErrorCode(error: unknown) {
   const message = typeof record.message === "string" ? record.message.toLowerCase() : "";
   const name = typeof record.name === "string" ? record.name : "";
 
-  if (code === "MISSING_AI_API_KEY" || message.includes("api key") || message.includes("openai_api_key") || message.includes("未配置")) {
+  if (code === "OPENAI_API_KEY_MISSING" || code === "MISSING_AI_API_KEY" || message.includes("api key") || message.includes("openai_api_key") || message.includes("未配置")) {
     return "OPENAI_API_KEY_MISSING" as const;
+  }
+
+  if (code === "OPENAI_BASE_URL_INVALID") {
+    return "OPENAI_BASE_URL_INVALID" as const;
   }
 
   if (name === "AbortError" || message.includes("timeout") || message.includes("超时")) {
     return "OPENAI_TIMEOUT" as const;
   }
 
-  if (message.includes("model") || message.includes("模型不可用")) {
-    return "OPENAI_MODEL_UNAVAILABLE" as const;
+  if (code === "OPENAI_RESPONSES_PARSE_FAILED") {
+    return "OPENAI_RESPONSES_PARSE_FAILED" as const;
   }
 
-  return "OPENAI_REQUEST_FAILED" as const;
+  if (code === "OPENAI_RESPONSES_REQUEST_FAILED" || message.includes("model") || message.includes("模型不可用")) {
+    return "OPENAI_RESPONSES_REQUEST_FAILED" as const;
+  }
+
+  return "OPENAI_RESPONSES_REQUEST_FAILED" as const;
 }
 
 function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCode>, error: unknown) {
@@ -67,8 +95,16 @@ function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCod
     return "GPT 请求超时，已使用本地预览结果";
   }
 
-  if (errorCode === "OPENAI_MODEL_UNAVAILABLE") {
-    return "当前 GPT 模型不可用，已使用本地预览结果";
+  if (errorCode === "OPENAI_BASE_URL_INVALID") {
+    return "OPENAI_BASE_URL 无效，已使用本地预览结果";
+  }
+
+  if (errorCode === "OPENAI_RESPONSES_PARSE_FAILED") {
+    return "OpenAI Responses API 返回解析失败，已使用本地预览结果";
+  }
+
+  if (errorCode === "OPENAI_RESPONSES_REQUEST_FAILED") {
+    return "OpenAI Responses API 请求失败，已使用本地预览结果";
   }
 
   return message || "GPT 接口暂不可用，已使用本地预览结果";
@@ -187,7 +223,7 @@ function readRequest(body: unknown) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let actor: Awaited<ReturnType<typeof requireKbAdmin>>;
+  let actor: Awaited<ReturnType<typeof requireKbAdmin>> | null = null;
 
   try {
     actor = await requireKbAdmin(request, {
@@ -195,7 +231,9 @@ export async function POST(request: Request) {
       targetType: "admin_kb_ingest_gpt"
     });
   } catch (error) {
-    return apiError(error);
+    if (!isLocalDevWithoutDatabase(request)) {
+      return apiError(error);
+    }
   }
 
   let input: ReturnType<typeof readRequest>;
@@ -222,7 +260,7 @@ export async function POST(request: Request) {
       agentName: input.agentName,
       category: input.category,
       tenantId: input.tenantId,
-      userId: input.userId ?? actor.id,
+      userId: input.userId ?? actor?.id ?? "local-admin-ingest-dev",
       source: input.source,
       platform: input.platform,
       syncTarget: input.syncTarget,
@@ -235,13 +273,25 @@ export async function POST(request: Request) {
       requestId
     });
 
-    return apiSuccess(result);
+    return jsonUtf8({
+      ok: true,
+      data: result,
+      fallback: false,
+      provider: result.provider,
+      model: result.model,
+      selectedModelLabel: result.selectedModelLabel,
+      replyMarkdown: result.replyMarkdown,
+      structuredResult: result.structuredResult,
+      structured: result.structured,
+      sync: result.sync,
+      sourceType: result.sourceType
+    });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
     const message = toGptFallbackMessage(errorCode, error);
     const localPreview = buildLocalPreview(input, errorCode);
 
-    return NextResponse.json({
+    return jsonUtf8({
       ok: false,
       fallback: true,
       errorCode,
@@ -250,6 +300,6 @@ export async function POST(request: Request) {
       model: input.preferredModel,
       localPreview,
       replyMarkdown: buildLocalPreviewReply(localPreview, message)
-    }, { status: 200 });
+    });
   }
 }

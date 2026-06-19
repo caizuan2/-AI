@@ -21,6 +21,73 @@ function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+export function extractResponsesText(payload: unknown) {
+  if (!payload || typeof payload !== "object") {
+    return "";
+  }
+
+  const record = payload as Record<string, unknown>;
+
+  if (typeof record.output_text === "string" && record.output_text.trim()) {
+    return record.output_text.trim();
+  }
+
+  const output = Array.isArray(record.output) ? record.output : [];
+  const parts: string[] = [];
+
+  for (const item of output) {
+    if (typeof item === "string" && item.trim()) {
+      parts.push(item.trim());
+      continue;
+    }
+
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const itemRecord = item as Record<string, unknown>;
+
+    if (typeof itemRecord.text === "string" && itemRecord.text.trim()) {
+      parts.push(itemRecord.text.trim());
+    }
+
+    if (typeof itemRecord.output_text === "string" && itemRecord.output_text.trim()) {
+      parts.push(itemRecord.output_text.trim());
+    }
+
+    if (typeof itemRecord.content === "string" && itemRecord.content.trim()) {
+      parts.push(itemRecord.content.trim());
+      continue;
+    }
+
+    const content = Array.isArray(itemRecord.content) ? itemRecord.content : [];
+
+    for (const contentItem of content) {
+      if (typeof contentItem === "string" && contentItem.trim()) {
+        parts.push(contentItem.trim());
+        continue;
+      }
+
+      if (!contentItem || typeof contentItem !== "object") {
+        continue;
+      }
+
+      const contentRecord = contentItem as Record<string, unknown>;
+      const text = typeof contentRecord.text === "string"
+        ? contentRecord.text
+        : typeof contentRecord.output_text === "string"
+          ? contentRecord.output_text
+          : "";
+
+      if (text.trim()) {
+        parts.push(text.trim());
+      }
+    }
+  }
+
+  return parts.join("\n").trim();
+}
+
 function readStringArray(value: unknown) {
   return Array.isArray(value)
     ? value.map((item) => readString(item)).filter(Boolean).slice(0, 8)

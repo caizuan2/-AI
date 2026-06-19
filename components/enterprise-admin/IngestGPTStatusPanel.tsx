@@ -19,7 +19,7 @@ export function IngestGPTStatusPanel({
   const isOk = status?.ok === true;
   const statusText = status
     ? isOk
-      ? "可用"
+      ? "已连接"
       : status.apiKeyConfigured
         ? "请求失败"
         : "未配置"

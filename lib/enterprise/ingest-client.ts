@@ -44,6 +44,7 @@ export interface IngestGptHealthStatus {
   diagnostics: string[];
   checkedAt?: string;
   requestTested?: boolean;
+  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT";
 }
 
 export interface IngestUploadState {
@@ -99,6 +100,8 @@ interface GptIngestResponse {
   model: string;
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
+  fallback?: false;
+  selectedModelLabel?: string;
   replyMarkdown: string;
   structured: {
     title?: string;
@@ -121,7 +124,7 @@ interface GptIngestResponse {
 interface GptFallbackResponse {
   ok: false;
   fallback: true;
-  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_REQUEST_FAILED" | "OPENAI_MODEL_UNAVAILABLE" | "OPENAI_TIMEOUT";
+  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT";
   message: string;
   selectedModelLabel?: string;
   model?: string;
