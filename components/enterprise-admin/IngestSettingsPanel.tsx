@@ -1,18 +1,21 @@
 "use client";
 
-import { Settings, X } from "lucide-react";
+import { ImagePlus, KeyRound, LogOut, Settings, X } from "lucide-react";
+import { useRef, type ChangeEvent } from "react";
 import type {
   IngestConnectionStatus,
+  IngestPlatform,
   IngestUploadState,
   IngestVoiceState
 } from "@/lib/enterprise/ingest-client";
+import { getAdminIngestPlatformLabel } from "@/lib/enterprise/admin-ingest-platform";
 import type { IngestChatAgent } from "@/lib/enterprise/mock-chat";
 
 export interface IngestSettingsState {
   autoSaveStructuredResult: boolean;
   uploadPreference: "composer" | "queue";
   localPreviewMode: boolean;
-  platform: "web";
+  platform: IngestPlatform;
   syncTarget: Array<"web" | "exe" | "apk">;
 }
 
@@ -24,7 +27,10 @@ export function IngestSettingsPanel({
   uploadedFiles,
   voiceState,
   settingsState,
+  adminAvatar,
   onSettingsChange,
+  onAvatarChange,
+  onAccountAction,
   onClose
 }: {
   open: boolean;
@@ -34,11 +40,34 @@ export function IngestSettingsPanel({
   uploadedFiles: IngestUploadState[];
   voiceState: IngestVoiceState;
   settingsState: IngestSettingsState;
+  adminAvatar: string;
   onSettingsChange: (nextState: IngestSettingsState) => void;
+  onAvatarChange: (nextAvatar: string) => void;
+  onAccountAction: (action: "password" | "switch") => void;
   onClose: () => void;
 }) {
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
   if (!open) {
     return null;
+  }
+
+  function handleAvatarFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file || !file.type.startsWith("image/")) {
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        onAvatarChange(reader.result);
+      }
+    };
+    reader.readAsDataURL(file);
+    event.target.value = "";
   }
 
   return (
@@ -57,15 +86,68 @@ export function IngestSettingsPanel({
           </button>
         </div>
 
+        <div className="mt-4 rounded-[24px] border border-[#eeeeeb] bg-[#fbfbfa] p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-white bg-gradient-to-br from-[#d9f8e9] to-[#fff4de] text-sm font-semibold text-[#128246] shadow-sm">
+                {adminAvatar ? (
+                  <span aria-label="当前头像" className="h-full w-full bg-cover bg-center" style={{ backgroundImage: `url(${adminAvatar})` }} />
+                ) : (
+                  "AI"
+                )}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-[#202020]">账号设置</p>
+                <p className="mt-1 text-xs leading-5 text-[#888]">头像仅保存在当前投喂端本地预览，不改登录核心。</p>
+              </div>
+            </div>
+            <input
+              ref={avatarInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={handleAvatarFileChange}
+            />
+          </div>
+          <div className="mt-3 grid gap-2">
+            <button
+              type="button"
+              onClick={() => avatarInputRef.current?.click()}
+              className="flex h-10 items-center gap-2 rounded-2xl bg-white px-3 text-left text-sm font-semibold text-[#202020] shadow-sm transition hover:bg-[#f6f6f5]"
+            >
+              <ImagePlus className="h-4 w-4 text-[#128246]" aria-hidden="true" />
+              修改头像
+            </button>
+            <button
+              type="button"
+              onClick={() => onAccountAction("password")}
+              className="flex h-10 items-center gap-2 rounded-2xl bg-white px-3 text-left text-sm font-semibold text-[#202020] shadow-sm transition hover:bg-[#f6f6f5]"
+            >
+              <KeyRound className="h-4 w-4 text-[#777]" aria-hidden="true" />
+              修改密码
+            </button>
+            <button
+              type="button"
+              onClick={() => onAccountAction("switch")}
+              className="flex h-10 items-center gap-2 rounded-2xl bg-white px-3 text-left text-sm font-semibold text-[#202020] shadow-sm transition hover:bg-[#f6f6f5]"
+            >
+              <LogOut className="h-4 w-4 text-[#777]" aria-hidden="true" />
+              切换账号
+            </button>
+          </div>
+        </div>
+
         <div className="mt-4 space-y-3 text-sm">
           <InfoRow label="当前 Agent" value={`${activeAgent.name} · ${activeAgent.role}`} />
           <InfoRow label="当前模型" value={selectedModel} />
+          <InfoRow label="当前端" value={getAdminIngestPlatformLabel(settingsState.platform)} />
           <InfoRow label="企业空间" value={connectionStatus.enterpriseSpace} />
           <InfoRow label="卡密 / License" value={connectionStatus.licenseStatus} />
           <InfoRow label="同步目标" value={settingsState.syncTarget.join(" / ")} />
           <InfoRow label="上传偏好" value={settingsState.uploadPreference === "composer" ? "附件进入输入框" : "仅加入队列"} />
           <InfoRow label="当前附件" value={uploadedFiles.length ? `${uploadedFiles.length} 个待发送` : "暂无"} />
           <InfoRow label="语音输入" value={voiceState.isRecording ? "正在听写..." : voiceState.isVoiceSupported ? "浏览器支持" : "浏览器暂不支持"} />
+          <InfoRow label="功能入口" value="本地配置预览，后续由超级管理员开启" />
           <InfoRow label="本地预览模式" value={settingsState.localPreviewMode ? "开启" : "关闭"} />
         </div>
 

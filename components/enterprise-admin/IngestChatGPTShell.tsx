@@ -14,6 +14,8 @@ import {
 import {
   Bell,
   Check,
+  ChevronDown,
+  ChevronRight,
   ImagePlus,
   Link2,
   Loader2,
@@ -33,8 +35,11 @@ import {
   X
 } from "lucide-react";
 import { IngestAttachmentPreview } from "@/components/enterprise-admin/IngestAttachmentPreview";
+import { IngestAgentConversationList } from "@/components/enterprise-admin/IngestAgentConversationList";
 import { IngestAgentMoreMenu } from "@/components/enterprise-admin/IngestAgentMoreMenu";
+import { IngestExpertMarketplace } from "@/components/enterprise-admin/IngestExpertMarketplace";
 import { IngestGPTModelPicker } from "@/components/enterprise-admin/IngestGPTModelPicker";
+import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResizableSidebar";
 import {
   ingestPrimaryRailFeatures,
   type IngestRailKey
@@ -50,9 +55,8 @@ import {
   DEFAULT_GPT_MODEL_SELECTION,
   getGptModelSelectionByDisplayName
 } from "@/lib/enterprise/gpt-model-options";
-import { ingestEXECollections } from "@/lib/enterprise/mock-ingest";
+import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import {
-  ingestChatAgents,
   ingestChatInitialDraft,
   ingestTrainingRecords,
   type IngestChatAgent,
@@ -60,6 +64,7 @@ import {
   type IngestKnowledgeDraft,
   type IngestTrainingRecord
 } from "@/lib/enterprise/mock-chat";
+import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
 const agentToneClasses: Record<IngestChatAgent["tone"], string> = {
   green: "bg-[#ddf7e6] text-[#128246]",
@@ -85,6 +90,7 @@ const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: 
 ];
 
 const organizeActions = ["提取重点", "改写为标准问答", "生成分类标签", "检查是否需要 AI 修正"];
+const EMPTY_AGENTS: IngestChatAgent[] = [];
 
 type IngestActionResult = {
   draft: IngestKnowledgeDraft;
@@ -96,8 +102,22 @@ type IngestActionResult = {
 interface IngestChatGPTShellProps {
   agents?: IngestChatAgent[];
   activeAgent?: IngestChatAgent;
+  hasActiveAgent?: boolean;
   activeAgentId?: string;
+  adminAvatar?: string;
   onAgentChange?: (agentId: string) => void;
+  agentConversations?: IngestAgentConversation[];
+  activeConversationId?: string;
+  expandedAgentIds?: string[];
+  expandedConversationAgentIds?: string[];
+  pinnedAgentIds?: string[];
+  onAgentToggleExpanded?: (agentId: string) => void;
+  onAgentConversationToggleExpanded?: (agentId: string) => void;
+  onAgentConversationSelect?: (agentId: string, conversationId: string) => void;
+  onAgentConversationCreate?: (agentId: string) => void;
+  onAgentConversationRename?: (agentId: string, conversationId: string, title: string) => void;
+  onAgentConversationDelete?: (agentId: string, conversationId: string) => void;
+  onAgentTogglePinned?: (agentId: string) => void;
   activeRailKey?: IngestRailKey;
   onRailChange?: (key: IngestRailKey) => void;
   searchKeyword?: string;
@@ -121,6 +141,8 @@ interface IngestChatGPTShellProps {
   isParsing?: boolean;
   isSaving?: boolean;
   onOpenCreateAgent?: () => void;
+  onAddExpertToAgent?: (expert: IngestExpert) => void;
+  addedExpertIds?: string[];
   onAgentViewDetails?: (agentId: string) => void;
   onAgentEdit?: (agentId: string) => void;
   onAgentArchive?: (agentId: string) => void;
@@ -311,8 +333,22 @@ function toStructuredPayload(draft: IngestKnowledgeDraft) {
 export function IngestChatGPTShell({
   agents: controlledAgents,
   activeAgent: controlledActiveAgent,
+  hasActiveAgent: controlledHasActiveAgent,
   activeAgentId: controlledActiveAgentId,
+  adminAvatar = "",
   onAgentChange,
+  agentConversations = [],
+  activeConversationId = "",
+  expandedAgentIds = [],
+  expandedConversationAgentIds = [],
+  pinnedAgentIds = [],
+  onAgentToggleExpanded,
+  onAgentConversationToggleExpanded,
+  onAgentConversationSelect,
+  onAgentConversationCreate,
+  onAgentConversationRename,
+  onAgentConversationDelete,
+  onAgentTogglePinned,
   activeRailKey: controlledActiveRailKey,
   onRailChange,
   searchKeyword: controlledSearchKeyword,
@@ -344,9 +380,9 @@ export function IngestChatGPTShell({
   isParsing: controlledIsParsing,
   isSaving: controlledIsSaving,
   onOpenCreateAgent,
+  onAddExpertToAgent,
+  addedExpertIds = [],
   onAgentViewDetails,
-  onAgentEdit,
-  onAgentArchive,
   onAgentDelete,
   onNoticeChange,
   onErrorChange,
@@ -360,7 +396,8 @@ export function IngestChatGPTShell({
 }: IngestChatGPTShellProps = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const [internalActiveAgentId, setInternalActiveAgentId] = useState("chief");
+  const organizeMenuRef = useRef<HTMLDivElement>(null);
+  const [internalActiveAgentId, setInternalActiveAgentId] = useState("");
   const [internalMessages, setInternalMessages] = useState<IngestChatMessage[]>([]);
   const [internalDraft, setInternalDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const [internalRecords, setInternalRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
@@ -375,7 +412,7 @@ export function IngestChatGPTShell({
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
   const [fileAccept, setFileAccept] = useState(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
 
-  const agents = controlledAgents ?? ingestChatAgents;
+  const agents = controlledAgents ?? EMPTY_AGENTS;
   const activeAgentId = controlledActiveAgentId ?? internalActiveAgentId;
   const setActiveAgentId = onAgentChange ?? setInternalActiveAgentId;
   const activeRailKey = controlledActiveRailKey ?? "chat";
@@ -396,10 +433,30 @@ export function IngestChatGPTShell({
   const setNoticeMessage = onNoticeChange ?? setInternalNoticeMessage;
   const selectedModelLabel = selectedModel;
 
+  const fallbackAgent = useMemo<IngestChatAgent>(() => ({
+    id: "no-agent",
+    expertId: null,
+    name: "未选择 Agent",
+    role: "待添加专家",
+    category: "专家广场",
+    description: "请先到专家广场添加专家 Agent。",
+    avatar: "+",
+    tone: "slate",
+    platform: voiceState.platform,
+    syncTarget: [...voiceState.syncTarget],
+    status: "active",
+    source: "expert_marketplace",
+    sourceApp: "admin_ingest",
+    managedBySuperAdmin: false,
+    editableByIngestAdmin: false,
+    deletableByIngestAdmin: false,
+    visibleToUserClient: false
+  }), [voiceState.platform, voiceState.syncTarget]);
   const activeAgent = useMemo(
-    () => controlledActiveAgent ?? agents.find((agent) => agent.id === activeAgentId) ?? agents[0] ?? ingestChatAgents[0],
-    [activeAgentId, agents, controlledActiveAgent]
+    () => controlledActiveAgent ?? agents.find((agent) => agent.id === activeAgentId) ?? agents[0] ?? fallbackAgent,
+    [activeAgentId, agents, controlledActiveAgent, fallbackAgent]
   );
+  const canIngest = controlledHasActiveAgent ?? agents.length > 0;
 
   const navItems = useMemo(
     () => ingestPrimaryRailFeatures.map((item) => ({
@@ -416,19 +473,7 @@ export function IngestChatGPTShell({
       : agents,
     [agents, normalizedSearch]
   );
-  const filteredRecords = useMemo(
-    () => normalizedSearch
-      ? records.filter((record) => [record.resultTitle, record.category, record.input, record.agentName].join(" ").toLowerCase().includes(normalizedSearch))
-      : records,
-    [normalizedSearch, records]
-  );
-  const filteredCollections = useMemo(
-    () => normalizedSearch
-      ? ingestEXECollections.filter((item) => [item.name, item.kind, item.status].join(" ").toLowerCase().includes(normalizedSearch))
-      : ingestEXECollections,
-    [normalizedSearch]
-  );
-  const hasSearchResults = filteredAgents.length > 0 || filteredRecords.length > 0 || filteredCollections.length > 0;
+  const hasSearchResults = filteredAgents.length > 0;
   const agentLabelById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, `${agent.name} · ${agent.role}`])),
     [agents]
@@ -483,6 +528,34 @@ export function IngestChatGPTShell({
   }, [isMoreOpen, isConnectionOpen]);
 
   useEffect(() => {
+    if (!isOrganizeOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      if (organizeMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      setIsOrganizeOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setIsOrganizeOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOrganizeOpen]);
+
+  useEffect(() => {
     if (controlledRecords) {
       return;
     }
@@ -516,6 +589,13 @@ export function IngestChatGPTShell({
 
     const value = input.trim();
     const hasAttachments = uploadedFiles.length > 0;
+
+    if (!canIngest) {
+      setNoticeMessage("请先到专家广场添加专家 Agent。");
+      setErrorMessage("");
+      onRailChange?.("experts");
+      return;
+    }
 
     if (!value && !hasAttachments) {
       return;
@@ -566,8 +646,11 @@ export function IngestChatGPTShell({
         body: JSON.stringify({
           input: value,
           source: "admin_ingest",
+          sourceApp: "admin_ingest",
           agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
           agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
           category: activeAgent.role,
           platform: "web",
           syncTarget: ["web", "exe", "apk"],
@@ -735,6 +818,13 @@ export function IngestChatGPTShell({
   }
 
   function handleUploadClick() {
+    if (!canIngest) {
+      setNoticeMessage("请先到专家广场添加专家 Agent。");
+      setErrorMessage("");
+      onRailChange?.("experts");
+      return;
+    }
+
     setFileAccept(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
     fileInputRef.current?.click();
   }
@@ -752,6 +842,13 @@ export function IngestChatGPTShell({
   }
 
   function openTypedUpload(label: string) {
+    if (!canIngest) {
+      setNoticeMessage("请先到专家广场添加专家 Agent。");
+      setErrorMessage("");
+      onRailChange?.("experts");
+      return;
+    }
+
     setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
     onToolAction?.(label);
     setTimeout(() => fileInputRef.current?.click(), 0);
@@ -792,13 +889,23 @@ export function IngestChatGPTShell({
   }
 
   const hasMessages = messages.length > 0;
+  const isExpertMarketplace = activeRailKey === "experts";
 
   return (
     <main className="flex h-screen overflow-hidden bg-[#f7f7f6] text-[#191919]">
       <aside className="flex h-screen w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5">
-        <div className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-white bg-[#d9f8e9] text-sm font-semibold text-[#128246] shadow-sm">
-          AI
-        </div>
+        <button
+          type="button"
+          title="管理员头像 / 设置"
+          onClick={() => onRailChange?.("settings")}
+          className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-white bg-gradient-to-br from-[#d9f8e9] to-[#fff7e8] text-sm font-semibold text-[#128246] shadow-sm transition hover:scale-[1.03] hover:shadow-md"
+        >
+          {adminAvatar ? (
+            <span aria-label="管理员头像" className="h-full w-full bg-cover bg-center" style={{ backgroundImage: `url(${adminAvatar})` }} />
+          ) : (
+            "AI"
+          )}
+        </button>
 
         <nav className="mt-7 flex flex-1 flex-col items-center gap-2" aria-label="Admin ingest navigation">
           {navItems.map((item) => {
@@ -850,7 +957,7 @@ export function IngestChatGPTShell({
         </div>
       </aside>
 
-      <aside className="hidden h-screen w-[240px] shrink-0 flex-col border-r border-[#ededeb] bg-[#fbfbfa] md:flex">
+      <IngestResizableSidebar className="border-[#ededeb] bg-[#fbfbfa]" ariaLabel="管理员投喂 Agent 列表">
         <div className="p-4 pb-3">
           <div className="flex h-9 items-center gap-2 rounded-full bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
             <Search className="h-4 w-4" aria-hidden="true" />
@@ -868,116 +975,138 @@ export function IngestChatGPTShell({
           </div>
           <button type="button" onClick={onOpenCreateAgent} className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-full border border-[#e4e4e1] bg-white text-sm font-medium text-[#202020] shadow-sm transition hover:bg-[#f7f7f5]">
             <Plus className="h-4 w-4" aria-hidden="true" />
-            新建 Agent
+            添加专家 Agent
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
           <div className="space-y-1.5">
-            {!hasSearchResults ? (
+            {agents.length === 0 ? (
+              <div className="mx-2 rounded-2xl border border-dashed border-[#d9d9d5] bg-white px-3 py-5 text-center">
+                <p className="text-xs font-semibold text-[#202020]">暂无 Agent，请到专家广场添加专家。</p>
+                <button
+                  type="button"
+                  onClick={() => onRailChange?.("experts")}
+                  className="mt-3 h-8 rounded-full bg-[#202020] px-3 text-xs font-semibold text-white hover:bg-black"
+                >
+                  打开专家广场
+                </button>
+              </div>
+            ) : !hasSearchResults ? (
               <div className="mx-2 rounded-2xl bg-[#f6f6f5] px-3 py-4 text-center text-xs leading-5 text-[#8a8a86]">
                 没有找到相关 Agent 或知识库
               </div>
             ) : null}
-            {filteredAgents.map((agent) => (
-              <div
-                key={agent.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => handleAgentCardSelect(agent.id)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    handleAgentCardSelect(agent.id);
-                  }
-                }}
-                className={[
-                  "group w-full cursor-pointer rounded-2xl p-3 text-left transition",
-                  activeAgent.id === agent.id ? "bg-[#e9e9e7] ring-1 ring-[#d8d8d4]" : "hover:bg-[#f0f0ee]"
-                ].join(" ")}
-              >
-                <div className="flex gap-3">
-                  <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold", agentToneClasses[agent.tone]].join(" ")}>
-                    {agent.avatar}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="block truncate text-sm font-semibold text-[#202020]">{agent.name}</span>
-                      <span className="flex shrink-0 items-center gap-1">
-                        {agent.status === "archived" ? <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[#9a6500]">已归档</span> : null}
-                        {activeAgent.id === agent.id ? (
-                          <>
-                            <span className="hidden rounded-full bg-[#e9f8ef] px-1.5 py-0.5 text-[10px] font-semibold text-[#128246] xl:inline">当前使用中</span>
-                            <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#202020] text-white">
-                              <Check className="h-3 w-3" aria-hidden="true" />
-                            </span>
-                          </>
-                        ) : null}
-                        <IngestAgentMoreMenu
-                          agent={agent}
-                          onViewDetails={(agentId) => {
-                            if (onAgentViewDetails) {
-                              onAgentViewDetails(agentId);
-                              return;
-                            }
+            {filteredAgents.map((agent) => {
+              const isActive = activeAgent.id === agent.id;
+              const isExpanded = expandedAgentIds.includes(agent.id);
+              const isPinned = pinnedAgentIds.includes(agent.id);
+              const conversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
 
-                            setActiveAgentId(agentId);
-                          }}
-                          onEdit={(agentId) => onAgentEdit?.(agentId)}
-                          onArchive={(agentId) => onAgentArchive?.(agentId)}
-                          onDelete={(agentId) => onAgentDelete?.(agentId)}
-                        />
+              return (
+                <div key={agent.id} className="mx-2">
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => handleAgentCardSelect(agent.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        handleAgentCardSelect(agent.id);
+                      }
+                    }}
+                    className={[
+                      "group relative w-full cursor-pointer rounded-2xl border px-2.5 py-2 text-left transition",
+                      isActive
+                        ? "border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white shadow-sm"
+                        : "border-transparent bg-transparent hover:bg-[#f5f3ef]"
+                    ].join(" ")}
+                  >
+                    {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
+                    <div className="flex min-h-[56px] items-center gap-3">
+                      <span className={["flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold", agentToneClasses[agent.tone]].join(" ")}>
+                        {agent.avatar}
                       </span>
-                    </span>
-                    <span className="mt-0.5 block truncate text-xs text-[#9a9a96]">{agent.role}</span>
-                    <span className="mt-2 block line-clamp-2 text-xs leading-5 text-[#70706b]">{agent.description}</span>
-                  </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2">
+                          <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#202020]"].join(" ")}>{agent.name}</span>
+                          <span className="flex shrink-0 items-center gap-1.5">
+                            {isPinned ? <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[#9a6500]">置顶</span> : null}
+                            <span className="flex items-center gap-1 transition">
+                              <IngestAgentMoreMenu
+                                agent={agent}
+                                isPinned={isPinned}
+                                onCreateConversation={(agentId) => onAgentConversationCreate?.(agentId)}
+                                onTogglePinned={(agentId) => onAgentTogglePinned?.(agentId)}
+                                onViewDetails={(agentId) => {
+                                  if (onAgentViewDetails) {
+                                    onAgentViewDetails(agentId);
+                                    return;
+                                  }
+
+                                  setActiveAgentId(agentId);
+                                }}
+                                onDelete={(agentId) => onAgentDelete?.(agentId)}
+                              />
+                              <button
+                                type="button"
+                                aria-label={isExpanded ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  onAgentToggleExpanded?.(agent.id);
+                                }}
+                                className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86] transition hover:bg-white hover:text-[#202020]"
+                              >
+                                {isExpanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                              </button>
+                            </span>
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-[#9a9a96]">{agent.description || agent.role}</span>
+                      </span>
+                    </div>
+                  </div>
+                  {isExpanded ? (
+                    <IngestAgentConversationList
+                      agentId={agent.id}
+                      conversations={conversations}
+                      activeConversationId={activeConversationId}
+                      expandedAll={expandedConversationAgentIds.includes(agent.id)}
+                      onSelectConversation={(agentId, conversationId) => onAgentConversationSelect?.(agentId, conversationId)}
+                      onToggleExpandedAll={(agentId) => onAgentConversationToggleExpanded?.(agentId)}
+                      onRenameConversation={(agentId, conversationId, title) => onAgentConversationRename?.(agentId, conversationId, title)}
+                      onDeleteConversation={(agentId, conversationId) => onAgentConversationDelete?.(agentId, conversationId)}
+                    />
+                  ) : null}
                 </div>
-              </div>
-            ))}
-          </div>
-
-          {filteredCollections.length > 0 ? (
-            <div className="mx-2 mt-4 border-t border-[#eeeeeb] pt-4">
-              <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#9b9b96]">知识库 / 分类</p>
-              <div className="mt-2 space-y-1">
-                {filteredCollections.slice(0, normalizedSearch ? 4 : 2).map((item) => (
-                  <button key={item.id} type="button" onClick={() => onRailChange?.("experts")} className="w-full rounded-xl px-2 py-2 text-left hover:bg-[#f0f0ee]">
-                    <span className="block truncate text-xs font-semibold text-[#303030]">{item.name}</span>
-                    <span className="mt-0.5 block truncate text-[11px] text-[#8c8c88]">{item.kind} · {item.count} · {item.status}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="mx-2 mt-4 border-t border-[#eeeeeb] pt-4">
-            <p className="px-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[#9b9b96]">最近投喂</p>
-            <div className="mt-2 space-y-1">
-              {filteredRecords.slice(0, 3).map((record) => (
-                <button key={record.id} type="button" onClick={() => openDrawer("records", { toggle: true })} className="w-full rounded-xl px-2 py-2 text-left hover:bg-[#f0f0ee]">
-                  <span className="block truncate text-xs font-semibold text-[#303030]">{record.resultTitle}</span>
-                  <span className="mt-0.5 block truncate text-[11px] text-[#8c8c88]">{record.category} · {record.time}</span>
-                </button>
-              ))}
-            </div>
+              );
+            })}
           </div>
         </div>
-      </aside>
+      </IngestResizableSidebar>
 
       <section className="relative flex min-w-0 flex-1 flex-col bg-white">
-        <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-b border-[#f0f0ee] px-5">
-          <button type="button" onClick={() => openDrawer("records", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
-            训练记录
-          </button>
-          <button type="button" onClick={() => openDrawer("draft", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
-            结构化结果
-          </button>
-          <IngestTenantSummary compact />
-        </div>
+        {!isExpertMarketplace ? (
+          <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-b border-[#f0f0ee] px-5">
+            <button type="button" onClick={() => openDrawer("records", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
+              训练记录
+            </button>
+            <button type="button" onClick={() => openDrawer("draft", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
+              结构化结果
+            </button>
+            <IngestTenantSummary compact />
+          </div>
+        ) : null}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4">
-          <div className="mx-auto flex min-h-full max-w-4xl flex-col justify-center">
+        <div className={["min-h-0 flex-1 overflow-y-auto", isExpertMarketplace ? "bg-[#f7f7f6] px-5 py-5" : "px-5 pb-5 pt-4"].join(" ")}>
+          <div className={isExpertMarketplace ? "mx-auto flex min-h-full w-full max-w-[1280px] flex-col" : "mx-auto flex min-h-full w-full max-w-[980px] flex-col justify-center"}>
+            {isExpertMarketplace ? (
+              <IngestExpertMarketplace
+                addedExpertIds={addedExpertIds}
+                onAddExpert={(expert) => onAddExpertToAgent?.(expert)}
+              />
+            ) : (
+              <>
             {activeRailKey !== "chat" ? (
               <RailStatusPanel
                 activeRailKey={activeRailKey}
@@ -989,19 +1118,37 @@ export function IngestChatGPTShell({
               />
             ) : null}
             {!hasMessages ? (
-              <div className="mx-auto flex w-full max-w-3xl flex-col items-center text-center">
+              <div className="mx-auto flex w-full max-w-[980px] flex-col items-center text-center">
                 <div className={["flex h-20 w-20 items-center justify-center rounded-[30px] text-3xl font-semibold shadow-sm", agentToneClasses[activeAgent.tone]].join(" ")}>
                   {activeAgent.avatar}
                 </div>
-                <h1 className="mt-6 text-4xl font-semibold tracking-tight text-[#181818] max-sm:text-3xl">Hi，我是知识投喂助手</h1>
-                <p className="mt-3 text-lg text-[#9a9a96]">{activeAgent.name} · {activeAgent.role}</p>
+                <h1 className="mt-6 text-4xl font-semibold tracking-tight text-[#181818] max-sm:text-3xl">
+                  {canIngest ? "Hi，我是知识投喂助手" : "请先添加专家 Agent"}
+                </h1>
+                <p className="mt-3 text-lg text-[#9a9a96]">
+                  {canIngest ? `${activeAgent.name} · ${activeAgent.role}` : "到专家广场添加后再开始对话投喂。"}
+                </p>
+                {!canIngest ? (
+                  <button
+                    type="button"
+                    onClick={() => onRailChange?.("experts")}
+                    className="mt-6 rounded-full bg-[#202020] px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-black"
+                  >
+                    打开专家广场
+                  </button>
+                ) : null}
                 <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
                   {quickPrompts.map((prompt) => (
                     <button
                       key={prompt}
                       type="button"
-                      onClick={() => setInput(prompt)}
-                      className="rounded-full bg-[#f6f6f5] px-4 py-3 text-left text-sm text-[#303030] transition hover:bg-[#ededeb]"
+                      disabled={!canIngest}
+                      onClick={() => {
+                        if (canIngest) {
+                          setInput(prompt);
+                        }
+                      }}
+                      className="rounded-full bg-[#f6f6f5] px-4 py-3 text-left text-sm text-[#303030] transition hover:bg-[#ededeb] disabled:cursor-not-allowed disabled:text-[#b6b6b2] disabled:hover:bg-[#f6f6f5]"
                     >
                       {prompt}
                     </button>
@@ -1009,11 +1156,15 @@ export function IngestChatGPTShell({
                 </div>
               </div>
             ) : (
-              <div className="mx-auto w-full max-w-3xl space-y-5 pt-8">
-                {messages.map((message) => (
+              <div className="mx-auto w-full max-w-[980px] space-y-5 pt-8">
+                {messages.map((message) => {
+                  const isStructuredResult = message.role === "assistant" && message.id.startsWith("assistant-result");
+
+                  return (
                   <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
                     <div className={[
-                      "max-w-[82%] rounded-[24px] px-4 py-3 text-sm leading-6 shadow-sm",
+                      "rounded-[24px] px-4 py-3 text-sm leading-6 shadow-sm",
+                      isStructuredResult ? "w-full max-w-full" : "max-w-[82%]",
                       message.role === "user" ? "bg-[#202020] text-white" : "border border-[#ececea] bg-[#f8f8f7] text-[#303030]"
                     ].join(" ")}>
                       {message.role === "assistant" ? (
@@ -1093,11 +1244,12 @@ export function IngestChatGPTShell({
                       </p>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
 
                 {draft.jobId ? (
                   <div className="flex justify-start">
-                    <div className="rounded-[24px] border border-[#e7e7e4] bg-white px-4 py-3 text-sm shadow-sm">
+                    <div className="w-full rounded-[24px] border border-[#e7e7e4] bg-white px-4 py-3 text-sm shadow-sm">
                       <p className="font-semibold text-[#202020]">AI 整理结果已准备好</p>
                       <p className="mt-1 text-xs text-[#777]">{draft.title} · {draft.category} · {draft.recommendation}</p>
                       <div className="mt-3 flex flex-wrap gap-2">
@@ -1118,11 +1270,14 @@ export function IngestChatGPTShell({
                 ) : null}
               </div>
             )}
+              </>
+            )}
           </div>
         </div>
 
+        {!isExpertMarketplace ? (
         <div className="shrink-0 bg-white px-5 pb-7">
-          <form onSubmit={handleSubmit} className="mx-auto max-w-4xl rounded-[28px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
+          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[980px] rounded-[28px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
             {uploadedFiles.length > 0 ? (
               <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
                 <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} />
@@ -1132,8 +1287,9 @@ export function IngestChatGPTShell({
               value={input}
               onChange={(event) => setInput(event.target.value)}
               rows={3}
-              placeholder={`可以向${activeAgent.name}描述任务或提问任何问题`}
-              className="min-h-[88px] w-full resize-none rounded-2xl border-0 bg-white px-3 py-3 text-sm leading-6 outline-none placeholder:text-[#aaa]"
+              disabled={!canIngest}
+              placeholder={canIngest ? `可以向${activeAgent.name}描述任务或提问任何问题` : "请先到专家广场添加专家 Agent"}
+              className="min-h-[88px] w-full resize-none rounded-2xl border-0 bg-white px-3 py-3 text-sm leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:bg-[#fbfbfa] disabled:text-[#aaa]"
             />
             <input
               ref={fileInputRef}
@@ -1151,6 +1307,7 @@ export function IngestChatGPTShell({
                   onOpen={() => {
                     setIsMoreOpen(false);
                     setIsConnectionOpen(false);
+                    setIsOrganizeOpen(false);
                   }}
                 />
                 <div ref={moreMenuRef} className="relative">
@@ -1158,6 +1315,8 @@ export function IngestChatGPTShell({
                     type="button"
                     onClick={() => {
                       setIsMoreOpen((current) => !current);
+                      setIsConnectionOpen(false);
+                      setIsOrganizeOpen(false);
                     }}
                     className="inline-flex h-9 items-center gap-1.5 rounded-full bg-[#f6f6f5] px-3 transition hover:bg-[#ededeb]"
                     aria-expanded={isMoreOpen}
@@ -1200,8 +1359,19 @@ export function IngestChatGPTShell({
                 </div>
               </div>
               <div className="flex shrink-0 items-center justify-end gap-1.5">
-                <div className="relative">
-                  <button type="button" title="AI 修正 / 整理工具" aria-label="AI 修正 / 整理工具" onClick={() => setIsOrganizeOpen((current) => !current)} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]" aria-expanded={isOrganizeOpen}>
+                <div ref={organizeMenuRef} className="relative">
+                  <button
+                    type="button"
+                    title="AI 修正 / 整理工具"
+                    aria-label="AI 修正 / 整理工具"
+                    onClick={() => {
+                      setIsOrganizeOpen((current) => !current);
+                      setIsMoreOpen(false);
+                      setIsConnectionOpen(false);
+                    }}
+                    className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]"
+                    aria-expanded={isOrganizeOpen}
+                  >
                     <Scissors className="h-4 w-4" aria-hidden="true" />
                   </button>
                   {isOrganizeOpen ? (
@@ -1228,6 +1398,7 @@ export function IngestChatGPTShell({
                 <button
                   type="button"
                   title={voiceState.isRecording ? "停止语音输入" : "语音"}
+                  aria-label={voiceState.isRecording ? "停止语音输入" : "语音"}
                   onClick={() => onVoiceToggle ? onVoiceToggle() : handleToolAction("语音备注")}
                   className={[
                     "flex h-9 w-9 items-center justify-center rounded-full transition",
@@ -1238,7 +1409,7 @@ export function IngestChatGPTShell({
                 </button>
                 <button
                   type="submit"
-                  disabled={isParsing || (!input.trim() && uploadedFiles.length === 0)}
+                  disabled={!canIngest || isParsing || (!input.trim() && uploadedFiles.length === 0)}
                   className={[
                     "flex h-10 items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
                     isParsing ? "w-auto px-3 text-xs font-semibold" : "w-10"
@@ -1258,6 +1429,7 @@ export function IngestChatGPTShell({
           </form>
 
         </div>
+        ) : null}
 
         {drawerOpen ? (
           <div className="absolute inset-y-0 right-0 z-40 flex w-full justify-end bg-black/10" onClick={() => setDrawerOpen(false)}>

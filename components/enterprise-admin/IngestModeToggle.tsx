@@ -35,7 +35,12 @@ import {
   type AdminIngestPlatformContext
 } from "@/lib/enterprise/admin-ingest-platform";
 import {
-  ingestChatAgents,
+  createAgentConversation,
+  createConversationMessages,
+  deriveConversationTitle,
+  type IngestAgentConversation
+} from "@/lib/enterprise/mock-agent-conversations";
+import {
   ingestChatInitialDraft,
   ingestTrainingRecords,
   type IngestChatMessage,
@@ -49,6 +54,7 @@ import {
   GPT_MODEL_DISPLAY_NAMES,
   isGptModelDisplayName
 } from "@/lib/enterprise/gpt-model-options";
+import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
 type IngestMode = "chat" | "workbench";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -112,6 +118,7 @@ const initialSettingsState: IngestSettingsState = {
   platform: "web",
   syncTarget: [...ingestSyncTarget]
 };
+const ADMIN_AVATAR_STORAGE_KEY = "admin-ingest-avatar";
 
 function createNotification(input: Pick<IngestNotification, "type" | "title" | "description"> & {
   read?: boolean;
@@ -164,19 +171,69 @@ function isHttpUrl(value: string) {
   }
 }
 
+function buildAiFixInstruction(label: string, content: string, hasAttachments: boolean) {
+  const trimmed = content.trim();
+
+  if (!trimmed && hasAttachments) {
+    if (label === "改写为标准问答") {
+      return "请基于已上传附件改写为标准问答，并整理成可入库知识。";
+    }
+
+    if (label === "生成分类标签") {
+      return "请基于已上传附件生成分类、标签和入库建议。";
+    }
+
+    if (label === "检查是否需要 AI 修正") {
+      return "请基于已上传附件检查是否需要 AI 修正，并整理成可入库知识。";
+    }
+
+    return "请基于已上传附件提取重点，并整理成可入库知识。";
+  }
+
+  if (label === "改写为标准问答") {
+    return `请将以下内容改写为标准问答，并整理成可入库知识：\n\n${trimmed}`;
+  }
+
+  if (label === "生成分类标签") {
+    return `请为以下内容生成分类、标签和入库建议：\n\n${trimmed}`;
+  }
+
+  if (label === "检查是否需要 AI 修正") {
+    return `请检查以下内容是否需要 AI 修正，并给出可入库版本：\n\n${trimmed}`;
+  }
+
+  return `请从以下内容中提取重点，并整理成可入库知识：\n\n${trimmed}`;
+}
+
 function normalizeInitialAgents() {
-  return ingestChatAgents.map((agent) => ({
-    ...agent,
-    status: "active" as const,
-    isSystem: true,
-    platform: "web" as const,
-    syncTarget: [...ingestSyncTarget],
-    source: agent.source ?? ("super_admin_category" as const),
-    managedBySuperAdmin: agent.managedBySuperAdmin ?? true,
-    editableByIngestAdmin: agent.editableByIngestAdmin ?? false,
-    deletableByIngestAdmin: agent.deletableByIngestAdmin ?? false,
-    visibleToUserClient: agent.visibleToUserClient ?? true
-  }));
+  return [] as IngestChatAgent[];
+}
+
+function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent {
+  return {
+    id: "no-agent",
+    expertId: null,
+    name: "未选择 Agent",
+    role: "待添加专家",
+    category: "专家广场",
+    description: "请先到专家广场添加专家 Agent。",
+    avatar: "+",
+    tone: "slate",
+    tenantId,
+    userId,
+    platform: context.platform,
+    syncTarget: [...context.syncTarget],
+    createdAt: new Date().toISOString(),
+    status: "active",
+    isSystem: false,
+    knowledgeCount: 0,
+    source: "expert_marketplace",
+    sourceApp: "admin_ingest",
+    managedBySuperAdmin: false,
+    editableByIngestAdmin: false,
+    deletableByIngestAdmin: false,
+    visibleToUserClient: false
+  };
 }
 
 export function IngestModeToggle() {
@@ -184,7 +241,12 @@ export function IngestModeToggle() {
   const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
   const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
-  const [activeAgentId, setActiveAgentId] = useState("chief");
+  const [activeAgentId, setActiveAgentId] = useState("");
+  const [agentConversations, setAgentConversations] = useState<IngestAgentConversation[]>([]);
+  const [activeConversationId, setActiveConversationId] = useState("");
+  const [expandedAgentIds, setExpandedAgentIds] = useState<string[]>([]);
+  const [expandedConversationAgentIds, setExpandedConversationAgentIds] = useState<string[]>([]);
+  const [pinnedAgentIds, setPinnedAgentIds] = useState<string[]>([]);
   const [activeRailKey, setActiveRailKey] = useState<IngestRailKey>("chat");
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [isAgentDetailOpen, setIsAgentDetailOpen] = useState(false);
@@ -210,6 +272,7 @@ export function IngestModeToggle() {
     })
   ]);
   const [settingsState, setSettingsState] = useState<IngestSettingsState>(initialSettingsState);
+  const [adminAvatar, setAdminAvatar] = useState("");
   const [isCreateAgentOpen, setIsCreateAgentOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<IngestChatMessage[]>([]);
@@ -231,14 +294,25 @@ export function IngestModeToggle() {
   const modelOptions = GPT_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
   const selectedGptModel = useMemo(() => getGptModelSelectionByDisplayName(selectedModelLabel), [selectedModelLabel]);
-  const visibleAgents = useMemo(
-    () => agents.filter((agent) => agent.status !== "deleted_local" && agent.status !== "archived"),
-    [agents]
-  );
+  const visibleAgents = useMemo(() => {
+    const filtered = agents.filter((agent) => agent.status !== "deleted_local" && agent.status !== "archived");
 
+    return [...filtered].sort((left, right) => {
+      const leftPinned = pinnedAgentIds.includes(left.id);
+      const rightPinned = pinnedAgentIds.includes(right.id);
+
+      if (leftPinned !== rightPinned) {
+        return leftPinned ? -1 : 1;
+      }
+
+      return 0;
+    });
+  }, [agents, pinnedAgentIds]);
+
+  const hasActiveAgent = visibleAgents.length > 0;
   const activeAgent = useMemo(
-    () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents.find((agent) => agent.id === "chief") ?? visibleAgents[0] ?? normalizeInitialAgents()[0],
-    [activeAgentId, visibleAgents]
+    () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents[0] ?? createEmptyAgent(platformContext),
+    [activeAgentId, platformContext, visibleAgents]
   );
   useEffect(() => {
     const nextContext = resolveAdminIngestPlatformContext({
@@ -267,6 +341,13 @@ export function IngestModeToggle() {
       platform: nextContext.platform,
       syncTarget: [...nextContext.syncTarget]
     })));
+    setAgentConversations((current) => current.map((conversation) => ({
+      ...conversation,
+      platform: nextContext.platform,
+      syncTarget: [...nextContext.syncTarget]
+    })));
+
+    setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
   }, []);
 
   useEffect(() => {
@@ -320,6 +401,28 @@ export function IngestModeToggle() {
     });
   }
 
+  function handleAdminAvatarChange(nextAvatar: string) {
+    setAdminAvatar(nextAvatar);
+    window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, nextAvatar);
+    setNoticeMessage("头像已更新。");
+    showActionToast({
+      type: "success",
+      title: "头像已更新"
+    });
+  }
+
+  function handleAccountSettingAction(action: "password" | "switch") {
+    const message = action === "password"
+      ? "修改密码功能将在账号系统接入后启用。"
+      : "切换账号将在登录系统接入后启用。";
+
+    setNoticeMessage(message);
+    showActionToast({
+      type: "info",
+      title: message
+    });
+  }
+
   function handleRailChange(nextKey: IngestRailKey) {
     setActiveRailKey(nextKey);
     setErrorMessage("");
@@ -332,7 +435,7 @@ export function IngestModeToggle() {
     }
 
     const railMessages: Record<Exclude<IngestRailKey, "chat">, string> = {
-      experts: "专家 Agent 工作区已打开，可通过搜索和新建 Agent 管理知识生产角色。",
+      experts: "专家广场已打开，请添加专家到 Agent 后再开始对话投喂。",
       tasks: `训练记录 / 投喂任务摘要已打开，目前共 ${records.length} 条记录。`,
       files: uploadedFiles.length > 0
         ? `文件状态面板已打开，最近文件：${uploadedFiles[0].fileName}。`
@@ -354,9 +457,18 @@ export function IngestModeToggle() {
       return;
     }
 
+    const nextConversation = agentConversations.find((conversation) => conversation.agentId === nextAgent.id && conversation.id === activeConversationId)
+      ?? agentConversations.find((conversation) => conversation.agentId === nextAgent.id);
+
     setCurrentAgent(nextAgent);
+    setActiveRailKey("chat");
+    setMode("chat");
+    setActiveConversationId(nextConversation?.id ?? "");
+    setMessages(nextConversation ? createConversationMessages({ conversation: nextConversation, agent: nextAgent }) : []);
     setIsAgentDetailOpen(false);
-    setNoticeMessage(`已切换到 ${nextAgent.name}，当前使用中。`);
+    setNoticeMessage(nextConversation
+      ? `已切换到 ${nextAgent.name} · ${nextConversation.title}。`
+      : `已切换到 ${nextAgent.name}。`);
   }
 
   function setCurrentAgent(agent: IngestChatAgent) {
@@ -401,7 +513,7 @@ export function IngestModeToggle() {
 
     setCurrentAgent(target);
     setIsAgentDetailOpen(true);
-    setNoticeMessage(`${target.name} 详情已打开，当前使用中。`);
+    setNoticeMessage(`${target.name} 详情已打开。`);
   }
 
   function handleEditAgent(agentId = activeAgent.id) {
@@ -438,7 +550,8 @@ export function IngestModeToggle() {
     });
 
     if (activeAgentId === target.id) {
-      setActiveAgentId("chief");
+      setActiveAgentId("");
+      setActiveConversationId("");
       setIsAgentDetailOpen(false);
     }
 
@@ -449,6 +562,18 @@ export function IngestModeToggle() {
     const target = findVisibleAgent(agentId);
 
     setCurrentAgent(target);
+
+    if (target.deletableByIngestAdmin !== true) {
+      const message = "系统分类由超级管理员配置，不能在投喂端删除。";
+
+      setNoticeMessage(message);
+      showActionToast({
+        type: "warning",
+        title: message
+      });
+      return;
+    }
+
     setDeleteCandidateAgent(target);
   }
 
@@ -466,6 +591,10 @@ export function IngestModeToggle() {
     }
 
     setAgents((current) => current.filter((agent) => agent.id !== target.id));
+    setAgentConversations((current) => current.filter((conversation) => conversation.agentId !== target.id));
+    setExpandedAgentIds((current) => current.filter((id) => id !== target.id));
+    setExpandedConversationAgentIds((current) => current.filter((id) => id !== target.id));
+    setPinnedAgentIds((current) => current.filter((id) => id !== target.id));
     setRecords((current) => [createAgentLifecycleRecord(target, "deleted_local"), ...current]);
     pushNotification({
       type: "fallback",
@@ -474,7 +603,9 @@ export function IngestModeToggle() {
     });
 
     if (activeAgentId === target.id) {
-      setActiveAgentId("chief");
+      setActiveAgentId("");
+      setActiveConversationId("");
+      setMessages([]);
     }
 
     setDeleteCandidateAgent(null);
@@ -482,9 +613,180 @@ export function IngestModeToggle() {
     setNoticeMessage(`${target.name} 已从当前投喂工作台移除，已新增训练记录。`);
   }
 
+  function handleToggleAgentPinned(agentId: string) {
+    const target = findVisibleAgent(agentId);
+    const wasPinned = pinnedAgentIds.includes(agentId);
+
+    setPinnedAgentIds((current) => wasPinned
+      ? current.filter((id) => id !== agentId)
+      : [agentId, ...current.filter((id) => id !== agentId)]);
+    setNoticeMessage(wasPinned ? `${target.name} 已取消置顶。` : `${target.name} 已置顶。`);
+    showActionToast({
+      type: "success",
+      title: wasPinned ? "已取消置顶" : "已置顶",
+      description: target.name
+    });
+  }
+
+  function handleToggleAgentExpanded(agentId: string) {
+    setExpandedAgentIds((current) => current.includes(agentId)
+      ? current.filter((id) => id !== agentId)
+      : [...current, agentId]);
+  }
+
+  function handleToggleAgentConversationExpanded(agentId: string) {
+    setExpandedConversationAgentIds((current) => current.includes(agentId)
+      ? current.filter((id) => id !== agentId)
+      : [...current, agentId]);
+  }
+
+  function handleSelectAgentConversation(agentId: string, conversationId: string) {
+    const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
+    const targetConversation = agentConversations.find((conversation) => conversation.id === conversationId && conversation.agentId === agentId);
+
+    if (!targetAgent || !targetConversation) {
+      return;
+    }
+
+    setCurrentAgent(targetAgent);
+    setActiveConversationId(targetConversation.id);
+    setMessages(createConversationMessages({ conversation: targetConversation, agent: targetAgent }));
+    setActiveRailKey("chat");
+    setMode("chat");
+    setNoticeMessage(`已打开 ${targetAgent.name} 下的对话：${targetConversation.title}。`);
+  }
+
+  function handleCreateAgentConversation(agentId: string) {
+    const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
+
+    if (!targetAgent) {
+      return;
+    }
+
+    const nextConversation = createAgentConversation({
+      agent: targetAgent,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget]
+    });
+
+    setAgentConversations((current) => [nextConversation, ...current]);
+    setCurrentAgent(targetAgent);
+    setActiveConversationId(nextConversation.id);
+    setMessages([]);
+    setActiveRailKey("chat");
+    setMode("chat");
+    setNoticeMessage(`已为 ${targetAgent.name} 新建对话，可开始投喂。`);
+    showActionToast({
+      type: "success",
+      title: "已新建对话",
+      description: targetAgent.name
+    });
+  }
+
+  function handleRenameAgentConversation(agentId: string, conversationId: string, title: string) {
+    const nextTitle = title.trim();
+
+    if (!nextTitle) {
+      return;
+    }
+
+    setAgentConversations((current) => current.map((conversation) => conversation.agentId === agentId && conversation.id === conversationId
+      ? {
+        ...conversation,
+        title: nextTitle,
+        updatedAt: new Date().toISOString(),
+        updatedLabel: "刚刚"
+      }
+      : conversation));
+
+    setNoticeMessage(`已更新对话名称：${nextTitle}`);
+    showActionToast({
+      type: "success",
+      title: "已更新对话名称",
+      description: nextTitle
+    });
+  }
+
+  function handleDeleteAgentConversation(agentId: string, conversationId: string) {
+    const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
+    const targetConversation = agentConversations.find((conversation) => conversation.agentId === agentId && conversation.id === conversationId);
+
+    if (!targetAgent || !targetConversation) {
+      return;
+    }
+
+    const remainingConversations = agentConversations.filter((conversation) => conversation.agentId === agentId && conversation.id !== conversationId);
+    const nextConversation = remainingConversations[0];
+
+    setAgentConversations((current) => current.filter((conversation) => conversation.id !== conversationId));
+
+    if (activeConversationId === conversationId) {
+      setCurrentAgent(targetAgent);
+      setActiveConversationId(nextConversation?.id ?? "");
+      setMessages(nextConversation ? createConversationMessages({ conversation: nextConversation, agent: targetAgent }) : []);
+      setActiveRailKey("chat");
+      setMode("chat");
+    }
+
+    setNoticeMessage(`已删除对话：${targetConversation.title}`);
+    showActionToast({
+      type: "success",
+      title: "已删除对话",
+      description: targetConversation.title
+    });
+  }
+
+  function ensureConversationForSend(agent: IngestChatAgent) {
+    const existing = agentConversations.find((conversation) => conversation.id === activeConversationId && conversation.agentId === agent.id);
+
+    if (existing) {
+      return existing.id;
+    }
+
+    const nextConversation = createAgentConversation({
+      agent,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget]
+    });
+
+    setAgentConversations((current) => [nextConversation, ...current]);
+    setActiveConversationId(nextConversation.id);
+
+    return nextConversation.id;
+  }
+
+  function markConversationUsed(conversationId: string, effectiveInput: string, attachmentFileName?: string) {
+    const nextTitle = deriveConversationTitle(effectiveInput, attachmentFileName);
+    const now = new Date().toISOString();
+
+    setAgentConversations((current) => current.map((conversation) => conversation.id === conversationId
+      ? {
+        ...conversation,
+        title: conversation.title === "新对话" ? nextTitle : conversation.title,
+        updatedAt: now,
+        updatedLabel: "刚刚",
+        messageCount: Math.max(conversation.messageCount + 2, 2)
+      }
+      : conversation));
+  }
+
   async function handleSend(textOverride?: string): Promise<IngestActionResult | null> {
     const value = (textOverride ?? input).trim();
     const currentModelLabel = selectedModelLabel;
+
+    if (!hasActiveAgent) {
+      const message = "请先到专家广场添加专家 Agent。";
+
+      setActiveRailKey("experts");
+      setNoticeMessage(message);
+      setErrorMessage("");
+      showActionToast({
+        type: "warning",
+        title: message
+      });
+      return null;
+    }
+
     const outgoingAttachments = uploadedFiles.map((file) => ({
       ...file,
       status: "attached" as const,
@@ -504,6 +806,9 @@ export function IngestModeToggle() {
       return null;
     }
 
+    const conversationId = ensureConversationForSend(activeAgent);
+
+    markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(outgoingAttachments.length > 0
       ? "已收到附件，准备解析并生成结构化知识..."
@@ -523,6 +828,10 @@ export function IngestModeToggle() {
         tenantId,
         userId,
         agentId: activeAgent.id,
+        expertId: activeAgent.expertId ?? null,
+        conversationId,
+        agentName: activeAgent.name,
+        expertName: activeAgent.expertId ? activeAgent.name : null,
         model: currentModelLabel,
         provider: "admin_ingest"
       },
@@ -539,6 +848,10 @@ export function IngestModeToggle() {
         tenantId,
         userId,
         agentId: activeAgent.id,
+        expertId: activeAgent.expertId ?? null,
+        conversationId,
+        agentName: activeAgent.name,
+        expertName: activeAgent.expertId ? activeAgent.name : null,
         model: currentModelLabel,
         provider: "openai"
       }
@@ -594,6 +907,10 @@ export function IngestModeToggle() {
           tenantId,
           userId,
           agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
           model: isGptFallback ? currentModelLabel : result.model ?? currentModelLabel,
           provider: result.provider,
           saveSuggestion: result.saveSuggestion
@@ -683,6 +1000,19 @@ export function IngestModeToggle() {
   }
 
   function handleUpload(files: File[]) {
+    if (!hasActiveAgent) {
+      const message = "请先到专家广场添加专家 Agent。";
+
+      setActiveRailKey("experts");
+      setNoticeMessage(message);
+      setErrorMessage("");
+      showActionToast({
+        type: "warning",
+        title: message
+      });
+      return;
+    }
+
     const states = files.map((file) => createUploadState(file, {
       tenantId,
       userId,
@@ -750,10 +1080,15 @@ export function IngestModeToggle() {
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      const message = "当前浏览器暂不支持语音输入，EXE / APK 端将在后续接入系统级语音。";
+      const message = "当前环境暂不支持网页语音识别。EXE / APK 端后续将接入系统级语音输入。";
       setVoiceState((current) => ({ ...current, isVoiceSupported: false, isRecording: false, error: message }));
       setErrorMessage("");
       setNoticeMessage(message);
+      showActionToast({
+        type: "warning",
+        title: "语音输入暂不可用",
+        description: message
+      });
       return;
     }
 
@@ -761,6 +1096,10 @@ export function IngestModeToggle() {
       recognitionRef.current?.stop();
       setVoiceState((current) => ({ ...current, isRecording: false }));
       setNoticeMessage("语音输入已停止。");
+      showActionToast({
+        type: "info",
+        title: "语音输入已停止"
+      });
       return;
     }
 
@@ -771,6 +1110,8 @@ export function IngestModeToggle() {
       }
 
       const recognition = new SpeechRecognition();
+      let latestTranscript = "";
+
       recognitionRef.current = recognition;
       recognition.continuous = false;
       recognition.interimResults = true;
@@ -778,7 +1119,11 @@ export function IngestModeToggle() {
       recognition.onstart = () => {
         setErrorMessage("");
         setVoiceState((current) => ({ ...current, isVoiceSupported: true, isRecording: true, error: "" }));
-        setNoticeMessage("正在听写...");
+        setNoticeMessage("正在听写，点击麦克风可停止。");
+        showActionToast({
+          type: "info",
+          title: "正在听写，点击麦克风可停止。"
+        });
       };
       recognition.onresult = (event) => {
         let transcript = "";
@@ -790,6 +1135,7 @@ export function IngestModeToggle() {
         const nextTranscript = transcript.trim();
 
         if (nextTranscript) {
+          latestTranscript = nextTranscript;
           setVoiceState((current) => ({ ...current, transcript: nextTranscript, error: "" }));
           setInput((current) => current.trim()
             ? `${current.trim()} ${nextTranscript}`
@@ -803,9 +1149,21 @@ export function IngestModeToggle() {
 
         setVoiceState((current) => ({ ...current, isRecording: false, error: message }));
         setErrorMessage(message);
+        showActionToast({
+          type: "warning",
+          title: message
+        });
       };
       recognition.onend = () => {
         setVoiceState((current) => ({ ...current, isRecording: false }));
+
+        if (latestTranscript.trim()) {
+          setNoticeMessage("语音内容已填入输入框。");
+          showActionToast({
+            type: "success",
+            title: "语音内容已填入输入框。"
+          });
+        }
       };
       recognition.start();
     } catch {
@@ -813,6 +1171,11 @@ export function IngestModeToggle() {
 
       setVoiceState((current) => ({ ...current, isVoiceSupported: true, isRecording: false, error: message }));
       setErrorMessage(message);
+      setNoticeMessage(message);
+      showActionToast({
+        type: "warning",
+        title: message
+      });
     }
   }
 
@@ -879,8 +1242,96 @@ export function IngestModeToggle() {
     return true;
   }
 
+  function handleAddExpertToAgent(expert: IngestExpert) {
+    const existing = visibleAgents.find((agent) => agent.expertId === expert.id);
+
+    if (existing) {
+      setActiveAgentId(existing.id);
+      setActiveRailKey("experts");
+      setNoticeMessage(`${existing.name} 已在 Agent 列表中，可点击左侧 Agent 或对话图标开始投喂。`);
+      showActionToast({
+        type: "info",
+        title: "该专家已添加"
+      });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextAgent: IngestChatAgent = {
+      id: `expert-agent-${expert.id}`,
+      expertId: expert.id,
+      name: expert.name,
+      role: expert.category,
+      category: expert.category,
+      description: expert.description,
+      avatar: expert.avatar,
+      tone: expert.tone,
+      tenantId,
+      userId,
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget],
+      createdAt: now,
+      status: "active",
+      isSystem: false,
+      knowledgeCount: 0,
+      source: "expert_marketplace",
+      sourceApp: "admin_ingest",
+      managedBySuperAdmin: false,
+      editableByIngestAdmin: true,
+      deletableByIngestAdmin: true,
+      visibleToUserClient: false
+    };
+    const nextRecord: IngestTrainingRecord = {
+      id: `record-expert-agent-${Date.now()}`,
+      jobId: null,
+      tenantId,
+      userId,
+      agentId: nextAgent.id,
+      expertId: expert.id,
+      agentName: nextAgent.name,
+      expertName: expert.name,
+      input: `从专家广场添加 Agent：${expert.name}`,
+      resultTitle: `添加专家 Agent：${expert.name}`,
+      saveStatus: "待确认",
+      category: expert.category,
+      time: "刚刚",
+      hits: 0,
+      sourceType: "admin_ingest",
+      source: "admin_ingest",
+      platform: platformContext.platform,
+      syncTarget: [...platformContext.syncTarget],
+      createdAt: now,
+      updatedAt: now,
+      aiOutput: null
+    };
+
+    setAgents((current) => [nextAgent, ...current]);
+    setActiveAgentId(nextAgent.id);
+    setRecords((current) => [nextRecord, ...current]);
+    setActiveRailKey("experts");
+    setIsAgentDetailOpen(false);
+    setErrorMessage("");
+    setNoticeMessage("已添加到 Agent，可新建对话开始投喂。");
+    pushNotification({
+      type: "success",
+      title: "已添加专家 Agent",
+      description: `${expert.name} 已加入当前投喂工作台，并预留 Web / EXE / APK 同步字段。`
+    });
+    showActionToast({
+      type: "success",
+      title: "已添加到 Agent，可新建对话开始投喂。"
+    });
+  }
+
   async function handleUrlIngestSubmit() {
     const url = urlInput.trim();
+
+    if (!hasActiveAgent) {
+      setUrlError("请先到专家广场添加专家 Agent。");
+      setActiveRailKey("experts");
+      setNoticeMessage("请先到专家广场添加专家 Agent。");
+      return;
+    }
 
     if (!url) {
       setUrlError("URL 不能为空。");
@@ -892,6 +1343,9 @@ export function IngestModeToggle() {
       return;
     }
 
+    const conversationId = ensureConversationForSend(activeAgent);
+
+    markConversationUsed(conversationId, `网址投喂：${url}`);
     setIsUrlIngesting(true);
     setUrlError("");
     setErrorMessage("");
@@ -930,6 +1384,10 @@ export function IngestModeToggle() {
           tenantId,
           userId,
           agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
           model: selectedModelLabel,
           provider: "admin_ingest"
         },
@@ -944,6 +1402,10 @@ export function IngestModeToggle() {
           tenantId,
           userId,
           agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
           model: selectedModelLabel,
           provider: result.provider,
           saveSuggestion: result.saveSuggestion
@@ -969,13 +1431,26 @@ export function IngestModeToggle() {
     setErrorMessage("");
 
     if (["提取重点", "改写为标准问答", "生成分类标签", "检查是否需要 AI 修正"].includes(label)) {
-      if (!input.trim()) {
-        setNoticeMessage("请输入内容后使用 AI 修正工具。");
+      if (!input.trim() && uploadedFiles.length === 0) {
+        const message = "请输入内容或上传附件后使用 AI 修正工具。";
+
+        setNoticeMessage(message);
+        showActionToast({
+          type: "warning",
+          title: message
+        });
         return;
       }
 
-      setInput(`${label}：${input.trim()}`);
-      setNoticeMessage(`已生成本地预览整理指令：${label}。`);
+      const nextInstruction = buildAiFixInstruction(label, input, uploadedFiles.length > 0);
+
+      setInput(nextInstruction);
+      setNoticeMessage(`已生成“${label}”指令，可继续发送 AI 投喂。`);
+      showActionToast({
+        type: "success",
+        title: `已生成“${label}”指令`,
+        description: input.trim() ? "指令已写入输入框。" : "已基于当前附件生成投喂指令。"
+      });
       return;
     }
 
@@ -1000,6 +1475,18 @@ export function IngestModeToggle() {
     }
 
     if (label === "网址投喂") {
+      if (!hasActiveAgent) {
+        const message = "请先到专家广场添加专家 Agent。";
+
+        setActiveRailKey("experts");
+        setNoticeMessage(message);
+        showActionToast({
+          type: "warning",
+          title: message
+        });
+        return;
+      }
+
       setIsUrlDialogOpen(true);
       setUrlError("");
       setNoticeMessage("网址投喂弹窗已打开，可输入 http:// 或 https:// 链接生成本地预览。");
@@ -1017,8 +1504,22 @@ export function IngestModeToggle() {
   const sharedProps = {
     agents: visibleAgents,
     activeAgent,
+    hasActiveAgent,
     activeAgentId,
+    adminAvatar,
     onAgentChange: handleAgentSelect,
+    agentConversations,
+    activeConversationId,
+    expandedAgentIds,
+    expandedConversationAgentIds,
+    pinnedAgentIds,
+    onAgentToggleExpanded: handleToggleAgentExpanded,
+    onAgentConversationToggleExpanded: handleToggleAgentConversationExpanded,
+    onAgentConversationSelect: handleSelectAgentConversation,
+    onAgentConversationCreate: handleCreateAgentConversation,
+    onAgentConversationRename: handleRenameAgentConversation,
+    onAgentConversationDelete: handleDeleteAgentConversation,
+    onAgentTogglePinned: handleToggleAgentPinned,
     activeRailKey,
     onRailChange: handleRailChange,
     searchKeyword,
@@ -1044,7 +1545,9 @@ export function IngestModeToggle() {
     settingsState,
     isParsing,
     isSaving,
-    onOpenCreateAgent: () => setIsCreateAgentOpen(true),
+    onOpenCreateAgent: () => handleRailChange("experts"),
+    onAddExpertToAgent: handleAddExpertToAgent,
+    addedExpertIds: visibleAgents.map((agent) => agent.expertId).filter((id): id is string => Boolean(id)),
     onAgentViewDetails: handleViewAgentDetail,
     onAgentEdit: handleEditAgent,
     onAgentArchive: handleArchiveAgent,
@@ -1063,30 +1566,32 @@ export function IngestModeToggle() {
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919]">
-      <div className="absolute left-[392px] top-5 z-50 flex rounded-full border border-[#ededeb] bg-[#f2f2f1]/95 p-1 text-sm font-semibold shadow-[0_10px_30px_rgba(15,23,42,0.04)] backdrop-blur max-md:left-1/2 max-md:-translate-x-1/2">
-        <button
-          type="button"
-          onClick={() => setMode("chat")}
-          className={[
-            "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-            mode === "chat" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
-          ].join(" ")}
-        >
-          <MessageSquareText className="h-4 w-4" aria-hidden="true" />
-          对话
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("workbench")}
-          className={[
-            "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-            mode === "workbench" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
-          ].join(" ")}
-        >
-          <MonitorCog className="h-4 w-4" aria-hidden="true" />
-          工作室
-        </button>
-      </div>
+      {activeRailKey !== "experts" ? (
+        <div className="absolute left-[calc(68px+var(--admin-ingest-sidebar-width,300px)+24px)] top-5 z-50 flex rounded-full border border-[#ededeb] bg-[#f2f2f1]/95 p-1 text-sm font-semibold shadow-[0_10px_30px_rgba(15,23,42,0.04)] backdrop-blur max-md:left-1/2 max-md:-translate-x-1/2">
+          <button
+            type="button"
+            onClick={() => setMode("chat")}
+            className={[
+              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
+              mode === "chat" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+            ].join(" ")}
+          >
+            <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+            对话
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("workbench")}
+            className={[
+              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
+              mode === "workbench" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+            ].join(" ")}
+          >
+            <MonitorCog className="h-4 w-4" aria-hidden="true" />
+            工作室
+          </button>
+        </div>
+      ) : null}
 
       {mode === "chat" ? <IngestChatGPTShell {...sharedProps} /> : <IngestEXEShell {...sharedProps} />}
       <IngestCreateAgentDialog
@@ -1111,7 +1616,10 @@ export function IngestModeToggle() {
         uploadedFiles={uploadedFiles}
         voiceState={voiceState}
         settingsState={settingsState}
+        adminAvatar={adminAvatar}
         onSettingsChange={setSettingsState}
+        onAvatarChange={handleAdminAvatarChange}
+        onAccountAction={handleAccountSettingAction}
         onClose={() => setOpenPanel(null)}
       />
       <IngestAgentDetailPanel
@@ -1208,6 +1716,24 @@ function UrlIngestDialog({
   onClose: () => void;
   onSubmit: () => void;
 }) {
+  useEffect(() => {
+    if (!open || isSubmitting) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    }
+
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isSubmitting, onClose, open]);
+
   if (!open) {
     return null;
   }
