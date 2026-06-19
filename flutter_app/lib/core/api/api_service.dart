@@ -44,10 +44,67 @@ class LicenseStatusResult {
   bool get canEnterApp => status == LicenseStatus.active;
 }
 
+class ConversationFeatureKeys {
+  static const share = 'conversation.share.enabled';
+  static const groupChat = 'conversation.group_chat.enabled';
+  static const rename = 'conversation.rename.enabled';
+  static const archive = 'conversation.archive.enabled';
+  static const delete = 'conversation.delete.enabled';
+  static const pinCloudSync = 'conversation.pin.cloud_sync_enabled';
+
+  static const all = <String>[
+    share,
+    groupChat,
+    rename,
+    archive,
+    delete,
+    pinCloudSync,
+  ];
+}
+
+class ConversationFeatureFlags {
+  const ConversationFeatureFlags({
+    required this.values,
+    this.loaded = false,
+    this.message = '功能暂未开放',
+    this.source = '',
+  });
+
+  const ConversationFeatureFlags.disabled([this.message = '功能暂未开放'])
+      : values = disabledValues,
+        loaded = false,
+        source = '';
+
+  static const disabledValues = <String, bool>{
+    ConversationFeatureKeys.share: false,
+    ConversationFeatureKeys.groupChat: false,
+    ConversationFeatureKeys.rename: false,
+    ConversationFeatureKeys.archive: false,
+    ConversationFeatureKeys.delete: false,
+    ConversationFeatureKeys.pinCloudSync: false,
+  };
+
+  final Map<String, bool> values;
+  final bool loaded;
+  final String message;
+  final String source;
+
+  bool isEnabled(String key) => values[key] == true;
+}
+
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
   static const _maxUploadSizeMb = 300;
   static const _uploadTimeout = Duration(minutes: 5);
+  static const _conversationFeaturePaths = <String>[
+    '/api/user/conversation-features',
+    '/api/user/features',
+    '/api/user/conversation-control',
+    '/api/conversation/features',
+    '/api/settings/conversation-features',
+    '/api/user/permissions',
+    '/api/license/features',
+  ];
 
   ApiService({
     required this.baseUrl,
@@ -370,6 +427,248 @@ class ApiService {
       headers: _headers(json: false),
     );
     return _unwrap(response);
+  }
+
+  Future<Map<String, dynamic>> _getJsonAllowPlain(String path) async {
+    final response = await _client.get(
+      _uri(path),
+      headers: _headers(json: false),
+    );
+    _captureCookie(response);
+    final envelope = _asMap(_jsonBody(response));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw ApiException(
+        _messageFromEnvelope(envelope, 'Request failed.'),
+        statusCode: response.statusCode,
+      );
+    }
+
+    if (envelope['ok'] == false || envelope['success'] == false) {
+      throw ApiException(
+        _messageFromEnvelope(envelope, 'Request failed.'),
+        statusCode: response.statusCode,
+      );
+    }
+
+    final data = envelope['data'];
+    return data is Map ? _asMap(data) : envelope;
+  }
+
+  Future<ConversationFeatureFlags> getConversationFeatureFlags() async {
+    if (mockMode) {
+      return const ConversationFeatureFlags.disabled();
+    }
+
+    for (final path in _conversationFeaturePaths) {
+      try {
+        final data = await _getJsonAllowPlain(path);
+        final flags = _conversationFeatureFlagsFrom(data, source: path);
+        _debugConversationFeatureFlags(flags);
+        return flags;
+      } on ApiException catch (error) {
+        debugPrint(
+          'conversation features load failed:\n'
+          'source=$path\n'
+          'status=${error.statusCode ?? ''}\n'
+          'message=${error.message}\n'
+          'fallback=all disabled',
+        );
+      } catch (error) {
+        debugPrint(
+          'conversation features load failed:\n'
+          'source=$path\n'
+          'status=\n'
+          'message=$error\n'
+          'fallback=all disabled',
+        );
+      }
+    }
+
+    return const ConversationFeatureFlags.disabled();
+  }
+
+  ConversationFeatureFlags _conversationFeatureFlagsFrom(
+    Map<String, dynamic> data, {
+    required String source,
+  }) {
+    final values = <String, bool>{
+      ConversationFeatureKeys.share: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.share,
+          'share',
+          'shareEnabled',
+          'share_enabled',
+          'canShare',
+          'can_share',
+        ]),
+      ),
+      ConversationFeatureKeys.groupChat: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.groupChat,
+          'groupChat',
+          'group_chat',
+          'groupChatEnabled',
+          'group_chat_enabled',
+          'canGroupChat',
+          'can_group_chat',
+        ]),
+      ),
+      ConversationFeatureKeys.rename: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.rename,
+          'rename',
+          'renameEnabled',
+          'rename_enabled',
+          'canRename',
+          'can_rename',
+        ]),
+      ),
+      ConversationFeatureKeys.archive: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.archive,
+          'archive',
+          'archiveEnabled',
+          'archive_enabled',
+          'canArchive',
+          'can_archive',
+        ]),
+      ),
+      ConversationFeatureKeys.delete: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.delete,
+          'delete',
+          'deleteEnabled',
+          'delete_enabled',
+          'canDelete',
+          'can_delete',
+        ]),
+      ),
+      ConversationFeatureKeys.pinCloudSync: _featureFlagEnabled(
+        _featureFlagValue(data, const [
+          ConversationFeatureKeys.pinCloudSync,
+          'conversation.pin_cloud_sync_enabled',
+          'pinCloudSync',
+          'pin_cloud_sync',
+          'pinCloudSyncEnabled',
+          'pin_cloud_sync_enabled',
+          'canSyncPinned',
+          'can_sync_pinned',
+        ]),
+      ),
+    };
+
+    final message = _featureMessage(data);
+    return ConversationFeatureFlags(
+      values: Map.unmodifiable(values),
+      loaded: true,
+      message: message.isEmpty ? '功能暂未开放' : message,
+      source: source,
+    );
+  }
+
+  Object? _featureFlagValue(
+    Object? source,
+    List<String> aliases, {
+    int depth = 0,
+  }) {
+    if (source == null || depth > 4) {
+      return null;
+    }
+
+    if (source is List) {
+      for (final item in source) {
+        final map = _asMap(item);
+        final key = _stringValue(
+          map['key'] ??
+              map['name'] ??
+              map['code'] ??
+              map['permission'] ??
+              map['feature'],
+        );
+        if (aliases.contains(key)) {
+          return map['enabled'] ??
+              map['value'] ??
+              map['active'] ??
+              map['status'] ??
+              map['state'];
+        }
+
+        final nested = _featureFlagValue(item, aliases, depth: depth + 1);
+        if (nested != null) {
+          return nested;
+        }
+      }
+      return null;
+    }
+
+    final map = _asMap(source);
+    if (map.isEmpty) {
+      return null;
+    }
+
+    for (final alias in aliases) {
+      if (map.containsKey(alias)) {
+        return map[alias];
+      }
+    }
+
+    for (final value in map.values) {
+      if (value is Map || value is List) {
+        final nested = _featureFlagValue(value, aliases, depth: depth + 1);
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  bool _featureFlagEnabled(Object? value) {
+    if (value is bool) {
+      return value;
+    }
+    if (value is Map || value is List) {
+      return _featureFlagEnabled(_featureFlagValue(value, const [
+        'enabled',
+        'value',
+      ]));
+    }
+    return _stringValue(value).toLowerCase() == 'true';
+  }
+
+  void _debugConversationFeatureFlags(ConversationFeatureFlags flags) {
+    debugPrint(
+      'conversation features loaded:\n'
+      'share=${flags.isEnabled(ConversationFeatureKeys.share)}\n'
+      'groupChat=${flags.isEnabled(ConversationFeatureKeys.groupChat)}\n'
+      'rename=${flags.isEnabled(ConversationFeatureKeys.rename)}\n'
+      'archive=${flags.isEnabled(ConversationFeatureKeys.archive)}\n'
+      'delete=${flags.isEnabled(ConversationFeatureKeys.delete)}\n'
+      'pinCloudSync=${flags.isEnabled(ConversationFeatureKeys.pinCloudSync)}\n'
+      'source=${flags.source}',
+    );
+  }
+
+  String _featureMessage(Map<String, dynamic> data) {
+    for (final key in const ['message', 'msg', 'reason', 'tips']) {
+      final value = _stringValue(data[key]);
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+    return '';
+  }
+
+  String _stringValue(Object? value) {
+    if (value == null) {
+      return '';
+    }
+    if (value is String) {
+      return value.trim();
+    }
+    return value.toString().trim();
   }
 
   Future<Map<String, dynamic>> login({

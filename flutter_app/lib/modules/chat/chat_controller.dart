@@ -30,7 +30,10 @@ class ChatController extends ChangeNotifier {
   bool _thinking = false;
   bool _cancelRequested = false;
   bool _syncing = false;
+  bool _loadingConversationFeatures = false;
   String? _lastSyncError;
+  ConversationFeatureFlags _conversationFeatures =
+      const ConversationFeatureFlags.disabled();
 
   List<ChatMessage> get _messages => _activeConversation.messages;
   List<ChatMessage> get messages =>
@@ -38,7 +41,9 @@ class ChatController extends ChangeNotifier {
   bool get sending => _sending;
   bool get thinking => _thinking;
   bool get syncing => _syncing;
+  bool get loadingConversationFeatures => _loadingConversationFeatures;
   String? get lastSyncError => _lastSyncError;
+  ConversationFeatureFlags get conversationFeatures => _conversationFeatures;
   bool get canRetry => _failedPrompt != null && !_sending;
   String get selectedModel => _selectedModel;
   String get sessionId => _activeConversation.id;
@@ -123,6 +128,26 @@ class ChatController extends ChangeNotifier {
       debugPrint(_lastSyncError);
     } finally {
       _syncing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> loadConversationFeatures({bool force = false}) async {
+    if (_loadingConversationFeatures ||
+        (!force && _conversationFeatures.loaded)) {
+      return;
+    }
+
+    _loadingConversationFeatures = true;
+    notifyListeners();
+
+    try {
+      _conversationFeatures = await apiService.getConversationFeatureFlags();
+    } catch (error) {
+      _conversationFeatures = const ConversationFeatureFlags.disabled();
+      debugPrint('Conversation feature flags failed: $error');
+    } finally {
+      _loadingConversationFeatures = false;
       notifyListeners();
     }
   }
