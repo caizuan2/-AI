@@ -8,8 +8,8 @@ const path = require("path");
 const APP_NAME = "AI知识库投喂端";
 const APP_ID = "com.aiknowledge.ingestadmin.desktop";
 const SESSION_PARTITION = "persist:admin-ingest";
-const DEFAULT_ADMIN_INGEST_URL = "http://localhost:3015/admin-ingest?app=ingest-admin&platform=exe";
-const READY_CHECK_RETRIES = Number.parseInt(process.env.ADMIN_INGEST_READY_RETRIES || "30", 10);
+const DEFAULT_ADMIN_INGEST_URL = "http://localhost:3020/admin-ingest?app=ingest-admin&platform=exe";
+const READY_CHECK_RETRIES = Number.parseInt(process.env.ADMIN_INGEST_READY_RETRIES || "60", 10);
 const READY_CHECK_INTERVAL_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_INTERVAL_MS || "1000", 10);
 const READY_CHECK_TIMEOUT_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_TIMEOUT_MS || "1800", 10);
 const LOG_FILE = path.join(os.tmpdir(), "admin-ingest-desktop.log");
@@ -70,6 +70,34 @@ function normalizeTargetUrl(candidate) {
 
 function getAppUrl() {
   return normalizeTargetUrl(process.env.ADMIN_INGEST_APP_URL);
+}
+
+function getTargetPort(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+
+    if (url.port) {
+      return url.port;
+    }
+
+    return url.protocol === "https:" ? "443" : "80";
+  } catch {
+    return "3020";
+  }
+}
+
+function buildDevServerCommand(targetUrl) {
+  const port = getTargetPort(targetUrl);
+  const cwd = process.cwd();
+
+  return {
+    cwd,
+    port,
+    display: [
+      `cd "${cwd}"`,
+      `npm run dev -- -p ${port}`
+    ].join("\n")
+  };
 }
 
 function sleep(ms) {
@@ -409,7 +437,7 @@ function stripFrameBlockingHeaders(headers) {
 async function waitForUrlReady(targetUrl) {
   const attempts = Number.isFinite(READY_CHECK_RETRIES) && READY_CHECK_RETRIES > 0
     ? READY_CHECK_RETRIES
-    : 30;
+    : 60;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const result = await checkUrlReady(targetUrl);
@@ -510,14 +538,14 @@ async function loadAdminIngestUrl() {
   const readyResult = await waitForUrlReady(targetUrl);
 
   if (!readyResult.ok) {
+    const command = buildDevServerCommand(targetUrl);
     const detail = [
       `目标地址：${targetUrl}`,
       `检测结果：${readyResult.error || `${readyResult.statusCode} ${readyResult.statusMessage || ""}`}`,
       "",
       "请先在 Worktree 2 运行：",
-      "cd \"C:\\Users\\PC\\.codex\\worktrees\\7927\\XT\"",
-      "npm run dev -- -p 3015"
-    ].join("\n");
+      command.display
+    ].filter(Boolean).join("\n");
 
     await loadHtml(renderShellPage({
       title: "投喂端 Web 服务未启动",
