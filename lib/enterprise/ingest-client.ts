@@ -18,7 +18,7 @@ import type {
   GptKnowledgeDraft,
   GptSaveRecommendation
 } from "@/lib/enterprise/gpt-knowledge-draft";
-import { buildChatGptStyleReply } from "@/lib/enterprise/gpt-chatgpt-style-validator";
+import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -59,8 +59,14 @@ export interface IngestUploadState {
   fileSize: number;
   isImage?: boolean;
   previewUrl?: string;
+  rawFile?: File;
   extractedText?: string;
   summary?: string;
+  mimeType?: string;
+  parseStatus?: "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
+  pageSummaries?: string[];
+  slideTexts?: Array<{ slideIndex: number; text: string }>;
+  limitationNote?: string;
   status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
   source: "admin_ingest";
   platform: IngestPlatform;
@@ -111,6 +117,13 @@ interface GptIngestResponse {
   selectedModelLabel?: string;
   replyMarkdown: string;
   knowledgeDraft?: GptKnowledgeDraft;
+  userClientCallPlan?: GptUserClientCallPlan;
+  sourceFiles?: Array<{
+    fileName: string;
+    mimeType?: string;
+    parseStatus?: string;
+    limitationNote?: string;
+  }>;
   suggestedQuestions?: string[];
   saveRecommendation?: GptSaveRecommendation;
   diagnostics?: string[];
@@ -132,15 +145,14 @@ interface GptIngestResponse {
   fallbackUsed?: boolean;
 }
 
-interface GptFallbackResponse {
+interface GptFailureResponse {
   ok: false;
-  fallback: true;
-  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT";
+  fallback?: false;
+  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "OPENAI_PRO_QUALITY_FAILED";
   message: string;
+  retryable?: boolean;
   selectedModelLabel?: string;
   model?: string;
-  localPreview?: unknown;
-  replyMarkdown?: string;
 }
 
 interface UrlIngestPreviewResponse {
@@ -204,7 +216,7 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
   }
 
   if (raw.includes("openai api key") || raw.includes("missing_ai_api_key") || raw.includes("未配置 openai")) {
-    return "未配置 OpenAI API Key，已使用本地预览模型。";
+    return "未配置 OpenAI API Key，无法调用 GPT-5.5。请配置后重新生成。";
   }
 
   if (raw.includes("timeout") || raw.includes("超时")) {
@@ -212,10 +224,10 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
   }
 
   if (raw.includes("gpt") || raw.includes("openai")) {
-    return "GPT 接口暂不可用，已使用本地预览结果。";
+    return "GPT-5.5 本次未完成，请检查模型权限、额度或网络后重新生成。";
   }
 
-  return "接口暂不可用，已使用本地预览结果。";
+  return "接口暂不可用，请稍后重试。";
 }
 
 async function readApiData<T>(response: Response): Promise<T> {
@@ -270,8 +282,8 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
-function isGptFallbackResponse(value: unknown): value is GptFallbackResponse {
-  return isPlainRecord(value) && value.ok === false && value.fallback === true;
+function isGptFailureResponse(value: unknown): value is GptFailureResponse {
+  return isPlainRecord(value) && value.ok === false;
 }
 
 function toRecordTime(value?: string) {
@@ -324,19 +336,24 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
     jobId: readString(record.jobId) || null,
     title,
     category,
+    categories: readOptionalStringArray(record.categories) ?? [category],
     tags: readTags(record.tags).length > 0 ? readTags(record.tags) : [category.replace("知识库", ""), "AI投喂"].filter(Boolean),
     summary,
     qaPairs: qaPairs.length > 0 ? qaPairs : [firstPair],
     standardQuestion: firstPair.q,
     standardAnswer: firstPair.a,
+    standardQuestions: readOptionalStringArray(record.standardQuestions) ?? [firstPair.q],
+    standardAnswers: readOptionalStringArray(record.standardAnswers) ?? [firstPair.a],
     trainingScore: Math.min(100, Math.max(1, Math.round(confidence))),
     recommendation,
     saveStatus: status,
     sourceType: "chat",
     scenarios: readOptionalStringArray(record.scenarios),
     sourceMaterials: readOptionalStringArray(record.sourceMaterials),
+    complianceNotes: readOptionalStringArray(record.complianceNotes),
     missingFields: readOptionalStringArray(record.missingFields),
     suggestedQuestions: readOptionalStringArray(record.suggestedQuestions ?? record.followUpQuestions),
+    userClientCallPlan: isPlainRecord(record.userClientCallPlan) ? record.userClientCallPlan as unknown as GptUserClientCallPlan : undefined,
     saveRecommendation: saveRecommendation || undefined,
     sourceModel: readString(record.sourceModel) || readString(record.model) || undefined,
     generatedBy: readString(record.generatedBy) || readString(record.providerUsed) || undefined,
@@ -415,6 +432,7 @@ export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, age
 function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agent: IngestChatAgent): IngestKnowledgeDraft {
   return normalizeDraftFromUnknown({
     ...(data.knowledgeDraft ?? data.structured),
+    userClientCallPlan: data.userClientCallPlan ?? data.knowledgeDraft?.userClientCallPlan,
     suggestedQuestions: data.suggestedQuestions ?? data.structured.followUpQuestions,
     saveRecommendation: data.saveRecommendation ?? data.knowledgeDraft?.saveRecommendation,
     id: `gpt-${Date.now()}`,
@@ -427,65 +445,6 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     replyMarkdown: data.replyMarkdown,
     fallbackUsed: false
   }, originalInput, agent, "待确认");
-}
-
-function createLocalPreviewResult(input: {
-  text: string;
-  agent: IngestChatAgent;
-  selectedModelLabel: string;
-  tenantId?: string | null;
-  userId?: string | null;
-  platform: IngestPlatform;
-  message: string;
-  localPreview?: unknown;
-  replyMarkdown?: string;
-}) {
-  const draft = normalizeDraftFromUnknown(input.localPreview, input.text, input.agent, "待确认");
-
-  draft.jobId = draft.jobId ?? `preview-${Date.now()}`;
-  draft.fallbackUsed = true;
-  draft.providerUsed = "local-fallback";
-  draft.model = input.selectedModelLabel;
-  draft.replyMarkdown = input.replyMarkdown;
-
-  return {
-    draft,
-    records: [createTrainingRecord({
-      originalInput: input.text,
-      draft,
-      agent: input.agent,
-      tenantId: input.tenantId ?? null,
-      userId: input.userId ?? null,
-      platform: input.platform
-    })],
-    preview: true,
-    provider: "local-fallback",
-    model: input.selectedModelLabel,
-    modelMode: "highest" as const,
-    replyMarkdown: input.replyMarkdown || buildChatGptStyleReply({
-      originalInput: input.text,
-      draft: {
-        title: draft.title,
-        summary: draft.summary ?? draft.standardAnswer,
-        category: draft.category,
-        tags: draft.tags,
-        standardQuestion: draft.standardQuestion,
-        standardAnswer: draft.standardAnswer,
-        scenarios: draft.scenarios ?? ["客户沟通", "客服回复", "销售解释"],
-        sourceMaterials: draft.sourceMaterials ?? ["管理员投喂内容"],
-        saveRecommendation: draft.saveRecommendation === "暂缓入库" || draft.recommendation === "暂不入库"
-          ? "暂缓入库"
-          : draft.saveRecommendation === "可以入库" || draft.recommendation === "建议入库"
-            ? "可以入库"
-            : "需要补充资料",
-        missingFields: draft.missingFields ?? ["完整业务背景", "标准服务边界", "真实客户案例"],
-        trainingScore: draft.trainingScore
-      },
-      fallbackNote: input.message
-    }),
-    saveSuggestion: draft.recommendation === "建议入库",
-    message: input.message
-  };
 }
 
 export async function sendCoreIngest(input: {
@@ -524,15 +483,7 @@ export async function sendCoreIngest(input: {
   });
 
   if (!health.ok && !health.apiKeyConfigured) {
-    return createLocalPreviewResult({
-      text: input.text,
-      agent: input.agent,
-      selectedModelLabel,
-      tenantId: input.tenantId ?? null,
-      userId: input.userId ?? null,
-      platform,
-      message: `${health.message}，已使用本地预览结果。`
-    });
+    throw new Error(health.message || "未配置 OpenAI API Key，无法调用 GPT-5.5。");
   }
 
   try {
@@ -570,20 +521,10 @@ export async function sendCoreIngest(input: {
         autoSave: false
       })
     });
-    const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFallbackResponse | null;
+    const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 
-    if (isGptFallbackResponse(payload)) {
-      return createLocalPreviewResult({
-        text: input.text,
-        agent: input.agent,
-        selectedModelLabel: payload.selectedModelLabel ?? selectedModelLabel,
-        tenantId: input.tenantId ?? null,
-        userId: input.userId ?? null,
-        platform,
-        message: payload.message,
-        localPreview: payload.localPreview,
-        replyMarkdown: payload.replyMarkdown
-      });
+    if (isGptFailureResponse(payload)) {
+      throw new Error(payload.message || "GPT-5.5 本次未完成，请稍后重试。");
     }
 
     if (!response.ok || !payload?.ok || !payload.data) {
@@ -617,17 +558,9 @@ export async function sendCoreIngest(input: {
       message: `GPT 已生成结构化知识：${draft.title}`
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : "GPT 接口暂不可用，已使用本地预览结果。";
-
-    return createLocalPreviewResult({
-      text: input.text,
-      agent: input.agent,
-      selectedModelLabel,
-      tenantId: input.tenantId ?? null,
-      userId: input.userId ?? null,
-      platform,
-      message
-    });
+    throw error instanceof Error
+      ? error
+      : new Error("GPT-5.5 本次未完成，请稍后重试。");
   }
 }
 
@@ -652,6 +585,8 @@ export async function saveKnowledgeDraft(input: {
     should_save: input.draft.recommendation !== "暂不入库",
     scenarios: input.draft.scenarios ?? [],
     sourceMaterials: input.draft.sourceMaterials ?? [],
+    complianceNotes: input.draft.complianceNotes ?? [],
+    userClientCallPlan: input.draft.userClientCallPlan,
     missingFields: input.draft.missingFields ?? [],
     suggestedQuestions: input.draft.suggestedQuestions ?? [],
     saveRecommendation: input.draft.saveRecommendation ?? input.draft.recommendation,
@@ -757,6 +692,9 @@ export function createUploadState(file: File, context: {
     fileSize: file.size,
     isImage,
     previewUrl,
+    rawFile: file,
+    mimeType: file.type || "application/octet-stream",
+    parseStatus: "metadata_only",
     status: "ready_to_send",
     source: "admin_ingest",
     platform: context.platform ?? "web",
@@ -765,6 +703,78 @@ export function createUploadState(file: File, context: {
     userId: context.userId ?? null,
     agentId: context.agentId ?? null,
     createdAt: new Date().toISOString()
+  };
+}
+
+interface ParseFileResponse {
+  ok: boolean;
+  data?: {
+    fileName: string;
+    fileType: string;
+    mimeType: string;
+    sizeBytes: number;
+    parseStatus: "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
+    extractedText: string;
+    pageSummaries: string[];
+    slideTexts: Array<{ slideIndex: number; text: string }>;
+    limitationNote: string;
+  };
+  message?: string;
+  error?: {
+    message?: string;
+  };
+}
+
+export function stripUploadRuntimeFields(file: IngestUploadState): Omit<IngestUploadState, "rawFile"> {
+  const safeFile = { ...file };
+
+  delete safeFile.rawFile;
+
+  return safeFile;
+}
+
+export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<IngestUploadState> {
+  if (!file.rawFile) {
+    return {
+      ...file,
+      parseStatus: file.parseStatus ?? (file.extractedText || file.summary ? "parsed" : "metadata_only"),
+      limitationNote: file.limitationNote ?? "当前附件没有原始 File 对象，只能把已有元数据传给 GPT。"
+    };
+  }
+
+  const formData = new FormData();
+
+  formData.append("file", file.rawFile);
+  formData.append("fileName", file.fileName);
+  formData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
+
+  const response = await fetch("/api/admin/kb/ingest/files/parse", {
+    method: "POST",
+    body: formData
+  });
+  const payload = await response.json().catch(() => null) as ParseFileResponse | null;
+
+  if (!response.ok || !payload?.ok || !payload.data) {
+    return {
+      ...file,
+      status: "failed",
+      parseStatus: "metadata_only",
+      limitationNote: payload?.message ?? payload?.error?.message ?? "文件解析失败，只能把文件名和元数据传给 GPT。"
+    };
+  }
+
+  return {
+    ...file,
+    fileType: payload.data.mimeType || file.fileType,
+    fileSize: payload.data.sizeBytes || file.fileSize,
+    mimeType: payload.data.mimeType,
+    extractedText: payload.data.extractedText || undefined,
+    summary: payload.data.extractedText ? payload.data.extractedText.slice(0, 360) : file.summary,
+    pageSummaries: payload.data.pageSummaries,
+    slideTexts: payload.data.slideTexts,
+    parseStatus: payload.data.parseStatus,
+    limitationNote: payload.data.limitationNote,
+    status: payload.data.parseStatus === "unsupported" ? "failed" : "parsed"
   };
 }
 

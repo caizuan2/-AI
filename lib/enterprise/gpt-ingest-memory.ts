@@ -15,6 +15,7 @@ export interface GptIngestMemoryAttachment {
   visibleText?: string;
   summary?: string;
   pageSummaries?: string[];
+  slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
   limitationNote?: string;
 }
 

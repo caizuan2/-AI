@@ -21,6 +21,9 @@ import type {
   GptKnowledgeDraft,
   GptSaveRecommendation
 } from "@/lib/enterprise/gpt-knowledge-draft";
+import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+import { assessGptProResponseQuality } from "@/lib/enterprise/gpt-pro-response-quality";
+import { buildGptProRetryDeepenPrompt } from "@/lib/enterprise/gpt-pro-retry-deepen";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -36,6 +39,7 @@ export interface OpenAIAdminIngestAttachment {
   visibleText?: string;
   summary?: string;
   pageSummaries?: string[];
+  slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
   limitationNote?: string;
 }
 
@@ -74,7 +78,14 @@ export interface OpenAIAdminIngestResult {
   selectedModelLabel: string;
   replyMarkdown: string;
   knowledgeDraft: GptKnowledgeDraft;
+  userClientCallPlan: GptUserClientCallPlan;
   suggestedQuestions: string[];
+  sourceFiles: Array<{
+    fileName: string;
+    mimeType?: string;
+    parseStatus?: string;
+    limitationNote?: string;
+  }>;
   saveRecommendation: GptSaveRecommendation;
   diagnostics: string[];
   structured: GptStructuredKnowledge;
@@ -87,7 +98,7 @@ export interface OpenAIAdminIngestResult {
   fallbackUsed: false;
 }
 
-const REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MS = 420_000;
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_MODEL_LABEL = "GPT-5.5 超高";
@@ -98,7 +109,8 @@ type OpenAIResponsesErrorCode =
   | "OPENAI_BASE_URL_INVALID"
   | "OPENAI_RESPONSES_REQUEST_FAILED"
   | "OPENAI_RESPONSES_PARSE_FAILED"
-  | "OPENAI_TIMEOUT";
+  | "OPENAI_TIMEOUT"
+  | "OPENAI_PRO_QUALITY_FAILED";
 
 class OpenAIResponsesError extends Error {
   constructor(
@@ -241,20 +253,111 @@ function buildUserPrompt(input: OpenAIAdminIngestInput) {
 
 function normalizeOpenAIResponseError(status: number, bodyText: string) {
   const lower = bodyText.toLowerCase();
+  let providerMessage = "";
+
+  try {
+    const payload = JSON.parse(bodyText) as { error?: { message?: unknown } };
+    providerMessage = typeof payload.error?.message === "string" ? payload.error.message.trim() : "";
+  } catch {
+    providerMessage = bodyText.trim().slice(0, 260);
+  }
+
+  const suffix = providerMessage ? `（HTTP ${status}：${providerMessage.slice(0, 260)}）` : `（HTTP ${status}）`;
 
   if (status === 401 || status === 403) {
-    return new OpenAIResponsesError("OPENAI_API_KEY_MISSING", "OpenAI API Key 未配置或无权访问当前模型。");
+    return new OpenAIResponsesError("OPENAI_API_KEY_MISSING", `OpenAI API Key 未配置或无权访问当前模型。${suffix}`);
   }
 
   if (status === 408 || lower.includes("timeout")) {
-    return new OpenAIResponsesError("OPENAI_TIMEOUT", "GPT 请求超时，请稍后重试。");
+    return new OpenAIResponsesError("OPENAI_TIMEOUT", `GPT 请求超时，请稍后重试。${suffix}`);
   }
 
   if (status === 404 || lower.includes("model")) {
-    return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", "当前 GPT 模型不可用，请检查 OPENAI_MODEL 或模型权限。");
+    return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", `当前 GPT 模型不可用，请检查 OPENAI_MODEL 或模型权限。${suffix}`);
   }
 
-  return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", "OpenAI Responses API 请求失败。");
+  return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", `OpenAI Responses API 请求失败。${suffix}`);
+}
+
+function isHighDepthParameterRejected(status: number, bodyText: string) {
+  if (status < 400 || status >= 500) {
+    return false;
+  }
+
+  const lower = bodyText.toLowerCase();
+
+  return [
+    "reasoning",
+    "verbosity",
+    "unsupported",
+    "unknown parameter",
+    "unrecognized",
+    "invalid parameter",
+    "text.verbosity"
+  ].some((signal) => lower.includes(signal));
+}
+
+function buildResponsesBody(input: {
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  highDepth: boolean;
+}) {
+  return {
+    model: input.model,
+    input: `${input.systemPrompt}\n\n${input.userPrompt}`,
+    ...(input.highDepth
+      ? {
+        reasoning: {
+          effort: "high"
+        },
+        text: {
+          verbosity: "high"
+        }
+      }
+      : {}),
+    max_output_tokens: 8000,
+    stream: true
+  };
+}
+
+function buildMissingReplyQuality(rawText: string) {
+  const quality = assessGptProResponseQuality(rawText);
+
+  return {
+    ...quality,
+    ok: false,
+    failedReasons: [
+      "OpenAI Responses API 返回了内容，但没有提供 replyMarkdown 主回复字段",
+      ...quality.failedReasons
+    ]
+  };
+}
+
+async function fetchResponsesWithBody(input: {
+  responsesUrl: string;
+  apiKey: string;
+  model: string;
+  systemPrompt: string;
+  userPrompt: string;
+  signal: AbortSignal;
+  highDepth: boolean;
+}) {
+  return await fetchOpenAIResponses(input.responsesUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(buildResponsesBody({
+      model: input.model,
+      systemPrompt: input.systemPrompt,
+      userPrompt: input.userPrompt,
+      highDepth: input.highDepth
+    })),
+    signal: input.signal,
+    cache: "no-store"
+  });
 }
 
 async function callResponsesApi(input: {
@@ -265,26 +368,139 @@ async function callResponsesApi(input: {
   userPrompt: string;
   signal: AbortSignal;
 }) {
-  const response = await fetchOpenAIResponses(input.responsesUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: input.model,
-      input: `${input.systemPrompt}\n\n${input.userPrompt}`,
-      max_output_tokens: 3600
-    }),
-    signal: input.signal,
-    cache: "no-store"
-  });
-  const bodyText = await response.text();
+  let response: Response;
+
+  try {
+    response = await fetchResponsesWithBody({
+      ...input,
+      highDepth: true
+    });
+  } catch (error) {
+    logger.warn("enterprise_admin_ingest.openai_network_retry", {
+      errorName: error && typeof error === "object" ? (error as { name?: unknown }).name : undefined,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    response = await fetchResponsesWithBody({
+      ...input,
+      highDepth: true
+    });
+  }
+
+  let bodyText = "";
 
   if (!response.ok) {
+    bodyText = await response.text();
+  }
+
+  if (!response.ok && isHighDepthParameterRejected(response.status, bodyText)) {
+    logger.warn("enterprise_admin_ingest.openai_high_depth_param_retry", {
+      status: response.status,
+      bodySnippet: bodyText.slice(0, 360)
+    });
+    response = await fetchResponsesWithBody({
+      ...input,
+      highDepth: false
+    });
+    bodyText = response.ok ? "" : await response.text();
+  }
+
+  if (!response.ok) {
+    logger.warn("enterprise_admin_ingest.openai_request_failed", {
+      status: response.status,
+      bodySnippet: bodyText.slice(0, 480)
+    });
     throw normalizeOpenAIResponseError(response.status, bodyText);
   }
 
+  if (response.body) {
+    return await readResponsesStream(response, input.model);
+  }
+
+  bodyText = await response.text();
+
+  return parseResponsesPayload(bodyText, input.model);
+}
+
+async function readResponsesStream(response: Response, fallbackModel: string) {
+  const reader = response.body?.getReader();
+
+  if (!reader) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可读取的流。");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  let model = fallbackModel;
+  let completedPayload: unknown = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split(/\n\n/);
+
+    buffer = chunks.pop() ?? "";
+
+    for (const chunk of chunks) {
+      const dataLines = chunk.split(/\n/g)
+        .map((line) => line.trim())
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trim())
+        .filter(Boolean);
+
+      for (const dataLine of dataLines) {
+        if (dataLine === "[DONE]") {
+          continue;
+        }
+
+        let payload: Record<string, unknown> | null = null;
+
+        try {
+          payload = JSON.parse(dataLine) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+
+        const delta = typeof payload.delta === "string" ? payload.delta : "";
+
+        if (delta) {
+          text += delta;
+        }
+
+        const responsePayload = payload.response && typeof payload.response === "object"
+          ? payload.response as Record<string, unknown>
+          : null;
+
+        if (typeof responsePayload?.model === "string") {
+          model = responsePayload.model;
+        }
+
+        if (payload.type === "response.completed" && responsePayload) {
+          completedPayload = responsePayload;
+        }
+      }
+    }
+  }
+
+  const completedText = completedPayload ? extractResponsesText(completedPayload) : "";
+  const finalText = text.trim() || completedText;
+
+  if (!finalText) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可解析文本。");
+  }
+
+  return {
+    text: finalText,
+    model
+  };
+}
+
+function parseResponsesPayload(bodyText: string, fallbackModel: string) {
   let payload: unknown = null;
 
   try {
@@ -303,7 +519,7 @@ async function callResponsesApi(input: {
     text,
     model: typeof (payload as { model?: unknown } | null)?.model === "string"
       ? (payload as { model: string }).model
-      : input.model
+      : fallbackModel
   };
 }
 
@@ -317,7 +533,7 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
     const systemPrompt = buildGptIngestBrainSystemPrompt();
     const userPrompt = buildUserPrompt(input);
 
-    const response = await callResponsesApi({
+    let response = await callResponsesApi({
       responsesUrl: resolved.responsesUrl,
       apiKey: resolved.apiKey,
       model: resolved.model,
@@ -325,18 +541,92 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       userPrompt,
       signal: controller.signal
     });
-    const normalized = normalizeGptOutput({
-      rawText: response.text,
-      originalInput: input.input,
-      fallbackCategory: input.category ?? ""
-    });
+    let normalized;
+
+    try {
+      normalized = normalizeGptOutput({
+        rawText: response.text,
+        originalInput: input.input,
+        fallbackCategory: input.category ?? "",
+        strictReply: true
+      });
+    } catch (error) {
+      const quality = buildMissingReplyQuality(response.text);
+
+      logger.warn("enterprise_admin_ingest.openai_missing_reply_retry", {
+        requestId: input.requestId,
+        model: response.model,
+        message: error instanceof Error ? error.message : String(error),
+        chineseCharCount: quality.chineseCharCount,
+        missingSignals: quality.missingSignals
+      });
+      response = await callResponsesApi({
+        responsesUrl: resolved.responsesUrl,
+        apiKey: resolved.apiKey,
+        model: resolved.model,
+        systemPrompt,
+        userPrompt: buildGptProRetryDeepenPrompt({
+          originalUserPrompt: userPrompt,
+          firstReplyMarkdown: response.text,
+          quality
+        }),
+        signal: controller.signal
+      });
+      normalized = normalizeGptOutput({
+        rawText: response.text,
+        originalInput: input.input,
+        fallbackCategory: input.category ?? "",
+        strictReply: true
+      });
+    }
+
+    let quality = assessGptProResponseQuality(normalized.replyMarkdown);
+
+    if (!quality.ok) {
+      logger.warn("enterprise_admin_ingest.openai_pro_quality_retry", {
+        requestId: input.requestId,
+        model: response.model,
+        chineseCharCount: quality.chineseCharCount,
+        customerQuestionCount: quality.customerQuestionCount,
+        missingSignals: quality.missingSignals,
+        forbiddenPhrases: quality.forbiddenPhrases
+      });
+      response = await callResponsesApi({
+        responsesUrl: resolved.responsesUrl,
+        apiKey: resolved.apiKey,
+        model: resolved.model,
+        systemPrompt,
+        userPrompt: buildGptProRetryDeepenPrompt({
+          originalUserPrompt: userPrompt,
+          firstReplyMarkdown: normalized.replyMarkdown,
+          quality
+        }),
+        signal: controller.signal
+      });
+      normalized = normalizeGptOutput({
+        rawText: response.text,
+        originalInput: input.input,
+        fallbackCategory: input.category ?? "",
+        strictReply: true
+      });
+      quality = assessGptProResponseQuality(normalized.replyMarkdown);
+    }
+
+    if (!quality.ok) {
+      throw new OpenAIResponsesError(
+        "OPENAI_PRO_QUALITY_FAILED",
+        `GPT-5.5 已返回，但回复未达到 ChatGPT Pro 投喂深度：${quality.failedReasons.join("；")}`
+      );
+    }
 
     logger.info("enterprise_admin_ingest.openai_success", {
       requestId: input.requestId,
       model: response.model,
       modelMode: resolved.modelMode,
       durationMs: Date.now() - startedAt,
-      responsesApi: true
+      responsesApi: true,
+      proQualityChineseChars: quality.chineseCharCount,
+      proQualityQuestions: quality.customerQuestionCount
     });
 
     return {
@@ -348,7 +638,14 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       selectedModelLabel: resolved.selectedModelLabel,
       replyMarkdown: normalized.replyMarkdown,
       knowledgeDraft: normalized.knowledgeDraft,
+      userClientCallPlan: normalized.userClientCallPlan,
       suggestedQuestions: normalized.suggestedQuestions,
+      sourceFiles: (input.attachments ?? []).map((attachment) => ({
+        fileName: attachment.fileName,
+        mimeType: attachment.mimeType ?? attachment.fileType,
+        parseStatus: attachment.parseStatus,
+        limitationNote: attachment.limitationNote
+      })),
       saveRecommendation: normalized.saveRecommendation,
       diagnostics: normalized.diagnostics,
       structured: normalized.structured,

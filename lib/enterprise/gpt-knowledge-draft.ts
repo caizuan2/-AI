@@ -1,17 +1,24 @@
+import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+
 export type GptSaveRecommendation = "可以入库" | "暂缓入库" | "需要补充资料";
 
 export interface GptKnowledgeDraft {
   title: string;
   summary: string;
   category: string;
+  categories?: string[];
   tags: string[];
   standardQuestion: string;
   standardAnswer: string;
+  standardQuestions?: string[];
+  standardAnswers?: string[];
   scenarios: string[];
   sourceMaterials: string[];
+  complianceNotes?: string[];
   saveRecommendation: GptSaveRecommendation;
   missingFields: string[];
   trainingScore: number;
+  userClientCallPlan?: GptUserClientCallPlan;
 }
 
 export interface GptStructuredKnowledge {
@@ -126,16 +133,23 @@ export function normalizeGptKnowledgeDraft(input: {
     : readStringArray(parsed.tags);
   const missingFields = readStringArray(nested.missingFields ?? parsed.missingFields, 6);
   const trainingScore = readNumber(nested.trainingScore ?? parsed.confidence, 82);
+  const standardQuestions = readStringArray(nested.standardQuestions ?? parsed.standardQuestions, 10);
+  const standardAnswers = readStringArray(nested.standardAnswers ?? parsed.standardAnswers, 10);
+  const categories = readStringArray(nested.categories ?? parsed.categories, 8);
 
   return {
     title,
     summary,
     category,
+    categories: categories.length > 0 ? categories : [category],
     tags: tags.length > 0 ? tags : [category.replace("知识库", ""), "GPT投喂"].filter(Boolean),
     standardQuestion,
     standardAnswer,
+    standardQuestions: standardQuestions.length > 0 ? standardQuestions : [standardQuestion],
+    standardAnswers: standardAnswers.length > 0 ? standardAnswers : [standardAnswer],
     scenarios: readStringArray(nested.scenarios ?? parsed.scenarios, 6),
     sourceMaterials: readStringArray(nested.sourceMaterials ?? parsed.sourceMaterials, 6),
+    complianceNotes: readStringArray(nested.complianceNotes ?? parsed.complianceNotes, 8),
     saveRecommendation: normalizeRecommendation(nested.saveRecommendation ?? parsed.saveRecommendation, trainingScore, missingFields),
     missingFields,
     trainingScore

@@ -11,6 +11,11 @@ import {
   buildChatGptStyleReply,
   ensureChatGptStyleReply
 } from "@/lib/enterprise/gpt-chatgpt-style-validator";
+import {
+  buildFallbackUserClientCallPlan,
+  normalizeUserClientCallPlan,
+  type GptUserClientCallPlan
+} from "@/lib/enterprise/gpt-user-client-call-plan";
 
 export type { GptStructuredKnowledge } from "@/lib/enterprise/gpt-knowledge-draft";
 
@@ -19,6 +24,7 @@ export interface NormalizedGptOutput {
   knowledgeDraft: GptKnowledgeDraft;
   suggestedQuestions: string[];
   saveRecommendation: GptSaveRecommendation;
+  userClientCallPlan: GptUserClientCallPlan;
   diagnostics: string[];
   structured: GptStructuredKnowledge;
 }
@@ -139,6 +145,7 @@ export function normalizeGptOutput(input: {
   rawText: string;
   originalInput: string;
   fallbackCategory: string;
+  strictReply?: boolean;
 }): NormalizedGptOutput {
   const parsed = parseMaybeJson(input.rawText);
   const knowledgeDraft = normalizeGptKnowledgeDraft({
@@ -157,30 +164,47 @@ export function normalizeGptOutput(input: {
         "有没有真实案例可以强化用户端回答？"
       ];
   const diagnostics = readStringArray(parsed?.diagnostics, 6);
+  const fallbackCallPlan = buildFallbackUserClientCallPlan({
+    category: knowledgeDraft.category,
+    tags: knowledgeDraft.tags,
+    standardQuestion: knowledgeDraft.standardQuestion,
+    standardAnswer: knowledgeDraft.standardAnswer
+  });
+  const userClientCallPlan = normalizeUserClientCallPlan(parsed?.userClientCallPlan, fallbackCallPlan);
+  knowledgeDraft.userClientCallPlan = userClientCallPlan;
   const structured = knowledgeDraftToStructured({
     draft: knowledgeDraft,
     followUpQuestions: suggestedQuestions
   });
   const rawMarkdown = parsed ? "" : extractMarkdownBody(input.rawText);
   const replyMarkdownCandidate = readString(parsed?.replyMarkdown)
-    || rawMarkdown
+    || rawMarkdown;
+
+  if (input.strictReply && !replyMarkdownCandidate) {
+    throw new Error("OpenAI Responses API 未返回 replyMarkdown。");
+  }
+
+  const nonStrictReplyMarkdownCandidate = replyMarkdownCandidate
     || buildChatGptStyleReply({
       originalInput: input.originalInput,
       draft: knowledgeDraft,
       suggestedQuestions
     });
-  const replyMarkdown = ensureChatGptStyleReply({
-    replyMarkdown: replyMarkdownCandidate,
-    originalInput: input.originalInput,
-    draft: knowledgeDraft,
-    suggestedQuestions
-  });
+  const replyMarkdown = input.strictReply
+    ? replyMarkdownCandidate
+    : ensureChatGptStyleReply({
+      replyMarkdown: nonStrictReplyMarkdownCandidate,
+      originalInput: input.originalInput,
+      draft: knowledgeDraft,
+      suggestedQuestions
+    });
 
   return {
     replyMarkdown,
     knowledgeDraft,
     suggestedQuestions,
     saveRecommendation: knowledgeDraft.saveRecommendation,
+    userClientCallPlan,
     diagnostics,
     structured
   };

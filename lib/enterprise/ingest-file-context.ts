@@ -12,6 +12,7 @@ export interface IngestFileContextSource {
   visibleText?: string;
   summary?: string;
   pageSummaries?: string[];
+  slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
   limitationNote?: string;
   userPrompt?: string;
 }
@@ -23,13 +24,14 @@ export interface IngestFileContext {
   mimeType?: string;
   extractedText?: string;
   pageSummaries: string[];
+  slideTexts: Array<{ slideIndex: number; text: string }>;
   visibleText?: string;
   userPrompt?: string;
-  parseStatus: "metadata_only" | "summary_only" | "parsed";
+  parseStatus: "metadata_only" | "summary_only" | "parsed" | "partial" | "unsupported" | "ocr_pending";
   limitationNote: string;
 }
 
-const DEFAULT_FILE_CONTEXT_LIMIT = 16_000;
+const DEFAULT_FILE_CONTEXT_LIMIT = 20_000;
 const PER_FILE_CONTEXT_LIMIT = 8_000;
 
 function cleanText(value: unknown) {
@@ -40,6 +42,30 @@ function cleanTextArray(value: unknown, limit = 8) {
   return Array.isArray(value)
     ? value.map((item) => cleanText(item)).filter(Boolean).slice(0, limit)
     : [];
+}
+
+function cleanSlideTexts(value: unknown, limit = 20) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item, index) => {
+    if (typeof item === "string") {
+      const text = cleanText(item);
+
+      return text ? { slideIndex: index + 1, text } : null;
+    }
+
+    if (!item || typeof item !== "object") {
+      return null;
+    }
+
+    const record = item as { slideIndex?: unknown; pageIndex?: unknown; text?: unknown; content?: unknown };
+    const slideIndex = readNumber(record.slideIndex, record.pageIndex) ?? index + 1;
+    const text = cleanText(record.text) || cleanText(record.content);
+
+    return text ? { slideIndex, text } : null;
+  }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, limit);
 }
 
 function readNumber(...values: unknown[]) {
@@ -121,7 +147,11 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
   const visibleText = smartLimit(cleanText(source.visibleText), Math.floor(PER_FILE_CONTEXT_LIMIT / 2));
   const summary = smartLimit(cleanText(source.summary), 1_400);
   const pageSummaries = cleanTextArray(source.pageSummaries, 10);
-  const parseStatus = extractedText || visibleText || pageSummaries.length > 0
+  const slideTexts = cleanSlideTexts(source.slideTexts, 20);
+  const explicitParseStatus = cleanText(source.parseStatus);
+  const parseStatus = explicitParseStatus === "unsupported" || explicitParseStatus === "ocr_pending" || explicitParseStatus === "partial"
+    ? explicitParseStatus
+    : extractedText || visibleText || pageSummaries.length > 0 || slideTexts.length > 0
     ? "parsed"
     : summary
       ? "summary_only"
@@ -139,6 +169,7 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
     mimeType,
     extractedText: extractedText || undefined,
     pageSummaries,
+    slideTexts,
     visibleText: visibleText || summary || undefined,
     userPrompt: cleanText(source.userPrompt) || cleanText(userPrompt) || undefined,
     parseStatus,
@@ -193,6 +224,7 @@ export function buildIngestFileContextPrompt(
     const bodyParts = [
       file.extractedText ? `extractedText:\n${file.extractedText}` : "",
       file.visibleText ? `visibleTextOrSummary:\n${file.visibleText}` : "",
+      file.slideTexts.length > 0 ? `slideTexts:\n${file.slideTexts.map((slide) => `Slide ${slide.slideIndex}: ${slide.text}`).join("\n")}` : "",
       file.pageSummaries.length > 0 ? `pageSummaries:\n${file.pageSummaries.map((summary, pageIndex) => `${pageIndex + 1}. ${summary}`).join("\n")}` : ""
     ].filter(Boolean);
 

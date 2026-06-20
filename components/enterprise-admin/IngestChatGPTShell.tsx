@@ -51,7 +51,6 @@ import {
   ingestPrimaryRailFeatures,
   type IngestRailKey
 } from "@/components/enterprise-admin/IngestRailConfig";
-import { IngestTenantSummary } from "@/components/enterprise-admin/IngestTenantSummary";
 import { getAdminIngestPlatformLabel } from "@/lib/enterprise/admin-ingest-platform";
 import {
   resolveAdminIngestDisplayProfile,
@@ -196,6 +195,7 @@ interface AdminIngestDraftResponse {
   sourceMaterials?: string[];
   missingFields?: string[];
   suggestedQuestions?: string[];
+  userClientCallPlan?: IngestKnowledgeDraft["userClientCallPlan"];
   saveRecommendation?: string;
   sourceModel?: string;
   generatedBy?: string;
@@ -232,7 +232,15 @@ interface AdminGptIngestResponse {
     saveRecommendation?: string;
     missingFields?: string[];
     trainingScore?: number;
+    userClientCallPlan?: IngestKnowledgeDraft["userClientCallPlan"];
   };
+  userClientCallPlan?: IngestKnowledgeDraft["userClientCallPlan"];
+  sourceFiles?: Array<{
+    fileName: string;
+    mimeType?: string;
+    parseStatus?: string;
+    limitationNote?: string;
+  }>;
   suggestedQuestions?: string[];
   saveRecommendation?: string;
   structured: {
@@ -356,6 +364,8 @@ function toStructuredPayload(draft: IngestKnowledgeDraft) {
     should_save: draft.recommendation !== "暂不入库",
     scenarios: draft.scenarios ?? [],
     sourceMaterials: draft.sourceMaterials ?? [],
+    complianceNotes: draft.complianceNotes ?? [],
+    userClientCallPlan: draft.userClientCallPlan,
     missingFields: draft.missingFields ?? [],
     suggestedQuestions: draft.suggestedQuestions ?? [],
     saveRecommendation: draft.saveRecommendation ?? draft.recommendation,
@@ -744,6 +754,7 @@ export function IngestChatGPTShell({
         scenarios: knowledgeDraft?.scenarios,
         sourceMaterials: knowledgeDraft?.sourceMaterials,
         missingFields: knowledgeDraft?.missingFields,
+        userClientCallPlan: data.userClientCallPlan ?? knowledgeDraft?.userClientCallPlan,
         suggestedQuestions: data.suggestedQuestions,
         saveRecommendation: data.saveRecommendation ?? knowledgeDraft?.saveRecommendation,
         sourceModel: data.model,
@@ -1213,7 +1224,6 @@ export function IngestChatGPTShell({
             <button type="button" onClick={() => openDrawer("draft", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
               结构化结果
             </button>
-            <IngestTenantSummary compact />
           </div>
         ) : null}
 
@@ -1338,7 +1348,7 @@ export function IngestChatGPTShell({
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                           {message.model ? <span className="rounded-full bg-white px-2 py-1 font-semibold text-[#555] shadow-sm">模型：{message.model}</span> : null}
                           {message.provider === "local-fallback" ? (
-                            <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">本地预览</span>
+                            <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
                           ) : null}
                           {message.saveSuggestion !== undefined ? (
                             <span className={message.saveSuggestion ? "rounded-full bg-[#e9f8ef] px-2 py-1 font-semibold text-[#128246]" : "rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]"}>
@@ -1597,6 +1607,28 @@ function KnowledgeDraftPanel({
         <Field label="标准答案" value={draft.standardAnswer} />
         {draft.scenarios?.length ? <Field label="适用场景" value={draft.scenarios.join("、")} /> : null}
         {draft.sourceMaterials?.length ? <Field label="来源材料" value={draft.sourceMaterials.join("、")} /> : null}
+        {draft.userClientCallPlan ? (
+          <div className="rounded-2xl bg-[#f8f8f7] p-3">
+            <p className="text-xs font-semibold text-[#8b8b86]">用户端调用策略</p>
+            <div className="mt-2 space-y-2 text-sm leading-6 text-[#303030]">
+              <p><span className="font-semibold text-[#202020]">检索策略：</span>{draft.userClientCallPlan.retrievalStrategy}</p>
+              <p><span className="font-semibold text-[#202020]">回答风格：</span>{draft.userClientCallPlan.userAnswerStyle}</p>
+              {draft.userClientCallPlan.recommendedAgents.length ? (
+                <p><span className="font-semibold text-[#202020]">推荐 Agent：</span>{draft.userClientCallPlan.recommendedAgents.join("、")}</p>
+              ) : null}
+              {draft.userClientCallPlan.exampleUserQuestions.length ? (
+                <Field label="用户端示例问题" value={draft.userClientCallPlan.exampleUserQuestions.join("\n")} />
+              ) : null}
+              {draft.userClientCallPlan.safetyRules.length ? (
+                <Field label="安全边界" value={draft.userClientCallPlan.safetyRules.join("\n")} />
+              ) : null}
+              {draft.userClientCallPlan.answerTemplates.length ? (
+                <Field label="回答模板" value={draft.userClientCallPlan.answerTemplates.join("\n\n")} />
+              ) : null}
+            </div>
+          </div>
+        ) : null}
+        {draft.complianceNotes?.length ? <Field label="合规/风险提醒" value={draft.complianceNotes.join("\n")} /> : null}
         {draft.missingFields?.length ? <Field label="建议补充" value={draft.missingFields.join("、")} /> : null}
         {draft.suggestedQuestions?.length ? <Field label="建议继续追问" value={draft.suggestedQuestions.join("\n")} /> : null}
         <div className="rounded-2xl bg-[#f8f8f7] p-3">
@@ -1676,7 +1708,7 @@ function RailStatusPanel({
         {noticeMessage}
       </span>
       <span className="shrink-0 rounded-full bg-white px-2.5 py-1 font-semibold text-[#777] shadow-sm">
-        本地预览 · Web / EXE / APK · {statusSummary}
+        本机工作区 · Web / EXE / APK · {statusSummary}
       </span>
     </div>
   );

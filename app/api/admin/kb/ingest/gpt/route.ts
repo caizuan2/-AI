@@ -12,8 +12,6 @@ import {
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
 import { hasDatabaseUrl } from "@/lib/server-config";
-import { buildChatGptStyleReply } from "@/lib/enterprise/gpt-chatgpt-style-validator";
-import type { GptKnowledgeDraft } from "@/lib/enterprise/gpt-knowledge-draft";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -36,6 +34,29 @@ function readStringArray(value: unknown, limit = 10) {
   return Array.isArray(value)
     ? value.map((item) => readString(item)).filter(Boolean).slice(0, limit)
     : [];
+}
+
+function readSlideTexts(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item, index) => {
+    if (typeof item === "string") {
+      const text = readString(item);
+
+      return text ? { slideIndex: index + 1, text } : null;
+    }
+
+    if (!isPlainObject(item)) {
+      return null;
+    }
+
+    const text = readString(item.text) || readString(item.content);
+    const slideIndex = readPositiveNumber(item.slideIndex, item.pageIndex) ?? index + 1;
+
+    return text ? { slideIndex, text } : null;
+  }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, 20);
 }
 
 function readPositiveNumber(...values: unknown[]) {
@@ -96,6 +117,10 @@ function toGptFallbackErrorCode(error: unknown) {
     return "OPENAI_RESPONSES_PARSE_FAILED" as const;
   }
 
+  if (code === "OPENAI_PRO_QUALITY_FAILED") {
+    return "OPENAI_PRO_QUALITY_FAILED" as const;
+  }
+
   if (code === "OPENAI_RESPONSES_REQUEST_FAILED" || message.includes("model") || message.includes("模型不可用")) {
     return "OPENAI_RESPONSES_REQUEST_FAILED" as const;
   }
@@ -108,75 +133,30 @@ function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCod
   const message = typeof record.message === "string" ? record.message.trim() : "";
 
   if (errorCode === "OPENAI_API_KEY_MISSING") {
-    return "缺少 OPENAI_API_KEY，已使用本地预览结果";
+    return "缺少 OPENAI_API_KEY，无法调用 GPT-5.5。请配置后点击重新连接 GPT 或重新生成。";
   }
 
   if (errorCode === "OPENAI_TIMEOUT") {
-    return "GPT 请求超时，已使用本地预览结果";
+    return message || "GPT-5.5 深度分析请求超时，请稍后点击重新连接 GPT 或重新生成。";
   }
 
   if (errorCode === "OPENAI_BASE_URL_INVALID") {
-    return "OPENAI_BASE_URL 无效，已使用本地预览结果";
+    return "OPENAI_BASE_URL 无效，无法调用 GPT-5.5。请检查配置后重试。";
   }
 
   if (errorCode === "OPENAI_RESPONSES_PARSE_FAILED") {
-    return "OpenAI Responses API 返回解析失败，已使用本地预览结果";
+    return "OpenAI Responses API 返回解析失败，请点击重新生成。";
+  }
+
+  if (errorCode === "OPENAI_PRO_QUALITY_FAILED") {
+    return message || "GPT-5.5 已返回，但回复未达到 ChatGPT Pro 投喂深度，请点击重新生成。";
   }
 
   if (errorCode === "OPENAI_RESPONSES_REQUEST_FAILED") {
-    return "OpenAI Responses API 请求失败，已使用本地预览结果";
+    return message || "OpenAI Responses API 请求失败，请检查模型权限、额度或网络后重试。";
   }
 
-  return message || "GPT 接口暂不可用，已使用本地预览结果";
-}
-
-function buildLocalPreview(input: ReturnType<typeof readRequest>, errorCode: ReturnType<typeof toGptFallbackErrorCode>) {
-  const category = input.category || input.agentName || "默认知识库";
-  const normalized = input.input.replace(/\s+/g, " ").trim();
-  const title = normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized || "投喂大脑草稿";
-  const summary = normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
-  const question = `关于“${title}”，应该如何沉淀为知识？`;
-  const answer = summary
-    ? `建议先按当前 ${input.agentName || "Agent"} 的知识口径整理，再补充来源、适用场景和标准回复。原始投喂：${summary}`
-    : "建议补充原始投喂内容后再进行结构化。";
-
-  return {
-    jobId: `preview-${Date.now()}`,
-    title: title || "投喂大脑草稿",
-    category,
-    tags: [category.replace("知识库", ""), "投喂草稿", errorCode].filter(Boolean),
-    summary: summary || "当前为投喂大脑草稿，GPT 恢复后可重新生成更完整结果。",
-    qa_pairs: [{ q: question, a: answer }],
-    confidence: errorCode === "OPENAI_API_KEY_MISSING" ? 72 : 68,
-    should_save: true,
-    providerUsed: "local-fallback",
-    model: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
-    fallbackUsed: true,
-    saveStatus: "pending" as const
-  };
-}
-
-function buildLocalPreviewReply(localPreview: ReturnType<typeof buildLocalPreview>, message: string) {
-  const firstPair = localPreview.qa_pairs[0];
-  const draft: GptKnowledgeDraft = {
-    title: localPreview.title,
-    summary: localPreview.summary,
-    category: localPreview.category,
-    tags: localPreview.tags,
-    standardQuestion: firstPair?.q ?? localPreview.title,
-    standardAnswer: firstPair?.a ?? localPreview.summary,
-    scenarios: ["客户沟通", "客服回复", "销售解释"],
-    sourceMaterials: ["管理员投喂内容"],
-    saveRecommendation: "需要补充资料",
-    missingFields: ["完整业务背景", "标准价格或服务边界", "真实客户案例"],
-    trainingScore: localPreview.confidence
-  };
-
-  return buildChatGptStyleReply({
-    originalInput: localPreview.summary,
-    draft,
-    fallbackNote: message
-  });
+  return message || "GPT-5.5 暂时无法完成本次投喂，请点击重新连接 GPT 或重新生成。";
 }
 
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
@@ -211,6 +191,7 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
       visibleText: readString(item.visibleText) || undefined,
       summary: readString(item.summary) || undefined,
       pageSummaries: readStringArray(item.pageSummaries),
+      slideTexts: readSlideTexts(item.slideTexts),
       limitationNote: readString(item.limitationNote) || undefined
     });
 
@@ -421,7 +402,9 @@ export async function POST(request: Request) {
       selectedModelLabel: result.selectedModelLabel,
       replyMarkdown: result.replyMarkdown,
       knowledgeDraft: result.knowledgeDraft,
+      userClientCallPlan: result.userClientCallPlan,
       suggestedQuestions: result.suggestedQuestions,
+      sourceFiles: result.sourceFiles,
       saveRecommendation: result.saveRecommendation,
       diagnostics: result.diagnostics,
       structuredResult: result.structuredResult,
@@ -432,17 +415,16 @@ export async function POST(request: Request) {
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
     const message = toGptFallbackMessage(errorCode, error);
-    const localPreview = buildLocalPreview(input, errorCode);
+    const status = errorCode === "OPENAI_TIMEOUT" ? 504 : errorCode === "OPENAI_API_KEY_MISSING" ? 401 : 503;
 
     return jsonUtf8({
       ok: false,
-      fallback: true,
+      fallback: false,
       errorCode,
       message,
+      retryable: true,
       selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || "GPT-5.5 超高",
-      model: input.preferredModel,
-      localPreview,
-      replyMarkdown: buildLocalPreviewReply(localPreview, message)
-    });
+      model: input.preferredModel
+    }, status);
   }
 }

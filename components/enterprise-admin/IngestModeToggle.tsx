@@ -20,9 +20,11 @@ import {
   checkGptHealthStatus,
   createUploadState,
   ingestSyncTarget,
+  parseUploadedFileForGpt,
   saveKnowledgeDraft,
   sendCoreIngest,
   sendUrlIngestPreview,
+  stripUploadRuntimeFields,
   type IngestConnectionStatus,
   type IngestGptHealthStatus,
   type IngestNotification,
@@ -53,8 +55,7 @@ import {
 import {
   DEFAULT_GPT_MODEL_SELECTION,
   getGptModelSelectionByDisplayName,
-  GPT_MODEL_DISPLAY_NAMES,
-  isGptModelDisplayName
+  GPT_MODEL_DISPLAY_NAMES
 } from "@/lib/enterprise/gpt-model-options";
 import {
   ADMIN_INGEST_APP_NAME_STORAGE_KEY,
@@ -102,8 +103,8 @@ type SpeechWindow = Window & {
 const tenantId: string | null = null;
 const userId: string | null = null;
 const GPT_FALLBACK_TOAST = {
-  title: "GPT 接口暂不可用",
-  description: "当前未检测到可用 GPT 接口，已临时使用本地预览结果。本地配置 OPENAI_API_KEY 或部署环境变量后即可使用真实 GPT。"
+  title: "GPT-5.5 本次未完成",
+  description: "本次没有生成 GPT 成功回复，请检查连接后点击重新连接 GPT 或重新生成。"
 };
 const initialConnectionStatus: IngestConnectionStatus = {
   enterpriseSpace: "本地预览",
@@ -158,14 +159,6 @@ function mergeTrainingRecords(incoming: IngestTrainingRecord[], current: IngestT
     seen.add(key);
     return true;
   });
-}
-
-function isOpenAIModelLabel(model: string) {
-  return isGptModelDisplayName(model);
-}
-
-function isGptUnavailableMessage(message: string) {
-  return /gpt\s*接口暂不可用|openai|未配置\s*openai|api key/i.test(message);
 }
 
 function isHttpUrl(value: string) {
@@ -276,7 +269,7 @@ export function IngestModeToggle() {
     createNotification({
       type: "license",
       title: "卡密状态待检查",
-      description: "点击连接或设置可查看当前账号授权状态，本地预览不会改动卡密核心逻辑。",
+      description: "点击连接或设置可查看当前账号授权状态；本机工作区不会改动卡密核心逻辑。",
       read: false
     })
   ]);
@@ -289,7 +282,7 @@ export function IngestModeToggle() {
   const [draft, setDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const [records, setRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
   const [lastInput, setLastInput] = useState("");
-  const [noticeMessage, setNoticeMessage] = useState("本地预览模式，登录后将同步企业知识库。");
+  const [noticeMessage, setNoticeMessage] = useState("管理员投喂端已就绪，登录后将同步企业知识库。");
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -816,8 +809,18 @@ export function IngestModeToggle() {
       return null;
     }
 
-    const outgoingAttachments = uploadedFiles.map((file) => ({
-      ...file,
+    let preparedUploads = uploadedFiles;
+
+    if (uploadedFiles.length > 0) {
+      setUploadedFiles((current) => current.map((file) => ({ ...file, status: "parsing" as const })));
+      preparedUploads = await Promise.all(uploadedFiles.map((file) => parseUploadedFileForGpt({
+        ...file,
+        status: "parsing"
+      })));
+    }
+
+    const outgoingAttachments = preparedUploads.map((file) => ({
+      ...stripUploadRuntimeFields(file),
       status: "attached" as const,
       agentId: activeAgent.id,
       tenantId,
@@ -839,10 +842,10 @@ export function IngestModeToggle() {
 
     markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
     setIsParsing(true);
-    setNoticeMessage(outgoingAttachments.length > 0
-      ? "文件已加入本次投喂，正在请求 GPT-5.5 深度分析。"
-      : "AI 正在解析并生成结构化知识...");
+    setNoticeMessage("GPT-5.5 正在深度分析资料...");
     setErrorMessage("");
+    setGptFallbackToast(null);
+    setActionToast(null);
     setMessages((current) => [
       ...current,
       {
@@ -902,20 +905,9 @@ export function IngestModeToggle() {
       setRecords(nextRecords);
       setResolvedModel(result.model ?? currentModelLabel);
       setLastInput(effectiveInput);
-
-      const isGptFallback = isOpenAIModelLabel(currentModelLabel) && (result.preview || result.provider === "local-fallback" || result.model === "core-engine-fallback" || isGptUnavailableMessage(result.message));
-
-      if (isGptFallback) {
-        showGptFallbackToast(result.message);
-      } else {
-        setGptFallbackToast(null);
-      }
-
-      setNoticeMessage(isGptFallback
-        ? "已生成投喂大脑草稿，可继续查看结构化结果或保存知识入库。"
-        : result.preview
-          ? `${result.message}（本地预览，不会跨端同步）`
-          : `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
+      setGptFallbackToast(null);
+      setErrorMessage("");
+      setNoticeMessage(`${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
       setMessages((current) => [
         ...current,
         {
@@ -935,14 +927,14 @@ export function IngestModeToggle() {
           conversationId,
           agentName: activeAgent.name,
           expertName: activeAgent.expertId ? activeAgent.name : null,
-          model: isGptFallback ? currentModelLabel : result.model ?? currentModelLabel,
+          model: result.model ?? currentModelLabel,
           provider: result.provider,
           saveSuggestion: result.saveSuggestion
         }
       ]);
       pushNotification({
-        type: result.preview ? "fallback" : "success",
-        title: result.preview ? "投喂已进入本地预览" : "最近投喂完成",
+        type: "success",
+        title: "最近投喂完成",
         description: outgoingAttachments.length > 0
           ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
           : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`
@@ -953,15 +945,11 @@ export function IngestModeToggle() {
         records: nextRecords
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "接口暂不可用，已使用本地预览结果。";
+      const message = error instanceof Error ? error.message : "GPT-5.5 本次未完成，请稍后重试。";
 
-      if (isOpenAIModelLabel(currentModelLabel) && isGptUnavailableMessage(message)) {
-        showGptFallbackToast(message);
-        setNoticeMessage("AI 投喂暂未完成，请检查 GPT 配置后重试。");
-        setErrorMessage("");
-      } else {
-        setErrorMessage(message);
-      }
+      showGptFallbackToast(message);
+      setNoticeMessage("AI 投喂暂未完成，请检查 GPT 配置后点击重新生成。");
+      setErrorMessage(message);
       return null;
     } finally {
       setIsParsing(false);
@@ -1124,7 +1112,7 @@ export function IngestModeToggle() {
         setNoticeMessage(nextStatus.message);
         showActionToast({
           type: "warning",
-          title: "GPT 接口暂不可用",
+          title: "GPT-5.5 本次未完成",
           description: nextStatus.message
         });
         showGptFallbackToast(nextStatus.message);

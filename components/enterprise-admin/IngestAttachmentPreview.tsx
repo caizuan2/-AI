@@ -15,6 +15,14 @@ const statusLabels: Record<IngestUploadState["status"], string> = {
   failed: "解析失败"
 };
 
+const parseStatusLabels: Record<NonNullable<IngestUploadState["parseStatus"]>, string> = {
+  parsed: "已解析正文",
+  partial: "部分解析",
+  metadata_only: "仅元数据",
+  unsupported: "暂不支持",
+  ocr_pending: "待 OCR"
+};
+
 type AttachmentKind = {
   label: "PDF" | "Word" | "PPT" | "图片" | "TXT" | "MD" | "文件";
   Icon: ComponentType<{ className?: string }>;
@@ -141,6 +149,7 @@ export function IngestAttachmentPreview({
                 <p className="truncate text-[11px] text-[#858580]">{formatFileSize(file.fileSize)}</p>
                 <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-semibold">
                   <span className="rounded-full bg-[#e9f8ef] px-2 py-0.5 text-[#128246]">{statusLabels[file.status]}</span>
+                  {file.parseStatus ? <span className="truncate rounded-full bg-white px-2 py-0.5 text-[#777]">{parseStatusLabels[file.parseStatus]}</span> : null}
                   {!compact ? <span className="truncate rounded-full bg-white px-2 py-0.5 text-[#777]">Web / EXE / APK</span> : null}
                 </div>
               </div>

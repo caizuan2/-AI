@@ -2,6 +2,7 @@ import type {
   AdminIngestPlatform,
   AdminIngestSyncTarget
 } from "@/lib/enterprise/admin-ingest-app-config";
+import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 
 export type IngestChatAgentTone = "green" | "blue" | "amber" | "rose" | "slate";
 export type IngestChatAgentStatus = "active" | "archived" | "deleted_local";
@@ -46,6 +47,11 @@ export interface IngestChatMessage {
     previewUrl?: string;
     extractedText?: string;
     summary?: string;
+    mimeType?: string;
+    parseStatus?: "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
+    pageSummaries?: string[];
+    slideTexts?: Array<{ slideIndex: number; text: string }>;
+    limitationNote?: string;
     status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
     source: "admin_ingest";
     platform: AdminIngestPlatform;
@@ -75,19 +81,24 @@ export interface IngestKnowledgeDraft {
   jobId?: string | null;
   title: string;
   category: string;
+  categories?: string[];
   tags: string[];
   summary?: string;
   qaPairs?: Array<{ q: string; a: string }>;
   standardQuestion: string;
   standardAnswer: string;
+  standardQuestions?: string[];
+  standardAnswers?: string[];
   trainingScore: number;
   recommendation: "建议入库" | "需要复核" | "暂不入库";
   saveStatus: "待确认" | "已保存" | "已拒绝";
   sourceType?: "chat" | "text" | "file" | "image" | "url";
   scenarios?: string[];
   sourceMaterials?: string[];
+  complianceNotes?: string[];
   missingFields?: string[];
   suggestedQuestions?: string[];
+  userClientCallPlan?: GptUserClientCallPlan;
   saveRecommendation?: string;
   sourceModel?: string;
   generatedBy?: string;
