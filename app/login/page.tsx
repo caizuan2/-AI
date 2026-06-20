@@ -11,12 +11,26 @@ import { unwrapApiResponse } from "@/lib/api/client";
 interface LoginResponse {
   success: true;
   licenseActivated: boolean;
+  isSuperAdmin?: boolean;
 }
 
 interface MeResponse {
   user: {
     licenseActivated: boolean;
+    isSuperAdmin?: boolean;
   };
+}
+
+function getPostLoginPath(input: { nextPath?: string; licenseActivated?: boolean; isSuperAdmin?: boolean }) {
+  if (input.nextPath) {
+    return input.nextPath;
+  }
+
+  if (input.isSuperAdmin) {
+    return "/super-admin";
+  }
+
+  return input.licenseActivated ? "/ingest" : "/unlock";
 }
 
 function LoginForm() {
@@ -64,7 +78,11 @@ function LoginForm() {
           } | null;
           const nextPath = getSafeNextPath();
 
-          router.replace(nextPath || (payload?.data?.user.licenseActivated ? "/ingest" : "/unlock"));
+          router.replace(getPostLoginPath({
+            nextPath,
+            licenseActivated: payload?.data?.user.licenseActivated,
+            isSuperAdmin: payload?.data?.user.isSuperAdmin
+          }));
           return;
         }
 
@@ -108,7 +126,11 @@ function LoginForm() {
       const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
       const nextPath = getSafeNextPath();
 
-      router.replace(nextPath || (data.licenseActivated ? "/ingest" : "/unlock"));
+      router.replace(getPostLoginPath({
+        nextPath,
+        licenseActivated: data.licenseActivated,
+        isSuperAdmin: data.isSuperAdmin
+      }));
       router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
