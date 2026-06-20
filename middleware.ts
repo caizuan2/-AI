@@ -127,7 +127,8 @@ const protectedPagePrefixes = [
   "/categories",
   "/settings",
   "/feedback",
-  "/admin"
+  "/admin",
+  "/super-admin"
 ];
 const sessionOnlyPagePrefixes = ["/unlock"];
 const publicExactPaths = [

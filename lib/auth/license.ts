@@ -1,17 +1,44 @@
 import { createHash, createHmac, randomBytes } from "crypto";
-import { LicenseKeyStatus } from "@prisma/client";
+import { LicenseKeyStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizePhone } from "@/lib/auth/phone";
-import { ForbiddenError, LicenseRequiredError, NotFoundError } from "@/lib/errors";
+import {
+  ForbiddenError,
+  InvalidLicenseKeyError,
+  LicenseActivationLimitReachedError,
+  LicenseAppTypeMismatchError,
+  LicenseDisabledError,
+  LicenseExpiredError,
+  LicenseNotFoundError,
+  LicenseRequiredError,
+  NotFoundError
+} from "@/lib/errors";
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const BOOTSTRAP_ADMIN_PHONES = ["+8613352833602"];
+const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "super_admin"] as const;
+const LICENSE_METADATA_ACTIONS = [
+  "generate_user_app_license_key",
+  "generate_ingest_admin_license_key",
+  "generate_super_admin_license_key",
+  "disable_license_key",
+  "SUPER_ADMIN_LICENSE_GENERATE",
+  "SUPER_ADMIN_LICENSE_DISABLE"
+];
+
+export type LicenseAppType = (typeof LICENSE_APP_TYPES)[number];
 
 export interface LicenseActivationContext {
   ip?: string;
   userAgent?: string;
+  appType?: string | null;
 }
+
+type LicenseMetadata = {
+  appType: LicenseAppType;
+  maxActivations: number;
+};
 
 function toHalfWidth(value: string) {
   return value
@@ -28,6 +55,28 @@ export function normalizeLicenseKey(key: string) {
   }
 
   return compact;
+}
+
+export function normalizeLicenseAppType(value: unknown, fallback: LicenseAppType = "user_app"): LicenseAppType {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+
+  if (normalized === "ingest" || normalized === "admin" || normalized === "admin_ingest") {
+    return "ingest_admin";
+  }
+
+  if (normalized === "user" || normalized === "client") {
+    return "user_app";
+  }
+
+  if (normalized === "super" || normalized === "super-admin") {
+    return "super_admin";
+  }
+
+  return LICENSE_APP_TYPES.includes(normalized as LicenseAppType) ? (normalized as LicenseAppType) : fallback;
 }
 
 function randomLicenseGroup(length: number) {
@@ -86,6 +135,17 @@ export function isValidLicenseFormat(key: string) {
   return LICENSE_KEY_PATTERN.test(normalizeLicenseKey(key));
 }
 
+export function isSupportedLicenseKeyInput(key: string) {
+  const normalized = normalizeLicenseKey(key);
+
+  return (
+    LICENSE_KEY_PATTERN.test(normalized) ||
+    /^XT-USER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized) ||
+    /^XT-INGEST-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized) ||
+    /^XT-SUPER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized)
+  );
+}
+
 async function findAcceptedLicenseKeys(keyHashes: string[]) {
   return prisma.licenseKey.findMany({
     where: {
@@ -97,6 +157,67 @@ async function findAcceptedLicenseKeys(keyHashes: string[]) {
       createdAt: "desc"
     }
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function readLicenseMetadata(metadata: unknown): LicenseMetadata | null {
+  if (!isRecord(metadata)) {
+    return null;
+  }
+
+  return {
+    appType: normalizeLicenseAppType(metadata.appType),
+    maxActivations: typeof metadata.maxActivations === "number" ? Math.max(1, metadata.maxActivations) : 1
+  };
+}
+
+async function getLicenseMetadata(licenseId: string): Promise<LicenseMetadata> {
+  const auditLog = await prisma.auditLog.findFirst({
+    where: {
+      action: {
+        in: LICENSE_METADATA_ACTIONS
+      },
+      targetType: "license_key",
+      targetId: licenseId
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    select: {
+      metadata: true
+    }
+  });
+
+  return readLicenseMetadata(auditLog?.metadata) ?? {
+    appType: "user_app",
+    maxActivations: 1
+  };
+}
+
+async function recordLicenseAuditLog(input: {
+  userId: string | null;
+  action: string;
+  targetId?: string | null;
+  context?: LicenseActivationContext;
+  metadata?: Record<string, unknown>;
+}) {
+  await prisma.auditLog
+    .create({
+      data: {
+        userId: input.userId,
+        role: null,
+        action: input.action,
+        targetType: "license_key",
+        targetId: input.targetId ?? null,
+        ip: input.context?.ip,
+        userAgent: input.context?.userAgent,
+        metadata: input.metadata as Prisma.InputJsonObject | undefined
+      }
+    })
+    .catch(() => undefined);
 }
 
 async function createAdminBootstrapLicenseIfAllowed(userId: string, key: string) {
@@ -194,6 +315,20 @@ export async function checkUserLicense(userId: string) {
 }
 
 export async function redeemLicenseKey(userId: string, key: string, context?: LicenseActivationContext) {
+  if (!isSupportedLicenseKeyInput(key)) {
+    await recordLicenseAuditLog({
+      userId,
+      action: "license_invalid",
+      context,
+      metadata: {
+        appType: normalizeLicenseAppType(context?.appType),
+        reason: "unsupported_format"
+      }
+    });
+    throw new InvalidLicenseKeyError("卡密格式无效。");
+  }
+
+  const requestedAppType = normalizeLicenseAppType(context?.appType);
   const keyHashes = getAcceptedLicenseHashes(key);
   const primaryHash = hashLicenseKey(key);
   let licenses = await findAcceptedLicenseKeys(keyHashes);
@@ -210,11 +345,45 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
         message: "卡密不存在。",
         context
       });
-      throw new NotFoundError("卡密不存在。");
+      await recordLicenseAuditLog({
+        userId,
+        action: "license_invalid",
+        context,
+        metadata: {
+          appType: requestedAppType,
+          reason: "not_found",
+          codeHash: primaryHash
+        }
+      });
+      throw new LicenseNotFoundError("卡密不存在。");
     }
   }
 
-  if (licenses.some((license) => license.status === LicenseKeyStatus.USED)) {
+  const license = licenses.find((item) => item.status === LicenseKeyStatus.UNUSED) ?? licenses[0];
+  const metadata = await getLicenseMetadata(license.id);
+
+  if (metadata.appType !== requestedAppType) {
+    await recordActivationLog({
+      codeHash: primaryHash,
+      userId,
+      success: false,
+      message: "卡密不适用于当前客户端。",
+      context
+    });
+    await recordLicenseAuditLog({
+      userId,
+      action: "license_app_type_mismatch",
+      targetId: license.id,
+      context,
+      metadata: {
+        requestedAppType,
+        licenseAppType: metadata.appType
+      }
+    });
+    throw new LicenseAppTypeMismatchError("卡密不适用于当前客户端。");
+  }
+
+  if (licenses.some((item) => item.status === LicenseKeyStatus.USED)) {
     await recordActivationLog({
       codeHash: primaryHash,
       userId,
@@ -222,7 +391,18 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       message: "卡密已使用。",
       context
     });
-    throw new ForbiddenError("卡密已使用。");
+    await recordLicenseAuditLog({
+      userId,
+      action: "license_activation_limit_reached",
+      targetId: license.id,
+      context,
+      metadata: {
+        requestedAppType,
+        maxActivations: metadata.maxActivations,
+        activationCount: 1
+      }
+    });
+    throw new LicenseActivationLimitReachedError("卡密已使用。");
   }
 
   if (licenses.every((license) => license.status === LicenseKeyStatus.DISABLED)) {
@@ -233,10 +413,18 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       message: "卡密已禁用。",
       context
     });
-    throw new ForbiddenError("卡密已禁用。");
+    await recordLicenseAuditLog({
+      userId,
+      action: "disable_license_key",
+      targetId: license.id,
+      context,
+      metadata: {
+        requestedAppType,
+        reason: "redeem_disabled_license"
+      }
+    });
+    throw new LicenseDisabledError("卡密已禁用。");
   }
-
-  const license = licenses.find((item) => item.status === LicenseKeyStatus.UNUSED) ?? licenses[0];
 
   if (license.status === LicenseKeyStatus.DISABLED) {
     await recordActivationLog({
@@ -246,7 +434,17 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       message: "卡密已禁用。",
       context
     });
-    throw new ForbiddenError("卡密已禁用。");
+    await recordLicenseAuditLog({
+      userId,
+      action: "disable_license_key",
+      targetId: license.id,
+      context,
+      metadata: {
+        requestedAppType,
+        reason: "redeem_disabled_license"
+      }
+    });
+    throw new LicenseDisabledError("卡密已禁用。");
   }
 
   if (license.expiresAt && license.expiresAt <= new Date()) {
@@ -257,7 +455,17 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       message: "卡密已过期。",
       context
     });
-    throw new ForbiddenError("卡密已过期。");
+    await recordLicenseAuditLog({
+      userId,
+      action: "license_expired",
+      targetId: license.id,
+      context,
+      metadata: {
+        requestedAppType,
+        expiresAt: license.expiresAt.toISOString()
+      }
+    });
+    throw new LicenseExpiredError("卡密已过期。");
   }
 
   const redeemedUser = await prisma.$transaction(async (tx) => {
@@ -282,13 +490,14 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
         message: "卡密已使用。",
         context
       });
-      throw new ForbiddenError("卡密已使用。");
+      throw new LicenseActivationLimitReachedError("卡密已使用。");
     }
 
     const user = await tx.user.update({
       where: { id: userId },
       data: {
-        licenseActivated: true
+        licenseActivated: true,
+        ...(requestedAppType === "ingest_admin" ? { role: "ingest_admin" as const } : {})
       },
       select: {
         id: true,
@@ -296,6 +505,32 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
         licenseActivated: true
       }
     });
+
+    if (requestedAppType === "ingest_admin") {
+      const activeAssignment = await tx.userRoleAssignment.findFirst({
+        where: {
+          userId,
+          role: "ingest_admin",
+          revokedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: new Date() } }
+          ]
+        },
+        select: {
+          id: true
+        }
+      });
+
+      if (!activeAssignment) {
+        await tx.userRoleAssignment.create({
+          data: {
+            userId,
+            role: "ingest_admin"
+          }
+        });
+      }
+    }
 
     return user;
   });
@@ -306,6 +541,18 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     success: true,
     message: "激活成功。",
     context
+  });
+  await recordLicenseAuditLog({
+    userId,
+    action: "redeem_license_key",
+    targetId: license.id,
+    context,
+    metadata: {
+      requestedAppType,
+      licenseAppType: metadata.appType,
+      maxActivations: metadata.maxActivations,
+      activationCount: 1
+    }
   });
 
   return redeemedUser;

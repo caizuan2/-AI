@@ -1,5 +1,6 @@
 node_modules/
 .next/
+.next-bak-*/
 .next-build/
 .netlify/
 .venv/
@@ -26,3 +27,5 @@ pnpm-debug.log*
 *.exe
 *.asar
 *.app
+
+test-license.ps1

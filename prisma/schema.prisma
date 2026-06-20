@@ -62,20 +62,55 @@ enum LicenseKeyStatus {
 enum UserRole {
   user
   kb_admin
+  ingest_admin
   super_admin
+  enterprise_admin
+}
+
+enum TenantPlan {
+  free
+  starter
+  pro
+  enterprise
+}
+
+enum TenantStatus {
+  active
+  inactive
+  pending
+  disabled
+  archived
+}
+
+enum KnowledgeSource {
+  user
+  ingest
+  system
+}
+
+enum LicenseStatus {
+  active
+  inactive
+  expired
+  revoked
 }
 
 model Tenant {
   id             String              @id @default(cuid())
   name           String
-  plan           String              @default("starter")
-  status         String              @default("active")
+  plan           TenantPlan          @default(free)
+  status         TenantStatus        @default(active)
+  region         String              @default("global")
+  seatLimit      Int                 @default(0) @map("seat_limit")
   createdAt      DateTime            @default(now()) @map("created_at")
   updatedAt      DateTime            @updatedAt @map("updated_at")
   users          User[]
   knowledgeItems KnowledgeItem[]
   ingestionJobs  IngestionJob[]
   queryLogs      KnowledgeQueryLog[]
+  knowledge      Knowledge[]
+  aiRequests     AIRequest[]
+  licenses       License[]
 
   @@index([status])
   @@index([plan])
@@ -91,6 +126,7 @@ model User {
   name             String?
   isActive         Boolean          @default(true)
   licenseActivated Boolean          @default(false)
+  role             UserRole         @default(user)
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   sessions         Session[]
@@ -108,9 +144,73 @@ model User {
   tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([tenantId], map: "users_tenant_id_idx")
+  @@index([role])
   @@index([licenseActivated])
   @@index([isActive])
   @@map("users")
+}
+
+model Knowledge {
+  id        String          @id @default(cuid())
+  tenantId  String          @map("tenant_id")
+  title     String
+  content   String          @db.Text
+  category  String          @default("general")
+  summary   String          @default("") @db.Text
+  source    KnowledgeSource @default(user)
+  status    TenantStatus    @default(active)
+  createdAt DateTime        @default(now()) @map("created_at")
+  updatedAt DateTime        @updatedAt @map("updated_at")
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([tenantId], map: "saas_knowledge_tenant_id_idx")
+  @@index([source])
+  @@index([status])
+  @@index([createdAt], map: "saas_knowledge_created_at_idx")
+  @@map("saas_knowledge")
+}
+
+model AIRequest {
+  id        String   @id @default(cuid())
+  tenantId  String   @map("tenant_id")
+  userId    String   @map("user_id")
+  prompt    String   @db.Text
+  response  String   @db.Text
+  model     String   @default("gpt-4o-mini")
+  tokens    Int      @default(0)
+  status    String   @default("success")
+  costUsd   Float    @default(0) @map("cost_usd")
+  createdAt DateTime @default(now()) @map("created_at")
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([tenantId], map: "ai_requests_tenant_id_idx")
+  @@index([userId], map: "ai_requests_user_id_idx")
+  @@index([status])
+  @@index([createdAt], map: "ai_requests_created_at_idx")
+  @@map("ai_requests")
+}
+
+model License {
+  id          String     @id @default(cuid())
+  code        String     @unique
+  key         String     @unique @default(cuid())
+  type        String     @default("trial")
+  status      String     @default("unused")
+  plan        TenantPlan @default(free)
+  userId      String?    @map("user_id")
+  tenantId    String?    @map("tenant_id")
+  expiresAt   DateTime?  @map("expires_at")
+  activatedAt DateTime?  @map("activated_at")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  tenant      Tenant?    @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([status])
+  @@index([type])
+  @@index([userId], map: "saas_licenses_user_id_idx")
+  @@index([tenantId], map: "saas_licenses_tenant_id_idx")
+  @@index([expiresAt], map: "saas_licenses_expires_at_idx")
+  @@map("saas_licenses")
 }
 
 model UserRoleAssignment {
@@ -158,25 +258,6 @@ model LicenseKey {
   @@index([redeemedByUserId])
   @@index([expiresAt])
   @@map("license_keys")
-}
-
-model License {
-  id          String    @id @default(cuid())
-  code        String    @unique
-  type        String    @default("trial")
-  status      String    @default("unused")
-  userId      String?   @map("user_id")
-  tenantId    String?   @map("tenant_id")
-  expiresAt   DateTime? @map("expires_at")
-  activatedAt DateTime? @map("activated_at")
-  createdAt   DateTime  @default(now()) @map("created_at")
-
-  @@index([status])
-  @@index([type])
-  @@index([userId], map: "saas_licenses_user_id_idx")
-  @@index([tenantId], map: "saas_licenses_tenant_id_idx")
-  @@index([expiresAt], map: "saas_licenses_expires_at_idx")
-  @@map("saas_licenses")
 }
 
 model ActivationLog {
