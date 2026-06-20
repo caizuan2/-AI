@@ -41,6 +41,7 @@ import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResi
 import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
 import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
 import { IngestGPTMessageRenderer } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
+import { IngestGPTCallProofBadge } from "@/components/enterprise-admin/IngestGPTCallProofBadge";
 import { IngestKnowledgeDraftActions } from "@/components/enterprise-admin/IngestKnowledgeDraftActions";
 import {
   buildIngestUserMessageCopyText,
@@ -75,6 +76,7 @@ import {
   type IngestTrainingRecord
 } from "@/lib/enterprise/mock-chat";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
+import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 
 const quickPrompts = [
   "把这段客服对话整理成标准问答",
@@ -199,6 +201,10 @@ interface AdminIngestDraftResponse {
   saveRecommendation?: string;
   sourceModel?: string;
   generatedBy?: string;
+  actualModel?: string;
+  responseId?: string;
+  usage?: OpenAIGptUsage;
+  gptProof?: GptCallProof;
 }
 
 interface AdminTrainingRecordResponse {
@@ -217,6 +223,11 @@ interface AdminTrainingRecordResponse {
 interface AdminGptIngestResponse {
   provider: "openai";
   model: string;
+  requestedModel?: string;
+  actualModel?: string;
+  responseId?: string;
+  usage?: OpenAIGptUsage;
+  gptProof?: GptCallProof;
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
   replyMarkdown: string;
@@ -326,7 +337,11 @@ function mapDraft(draft: AdminIngestDraftResponse): IngestKnowledgeDraft {
     saveRecommendation: draft.saveRecommendation,
     sourceModel: draft.sourceModel ?? draft.model,
     generatedBy: draft.generatedBy ?? draft.providerUsed,
-    fallbackUsed: draft.fallbackUsed
+    fallbackUsed: draft.fallbackUsed,
+    actualModel: draft.actualModel,
+    responseId: draft.responseId,
+    usage: draft.usage,
+    gptProof: draft.gptProof
   };
 }
 
@@ -736,6 +751,11 @@ export function IngestChatGPTShell({
         })
       });
       const data = await readApiData<AdminGptIngestResponse>(response);
+
+      if (!data.gptProof || data.gptProof.fallback !== false || !data.responseId) {
+        throw new Error("GPT-5.5 未返回有效调用证据，本次不插入成功回复。");
+      }
+
       const knowledgeDraft = data.knowledgeDraft;
       const nextDraft = mapDraft({
         jobId: `gpt-${Date.now()}`,
@@ -758,6 +778,10 @@ export function IngestChatGPTShell({
         suggestedQuestions: data.suggestedQuestions,
         saveRecommendation: data.saveRecommendation ?? knowledgeDraft?.saveRecommendation,
         sourceModel: data.model,
+        actualModel: data.actualModel || data.model,
+        responseId: data.responseId,
+        usage: data.usage,
+        gptProof: data.gptProof,
         generatedBy: data.provider,
         fallbackUsed: false,
         saveStatus: "pending"
@@ -793,7 +817,8 @@ export function IngestChatGPTShell({
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: data.modelDisplayName || data.model,
           provider: data.provider,
-          saveSuggestion: data.structured.saveSuggestion
+          saveSuggestion: data.structured.saveSuggestion,
+          gptProof: data.gptProof
         }
       ]);
     } catch (error) {
@@ -1347,6 +1372,7 @@ export function IngestChatGPTShell({
                       {message.role === "assistant" && (message.model || message.saveSuggestion !== undefined) ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                           {message.model ? <span className="rounded-full bg-[#f4f4f2] px-2 py-1 font-semibold text-[#555]">模型：{message.model}</span> : null}
+                          <IngestGPTCallProofBadge proof={message.gptProof} />
                           {message.provider === "local-fallback" ? (
                             <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
                           ) : null}

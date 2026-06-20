@@ -24,6 +24,7 @@ import type {
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 import { assessGptProResponseQuality } from "@/lib/enterprise/gpt-pro-response-quality";
 import { buildGptProRetryDeepenPrompt } from "@/lib/enterprise/gpt-pro-retry-deepen";
+import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -72,6 +73,12 @@ export interface OpenAIAdminIngestInput {
 export interface OpenAIAdminIngestResult {
   provider: "openai";
   model: string;
+  requestedModel: string;
+  actualModel: string;
+  responseId: string;
+  createdAt: string;
+  usage: OpenAIGptUsage;
+  gptProof: GptCallProof;
   modelDisplayName: string;
   modelMode: "highest" | "fixed";
   fallback: false;
@@ -151,6 +158,34 @@ function unique(values: string[]) {
     seen.add(normalized);
     return true;
   });
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function normalizeCreatedAt(value: unknown) {
+  const numeric = readNumber(value);
+
+  if (numeric) {
+    return new Date(numeric * 1000).toISOString();
+  }
+
+  return new Date().toISOString();
+}
+
+function normalizeUsage(value: unknown): OpenAIGptUsage {
+  const record = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const outputDetails = record.output_tokens_details && typeof record.output_tokens_details === "object"
+    ? record.output_tokens_details as Record<string, unknown>
+    : {};
+
+  return {
+    inputTokens: readNumber(record.input_tokens),
+    outputTokens: readNumber(record.output_tokens),
+    totalTokens: readNumber(record.total_tokens),
+    reasoningTokens: readNumber(outputDetails.reasoning_tokens)
+  };
 }
 
 function readProxyUrls() {
@@ -316,7 +351,7 @@ function buildResponsesBody(input: {
         }
       }
       : {}),
-    max_output_tokens: 8000,
+    max_output_tokens: 10000,
     stream: true
   };
 }
@@ -431,8 +466,11 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
   const decoder = new TextDecoder();
   let buffer = "";
   let text = "";
-  let model = fallbackModel;
-  let completedPayload: unknown = null;
+  let model = "";
+  let responseId = "";
+  let createdAt = "";
+  let usage: OpenAIGptUsage = {};
+  let completedPayload: Record<string, unknown> | null = null;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -480,6 +518,18 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
           model = responsePayload.model;
         }
 
+        if (typeof responsePayload?.id === "string") {
+          responseId = responsePayload.id;
+        }
+
+        if (responsePayload && "created_at" in responsePayload) {
+          createdAt = normalizeCreatedAt(responsePayload.created_at);
+        }
+
+        if (responsePayload?.usage) {
+          usage = normalizeUsage(responsePayload.usage);
+        }
+
         if (payload.type === "response.completed" && responsePayload) {
           completedPayload = responsePayload;
         }
@@ -489,14 +539,29 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
 
   const completedText = completedPayload ? extractResponsesText(completedPayload) : "";
   const finalText = text.trim() || completedText;
+  const rawModel = typeof completedPayload?.model === "string" ? completedPayload.model : model;
+  const rawResponseId = typeof completedPayload?.id === "string" ? completedPayload.id : responseId;
+  const finalCreatedAt = completedPayload && "created_at" in completedPayload ? normalizeCreatedAt(completedPayload.created_at) : createdAt || new Date().toISOString();
+  const finalUsage = completedPayload?.usage ? normalizeUsage(completedPayload.usage) : usage;
 
   if (!finalText) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可解析文本。");
   }
 
+  if (!rawResponseId) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 responseId，不能证明 GPT-5.5 调用。");
+  }
+
+  if (!rawModel) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 actualModel，不能证明 GPT-5.5 调用。");
+  }
+
   return {
     text: finalText,
-    model
+    model: rawModel || fallbackModel,
+    responseId: rawResponseId,
+    createdAt: finalCreatedAt,
+    usage: finalUsage
   };
 }
 
@@ -510,16 +575,28 @@ function parseResponsesPayload(bodyText: string, fallbackModel: string) {
   }
 
   const text = extractResponsesText(payload);
+  const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const model = typeof record.model === "string" ? record.model : "";
+  const responseId = typeof record.id === "string" ? record.id : "";
 
   if (!text) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可解析文本。");
   }
 
+  if (!responseId) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 responseId，不能证明 GPT-5.5 调用。");
+  }
+
+  if (!model) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 actualModel，不能证明 GPT-5.5 调用。");
+  }
+
   return {
     text,
-    model: typeof (payload as { model?: unknown } | null)?.model === "string"
-      ? (payload as { model: string }).model
-      : fallbackModel
+    model: model || fallbackModel,
+    responseId,
+    createdAt: normalizeCreatedAt(record.created_at),
+    usage: normalizeUsage(record.usage)
   };
 }
 
@@ -541,7 +618,9 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       userPrompt,
       signal: controller.signal
     });
-    let normalized;
+    let normalized: ReturnType<typeof normalizeGptOutput> | null = null;
+    let quality = buildMissingReplyQuality(response.text);
+    let deepenAttempts = 0;
 
     try {
       normalized = normalizeGptOutput({
@@ -550,46 +629,30 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         fallbackCategory: input.category ?? "",
         strictReply: true
       });
+      quality = assessGptProResponseQuality(normalized.replyMarkdown);
     } catch (error) {
-      const quality = buildMissingReplyQuality(response.text);
-
-      logger.warn("enterprise_admin_ingest.openai_missing_reply_retry", {
+      logger.warn("enterprise_admin_ingest.openai_missing_reply_quality_check", {
         requestId: input.requestId,
         model: response.model,
+        responseId: response.responseId,
         message: error instanceof Error ? error.message : String(error),
         chineseCharCount: quality.chineseCharCount,
         missingSignals: quality.missingSignals
       });
-      response = await callResponsesApi({
-        responsesUrl: resolved.responsesUrl,
-        apiKey: resolved.apiKey,
-        model: resolved.model,
-        systemPrompt,
-        userPrompt: buildGptProRetryDeepenPrompt({
-          originalUserPrompt: userPrompt,
-          firstReplyMarkdown: response.text,
-          quality
-        }),
-        signal: controller.signal
-      });
-      normalized = normalizeGptOutput({
-        rawText: response.text,
-        originalInput: input.input,
-        fallbackCategory: input.category ?? "",
-        strictReply: true
-      });
     }
 
-    let quality = assessGptProResponseQuality(normalized.replyMarkdown);
-
-    if (!quality.ok) {
-      logger.warn("enterprise_admin_ingest.openai_pro_quality_retry", {
+    while ((!normalized || !quality.ok) && deepenAttempts < 2) {
+      deepenAttempts += 1;
+      logger.warn("enterprise_admin_ingest.openai_pro_quality_deepen", {
         requestId: input.requestId,
+        attempt: deepenAttempts,
         model: response.model,
+        responseId: response.responseId,
         chineseCharCount: quality.chineseCharCount,
         customerQuestionCount: quality.customerQuestionCount,
         missingSignals: quality.missingSignals,
-        forbiddenPhrases: quality.forbiddenPhrases
+        forbiddenPhrases: quality.forbiddenPhrases,
+        failedReasons: quality.failedReasons
       });
       response = await callResponsesApi({
         responsesUrl: resolved.responsesUrl,
@@ -598,18 +661,32 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         systemPrompt,
         userPrompt: buildGptProRetryDeepenPrompt({
           originalUserPrompt: userPrompt,
-          firstReplyMarkdown: normalized.replyMarkdown,
+          firstReplyMarkdown: normalized?.replyMarkdown ?? response.text,
           quality
         }),
         signal: controller.signal
       });
-      normalized = normalizeGptOutput({
-        rawText: response.text,
-        originalInput: input.input,
-        fallbackCategory: input.category ?? "",
-        strictReply: true
-      });
-      quality = assessGptProResponseQuality(normalized.replyMarkdown);
+
+      try {
+        normalized = normalizeGptOutput({
+          rawText: response.text,
+          originalInput: input.input,
+          fallbackCategory: input.category ?? "",
+          strictReply: true
+        });
+        quality = assessGptProResponseQuality(normalized.replyMarkdown);
+      } catch (error) {
+        normalized = null;
+        quality = buildMissingReplyQuality(response.text);
+        logger.warn("enterprise_admin_ingest.openai_deepen_missing_reply", {
+          requestId: input.requestId,
+          attempt: deepenAttempts,
+          model: response.model,
+          responseId: response.responseId,
+          message: error instanceof Error ? error.message : String(error),
+          failedReasons: quality.failedReasons
+        });
+      }
     }
 
     if (!quality.ok) {
@@ -619,19 +696,56 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       );
     }
 
+    if (!normalized) {
+      throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "GPT-5.5 未返回可保存的 replyMarkdown。");
+    }
+
+    if (!response.responseId) {
+      throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 responseId，不能证明 GPT-5.5 调用。");
+    }
+
+    if (!response.model.toLowerCase().includes("gpt-5.5")) {
+      throw new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", `实际返回模型不是 GPT-5.5：${response.model}`);
+    }
+
+    const gptProof: GptCallProof = {
+      provider: "openai",
+      endpoint: "/responses",
+      requestedModel: resolved.model,
+      actualModel: response.model,
+      responseId: response.responseId,
+      fallback: false,
+      requestTested: true,
+      qualityPassed: true,
+      deepenAttempts,
+      createdAt: response.createdAt,
+      usage: response.usage
+    };
+
     logger.info("enterprise_admin_ingest.openai_success", {
       requestId: input.requestId,
       model: response.model,
+      requestedModel: resolved.model,
+      responseId: response.responseId,
       modelMode: resolved.modelMode,
       durationMs: Date.now() - startedAt,
       responsesApi: true,
       proQualityChineseChars: quality.chineseCharCount,
-      proQualityQuestions: quality.customerQuestionCount
+      proQualityQuestions: quality.customerQuestionCount,
+      outputTokens: response.usage.outputTokens,
+      reasoningTokens: response.usage.reasoningTokens,
+      deepenAttempts
     });
 
     return {
       provider: "openai",
       model: response.model,
+      requestedModel: resolved.model,
+      actualModel: response.model,
+      responseId: response.responseId,
+      createdAt: response.createdAt,
+      usage: response.usage,
+      gptProof,
       modelDisplayName: resolved.selectedModelLabel,
       modelMode: resolved.modelMode,
       fallback: false,

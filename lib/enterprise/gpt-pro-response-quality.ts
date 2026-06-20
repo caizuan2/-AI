@@ -35,7 +35,7 @@ const REQUIRED_SIGNALS: Array<{ key: string; label: string; pattern: RegExp }> =
   {
     key: "userClientCallPlan",
     label: "用户端调用策略",
-    pattern: /用户端调用策略|用户端调用|用户提问.*检索|检索知识库.*GPT/
+    pattern: /用户端调用策略|用户端调用|用户提问.*检索|检索知识库.*GPT|知识库检索\s*\+\s*GPT/
   },
   {
     key: "complianceRisk",
@@ -56,6 +56,9 @@ export interface GptProResponseQualityReport {
   missingSignals: string[];
   forbiddenPhrases: string[];
   failedReasons: string[];
+  hasTable: boolean;
+  hasCopyableBlockSignal: boolean;
+  hasUserClientRetrievalLogic: boolean;
 }
 
 export function countChineseCharacters(text: string) {
@@ -73,14 +76,21 @@ export function assessGptProResponseQuality(replyMarkdown: string): GptProRespon
   const text = replyMarkdown.trim();
   const chineseCharCount = countChineseCharacters(text);
   const customerQuestionCount = countCustomerQuestions(text);
+  const hasTable = /\|[^\n]+\|\s*\n\s*\|[-:\s|]+\|/.test(text);
+  const hasCopyableBlockSignal = /(^|\n)>\s+|↓|流程[:：]|建议话术[:：]|标准话术[:：]|回答公式[:：]/.test(text);
+  const hasUserClientRetrievalLogic = /用户端[^。；\n]*(不是|不能)[^。；\n]*(背诵|照搬|直接输出|原文)/.test(text)
+    && /(知识库检索|检索知识|检索相关知识片段|RAG)[^。；\n]*(GPT|大模型|二次思考|二次推理|自然回答)/.test(text);
   const missingSignals = REQUIRED_SIGNALS
     .filter((signal) => !signal.pattern.test(text))
     .map((signal) => signal.label);
   const forbiddenPhrases = GPT_PRO_FORBIDDEN_PHRASES.filter((phrase) => text.includes(phrase));
   const failedReasons = [
-    chineseCharCount < 2500 ? `中文字符数不足 2500，当前 ${chineseCharCount}` : "",
-    customerQuestionCount < 5 ? `客户问题/问答方向少于 5 个，当前 ${customerQuestionCount}` : "",
+    chineseCharCount < 3500 ? `中文字符数不足 3500，当前 ${chineseCharCount}` : "",
+    customerQuestionCount < 7 ? `客户问题/问答方向少于 7 个，当前 ${customerQuestionCount}` : "",
     missingSignals.length > 0 ? `缺少关键层次：${missingSignals.join("、")}` : "",
+    hasTable ? "" : "缺少 Markdown 表格",
+    hasCopyableBlockSignal ? "" : "缺少流程块、引用块或可复制话术块",
+    hasUserClientRetrievalLogic ? "" : "缺少“知识库检索 + GPT 二次思考 + 自然回答”的用户端调用逻辑",
     forbiddenPhrases.length > 0 ? `包含禁用表达：${forbiddenPhrases.join("、")}` : ""
   ].filter(Boolean);
 
@@ -90,6 +100,9 @@ export function assessGptProResponseQuality(replyMarkdown: string): GptProRespon
     customerQuestionCount,
     missingSignals,
     forbiddenPhrases,
-    failedReasons
+    failedReasons,
+    hasTable,
+    hasCopyableBlockSignal,
+    hasUserClientRetrievalLogic
   };
 }

@@ -929,7 +929,8 @@ export function IngestModeToggle() {
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: result.model ?? currentModelLabel,
           provider: result.provider,
-          saveSuggestion: result.saveSuggestion
+          saveSuggestion: result.saveSuggestion,
+          gptProof: result.gptProof
         }
       ]);
       pushNotification({

@@ -19,6 +19,7 @@ import type {
   GptSaveRecommendation
 } from "@/lib/enterprise/gpt-knowledge-draft";
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -111,6 +112,12 @@ interface ApiEnvelope<T> {
 interface GptIngestResponse {
   provider: "openai";
   model: string;
+  requestedModel?: string;
+  actualModel?: string;
+  responseId?: string;
+  createdAt?: string;
+  usage?: OpenAIGptUsage;
+  gptProof?: GptCallProof;
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
   fallback?: false;
@@ -361,7 +368,11 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
     model: readString(record.model) || "knowledge-core",
     modelMode: record.modelMode === "fixed" ? "fixed" : record.modelMode === "highest" ? "highest" : undefined,
     replyMarkdown: readString(record.replyMarkdown) || undefined,
-    fallbackUsed: Boolean(record.fallbackUsed)
+    fallbackUsed: Boolean(record.fallbackUsed),
+    gptProof: isPlainRecord(record.gptProof) ? record.gptProof as unknown as GptCallProof : undefined,
+    actualModel: readString(record.actualModel) || undefined,
+    responseId: readString(record.responseId) || undefined,
+    usage: isPlainRecord(record.usage) ? record.usage as unknown as OpenAIGptUsage : undefined
   };
 }
 
@@ -440,6 +451,10 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     providerUsed: data.provider,
     model: data.modelDisplayName || data.model,
     sourceModel: data.model,
+    actualModel: data.actualModel || data.model,
+    responseId: data.responseId,
+    usage: data.usage,
+    gptProof: data.gptProof,
     generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
@@ -532,6 +547,11 @@ export async function sendCoreIngest(input: {
     }
 
     const data = payload.data;
+
+    if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || !data.responseId) {
+      throw new Error("GPT-5.5 未返回有效调用证据，本次不插入成功回复。");
+    }
+
     const draft = gptResponseToDraft(data, input.text, input.agent);
 
     draft.jobId = draft.jobId ?? `gpt-${Date.now()}`;
@@ -552,6 +572,10 @@ export async function sendCoreIngest(input: {
       preview: false,
       provider: draft.providerUsed ?? "openai",
       model: data.modelDisplayName ?? selectedModelLabel,
+      actualModel: data.actualModel ?? data.model,
+      responseId: data.responseId,
+      usage: data.usage,
+      gptProof: data.gptProof,
       modelMode: draft.modelMode,
       replyMarkdown: draft.replyMarkdown,
       saveSuggestion: draft.recommendation === "建议入库",

@@ -2,6 +2,7 @@ import type {
   AdminIngestPlatform,
   AdminIngestSyncTarget
 } from "@/lib/enterprise/admin-ingest-app-config";
+import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 
 export type IngestChatAgentTone = "green" | "blue" | "amber" | "rose" | "slate";
@@ -74,6 +75,7 @@ export interface IngestChatMessage {
   model?: string;
   provider?: string;
   saveSuggestion?: boolean;
+  gptProof?: GptCallProof;
 }
 
 export interface IngestKnowledgeDraft {
@@ -107,6 +109,10 @@ export interface IngestKnowledgeDraft {
   modelMode?: "highest" | "fixed";
   replyMarkdown?: string;
   fallbackUsed?: boolean;
+  gptProof?: GptCallProof;
+  actualModel?: string;
+  responseId?: string;
+  usage?: OpenAIGptUsage;
 }
 
 export interface IngestTrainingRecord {
