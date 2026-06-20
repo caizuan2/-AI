@@ -69,12 +69,28 @@ async function getAssignedRoles(userId: string): Promise<AppRole[]> {
   }
 }
 
+async function getBaseUserRole(userId: string): Promise<AppRole | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: {
+      role: true
+    }
+  });
+
+  return normalizeAppRole(user?.role);
+}
+
 export async function requireAuth() {
   return requireUser();
 }
 
 export async function getUserRoles(user: Pick<AppUser, "id" | "phone">): Promise<AppRole[]> {
   const roles = new Set<AppRole>(["user"]);
+  const baseRole = await getBaseUserRole(user.id);
+
+  if (baseRole) {
+    roles.add(baseRole);
+  }
 
   if (isAdminUser(user)) {
     roles.add("super_admin");
