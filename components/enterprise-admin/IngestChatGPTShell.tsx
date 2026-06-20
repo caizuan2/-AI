@@ -756,6 +756,7 @@ export function IngestChatGPTShell({
         throw new Error("GPT-5.5 未返回有效调用证据，本次不插入成功回复。");
       }
 
+      setErrorMessage("");
       const knowledgeDraft = data.knowledgeDraft;
       const nextDraft = mapDraft({
         jobId: `gpt-${Date.now()}`,

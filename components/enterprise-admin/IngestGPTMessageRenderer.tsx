@@ -7,7 +7,7 @@ export function IngestGPTMessageRenderer({ content }: { content: string }) {
   const segments = content.split(/```/g);
 
   return (
-    <article className="max-w-[820px] space-y-5 text-[15px] leading-8 text-[#2f2f2f]">
+    <article className="max-w-[840px] space-y-4 text-[15px] leading-[1.78] text-[#2f2f2f]">
       {segments.map((segment, index) => {
         const key = `${index}-${segment.slice(0, 12)}`;
 
@@ -15,7 +15,7 @@ export function IngestGPTMessageRenderer({ content }: { content: string }) {
           const code = segment.replace(/^\w+\n/, "").trim();
 
           return (
-            <CopyableBlock key={key} copyText={code} label="代码 / 流程块">
+            <CopyableBlock key={key} copyText={code}>
               <pre className="overflow-x-auto whitespace-pre-wrap text-[13px] leading-6 text-[#303030]">
                 <code>{code}</code>
               </pre>
@@ -38,6 +38,7 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
     const line = lines[index] ?? "";
     const trimmed = line.trim();
     const key = `${keyPrefix}-${index}`;
+    const heading = parseHeading(trimmed, lines, index);
 
     if (!trimmed) {
       nodes.push(<div key={key} className="h-1" />);
@@ -63,53 +64,30 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
       continue;
     }
 
-    if (trimmed.startsWith("### ")) {
-      nodes.push(<SectionHeading key={key} level={3} text={trimmed.slice(4)} />);
+    if (heading) {
+      nodes.push(<SectionHeading key={key} level={heading.level} text={heading.text} withRule={heading.withRule} />);
       index += 1;
       continue;
     }
 
     if (isFlowStart(lines, index)) {
-      const flowLines: string[] = [];
-
-      while (index < lines.length && lines[index]?.trim()) {
-        const current = lines[index]?.trim() ?? "";
-
-        if (flowLines.length > 0 && isHeading(current)) {
-          break;
-        }
-
-        flowLines.push(current);
-        index += 1;
-
-        if (flowLines.length > 1 && !current.includes("↓") && !isFlowLabel(current)) {
-          break;
-        }
-      }
+      const { nextIndex, flowLines } = collectFlowLines(lines, index);
+      index = nextIndex;
 
       nodes.push(
-        <CopyableBlock key={key} copyText={flowLines.join("\n")} label={isFlowLabel(flowLines[0] ?? "") ? flowLines[0] : "流程卡片"}>
+        <CopyableBlock key={key} copyText={flowLines.join("\n")}>
           <div className="space-y-2 text-[14px] leading-7 text-[#333]">
             {flowLines.map((flowLine, flowIndex) => (
-              <p key={`${key}-flow-${flowIndex}`} className={flowLine === "↓" ? "text-center text-[#9a9a94]" : "whitespace-pre-wrap"}>
+              <p
+                key={`${key}-flow-${flowIndex}`}
+                className={flowLine === "↓" ? "text-center text-[#9a9a94]" : isFlowLabel(flowLine) ? "font-semibold text-[#202020]" : "whitespace-pre-wrap"}
+              >
                 {renderInlineMarkdown(flowLine)}
               </p>
             ))}
           </div>
         </CopyableBlock>
       );
-      continue;
-    }
-
-    if (trimmed.startsWith("## ")) {
-      nodes.push(<SectionHeading key={key} level={2} text={trimmed.slice(3)} />);
-      index += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith("# ")) {
-      nodes.push(<SectionHeading key={key} level={1} text={trimmed.slice(2)} />);
-      index += 1;
       continue;
     }
 
@@ -127,7 +105,7 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
       }
 
       nodes.push(
-        <CopyableBlock key={key} copyText={quoteLines.join("\n")} label="建议话术">
+        <CopyableBlock key={key} copyText={quoteLines.join("\n")}>
           <div className="border-l-4 border-[#d4d4d0] pl-4 text-[#444]">
             {quoteLines.map((quote, quoteIndex) => (
               <p key={`${key}-quote-${quoteIndex}`} className="my-1.5 whitespace-pre-wrap">
@@ -171,20 +149,26 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
   return nodes;
 }
 
-function SectionHeading({ level, text }: { level: 1 | 2 | 3; text: string }) {
+function SectionHeading({
+  level,
+  text,
+  withRule
+}: {
+  level: 1 | 2 | 3;
+  text: string;
+  withRule?: boolean;
+}) {
   const className = level === 1
-    ? "pt-2 text-[23px] font-semibold leading-8 text-[#202020]"
+    ? "mt-8 text-[25px] font-bold leading-9 text-[#202020]"
     : level === 2
-      ? "pt-4 text-[20px] font-semibold leading-8 text-[#202020]"
-      : "pt-3 text-[17px] font-semibold leading-7 text-[#242424]";
+      ? "mt-6 text-[20px] font-semibold leading-8 text-[#202020]"
+      : "mt-4 text-[17px] font-semibold leading-7 text-[#242424]";
   const HeadingTag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
 
   return (
-    <div className="group flex items-start justify-between gap-3">
+    <div>
       <HeadingTag className={className}>{renderInlineMarkdown(text)}</HeadingTag>
-      {isCopyableSectionTitle(text) ? (
-        <CopyButton copyText={text} className="mt-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
-      ) : null}
+      {withRule ? <div className="mt-3 h-px w-full bg-[#ecece9]" /> : null}
     </div>
   );
 }
@@ -196,12 +180,51 @@ function isTableStart(lines: string[], index: number) {
   return current.startsWith("|") && next.startsWith("|") && /^[-:\s|]+$/.test(next);
 }
 
+function parseHeading(value: string, lines: string[] = [], index = 0): { level: 1 | 2 | 3; text: string; withRule?: boolean } | null {
+  const markdown = value.match(/^(#{1,3})\s+(.+)$/);
+
+  if (markdown) {
+    const title = markdown[2].trim();
+    const looksLikeMajorSection = /^[一二三四五六七八九十]+[、.．]\s*\S+/.test(title);
+    const level = markdown[1].length === 1 || (markdown[1].length === 2 && looksLikeMajorSection) ? 1 : markdown[1].length === 2 ? 2 : 3;
+
+    return { level, text: title, withRule: level === 1 };
+  }
+
+  if (/^[一二三四五六七八九十]+[、.．]\s*\S+/.test(value)) {
+    return { level: 1, text: value, withRule: true };
+  }
+
+  const qHeading = value.match(/^(Q\d+)\s*[：:]\s*(.+)$/i);
+
+  if (qHeading) {
+    return { level: 3, text: `${qHeading[1]}：${qHeading[2].trim()}` };
+  }
+
+  const numbered = value.match(/^(\d+)[.．、]\s+(.+)$/);
+
+  if (numbered && isNumericSectionHeading(numbered[2], lines, index)) {
+    return { level: 2, text: value };
+  }
+
+  return null;
+}
+
 function isHeading(value: string) {
-  return /^#{1,3}\s+/.test(value);
+  return parseHeading(value) !== null;
+}
+
+function isNumericSectionHeading(text: string, lines: string[], index: number) {
+  const body = text.replace(/\*\*/g, "").trim();
+  const previous = lines[index - 1]?.trim() ?? "";
+  const next = lines[index + 1]?.trim() ?? "";
+  const hasSiblingListItem = /^(\d+)[.．、]\s+/.test(previous) || /^(\d+)[.．、]\s+/.test(next);
+
+  return body.length <= 30 && !/[。；;，,]$/.test(body) && !body.includes("：") && !hasSiblingListItem;
 }
 
 function isFlowLabel(value: string) {
-  return /^(流程|回答公式|建议话术|用户端调用公式|用户端调用策略|SOP|标准话术)[:：]/.test(value);
+  return /^(流程|流程块|回答公式|建议话术|用户端调用公式|用户端调用策略|SOP|标准话术|优化成)[:：]/.test(value);
 }
 
 function isFlowStart(lines: string[], index: number) {
@@ -216,8 +239,49 @@ function isFlowStart(lines: string[], index: number) {
   return isFlowLabel(current) || current.includes("↓") || (nearby.includes("↓") && !isHeading(next));
 }
 
-function isCopyableSectionTitle(value: string) {
-  return /可入库|用户端|标准话术|SOP|回答风格|建议话术|流程|公式|草稿/.test(value);
+function collectFlowLines(lines: string[], startIndex: number) {
+  const flowLines: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = lines[index]?.trim() ?? "";
+
+    if (!current) {
+      if (flowLines.length > 0) {
+        const first = flowLines[0] ?? "";
+        const nextNonEmpty = lines.slice(index + 1).find((line) => line.trim())?.trim() ?? "";
+
+        if (flowLines.length === 1 && isFlowLabel(first) && nextNonEmpty && !isHeading(nextNonEmpty) && !isTableStart(lines, index + 1)) {
+          index += 1;
+          continue;
+        }
+
+        index += 1;
+        break;
+      }
+
+      index += 1;
+      continue;
+    }
+
+    if (flowLines.length > 0 && (isHeading(current) || isTableStart(lines, index))) {
+      break;
+    }
+
+    flowLines.push(current);
+    index += 1;
+
+    const next = lines[index]?.trim() ?? "";
+
+    if (flowLines.length > 1 && !current.includes("↓") && !next.includes("↓") && !isFlowLabel(current)) {
+      break;
+    }
+  }
+
+  return {
+    flowLines: flowLines.length ? flowLines : [lines[startIndex]?.trim() ?? ""],
+    nextIndex: index
+  };
 }
 
 function MarkdownTable({ lines }: { lines: string[] }) {
@@ -233,13 +297,20 @@ function MarkdownTable({ lines }: { lines: string[] }) {
   }
 
   return (
-    <CopyableBlock copyText={lines.join("\n")} label="表格">
-      <div className="overflow-x-auto rounded-2xl border border-[#e2e2df] bg-white">
+    <div className="group relative my-5">
+      <CopyButton copyText={lines.join("\n")} className="absolute right-2 top-2 z-10 opacity-100 sm:opacity-0 sm:group-hover:opacity-100" />
+      <div className="overflow-x-auto rounded-2xl border border-[#dededb] bg-white shadow-[0_10px_30px_rgba(15,23,42,0.035)]">
         <table className="min-w-full border-separate border-spacing-0 text-left text-[13px]">
           <thead className="bg-[#f5f5f3] text-[#4b4b47]">
             <tr>
               {headers.map((header, index) => (
-                <th key={`${header}-${index}`} className="border-b border-[#e2e2df] px-4 py-3 font-semibold first:rounded-tl-2xl last:rounded-tr-2xl">
+                <th
+                  key={`${header}-${index}`}
+                  className={[
+                    "border-b border-[#e2e2df] px-4 py-3 font-semibold first:rounded-tl-2xl last:rounded-tr-2xl",
+                    index === headers.length - 1 ? "pr-12" : ""
+                  ].join(" ")}
+                >
                   {renderInlineMarkdown(header)}
                 </th>
               ))}
@@ -258,25 +329,20 @@ function MarkdownTable({ lines }: { lines: string[] }) {
           </tbody>
         </table>
       </div>
-    </CopyableBlock>
+    </div>
   );
 }
 
 function CopyableBlock({
   children,
-  copyText,
-  label
+  copyText
 }: {
   children: ReactNode;
   copyText: string;
-  label: string;
 }) {
   return (
-    <section className="group relative rounded-[22px] border border-[#e6e6e3] bg-[#f7f7f5] p-4 shadow-[0_8px_26px_rgba(15,23,42,0.04)]">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-[#777] shadow-sm">{label}</span>
-        <CopyButton copyText={copyText} />
-      </div>
+    <section className="group relative my-5 rounded-[22px] border border-[#eeeeeb] bg-[#f7f7f5] p-4 pr-12 shadow-[0_8px_26px_rgba(15,23,42,0.035)]">
+      <CopyButton copyText={copyText} className="absolute right-3 top-3" />
       {children}
     </section>
   );
@@ -313,17 +379,22 @@ function CopyButton({
   }
 
   return (
-    <button
-      type="button"
-      onClick={() => void handleCopy()}
-      className={[
-        "inline-flex h-7 shrink-0 items-center gap-1 rounded-full bg-white px-2.5 text-[11px] font-semibold text-[#666] shadow-sm transition hover:bg-[#eeeeeb] hover:text-[#202020]",
-        className
-      ].join(" ")}
-    >
-      {copied ? <Check className="h-3 w-3 text-[#128246]" aria-hidden="true" /> : <Copy className="h-3 w-3" aria-hidden="true" />}
-      {copied ? "已复制" : "复制"}
-    </button>
+    <span className={["relative inline-flex", className].join(" ")}>
+      <button
+        type="button"
+        onClick={() => void handleCopy()}
+        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e6e6e3] bg-white/95 text-[#666] shadow-sm transition hover:bg-[#eeeeeb] hover:text-[#202020]"
+        aria-label={copied ? "已复制" : "复制内容"}
+        title={copied ? "已复制" : "复制"}
+      >
+        {copied ? <Check className="h-3.5 w-3.5 text-[#128246]" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+      </button>
+      {copied ? (
+        <span className="pointer-events-none absolute right-0 top-9 rounded-full bg-[#202020] px-2 py-1 text-[11px] font-semibold text-white shadow-lg">
+          已复制
+        </span>
+      ) : null}
+    </span>
   );
 }
 

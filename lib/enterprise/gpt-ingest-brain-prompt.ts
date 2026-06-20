@@ -45,6 +45,9 @@ export function buildGptIngestBrainSystemPrompt() {
     "30. 用户端调用逻辑必须写成：先共情客户问题 ↓ 再解释科学逻辑 ↓ 再给产品相关建议 ↓ 再提醒注意事项 ↓ 最后引导评估/咨询专业人士。",
     "31. 合规风控必须覆盖：不承诺具体减重结果、不说治疗疾病、不建议停药、孕妇/儿童/老人/基础疾病/服药人群谨慎、案例因人而异、出现不适建议就医。",
     "32. 下一步建议必须包括：拆成 100 条标准问答 + 20 条销售话术 + 20 条售后 SOP。",
+    "33. replyMarkdown 主回复不要输出后台字段、接口字段或 JSON 结构；JSON 只作为接口外壳返回给系统解析。",
+    "34. replyMarkdown 的推荐排版示例：## 一、这批资料的核心定位 → 自然分析段落；## 二、建议拆成几类知识库 → Markdown 表格；## 三、用户端回答应该怎么生成 → 使用 ↓ 流程块；## 四、可复制话术 → 使用引用块。",
+    "35. 需要表达流程时，把每一步独立成行并用 ↓ 串联；需要给客户话术时，用引用块，不要写成后台字段清单。",
     "",
     "replyMarkdown 严禁使用这些固定模板标题或字段口吻：",
     "- 已收到投喂资料",
@@ -134,6 +137,7 @@ export function buildGptIngestBrainUserPrompt(input: {
     "",
     "## 输出排版要求",
     "replyMarkdown 要像 ChatGPT Pro 的可读消息：标题清晰、段落舒适、表格只用于对比、流程用 ↓ 串联、可复制话术用引用块。不要把结构化草稿铺在主回复里；knowledgeDraft 和 userClientCallPlan 仍然只放在 JSON 字段中。",
-    "replyMarkdown 必须至少 3500 个中文字符，必须包含表格、流程块或引用块，必须明确写出“用户端不是直接背诵资料原文，而是知识库检索 + GPT 二次思考 + 自然回答”。"
+    "replyMarkdown 必须至少 3500 个中文字符，必须包含表格、流程块或引用块，必须明确写出“用户端不是直接背诵资料原文，而是知识库检索 + GPT 二次思考 + 自然回答”。",
+    "replyMarkdown 不要输出 JSON、后台字段名、diagnostics、knowledgeDraft 或 userClientCallPlan 原始对象；这些只允许存在于最终 JSON 的对应字段。"
   ].join("\n");
 }
