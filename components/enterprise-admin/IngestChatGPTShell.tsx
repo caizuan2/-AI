@@ -1301,18 +1301,18 @@ export function IngestChatGPTShell({
                   <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
                     <div className={[
                       "text-sm leading-6",
-                      isStructuredResult ? "w-full max-w-full" : "max-w-[82%]",
+                      isStructuredResult || message.role === "assistant" ? "w-full max-w-full" : "max-w-[82%]",
                       message.role === "user"
                         ? "rounded-[24px] bg-[#202020] px-4 py-3 text-white shadow-sm"
                         : isStructuredResult
                           ? "px-1 py-2 text-[#303030]"
-                          : "rounded-[24px] border border-[#ececea] bg-[#f8f8f7] px-4 py-3 text-[#303030] shadow-sm"
+                          : "px-1 py-3 text-[#303030]"
                     ].join(" ")}>
                       {message.role === "assistant" ? (
                         <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
                           <IngestAgentAvatar profile={messageProfile} size="xs" />
                           <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
-                          <span className="rounded-full bg-white px-2 py-0.5 text-[#888] shadow-sm">{message.model ?? selectedModelLabel}</span>
+                          <span className="rounded-full bg-[#f4f4f2] px-2 py-0.5 text-[#888]">{message.model ?? selectedModelLabel}</span>
                         </div>
                       ) : null}
                       {message.role === "assistant" ? (
@@ -1346,7 +1346,7 @@ export function IngestChatGPTShell({
                       ) : null}
                       {message.role === "assistant" && (message.model || message.saveSuggestion !== undefined) ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                          {message.model ? <span className="rounded-full bg-white px-2 py-1 font-semibold text-[#555] shadow-sm">模型：{message.model}</span> : null}
+                          {message.model ? <span className="rounded-full bg-[#f4f4f2] px-2 py-1 font-semibold text-[#555]">模型：{message.model}</span> : null}
                           {message.provider === "local-fallback" ? (
                             <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
                           ) : null}
