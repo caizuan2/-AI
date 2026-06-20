@@ -23,8 +23,6 @@ import {
   Paperclip,
   Plug,
   Plus,
-  Copy,
-  Pencil,
   Save,
   Scissors,
   Search,
@@ -42,6 +40,13 @@ import { IngestGPTModelPicker } from "@/components/enterprise-admin/IngestGPTMod
 import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResizableSidebar";
 import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
 import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
+import { IngestGPTMessageRenderer } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
+import { IngestKnowledgeDraftActions } from "@/components/enterprise-admin/IngestKnowledgeDraftActions";
+import {
+  buildIngestUserMessageCopyText,
+  IngestChatGPTFileMessage
+} from "@/components/enterprise-admin/IngestChatGPTFileMessage";
+import { IngestMessageQuickActions } from "@/components/enterprise-admin/IngestMessageQuickActions";
 import {
   ingestPrimaryRailFeatures,
   type IngestRailKey
@@ -187,6 +192,13 @@ interface AdminIngestDraftResponse {
   model: string;
   fallbackUsed: boolean;
   saveStatus: "pending" | "saved" | "rejected";
+  scenarios?: string[];
+  sourceMaterials?: string[];
+  missingFields?: string[];
+  suggestedQuestions?: string[];
+  saveRecommendation?: string;
+  sourceModel?: string;
+  generatedBy?: string;
 }
 
 interface AdminTrainingRecordResponse {
@@ -208,6 +220,21 @@ interface AdminGptIngestResponse {
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
   replyMarkdown: string;
+  knowledgeDraft?: {
+    title: string;
+    summary: string;
+    category: string;
+    tags: string[];
+    standardQuestion: string;
+    standardAnswer: string;
+    scenarios?: string[];
+    sourceMaterials?: string[];
+    saveRecommendation?: string;
+    missingFields?: string[];
+    trainingScore?: number;
+  };
+  suggestedQuestions?: string[];
+  saveRecommendation?: string;
   structured: {
     title?: string;
     category?: string;
@@ -284,6 +311,13 @@ function mapDraft(draft: AdminIngestDraftResponse): IngestKnowledgeDraft {
     saveStatus: toSaveStatus(draft.saveStatus),
     providerUsed: draft.providerUsed,
     model: draft.model,
+    scenarios: draft.scenarios,
+    sourceMaterials: draft.sourceMaterials,
+    missingFields: draft.missingFields,
+    suggestedQuestions: draft.suggestedQuestions,
+    saveRecommendation: draft.saveRecommendation,
+    sourceModel: draft.sourceModel ?? draft.model,
+    generatedBy: draft.generatedBy ?? draft.providerUsed,
     fallbackUsed: draft.fallbackUsed
   };
 }
@@ -320,6 +354,13 @@ function toStructuredPayload(draft: IngestKnowledgeDraft) {
       : [{ q: draft.standardQuestion, a: draft.standardAnswer }],
     confidence: draft.trainingScore,
     should_save: draft.recommendation !== "暂不入库",
+    scenarios: draft.scenarios ?? [],
+    sourceMaterials: draft.sourceMaterials ?? [],
+    missingFields: draft.missingFields ?? [],
+    suggestedQuestions: draft.suggestedQuestions ?? [],
+    saveRecommendation: draft.saveRecommendation ?? draft.recommendation,
+    sourceModel: draft.sourceModel ?? draft.model ?? "unknown",
+    generatedBy: draft.generatedBy ?? draft.providerUsed ?? "unknown",
     reason: draft.recommendation,
     importance: Math.min(5, Math.max(1, Math.round(draft.trainingScore / 20))),
     clarityScore: Math.min(5, Math.max(1, Math.round(draft.trainingScore / 20))),
@@ -645,24 +686,13 @@ export function IngestChatGPTShell({
         role: "user",
         content: value || "附件投喂",
         time: now,
+        attachments: uploadedFiles.map((file) => ({ ...file, status: "attached" as const })),
         agentId: activeAgent.id,
         expertId: activeAgent.expertId ?? null,
         agentName: activeAgent.name,
         expertName: activeAgent.expertId ? activeAgent.name : null,
         model: selectedModelLabel,
         provider: "admin_ingest"
-      },
-      {
-        id: `assistant-${Date.now()}`,
-        role: "assistant",
-        content: "AI 正在解析投喂内容，并准备生成结构化知识。",
-        time: now,
-        agentId: activeAgent.id,
-        expertId: activeAgent.expertId ?? null,
-        agentName: activeAgent.name,
-        expertName: activeAgent.expertId ? activeAgent.name : null,
-        model: selectedModelLabel,
-        provider: "openai"
       }
     ]);
 
@@ -691,24 +721,33 @@ export function IngestChatGPTShell({
           gptTierLabel: gptSelection.tierLabel,
           gptVersion: gptSelection.version,
           selectedModelLabel: gptSelection.displayName,
-          modelDisplayName: gptSelection.displayName
+          modelDisplayName: gptSelection.displayName,
+          attachments: uploadedFiles.map((file) => ({ ...file, status: "attached" }))
         })
       });
       const data = await readApiData<AdminGptIngestResponse>(response);
+      const knowledgeDraft = data.knowledgeDraft;
       const nextDraft = mapDraft({
         jobId: `gpt-${Date.now()}`,
-        title: data.structured.title || "GPT 结构化知识",
-        category: data.structured.category || activeAgent.role,
-        tags: data.structured.tags ?? [],
-        summary: data.structured.summary || data.structured.answer || value,
+        title: knowledgeDraft?.title || data.structured.title || "GPT 结构化知识",
+        category: knowledgeDraft?.category || data.structured.category || activeAgent.role,
+        tags: knowledgeDraft?.tags ?? data.structured.tags ?? [],
+        summary: knowledgeDraft?.summary || data.structured.summary || data.structured.answer || value,
         qa_pairs: [{
-          q: data.structured.question || `关于“${data.structured.title || value}”，应该如何处理？`,
-          a: data.structured.answer || data.structured.summary || value
+          q: knowledgeDraft?.standardQuestion || data.structured.question || `关于“${data.structured.title || value}”，应该如何处理？`,
+          a: knowledgeDraft?.standardAnswer || data.structured.answer || data.structured.summary || value
         }],
-        confidence: data.structured.confidence ?? 78,
-        should_save: data.structured.saveSuggestion ?? true,
+        confidence: knowledgeDraft?.trainingScore ?? data.structured.confidence ?? 78,
+        should_save: data.structured.saveSuggestion ?? data.saveRecommendation !== "暂缓入库",
         providerUsed: data.provider,
         model: data.modelDisplayName || data.model,
+        scenarios: knowledgeDraft?.scenarios,
+        sourceMaterials: knowledgeDraft?.sourceMaterials,
+        missingFields: knowledgeDraft?.missingFields,
+        suggestedQuestions: data.suggestedQuestions,
+        saveRecommendation: data.saveRecommendation ?? knowledgeDraft?.saveRecommendation,
+        sourceModel: data.model,
+        generatedBy: data.provider,
         fallbackUsed: false,
         saveStatus: "pending"
       });
@@ -837,6 +876,14 @@ export function IngestChatGPTShell({
     if (result && !result.preview) {
       showToast("GPT 已重新生成", result.draft.title, "success");
     }
+  }
+
+  function handleContinueOptimize() {
+    const missing = draft.missingFields?.length ? `，重点补齐：${draft.missingFields.join("、")}` : "";
+    const nextInput = `请基于上一轮投喂结果继续优化，让内容更适合「${activeAgent.role}」使用${missing}，并重新生成更清晰的标准问答、标签和入库建议。`;
+
+    setInput(nextInput);
+    setNoticeMessage("已把继续优化指令放入输入框，可直接发送给 GPT。");
   }
 
   function openDrawer(view: "draft" | "records", options: { toggle?: boolean } = {}) {
@@ -1226,12 +1273,30 @@ export function IngestChatGPTShell({
                   });
                   const messageAgentLabel = message.agentName ?? agentLabelById.get(message.agentId ?? activeAgent.id) ?? messageProfile.agentName;
 
+                  if (message.role === "user" && message.attachments?.length) {
+                    return (
+                      <div key={message.id} className="flex justify-end">
+                        <IngestChatGPTFileMessage
+                          message={message}
+                          agentLabel={messageAgentLabel}
+                          modelLabel={message.model ?? selectedModelLabel}
+                          onCopy={() => void handleCopyMessage(buildIngestUserMessageCopyText(message))}
+                          onEdit={() => handleEditMessage(message)}
+                        />
+                      </div>
+                    );
+                  }
+
                   return (
                   <div key={message.id} className={message.role === "user" ? "flex justify-end" : "flex justify-start"}>
                     <div className={[
-                      "rounded-[24px] px-4 py-3 text-sm leading-6 shadow-sm",
+                      "text-sm leading-6",
                       isStructuredResult ? "w-full max-w-full" : "max-w-[82%]",
-                      message.role === "user" ? "bg-[#202020] text-white" : "border border-[#ececea] bg-[#f8f8f7] text-[#303030]"
+                      message.role === "user"
+                        ? "rounded-[24px] bg-[#202020] px-4 py-3 text-white shadow-sm"
+                        : isStructuredResult
+                          ? "px-1 py-2 text-[#303030]"
+                          : "rounded-[24px] border border-[#ececea] bg-[#f8f8f7] px-4 py-3 text-[#303030] shadow-sm"
                     ].join(" ")}>
                       {message.role === "assistant" ? (
                         <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
@@ -1241,7 +1306,7 @@ export function IngestChatGPTShell({
                         </div>
                       ) : null}
                       {message.role === "assistant" ? (
-                        <MarkdownOutput content={message.content} />
+                        <IngestGPTMessageRenderer content={message.content} />
                       ) : (
                         <div>
                           {message.attachments?.length ? <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">投喂说明</p> : null}
@@ -1262,22 +1327,11 @@ export function IngestChatGPTShell({
                       ) : null}
                       {message.role === "user" ? (
                         <div className="mt-3 flex flex-wrap justify-end gap-2">
-                          <button
-                            type="button"
-                            onClick={() => void handleCopyMessage(message.content)}
-                            className="inline-flex h-7 items-center gap-1 rounded-full bg-white/10 px-2.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/15 hover:text-white"
-                          >
-                            <Copy className="h-3 w-3" aria-hidden="true" />
-                            复制
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleEditMessage(message)}
-                            className="inline-flex h-7 items-center gap-1 rounded-full bg-white/10 px-2.5 text-[11px] font-semibold text-white/80 transition hover:bg-white/15 hover:text-white"
-                          >
-                            <Pencil className="h-3 w-3" aria-hidden="true" />
-                            编辑
-                          </button>
+                          <IngestMessageQuickActions
+                            onCopy={() => void handleCopyMessage(buildIngestUserMessageCopyText(message))}
+                            onEdit={() => handleEditMessage(message)}
+                            tone="dark"
+                          />
                         </div>
                       ) : null}
                       {message.role === "assistant" && (message.model || message.saveSuggestion !== undefined) ? (
@@ -1294,31 +1348,17 @@ export function IngestChatGPTShell({
                         </div>
                       ) : null}
                       {message.role === "assistant" && message.id.startsWith("assistant-result") ? (
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          <button type="button" onClick={() => void handleCopyMessage(message.content)} className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#555] shadow-sm">
-                            <Copy className="h-3.5 w-3.5" aria-hidden="true" />
-                            复制
-                          </button>
-                          <button type="button" onClick={() => openDrawer("draft")} className="rounded-full bg-[#202020] px-3 py-1.5 text-xs font-semibold text-white">查看结构化结果</button>
-                          <button type="button" onClick={handleSaveDraft} disabled={isSaving || draft.saveStatus === "已保存"} className="rounded-full bg-[#e9f8ef] px-3 py-1.5 text-xs font-semibold text-[#128246] disabled:text-[#aaa]">
-                            {draft.saveStatus === "已保存" ? "已保存" : "保存知识入库"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleReconnectGpt()}
-                            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#555] shadow-sm"
-                          >
-                            重新连接 GPT
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleRegenerate(message.content)}
-                            disabled={isParsing}
-                            className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-[#555] shadow-sm"
-                          >
-                            {isParsing ? "生成中..." : "重新生成"}
-                          </button>
-                        </div>
+                        <IngestKnowledgeDraftActions
+                          isSaving={isSaving}
+                          isSaved={draft.saveStatus === "已保存"}
+                          isParsing={isParsing}
+                          onCopy={() => void handleCopyMessage(message.content)}
+                          onOpenDraft={() => openDrawer("draft")}
+                          onSave={() => void handleSaveDraft()}
+                          onRegenerate={() => void handleRegenerate(message.content)}
+                          onContinueOptimize={handleContinueOptimize}
+                          onReconnectGpt={() => void handleReconnectGpt()}
+                        />
                       ) : null}
                       <p className={message.role === "user" ? "mt-2 text-[11px] text-white/50" : "mt-2 text-[11px] text-[#999]"}>
                         {message.time}
@@ -1327,21 +1367,6 @@ export function IngestChatGPTShell({
                   </div>
                   );
                 })}
-
-                {draft.jobId ? (
-                  <div className="flex justify-start">
-                    <div className="w-full rounded-[24px] border border-[#e7e7e4] bg-white px-4 py-3 text-sm shadow-sm">
-                      <p className="font-semibold text-[#202020]">AI 整理结果已准备好</p>
-                      <p className="mt-1 text-xs text-[#777]">{draft.title} · {draft.category} · {draft.recommendation}</p>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        <button type="button" onClick={() => openDrawer("draft")} className="rounded-full bg-[#202020] px-3 py-2 text-xs font-semibold text-white">查看结构化结果</button>
-                        <button type="button" onClick={handleSaveDraft} disabled={isSaving || draft.saveStatus === "已保存"} className="rounded-full bg-[#e9f8ef] px-3 py-2 text-xs font-semibold text-[#128246] disabled:text-[#aaa]">
-                          {draft.saveStatus === "已保存" ? "已保存" : "保存知识入库"}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
 
                 {isParsing ? (
                   <div className="flex items-center gap-2 rounded-2xl bg-[#f8f8f7] px-4 py-3 text-sm text-[#666]">
@@ -1570,6 +1595,10 @@ function KnowledgeDraftPanel({
         </div>
         <Field label="标准问题" value={draft.standardQuestion} />
         <Field label="标准答案" value={draft.standardAnswer} />
+        {draft.scenarios?.length ? <Field label="适用场景" value={draft.scenarios.join("、")} /> : null}
+        {draft.sourceMaterials?.length ? <Field label="来源材料" value={draft.sourceMaterials.join("、")} /> : null}
+        {draft.missingFields?.length ? <Field label="建议补充" value={draft.missingFields.join("、")} /> : null}
+        {draft.suggestedQuestions?.length ? <Field label="建议继续追问" value={draft.suggestedQuestions.join("\n")} /> : null}
         <div className="rounded-2xl bg-[#f8f8f7] p-3">
           <div className="flex items-center justify-between text-xs font-semibold text-[#555]">
             <span>训练价值评分</span>
@@ -1590,7 +1619,7 @@ function KnowledgeDraftPanel({
         </button>
         {draft.providerUsed ? (
           <p className="text-center text-[11px] text-[#aaa]">
-            Provider：{draft.providerUsed} · {draft.model}{draft.fallbackUsed ? " · fallback" : ""}
+            Provider：{draft.generatedBy ?? draft.providerUsed} · {draft.sourceModel ?? draft.model}{draft.fallbackUsed ? " · fallback" : ""}
           </p>
         ) : null}
       </div>
@@ -1598,77 +1627,11 @@ function KnowledgeDraftPanel({
   );
 }
 
-function MarkdownOutput({ content }: { content: string }) {
-  const segments = content.split(/```/g);
-
-  return (
-    <div className="space-y-2 text-sm leading-6 text-[#303030]">
-      {segments.map((segment, index) => {
-        const key = `${index}-${segment.slice(0, 12)}`;
-
-        if (index % 2 === 1) {
-          const lines = segment.replace(/^\w+\n/, "").trim();
-
-          return (
-            <pre key={key} className="overflow-x-auto rounded-2xl bg-[#ececea] px-3 py-2 text-xs leading-5 text-[#303030]">
-              <code>{lines}</code>
-            </pre>
-          );
-        }
-
-        return segment.split(/\n/g).map((line, lineIndex) => {
-          const trimmed = line.trim();
-          const lineKey = `${key}-${lineIndex}`;
-
-          if (!trimmed) {
-            return <div key={lineKey} className="h-1" />;
-          }
-
-          if (trimmed.startsWith("### ")) {
-            return <h4 key={lineKey} className="pt-1 text-sm font-semibold text-[#202020]">{renderInlineMarkdown(trimmed.slice(4))}</h4>;
-          }
-
-          if (trimmed.startsWith("## ")) {
-            return <h3 key={lineKey} className="pt-1 text-base font-semibold text-[#202020]">{renderInlineMarkdown(trimmed.slice(3))}</h3>;
-          }
-
-          if (trimmed.startsWith("# ")) {
-            return <h2 key={lineKey} className="pt-1 text-lg font-semibold text-[#202020]">{renderInlineMarkdown(trimmed.slice(2))}</h2>;
-          }
-
-          if (trimmed.startsWith("- ")) {
-            return (
-              <div key={lineKey} className="flex gap-2">
-                <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[#a4a4a0]" />
-                <p>{renderInlineMarkdown(trimmed.slice(2))}</p>
-              </div>
-            );
-          }
-
-          return <p key={lineKey}>{renderInlineMarkdown(trimmed)}</p>;
-        });
-      })}
-    </div>
-  );
-}
-
-function renderInlineMarkdown(text: string) {
-  const parts = text.split(/(\*\*[^*]+\*\*)/g);
-
-  return parts.map((part, index) => {
-    if (part.startsWith("**") && part.endsWith("**")) {
-      return <strong key={`${part}-${index}`} className="font-semibold text-[#202020]">{part.slice(2, -2)}</strong>;
-    }
-
-    return <span key={`${part}-${index}`}>{part}</span>;
-  });
-}
-
 function Field({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-2xl bg-[#f8f8f7] p-3">
       <p className="text-xs font-semibold text-[#8b8b86]">{label}</p>
-      <p className="mt-1 leading-6 text-[#303030]">{value}</p>
+      <p className="mt-1 whitespace-pre-wrap leading-6 text-[#303030]">{value}</p>
     </div>
   );
 }

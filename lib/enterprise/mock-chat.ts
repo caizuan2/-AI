@@ -44,6 +44,8 @@ export interface IngestChatMessage {
     fileSize: number;
     isImage?: boolean;
     previewUrl?: string;
+    extractedText?: string;
+    summary?: string;
     status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
     source: "admin_ingest";
     platform: AdminIngestPlatform;
@@ -82,6 +84,13 @@ export interface IngestKnowledgeDraft {
   recommendation: "建议入库" | "需要复核" | "暂不入库";
   saveStatus: "待确认" | "已保存" | "已拒绝";
   sourceType?: "chat" | "text" | "file" | "image" | "url";
+  scenarios?: string[];
+  sourceMaterials?: string[];
+  missingFields?: string[];
+  suggestedQuestions?: string[];
+  saveRecommendation?: string;
+  sourceModel?: string;
+  generatedBy?: string;
   providerUsed?: string;
   model?: string;
   modelMode?: "highest" | "fixed";

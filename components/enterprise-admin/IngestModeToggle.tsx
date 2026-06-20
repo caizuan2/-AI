@@ -840,7 +840,7 @@ export function IngestModeToggle() {
     markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(outgoingAttachments.length > 0
-      ? "已收到附件，准备解析并生成结构化知识..."
+      ? "文件已加入本次投喂，正在请求 GPT-5.5 深度分析。"
       : "AI 正在解析并生成结构化知识...");
     setErrorMessage("");
     setMessages((current) => [
@@ -863,26 +863,6 @@ export function IngestModeToggle() {
         expertName: activeAgent.expertId ? activeAgent.name : null,
         model: currentModelLabel,
         provider: "admin_ingest"
-      },
-      {
-        id: `assistant-pending-${Date.now()}`,
-        role: "assistant",
-        content: outgoingAttachments.length > 0
-          ? "已收到附件，准备解析并生成结构化知识。文件已加入投喂队列，真实解析将在下一阶段接入。"
-          : "AI 正在解析投喂内容，并准备生成结构化知识。",
-        time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        source: "admin_ingest",
-        platform: platformContext.platform,
-        syncTarget: [...platformContext.syncTarget],
-        tenantId,
-        userId,
-        agentId: activeAgent.id,
-        expertId: activeAgent.expertId ?? null,
-        conversationId,
-        agentName: activeAgent.name,
-        expertName: activeAgent.expertId ? activeAgent.name : null,
-        model: currentModelLabel,
-        provider: "openai"
       }
     ]);
     setInput("");
@@ -901,6 +881,19 @@ export function IngestModeToggle() {
         tenantId,
         userId,
         attachments: outgoingAttachments,
+        recentMessages: messages.slice(-10).map((message) => ({
+          role: message.role,
+          content: message.content,
+          model: message.model ?? null,
+          provider: message.provider ?? null
+        })),
+        previousKnowledgeDrafts: draft.jobId ? [draft] : [],
+        recentTrainingRecords: records.slice(0, 6).map((record) => ({
+          input: record.input,
+          resultTitle: record.resultTitle,
+          category: record.category,
+          saveStatus: record.saveStatus
+        })),
         platform: platformContext.platform
       });
       const nextRecords = mergeTrainingRecords(result.records, records);
@@ -919,7 +912,7 @@ export function IngestModeToggle() {
       }
 
       setNoticeMessage(isGptFallback
-        ? "已生成本地预览结构化结果，可继续保存知识入库。"
+        ? "已生成投喂大脑草稿，可继续查看结构化结果或保存知识入库。"
         : result.preview
           ? `${result.message}（本地预览，不会跨端同步）`
           : `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
@@ -929,7 +922,7 @@ export function IngestModeToggle() {
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
           content: result.replyMarkdown || (result.preview
-            ? `${result.message} 已生成本地预览结构化结果：${result.draft.title}。`
+            ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
             : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`),
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
           source: "admin_ingest",

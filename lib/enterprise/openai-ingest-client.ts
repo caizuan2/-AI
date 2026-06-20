@@ -9,18 +9,41 @@ import {
 } from "@/lib/enterprise/gpt-output-normalizer";
 import type { AdminIngestPlatform } from "@/lib/enterprise/admin-ingest-app-config";
 import { OPENAI_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
+import {
+  buildGptIngestBrainSystemPrompt,
+  buildGptIngestBrainUserPrompt
+} from "@/lib/enterprise/gpt-ingest-brain-prompt";
+import type {
+  GptIngestMemoryMessage,
+  GptIngestMemoryRecord
+} from "@/lib/enterprise/gpt-ingest-memory";
+import type {
+  GptKnowledgeDraft,
+  GptSaveRecommendation
+} from "@/lib/enterprise/gpt-knowledge-draft";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
   fileType?: string;
+  mimeType?: string;
   fileSize?: number;
+  sizeBytes?: number;
   status?: string;
+  parseStatus?: string;
+  extractedText?: string;
+  text?: string;
+  content?: string;
+  visibleText?: string;
+  summary?: string;
+  pageSummaries?: string[];
+  limitationNote?: string;
 }
 
 export interface OpenAIAdminIngestInput {
   input: string;
   attachments?: OpenAIAdminIngestAttachment[];
   agentId?: string | null;
+  expertId?: string | null;
   agentName?: string | null;
   category?: string | null;
   source: "admin_ingest";
@@ -34,6 +57,11 @@ export interface OpenAIAdminIngestInput {
   gptVersion?: string | null;
   selectedModelLabel?: string | null;
   modelDisplayName?: string | null;
+  agentDescription?: string | null;
+  targetUser?: string | null;
+  recentMessages?: GptIngestMemoryMessage[];
+  previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
+  recentTrainingRecords?: GptIngestMemoryRecord[];
   requestId?: string;
 }
 
@@ -45,6 +73,10 @@ export interface OpenAIAdminIngestResult {
   fallback: false;
   selectedModelLabel: string;
   replyMarkdown: string;
+  knowledgeDraft: GptKnowledgeDraft;
+  suggestedQuestions: string[];
+  saveRecommendation: GptSaveRecommendation;
+  diagnostics: string[];
   structured: GptStructuredKnowledge;
   structuredResult: GptStructuredKnowledge;
   sync: {
@@ -55,7 +87,7 @@ export interface OpenAIAdminIngestResult {
   fallbackUsed: false;
 }
 
-const REQUEST_TIMEOUT_MS = 35_000;
+const REQUEST_TIMEOUT_MS = 90_000;
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_MODEL_LABEL = "GPT-5.5 超高";
@@ -183,48 +215,28 @@ function resolveResponsesConfig(input: OpenAIAdminIngestInput) {
   };
 }
 
-function buildSystemPrompt() {
-  return [
-    "你是企业 AI 知识库投喂管理员的 GPT 助手。",
-    "你的任务是先像 ChatGPT 一样自然、清晰、分段地回复管理员，再把内容整理成可保存到知识库的结构化结果。",
-    "请使用中文输出，语气像 ChatGPT，但内容要面向企业知识库生产。",
-    "请把用户投喂内容整理成标题、摘要、分类、标签、标准问答、训练价值评分、是否入库建议。",
-    "输出必须是一个 JSON 对象，不要使用 Markdown 代码围栏。",
-    "JSON 字段必须包含：replyMarkdown, title, category, summary, tags, question, answer, confidence, saveSuggestion, followUpQuestions, sourceType, syncTarget。",
-    "replyMarkdown 要使用自然段、标题、列表、加粗重点；不要空泛，要适合客服、销售、售后、制度、产品知识库沉淀。",
-    "title/category/summary/tags/question/answer 要能直接用于知识库入库。",
-    "confidence 为 0-100 的训练价值评分，saveSuggestion 为 boolean。",
-    "sourceType 固定为 admin_ingest，syncTarget 固定为 [\"web\",\"exe\",\"apk\"]。"
-  ].join("\n");
-}
-
-function buildAttachmentSummary(attachments: OpenAIAdminIngestAttachment[] = []) {
-  if (attachments.length === 0) {
-    return "无附件。";
-  }
-
-  return attachments
-    .map((file, index) => `${index + 1}. ${file.fileName} (${file.fileType || "unknown"}, ${file.fileSize ?? "size_unknown"} bytes, ${file.status || "ready"})`)
-    .join("\n");
-}
-
 function buildUserPrompt(input: OpenAIAdminIngestInput) {
-  return [
-    `当前 Agent：${input.agentName || input.agentId || "默认 Agent"}`,
-    `当前分类：${input.category || "默认知识库"}`,
-    `当前 GPT 模型：${input.selectedModelLabel || input.modelDisplayName || input.preferredModel || "GPT-5.5 超高"}`,
-    `当前 GPT 档位：${input.gptTierLabel || input.gptTier || "超高"}`,
-    `当前 GPT 版本：${input.gptVersion || "5.5"}`,
-    `来源：${input.source}`,
-    `平台：${input.platform}`,
-    `同步目标：${input.syncTarget.join(" / ")}`,
-    "",
-    "## 管理员投喂内容",
-    input.input,
-    "",
-    "## 附件摘要",
-    buildAttachmentSummary(input.attachments)
-  ].join("\n");
+  return buildGptIngestBrainUserPrompt({
+    currentInput: input.input,
+    memory: {
+      currentInput: input.input,
+      currentAgent: {
+        agentId: input.agentId,
+        expertId: input.expertId,
+        agentName: input.agentName,
+        category: input.category,
+        description: input.agentDescription,
+        targetUser: input.targetUser
+      },
+      recentMessages: input.recentMessages,
+      uploadedAttachments: input.attachments,
+      previousKnowledgeDrafts: input.previousKnowledgeDrafts,
+      recentTrainingRecords: input.recentTrainingRecords,
+      selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
+      platform: input.platform,
+      syncTarget: input.syncTarget
+    }
+  });
 }
 
 function normalizeOpenAIResponseError(status: number, bodyText: string) {
@@ -262,7 +274,7 @@ async function callResponsesApi(input: {
     body: JSON.stringify({
       model: input.model,
       input: `${input.systemPrompt}\n\n${input.userPrompt}`,
-      max_output_tokens: 1800
+      max_output_tokens: 3600
     }),
     signal: input.signal,
     cache: "no-store"
@@ -302,7 +314,7 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
 
   try {
     const resolved = resolveResponsesConfig(input);
-    const systemPrompt = buildSystemPrompt();
+    const systemPrompt = buildGptIngestBrainSystemPrompt();
     const userPrompt = buildUserPrompt(input);
 
     const response = await callResponsesApi({
@@ -335,6 +347,10 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       fallback: false,
       selectedModelLabel: resolved.selectedModelLabel,
       replyMarkdown: normalized.replyMarkdown,
+      knowledgeDraft: normalized.knowledgeDraft,
+      suggestedQuestions: normalized.suggestedQuestions,
+      saveRecommendation: normalized.saveRecommendation,
+      diagnostics: normalized.diagnostics,
       structured: normalized.structured,
       structuredResult: normalized.structured,
       sync: {

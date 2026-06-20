@@ -12,6 +12,8 @@ import {
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
 import { hasDatabaseUrl } from "@/lib/server-config";
+import { buildChatGptStyleReply } from "@/lib/enterprise/gpt-chatgpt-style-validator";
+import type { GptKnowledgeDraft } from "@/lib/enterprise/gpt-knowledge-draft";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,6 +30,24 @@ function jsonUtf8(data: unknown, status = 200) {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readStringArray(value: unknown, limit = 10) {
+  return Array.isArray(value)
+    ? value.map((item) => readString(item)).filter(Boolean).slice(0, limit)
+    : [];
+}
+
+function readPositiveNumber(...values: unknown[]) {
+  for (const value of values) {
+    const numberValue = typeof value === "number" ? value : Number(value);
+
+    if (Number.isFinite(numberValue) && numberValue > 0) {
+      return numberValue;
+    }
+  }
+
+  return undefined;
 }
 
 function isLocalDevWithoutDatabase(request: Request) {
@@ -113,7 +133,7 @@ function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCod
 function buildLocalPreview(input: ReturnType<typeof readRequest>, errorCode: ReturnType<typeof toGptFallbackErrorCode>) {
   const category = input.category || input.agentName || "默认知识库";
   const normalized = input.input.replace(/\s+/g, " ").trim();
-  const title = normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized || "本地预览结构化结果";
+  const title = normalized.length > 18 ? `${normalized.slice(0, 18)}...` : normalized || "投喂大脑草稿";
   const summary = normalized.length > 140 ? `${normalized.slice(0, 140)}...` : normalized;
   const question = `关于“${title}”，应该如何沉淀为知识？`;
   const answer = summary
@@ -122,10 +142,10 @@ function buildLocalPreview(input: ReturnType<typeof readRequest>, errorCode: Ret
 
   return {
     jobId: `preview-${Date.now()}`,
-    title: title || "本地预览结构化结果",
+    title: title || "投喂大脑草稿",
     category,
-    tags: [category.replace("知识库", ""), "本地预览", errorCode].filter(Boolean),
-    summary: summary || "当前为本地预览结果，配置 OPENAI_API_KEY 后可重新生成真实 GPT 结果。",
+    tags: [category.replace("知识库", ""), "投喂草稿", errorCode].filter(Boolean),
+    summary: summary || "当前为投喂大脑草稿，GPT 恢复后可重新生成更完整结果。",
     qa_pairs: [{ q: question, a: answer }],
     confidence: errorCode === "OPENAI_API_KEY_MISSING" ? 72 : 68,
     should_save: true,
@@ -137,22 +157,26 @@ function buildLocalPreview(input: ReturnType<typeof readRequest>, errorCode: Ret
 }
 
 function buildLocalPreviewReply(localPreview: ReturnType<typeof buildLocalPreview>, message: string) {
-  return [
-    "## 本地预览结构化结果",
-    "",
-    message,
-    "",
-    `- 标题：${localPreview.title}`,
-    `- 分类：${localPreview.category}`,
-    `- 标签：${localPreview.tags.join("、")}`,
-    `- 训练价值评分：${localPreview.confidence}/100`,
-    "",
-    "### 标准问答",
-    `Q：${localPreview.qa_pairs[0]?.q ?? localPreview.title}`,
-    `A：${localPreview.qa_pairs[0]?.a ?? localPreview.summary}`,
-    "",
-    "配置 OPENAI_API_KEY 后，可点击“重新连接 GPT”再“重新生成”。"
-  ].join("\n");
+  const firstPair = localPreview.qa_pairs[0];
+  const draft: GptKnowledgeDraft = {
+    title: localPreview.title,
+    summary: localPreview.summary,
+    category: localPreview.category,
+    tags: localPreview.tags,
+    standardQuestion: firstPair?.q ?? localPreview.title,
+    standardAnswer: firstPair?.a ?? localPreview.summary,
+    scenarios: ["客户沟通", "客服回复", "销售解释"],
+    sourceMaterials: ["管理员投喂内容"],
+    saveRecommendation: "需要补充资料",
+    missingFields: ["完整业务背景", "标准价格或服务边界", "真实客户案例"],
+    trainingScore: localPreview.confidence
+  };
+
+  return buildChatGptStyleReply({
+    originalInput: localPreview.summary,
+    draft,
+    fallbackNote: message
+  });
 }
 
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
@@ -175,9 +199,19 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
 
     attachments.push({
       fileName,
-      fileType: readString(item.fileType) || undefined,
-      fileSize: typeof item.fileSize === "number" && Number.isFinite(item.fileSize) ? item.fileSize : undefined,
-      status: readString(item.status) || undefined
+      fileType: readString(item.fileType) || readString(item.mimeType) || undefined,
+      mimeType: readString(item.mimeType) || readString(item.fileType) || undefined,
+      fileSize: readPositiveNumber(item.fileSize, item.sizeBytes),
+      sizeBytes: readPositiveNumber(item.sizeBytes, item.fileSize),
+      status: readString(item.status) || undefined,
+      parseStatus: readString(item.parseStatus) || undefined,
+      extractedText: readString(item.extractedText) || undefined,
+      text: readString(item.text) || undefined,
+      content: readString(item.content) || undefined,
+      visibleText: readString(item.visibleText) || undefined,
+      summary: readString(item.summary) || undefined,
+      pageSummaries: readStringArray(item.pageSummaries),
+      limitationNote: readString(item.limitationNote) || undefined
     });
 
     if (attachments.length >= 12) {
@@ -186,6 +220,99 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
   }
 
   return attachments;
+}
+
+function readRecentMessages(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.map((item) => {
+    if (!isPlainObject(item)) {
+      return null;
+    }
+
+    const role = item.role === "assistant" ? "assistant" : item.role === "user" ? "user" : null;
+    const content = readString(item.content);
+
+    if (!role || !content) {
+      return null;
+    }
+
+    return {
+      role,
+      content,
+      model: readString(item.model) || null,
+      provider: readString(item.provider) || null
+    };
+  }).filter((item): item is { role: "user" | "assistant"; content: string; model: string | null; provider: string | null } => Boolean(item)).slice(-12);
+}
+
+function readPreviousKnowledgeDrafts(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  type PreviousDraft = {
+    title?: string;
+    category?: string;
+    tags?: string[];
+    standardQuestion?: string;
+    standardAnswer?: string;
+  };
+
+  return value.map((item) => {
+    if (!isPlainObject(item)) {
+      return null;
+    }
+
+    const draft: PreviousDraft = {};
+    const title = readString(item.title);
+    const category = readString(item.category);
+    const tags = Array.isArray(item.tags) ? item.tags.map((tag) => readString(tag)).filter(Boolean).slice(0, 8) : [];
+    const standardQuestion = readString(item.standardQuestion);
+    const standardAnswer = readString(item.standardAnswer);
+
+    if (title) draft.title = title;
+    if (category) draft.category = category;
+    if (tags.length > 0) draft.tags = tags;
+    if (standardQuestion) draft.standardQuestion = standardQuestion;
+    if (standardAnswer) draft.standardAnswer = standardAnswer;
+
+    return draft;
+  }).filter((item): item is PreviousDraft => item !== null).slice(-3);
+}
+
+function readRecentTrainingRecords(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  type RecentRecord = {
+    input?: string;
+    resultTitle?: string;
+    category?: string;
+    saveStatus?: string;
+  };
+
+  return value.map((item) => {
+    if (!isPlainObject(item)) {
+      return null;
+    }
+
+    const record: RecentRecord = {};
+    const input = readString(item.input);
+    const resultTitle = readString(item.resultTitle);
+    const category = readString(item.category);
+    const saveStatus = readString(item.saveStatus);
+
+    if (input) record.input = input;
+    if (resultTitle) record.resultTitle = resultTitle;
+    if (category) record.category = category;
+    if (saveStatus) record.saveStatus = saveStatus;
+
+    return record;
+  }).filter((item): item is RecentRecord => item !== null).slice(0, 6);
 }
 
 function readRequest(body: unknown) {
@@ -203,8 +330,11 @@ function readRequest(body: unknown) {
     input,
     attachments: readAttachments(body.attachments),
     agentId: readString(body.agentId) || null,
+    expertId: readString(body.expertId) || null,
     agentName: readString(body.agentName) || null,
     category: readString(body.category) || null,
+    agentDescription: readString(body.agentDescription) || null,
+    targetUser: readString(body.targetUser) || null,
     tenantId: readString(body.tenantId) || null,
     userId: readString(body.userId) || null,
     source: "admin_ingest" as const,
@@ -217,7 +347,10 @@ function readRequest(body: unknown) {
     gptTierLabel: readString(body.gptTierLabel) || null,
     gptVersion: readString(body.gptVersion) || null,
     selectedModelLabel: readString(body.selectedModelLabel) || null,
-    modelDisplayName: readString(body.modelDisplayName) || null
+    modelDisplayName: readString(body.modelDisplayName) || null,
+    recentMessages: readRecentMessages(body.recentMessages),
+    previousKnowledgeDrafts: readPreviousKnowledgeDrafts(body.previousKnowledgeDrafts),
+    recentTrainingRecords: readRecentTrainingRecords(body.recentTrainingRecords)
   };
 }
 
@@ -257,8 +390,11 @@ export async function POST(request: Request) {
       input: input.input,
       attachments: input.attachments,
       agentId: input.agentId,
+      expertId: input.expertId,
       agentName: input.agentName,
       category: input.category,
+      agentDescription: input.agentDescription,
+      targetUser: input.targetUser,
       tenantId: input.tenantId,
       userId: input.userId ?? actor?.id ?? "local-admin-ingest-dev",
       source: input.source,
@@ -270,6 +406,9 @@ export async function POST(request: Request) {
       gptVersion: input.gptVersion,
       selectedModelLabel: input.selectedModelLabel,
       modelDisplayName: input.modelDisplayName,
+      recentMessages: input.recentMessages,
+      previousKnowledgeDrafts: input.previousKnowledgeDrafts,
+      recentTrainingRecords: input.recentTrainingRecords,
       requestId
     });
 
@@ -281,6 +420,10 @@ export async function POST(request: Request) {
       model: result.model,
       selectedModelLabel: result.selectedModelLabel,
       replyMarkdown: result.replyMarkdown,
+      knowledgeDraft: result.knowledgeDraft,
+      suggestedQuestions: result.suggestedQuestions,
+      saveRecommendation: result.saveRecommendation,
+      diagnostics: result.diagnostics,
       structuredResult: result.structuredResult,
       structured: result.structured,
       sync: result.sync,

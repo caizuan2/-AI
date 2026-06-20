@@ -14,6 +14,11 @@ import {
   type GptTier,
   type GptVersion
 } from "@/lib/enterprise/gpt-model-options";
+import type {
+  GptKnowledgeDraft,
+  GptSaveRecommendation
+} from "@/lib/enterprise/gpt-knowledge-draft";
+import { buildChatGptStyleReply } from "@/lib/enterprise/gpt-chatgpt-style-validator";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -54,6 +59,8 @@ export interface IngestUploadState {
   fileSize: number;
   isImage?: boolean;
   previewUrl?: string;
+  extractedText?: string;
+  summary?: string;
   status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
   source: "admin_ingest";
   platform: IngestPlatform;
@@ -103,6 +110,10 @@ interface GptIngestResponse {
   fallback?: false;
   selectedModelLabel?: string;
   replyMarkdown: string;
+  knowledgeDraft?: GptKnowledgeDraft;
+  suggestedQuestions?: string[];
+  saveRecommendation?: GptSaveRecommendation;
+  diagnostics?: string[];
   structured: {
     title?: string;
     category?: string;
@@ -249,6 +260,12 @@ function readQaPairs(value: unknown) {
     .filter((item): item is { q: string; a: string } => Boolean(item));
 }
 
+function readOptionalStringArray(value: unknown) {
+  const values = readTags(value);
+
+  return values.length > 0 ? values : undefined;
+}
+
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -274,19 +291,33 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
   const record = data && typeof data === "object" ? data as Record<string, unknown> : {};
   const directQuestion = readString(record.question);
   const directAnswer = readString(record.answer);
+  const standardQuestion = readString(record.standardQuestion);
+  const standardAnswer = readString(record.standardAnswer);
   const qaPairs = readQaPairs(record.qa_pairs ?? record.structured_qa ?? record.qaPairs);
   const title = readString(record.title) || `${agent.role.replace("知识库", "") || agent.name}投喂知识`;
   const category = readString(record.category) || agent.role || "默认知识库";
   const summary = readString(record.summary) || readString(record.content) || input.slice(0, 120);
   const confidence = readNumber(record.confidence ?? record.trainingScore, 82);
-  const firstPair = qaPairs[0] ?? (directQuestion || directAnswer ? {
-    q: directQuestion || `关于“${title}”，应该如何处理？`,
-    a: directAnswer || summary
+  const firstPair = qaPairs[0] ?? (standardQuestion || standardAnswer || directQuestion || directAnswer ? {
+    q: standardQuestion || directQuestion || `关于“${title}”，应该如何处理？`,
+    a: standardAnswer || directAnswer || summary
   } : {
     q: `关于“${title}”，应该如何处理？`,
     a: summary || `建议按当前 ${agent.name} 的知识口径处理，并保留来源记录。`
   });
-  const saveSuggestion = typeof record.saveSuggestion === "boolean" ? record.saveSuggestion : confidence >= 80;
+  const saveRecommendation = readString(record.saveRecommendation);
+  const saveSuggestion = typeof record.saveSuggestion === "boolean"
+    ? record.saveSuggestion
+    : saveRecommendation
+      ? saveRecommendation === "可以入库"
+      : confidence >= 80;
+  const recommendation = saveRecommendation === "暂缓入库"
+    ? "暂不入库"
+    : saveRecommendation === "需要补充资料"
+      ? "需要复核"
+      : saveSuggestion
+        ? "建议入库"
+        : "需要复核";
 
   return {
     id: readString(record.id) || `draft-${Date.now()}`,
@@ -299,9 +330,16 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
     standardQuestion: firstPair.q,
     standardAnswer: firstPair.a,
     trainingScore: Math.min(100, Math.max(1, Math.round(confidence))),
-    recommendation: saveSuggestion ? "建议入库" : "需要复核",
+    recommendation,
     saveStatus: status,
     sourceType: "chat",
+    scenarios: readOptionalStringArray(record.scenarios),
+    sourceMaterials: readOptionalStringArray(record.sourceMaterials),
+    missingFields: readOptionalStringArray(record.missingFields),
+    suggestedQuestions: readOptionalStringArray(record.suggestedQuestions ?? record.followUpQuestions),
+    saveRecommendation: saveRecommendation || undefined,
+    sourceModel: readString(record.sourceModel) || readString(record.model) || undefined,
+    generatedBy: readString(record.generatedBy) || readString(record.providerUsed) || undefined,
     providerUsed: readString(record.providerUsed) || "core-engine",
     model: readString(record.model) || "knowledge-core",
     modelMode: record.modelMode === "fixed" ? "fixed" : record.modelMode === "highest" ? "highest" : undefined,
@@ -376,11 +414,15 @@ export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, age
 
 function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agent: IngestChatAgent): IngestKnowledgeDraft {
   return normalizeDraftFromUnknown({
-    ...data.structured,
+    ...(data.knowledgeDraft ?? data.structured),
+    suggestedQuestions: data.suggestedQuestions ?? data.structured.followUpQuestions,
+    saveRecommendation: data.saveRecommendation ?? data.knowledgeDraft?.saveRecommendation,
     id: `gpt-${Date.now()}`,
     jobId: `gpt-${Date.now()}`,
     providerUsed: data.provider,
     model: data.modelDisplayName || data.model,
+    sourceModel: data.model,
+    generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
     fallbackUsed: false
@@ -420,18 +462,27 @@ function createLocalPreviewResult(input: {
     provider: "local-fallback",
     model: input.selectedModelLabel,
     modelMode: "highest" as const,
-    replyMarkdown: input.replyMarkdown || [
-      "## 本地预览结构化结果",
-      "",
-      input.message,
-      "",
-      "### 本地预览整理",
-      `- 标题：${draft.title}`,
-      `- 分类：${draft.category}`,
-      `- 入库建议：${draft.recommendation}`,
-      "",
-      draft.summary ?? draft.standardAnswer
-    ].join("\n"),
+    replyMarkdown: input.replyMarkdown || buildChatGptStyleReply({
+      originalInput: input.text,
+      draft: {
+        title: draft.title,
+        summary: draft.summary ?? draft.standardAnswer,
+        category: draft.category,
+        tags: draft.tags,
+        standardQuestion: draft.standardQuestion,
+        standardAnswer: draft.standardAnswer,
+        scenarios: draft.scenarios ?? ["客户沟通", "客服回复", "销售解释"],
+        sourceMaterials: draft.sourceMaterials ?? ["管理员投喂内容"],
+        saveRecommendation: draft.saveRecommendation === "暂缓入库" || draft.recommendation === "暂不入库"
+          ? "暂缓入库"
+          : draft.saveRecommendation === "可以入库" || draft.recommendation === "建议入库"
+            ? "可以入库"
+            : "需要补充资料",
+        missingFields: draft.missingFields ?? ["完整业务背景", "标准服务边界", "真实客户案例"],
+        trainingScore: draft.trainingScore
+      },
+      fallbackNote: input.message
+    }),
     saveSuggestion: draft.recommendation === "建议入库",
     message: input.message
   };
@@ -449,6 +500,19 @@ export async function sendCoreIngest(input: {
   tenantId?: string | null;
   userId?: string | null;
   attachments?: IngestUploadState[];
+  recentMessages?: Array<{
+    role: "user" | "assistant";
+    content: string;
+    model?: string | null;
+    provider?: string | null;
+  }>;
+  previousKnowledgeDrafts?: Array<Partial<IngestKnowledgeDraft>>;
+  recentTrainingRecords?: Array<{
+    input?: string;
+    resultTitle?: string;
+    category?: string;
+    saveStatus?: string;
+  }>;
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
@@ -483,6 +547,8 @@ export async function sendCoreIngest(input: {
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
         expertName: input.agent.expertId ? input.agent.name : null,
+        agentDescription: input.agent.description,
+        targetUser: input.agent.role,
         category: input.category,
         model: input.model,
         tenantId: input.tenantId ?? null,
@@ -498,6 +564,9 @@ export async function sendCoreIngest(input: {
         gptVersion: input.gptVersion ?? gptSelection.version,
         selectedModelLabel,
         modelDisplayName: selectedModelLabel,
+        recentMessages: input.recentMessages ?? [],
+        previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
+        recentTrainingRecords: input.recentTrainingRecords ?? [],
         autoSave: false
       })
     });
@@ -581,6 +650,13 @@ export async function saveKnowledgeDraft(input: {
       : [{ q: input.draft.standardQuestion, a: input.draft.standardAnswer }],
     confidence: input.draft.trainingScore,
     should_save: input.draft.recommendation !== "暂不入库",
+    scenarios: input.draft.scenarios ?? [],
+    sourceMaterials: input.draft.sourceMaterials ?? [],
+    missingFields: input.draft.missingFields ?? [],
+    suggestedQuestions: input.draft.suggestedQuestions ?? [],
+    saveRecommendation: input.draft.saveRecommendation ?? input.draft.recommendation,
+    sourceModel: input.draft.sourceModel ?? input.draft.model ?? "unknown",
+    generatedBy: input.draft.generatedBy ?? input.draft.providerUsed ?? "unknown",
     providerUsed: input.draft.providerUsed ?? "unknown",
     model: input.draft.model ?? "unknown",
     fallbackUsed: input.draft.fallbackUsed ?? false
