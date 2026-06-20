@@ -131,6 +131,54 @@ function parseMaybeJson(text: string) {
   }
 }
 
+function collectStringValues(value: unknown, depth = 0): string[] {
+  if (depth > 4) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    return [value.trim()].filter(Boolean);
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectStringValues(item, depth + 1));
+  }
+
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  return Object.values(value as Record<string, unknown>).flatMap((item) => collectStringValues(item, depth + 1));
+}
+
+function readLikelyReplyMarkdown(parsed: Record<string, unknown> | null) {
+  if (!parsed) {
+    return "";
+  }
+
+  const preferred = [
+    parsed.replyMarkdown,
+    parsed.markdown,
+    parsed.mainReply,
+    parsed.reply,
+    parsed.answer,
+    parsed.content,
+    parsed.message,
+    parsed.result,
+    parsed.summaryMarkdown
+  ].map(readString).find((value) => value.length > 200);
+
+  if (preferred) {
+    return preferred;
+  }
+
+  return collectStringValues(parsed)
+    .filter((value) => value.length > 300)
+    .filter((value) => /[\u3400-\u9fff]/.test(value))
+    .filter((value) => !value.trim().startsWith("{"))
+    .sort((left, right) => right.length - left.length)[0] ?? "";
+}
+
 function extractMarkdownBody(text: string) {
   const trimmed = text.trim();
 
@@ -178,9 +226,10 @@ export function normalizeGptOutput(input: {
   });
   const rawMarkdown = parsed ? "" : extractMarkdownBody(input.rawText);
   const replyMarkdownCandidate = readString(parsed?.replyMarkdown)
+    || readLikelyReplyMarkdown(parsed)
     || rawMarkdown;
 
-  if (input.strictReply && !replyMarkdownCandidate) {
+  if (input.strictReply && !replyMarkdownCandidate && !input.rawText.trim()) {
     throw new Error("OpenAI Responses API 未返回 replyMarkdown。");
   }
 
@@ -190,14 +239,12 @@ export function normalizeGptOutput(input: {
       draft: knowledgeDraft,
       suggestedQuestions
     });
-  const replyMarkdown = input.strictReply
-    ? replyMarkdownCandidate
-    : ensureChatGptStyleReply({
-      replyMarkdown: nonStrictReplyMarkdownCandidate,
-      originalInput: input.originalInput,
-      draft: knowledgeDraft,
-      suggestedQuestions
-    });
+  const replyMarkdown = ensureChatGptStyleReply({
+    replyMarkdown: nonStrictReplyMarkdownCandidate,
+    originalInput: input.originalInput,
+    draft: knowledgeDraft,
+    suggestedQuestions
+  });
 
   return {
     replyMarkdown,

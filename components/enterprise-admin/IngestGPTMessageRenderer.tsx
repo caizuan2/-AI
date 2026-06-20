@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { IngestKnowledgeDraftCard } from "@/components/enterprise-admin/IngestKnowledgeDraftCard";
 
 export function IngestGPTMessageRenderer({ content }: { content: string }) {
   const segments = content.split(/```/g);
@@ -39,10 +40,25 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
     const trimmed = line.trim();
     const key = `${keyPrefix}-${index}`;
     const heading = parseHeading(trimmed, lines, index);
+    const knowledgeDraftTitle = parseKnowledgeDraftTitle(trimmed);
 
     if (!trimmed) {
       nodes.push(<div key={key} className="h-1" />);
       index += 1;
+      continue;
+    }
+
+    if (knowledgeDraftTitle) {
+      const { draftLines, nextIndex } = collectKnowledgeDraftLines(lines, index + 1);
+
+      nodes.push(
+        <IngestKnowledgeDraftCard
+          key={key}
+          title={knowledgeDraftTitle}
+          body={draftLines.join("\n")}
+        />
+      );
+      index = nextIndex;
       continue;
     }
 
@@ -214,6 +230,59 @@ function isHeading(value: string) {
   return parseHeading(value) !== null;
 }
 
+function parseKnowledgeDraftTitle(value: string) {
+  const normalized = value
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/\*\*/g, "")
+    .trim();
+
+  if (normalized.length > 100) {
+    return null;
+  }
+
+  if (/^(?:[一二三四五六七八九十]+[、.．]\s*)?(?:可入库草稿|入库草稿|知识库草稿|可保存知识)(?:[:：].*)?$/.test(normalized)) {
+    return normalized;
+  }
+
+  if (/^[一二三四五六七八九十]+[、.．]\s*可入库草稿[:：]/.test(normalized)) {
+    return normalized;
+  }
+
+  return null;
+}
+
+function collectKnowledgeDraftLines(lines: string[], startIndex: number) {
+  const draftLines: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = lines[index] ?? "";
+    const trimmed = current.trim();
+    const hasDraftContent = draftLines.some((draftLine) => draftLine.trim());
+    const heading = parseHeading(trimmed);
+
+    if (hasDraftContent && heading?.level === 1 && !parseKnowledgeDraftTitle(trimmed)) {
+      break;
+    }
+
+    draftLines.push(current);
+    index += 1;
+  }
+
+  while (draftLines.length > 0 && !draftLines[0]?.trim()) {
+    draftLines.shift();
+  }
+
+  while (draftLines.length > 0 && !draftLines[draftLines.length - 1]?.trim()) {
+    draftLines.pop();
+  }
+
+  return {
+    draftLines: draftLines.length ? draftLines : ["这部分草稿内容仍在生成中，可先复制当前标题并继续让 GPT 补齐可入库问答。"],
+    nextIndex: index
+  };
+}
+
 function isNumericSectionHeading(text: string, lines: string[], index: number) {
   const body = text.replace(/\*\*/g, "").trim();
   const previous = lines[index - 1]?.trim() ?? "";
@@ -379,7 +448,7 @@ function CopyButton({
   }
 
   return (
-    <span className={["relative inline-flex", className].join(" ")}>
+    <span className={["inline-flex", className || "relative"].join(" ")}>
       <button
         type="button"
         onClick={() => void handleCopy()}
