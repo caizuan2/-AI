@@ -66,14 +66,21 @@ class ConversationFeatureFlags {
   const ConversationFeatureFlags({
     required this.values,
     this.loaded = false,
-    this.message = '功能暂未开放',
+    this.message = '该功能暂未开放，请联系管理员开启。',
     this.source = '',
+    this.statusCode,
+    this.contentType = '',
+    this.error,
   });
 
-  const ConversationFeatureFlags.disabled([this.message = '功能暂未开放'])
-      : values = disabledValues,
-        loaded = false,
-        source = '';
+  const ConversationFeatureFlags.disabled({
+    this.message = '该功能暂未开放，请联系管理员开启。',
+    this.source = '',
+    this.statusCode,
+    this.contentType = '',
+    this.error,
+  })  : values = disabledValues,
+        loaded = false;
 
   static const disabledValues = <String, bool>{
     ConversationFeatureKeys.share: false,
@@ -88,23 +95,49 @@ class ConversationFeatureFlags {
   final bool loaded;
   final String message;
   final String source;
+  final int? statusCode;
+  final String contentType;
+  final String? error;
 
   bool isEnabled(String key) => values[key] == true;
+}
+
+class _ConversationFeatureHttpResult {
+  const _ConversationFeatureHttpResult({
+    required this.data,
+    required this.statusCode,
+    required this.contentType,
+  });
+
+  final Map<String, dynamic> data;
+  final int statusCode;
+  final String contentType;
+}
+
+class _ConversationFeatureLoadFailure implements Exception {
+  const _ConversationFeatureLoadFailure({
+    required this.source,
+    required this.reason,
+    this.statusCode,
+    this.contentType = '',
+  });
+
+  final String source;
+  final String reason;
+  final int? statusCode;
+  final String contentType;
+
+  @override
+  String toString() => reason;
 }
 
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
   static const _maxUploadSizeMb = 300;
   static const _uploadTimeout = Duration(minutes: 5);
-  static const _conversationFeaturePaths = <String>[
-    '/api/user/conversation-features',
-    '/api/user/features',
-    '/api/user/conversation-control',
-    '/api/conversation/features',
-    '/api/settings/conversation-features',
-    '/api/user/permissions',
-    '/api/license/features',
-  ];
+  static const _conversationFeaturePath = '/api/user/conversation-features';
+  static const _conversationFeatureTimeout = Duration(seconds: 8);
+  static const _conversationActionTimeout = Duration(seconds: 15);
 
   ApiService({
     required this.baseUrl,
@@ -429,30 +462,217 @@ class ApiService {
     return _unwrap(response);
   }
 
-  Future<Map<String, dynamic>> _getJsonAllowPlain(String path) async {
-    final response = await _client.get(
-      _uri(path),
-      headers: _headers(json: false),
+  Future<Map<String, dynamic>> _requestConversationAction({
+    required String action,
+    required String method,
+    required String path,
+    required String conversationId,
+    Map<String, dynamic> body = const {},
+  }) async {
+    debugPrint(
+      '[conversation-action] $action start conversationId=$conversationId',
     );
+
+    late final http.Response response;
+    try {
+      final uri = _uri(path);
+      final headers = _headers(json: method != 'DELETE');
+      response = switch (method) {
+        'POST' => await _client
+            .post(uri, headers: headers, body: jsonEncode(body))
+            .timeout(_conversationActionTimeout),
+        'PATCH' => await _client
+            .patch(uri, headers: headers, body: jsonEncode(body))
+            .timeout(_conversationActionTimeout),
+        'DELETE' => await _client
+            .delete(uri, headers: _headers(json: false))
+            .timeout(_conversationActionTimeout),
+        _ => throw ApiException('操作接口未接入', statusCode: 405),
+      };
+    } on ApiException catch (error) {
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${error.statusCode ?? ''} reason=${error.message}',
+      );
+      rethrow;
+    } on TimeoutException {
+      const message = '网络异常，请稍后重试';
+      debugPrint(
+        '[conversation-action] $action failed status= reason=$message',
+      );
+      throw const ApiException(message);
+    } catch (error) {
+      const message = '网络异常，请稍后重试';
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status= reason=$message detail=$error',
+      );
+      throw const ApiException(message);
+    }
+
     _captureCookie(response);
-    final envelope = _asMap(_jsonBody(response));
+
+    final envelope = _conversationActionEnvelope(
+      response,
+      strictJson: response.statusCode >= 200 && response.statusCode < 300,
+    );
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final reason = _conversationActionFailureMessage(
+        response.statusCode,
+        envelope,
+      );
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${response.statusCode} reason=$reason',
+      );
+      throw ApiException(reason, statusCode: response.statusCode);
+    }
+
+    if (envelope['ok'] == false || envelope['success'] == false) {
+      final reason = _messageFromEnvelope(envelope, '操作失败，请稍后重试');
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${response.statusCode} reason=$reason',
+      );
+      throw ApiException(reason, statusCode: response.statusCode);
+    }
+
+    final data = envelope['data'];
+    debugPrint('[conversation-action] $action success');
+    return data is Map ? _asMap(data) : envelope;
+  }
+
+  Map<String, dynamic> _conversationActionEnvelope(
+    http.Response response, {
+    required bool strictJson,
+  }) {
+    if (response.body.trim().isEmpty) {
+      return <String, dynamic>{};
+    }
+
+    if (!strictJson && _looksLikeHtml(response)) {
+      return <String, dynamic>{};
+    }
+
+    try {
+      return _asMap(_jsonBody(response));
+    } on ApiException catch (error) {
+      if (!strictJson) {
+        return <String, dynamic>{};
+      }
+      throw ApiException(
+        '接口返回异常',
+        statusCode: error.statusCode,
+        debugDetails: error.debugDetails,
+      );
+    } catch (error) {
+      if (!strictJson) {
+        return <String, dynamic>{};
+      }
+      throw ApiException(
+        '接口返回异常',
+        statusCode: response.statusCode,
+        debugDetails: error.toString(),
+      );
+    }
+  }
+
+  String _conversationActionFailureMessage(
+    int statusCode,
+    Map<String, dynamic> envelope,
+  ) {
+    return switch (statusCode) {
+      401 => '请先登录后再操作',
+      403 => '无权限执行该操作',
+      404 => '操作接口未部署',
+      405 => '操作接口未接入',
+      >= 500 => '服务器异常，请稍后重试',
+      _ => _messageFromEnvelope(envelope, '操作失败，请稍后重试'),
+    };
+  }
+
+  String _conversationActionPath(String conversationId, String action) {
+    final encodedId = Uri.encodeComponent(conversationId);
+    return '/api/user/conversations/$encodedId/$action';
+  }
+
+  Future<_ConversationFeatureHttpResult> _getConversationFeatureJson(
+    String path,
+  ) async {
+    debugPrint('[conversation-features] request start: $path');
+
+    late final http.Response response;
+    try {
+      response = await _client
+          .get(
+            _uri(path),
+            headers: _headers(json: false),
+          )
+          .timeout(_conversationFeatureTimeout);
+    } on TimeoutException catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        reason: 'timeout: $error',
+      );
+    } catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        reason: error.toString(),
+      );
+    }
+
+    _captureCookie(response);
+    final contentType = _contentType(response);
+    debugPrint(
+        '[conversation-features] response status=${response.statusCode}');
+    debugPrint('[conversation-features] response contentType=$contentType');
+
+    late final Map<String, dynamic> envelope;
+    try {
+      envelope = _asMap(_jsonBody(response));
+    } on ApiException catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: error.message,
+      );
+    } catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: error.toString(),
+      );
+    }
+
+    final rawKeys = envelope.keys.map((key) => key.toString()).toList();
+    debugPrint('[conversation-features] raw keys=${rawKeys.join(',')}');
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw ApiException(
-        _messageFromEnvelope(envelope, 'Request failed.'),
+      throw _ConversationFeatureLoadFailure(
+        source: path,
         statusCode: response.statusCode,
+        contentType: contentType,
+        reason: _messageFromEnvelope(envelope, 'Request failed.'),
       );
     }
 
     if (envelope['ok'] == false || envelope['success'] == false) {
-      throw ApiException(
-        _messageFromEnvelope(envelope, 'Request failed.'),
+      throw _ConversationFeatureLoadFailure(
+        source: path,
         statusCode: response.statusCode,
+        contentType: contentType,
+        reason: _messageFromEnvelope(envelope, 'Request failed.'),
       );
     }
 
     final data = envelope['data'];
-    return data is Map ? _asMap(data) : envelope;
+    return _ConversationFeatureHttpResult(
+      data: data is Map ? _asMap(data) : envelope,
+      statusCode: response.statusCode,
+      contentType: contentType,
+    );
   }
 
   Future<ConversationFeatureFlags> getConversationFeatureFlags() async {
@@ -460,37 +680,129 @@ class ApiService {
       return const ConversationFeatureFlags.disabled();
     }
 
-    for (final path in _conversationFeaturePaths) {
-      try {
-        final data = await _getJsonAllowPlain(path);
-        final flags = _conversationFeatureFlagsFrom(data, source: path);
-        _debugConversationFeatureFlags(flags);
-        return flags;
-      } on ApiException catch (error) {
-        debugPrint(
-          'conversation features load failed:\n'
-          'source=$path\n'
-          'status=${error.statusCode ?? ''}\n'
-          'message=${error.message}\n'
-          'fallback=all disabled',
-        );
-      } catch (error) {
-        debugPrint(
-          'conversation features load failed:\n'
-          'source=$path\n'
-          'status=\n'
-          'message=$error\n'
-          'fallback=all disabled',
+    try {
+      final result = await _getConversationFeatureJson(
+        _conversationFeaturePath,
+      );
+      final flags = _conversationFeatureFlagsFrom(
+        result.data,
+        source: _conversationFeaturePath,
+        statusCode: result.statusCode,
+        contentType: result.contentType,
+      );
+      _debugConversationFeatureFlags(flags);
+      return flags;
+    } on _ConversationFeatureLoadFailure catch (error) {
+      debugPrint(
+        '[conversation-features] load failed\n'
+        'source=${error.source}\n'
+        'status=${error.statusCode ?? ''}\n'
+        'contentType=${error.contentType}\n'
+        'reason=${error.reason}\n'
+        'fallback=all disabled',
+      );
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        return ConversationFeatureFlags.disabled(
+          message: '请先登录后再使用该功能。',
+          source: error.source,
+          statusCode: error.statusCode,
+          contentType: error.contentType,
+          error: error.reason,
         );
       }
+      return ConversationFeatureFlags.disabled(
+        source: error.source,
+        statusCode: error.statusCode,
+        contentType: error.contentType,
+        error: error.reason,
+      );
+    } catch (error) {
+      debugPrint(
+        '[conversation-features] load failed\n'
+        'source=$_conversationFeaturePath\n'
+        'status=\n'
+        'contentType=\n'
+        'reason=$error\n'
+        'fallback=all disabled',
+      );
+      return ConversationFeatureFlags.disabled(
+        source: _conversationFeaturePath,
+        error: error.toString(),
+      );
     }
+  }
 
-    return const ConversationFeatureFlags.disabled();
+  Future<Map<String, dynamic>> shareConversation(String conversationId) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'share',
+      method: 'POST',
+      path: _conversationActionPath(conversationId, 'share'),
+      conversationId: conversationId,
+    );
+  }
+
+  Future<Map<String, dynamic>> startConversationGroupChat(
+    String conversationId,
+  ) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'group-chat',
+      method: 'POST',
+      path: _conversationActionPath(conversationId, 'group-chat'),
+      conversationId: conversationId,
+    );
+  }
+
+  Future<Map<String, dynamic>> renameConversation({
+    required String conversationId,
+    required String title,
+  }) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'rename',
+      method: 'PATCH',
+      path: _conversationActionPath(conversationId, 'rename'),
+      conversationId: conversationId,
+      body: {'title': title},
+    );
+  }
+
+  Future<Map<String, dynamic>> archiveConversation(String conversationId) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'archive',
+      method: 'PATCH',
+      path: _conversationActionPath(conversationId, 'archive'),
+      conversationId: conversationId,
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteConversation(String conversationId) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'delete',
+      method: 'DELETE',
+      path: '/api/user/conversations/${Uri.encodeComponent(conversationId)}',
+      conversationId: conversationId,
+    );
   }
 
   ConversationFeatureFlags _conversationFeatureFlagsFrom(
     Map<String, dynamic> data, {
     required String source,
+    required int statusCode,
+    required String contentType,
   }) {
     final values = <String, bool>{
       ConversationFeatureKeys.share: _featureFlagEnabled(
@@ -562,8 +874,10 @@ class ApiService {
     return ConversationFeatureFlags(
       values: Map.unmodifiable(values),
       loaded: true,
-      message: message.isEmpty ? '功能暂未开放' : message,
+      message: message.isEmpty ? '该功能暂未开放，请联系管理员开启。' : message,
       source: source,
+      statusCode: statusCode,
+      contentType: contentType,
     );
   }
 
@@ -640,13 +954,13 @@ class ApiService {
 
   void _debugConversationFeatureFlags(ConversationFeatureFlags flags) {
     debugPrint(
-      'conversation features loaded:\n'
-      'share=${flags.isEnabled(ConversationFeatureKeys.share)}\n'
-      'groupChat=${flags.isEnabled(ConversationFeatureKeys.groupChat)}\n'
-      'rename=${flags.isEnabled(ConversationFeatureKeys.rename)}\n'
-      'archive=${flags.isEnabled(ConversationFeatureKeys.archive)}\n'
-      'delete=${flags.isEnabled(ConversationFeatureKeys.delete)}\n'
-      'pinCloudSync=${flags.isEnabled(ConversationFeatureKeys.pinCloudSync)}\n'
+      '[conversation-features] parsed '
+      'share=${flags.isEnabled(ConversationFeatureKeys.share)} '
+      'groupChat=${flags.isEnabled(ConversationFeatureKeys.groupChat)} '
+      'rename=${flags.isEnabled(ConversationFeatureKeys.rename)} '
+      'archive=${flags.isEnabled(ConversationFeatureKeys.archive)} '
+      'delete=${flags.isEnabled(ConversationFeatureKeys.delete)} '
+      'pinCloudSync=${flags.isEnabled(ConversationFeatureKeys.pinCloudSync)} '
       'source=${flags.source}',
     );
   }

@@ -971,6 +971,11 @@ class _ChatPageState extends State<ChatPage> {
           conversationFeatures: _controller.conversationFeatures,
           useOfficialBrand: _useWindowsBrand,
           onSetConversationPinned: _controller.setConversationPinned,
+          onShareConversation: _controller.shareConversation,
+          onStartGroupChat: _controller.startConversationGroupChat,
+          onRenameConversation: _controller.renameConversation,
+          onArchiveConversation: _controller.archiveConversation,
+          onDeleteConversation: _controller.deleteConversation,
           onNewConversation: () {
             _clearComposer();
             _controller.startNewConversation();
@@ -1408,6 +1413,11 @@ class _HistoryDrawer extends StatefulWidget {
     required this.conversationFeatures,
     required this.useOfficialBrand,
     required this.onSetConversationPinned,
+    required this.onShareConversation,
+    required this.onStartGroupChat,
+    required this.onRenameConversation,
+    required this.onArchiveConversation,
+    required this.onDeleteConversation,
     required this.onNewConversation,
     required this.onOpenConversation,
     required this.onOpenSettings,
@@ -1426,6 +1436,11 @@ class _HistoryDrawer extends StatefulWidget {
   final ConversationFeatureFlags conversationFeatures;
   final bool useOfficialBrand;
   final bool Function(String id, bool pinned) onSetConversationPinned;
+  final Future<Map<String, dynamic>> Function(String id) onShareConversation;
+  final Future<Map<String, dynamic>> Function(String id) onStartGroupChat;
+  final Future<String> Function(String id, String title) onRenameConversation;
+  final Future<void> Function(String id) onArchiveConversation;
+  final Future<void> Function(String id) onDeleteConversation;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
   final VoidCallback onOpenSettings;
@@ -1452,22 +1467,35 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
   }
 
   void _showUnavailableFeature() {
-    _showLocalActionHint(context, '功能暂未开放', error: true);
+    final message = widget.conversationFeatures.message.trim();
+    _showLocalActionHint(
+      context,
+      message.isEmpty ? '该功能暂未开放，请联系管理员开启。' : message,
+      error: true,
+    );
   }
 
-  void _showMissingOperation() {
-    _showLocalActionHint(context, '操作接口未接入', error: true);
+  void _showActionError(Object error) {
+    final message = error is ApiException ? error.message : '网络异常，请稍后重试';
+    _showLocalActionHint(context, message, error: true);
   }
 
   Future<bool> _confirmDeleteConversation(
     ChatConversationSummary conversation,
   ) async {
+    debugPrint(
+      '[conversation-action] delete confirm conversationId=${conversation.id}',
+    );
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
           title: const Text('删除会话'),
-          content: Text('确认删除“${conversation.title}”？此操作需要服务端接口支持。'),
+          content: Text(
+            '确认删除该会话？\n\n'
+            '删除后该会话将从历史列表移除。\n\n'
+            '会话：${conversation.title}',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -1487,6 +1515,77 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     return confirmed == true;
   }
 
+  Future<String?> _promptRenameConversation(
+    ChatConversationSummary conversation,
+  ) async {
+    final controller = TextEditingController(text: conversation.title);
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('重命名会话'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              maxLength: 40,
+              decoration: const InputDecoration(
+                labelText: '会话标题',
+                hintText: '请输入新的会话标题',
+              ),
+              onSubmitted: (value) {
+                Navigator.of(dialogContext).pop(value.trim());
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(controller.text.trim());
+                },
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  String _firstActionString(Object? value, List<String> keys, {int depth = 0}) {
+    if (value == null || depth > 4) {
+      return '';
+    }
+    if (value is Map) {
+      for (final key in keys) {
+        final raw = value[key];
+        if (raw is String && raw.trim().isNotEmpty) {
+          return raw.trim();
+        }
+      }
+      for (final item in value.values) {
+        final nested = _firstActionString(item, keys, depth: depth + 1);
+        if (nested.isNotEmpty) {
+          return nested;
+        }
+      }
+    }
+    if (value is List) {
+      for (final item in value) {
+        final nested = _firstActionString(item, keys, depth: depth + 1);
+        if (nested.isNotEmpty) {
+          return nested;
+        }
+      }
+    }
+    return '';
+  }
+
   Future<void> _handleConversationMenu(
     _ConversationMenuAction action,
     ChatConversationSummary conversation,
@@ -1497,21 +1596,64 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
           _showUnavailableFeature();
           return;
         }
-        _showMissingOperation();
+        try {
+          final data = await widget.onShareConversation(conversation.id);
+          if (!mounted) return;
+          final link = _firstActionString(data, const [
+            'shareUrl',
+            'share_url',
+            'url',
+            'link',
+          ]);
+          if (link.isNotEmpty) {
+            await Clipboard.setData(ClipboardData(text: link));
+            debugPrint('[conversation-action] share success copied=true');
+            if (!mounted) return;
+            _showLocalActionHint(context, '分享链接已复制');
+          } else {
+            debugPrint('[conversation-action] share success copied=false');
+            _showLocalActionHint(context, '分享已创建');
+          }
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.startGroupChat:
         if (!_isFeatureEnabled(ConversationFeatureKeys.groupChat)) {
           _showUnavailableFeature();
           return;
         }
-        _showMissingOperation();
+        try {
+          await widget.onStartGroupChat(conversation.id);
+          if (!mounted) return;
+          _showLocalActionHint(context, '群聊已创建，入口即将开放');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.rename:
         if (!_isFeatureEnabled(ConversationFeatureKeys.rename)) {
           _showUnavailableFeature();
           return;
         }
-        _showMissingOperation();
+        final nextTitle = await _promptRenameConversation(conversation);
+        if (!mounted || nextTitle == null) {
+          return;
+        }
+        if (nextTitle.trim().isEmpty) {
+          _showLocalActionHint(context, '标题不能为空', error: true);
+          return;
+        }
+        try {
+          await widget.onRenameConversation(conversation.id, nextTitle);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已重命名');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.togglePinned:
         final nextPinned = !conversation.pinned;
@@ -1533,7 +1675,14 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
           _showUnavailableFeature();
           return;
         }
-        _showMissingOperation();
+        try {
+          await widget.onArchiveConversation(conversation.id);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已归档');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.delete:
         if (!_isFeatureEnabled(ConversationFeatureKeys.delete)) {
@@ -1544,7 +1693,14 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
         if (!mounted || !confirmed) {
           return;
         }
-        _showMissingOperation();
+        try {
+          await widget.onDeleteConversation(conversation.id);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已删除');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
     }
   }
@@ -2407,8 +2563,8 @@ PopupMenuEntry<_ConversationMenuAction> _conversationMenuItem({
   final enabled =
       featureKey == null || (features?.isEnabled(featureKey) ?? false);
   return PopupMenuItem<_ConversationMenuAction>(
-    enabled: enabled,
-    value: enabled ? action : null,
+    enabled: true,
+    value: action,
     padding: EdgeInsets.zero,
     height: 42,
     child: _ConversationMenuItemRow(

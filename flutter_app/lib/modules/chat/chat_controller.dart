@@ -34,6 +34,11 @@ class ChatController extends ChangeNotifier {
   String? _lastSyncError;
   ConversationFeatureFlags _conversationFeatures =
       const ConversationFeatureFlags.disabled();
+  String _lastConversationFeatureSource = '';
+  int? _lastConversationFeatureStatusCode;
+  String? _lastConversationFeatureError;
+  Map<String, bool> _lastConversationFeatureParsedValues =
+      ConversationFeatureFlags.disabledValues;
 
   List<ChatMessage> get _messages => _activeConversation.messages;
   List<ChatMessage> get messages =>
@@ -44,6 +49,12 @@ class ChatController extends ChangeNotifier {
   bool get loadingConversationFeatures => _loadingConversationFeatures;
   String? get lastSyncError => _lastSyncError;
   ConversationFeatureFlags get conversationFeatures => _conversationFeatures;
+  String get lastConversationFeatureSource => _lastConversationFeatureSource;
+  int? get lastConversationFeatureStatusCode =>
+      _lastConversationFeatureStatusCode;
+  String? get lastConversationFeatureError => _lastConversationFeatureError;
+  Map<String, bool> get lastConversationFeatureParsedValues =>
+      Map.unmodifiable(_lastConversationFeatureParsedValues);
   bool get canRetry => _failedPrompt != null && !_sending;
   String get selectedModel => _selectedModel;
   String get sessionId => _activeConversation.id;
@@ -51,7 +62,7 @@ class ChatController extends ChangeNotifier {
   List<ChatConversationSummary> get loadedConversations {
     final summaries = [
       for (final conversation in _conversations.reversed)
-        if (conversation.hasVisibleContent)
+        if (conversation.hasVisibleContent && !conversation.archived)
           ChatConversationSummary(
             id: conversation.id,
             title: conversation.title,
@@ -79,6 +90,64 @@ class ChatController extends ChangeNotifier {
     conversation.pinned = pinned;
     notifyListeners();
     return true;
+  }
+
+  Future<Map<String, dynamic>> shareConversation(String id) async {
+    final conversation = _requireConversation(id);
+    return apiService.shareConversation(_conversationActionId(conversation));
+  }
+
+  Future<Map<String, dynamic>> startConversationGroupChat(String id) async {
+    final conversation = _requireConversation(id);
+    return apiService.startConversationGroupChat(
+      _conversationActionId(conversation),
+    );
+  }
+
+  Future<String> renameConversation(String id, String title) async {
+    final conversation = _requireConversation(id);
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      throw const ApiException('标题不能为空');
+    }
+
+    final data = await apiService.renameConversation(
+      conversationId: _conversationActionId(conversation),
+      title: trimmedTitle,
+    );
+    final nestedConversation = _mapValue(data['conversation']);
+    final nextTitle = _firstString(data, const ['title', 'name']) ??
+        _firstString(nestedConversation, const ['title', 'name']) ??
+        trimmedTitle;
+    conversation.cloudTitle = nextTitle;
+    conversation.cloudUpdatedAt = DateTime.now();
+    notifyListeners();
+    return nextTitle;
+  }
+
+  Future<void> archiveConversation(String id) async {
+    final conversation = _requireConversation(id);
+    await apiService.archiveConversation(_conversationActionId(conversation));
+    conversation.archived = true;
+    conversation.cloudUpdatedAt = DateTime.now();
+    notifyListeners();
+  }
+
+  Future<void> deleteConversation(String id) async {
+    final conversation = _requireConversation(id);
+    await apiService.deleteConversation(_conversationActionId(conversation));
+    final wasActive = identical(conversation, _activeConversation);
+    _conversations.remove(conversation);
+    if (wasActive) {
+      _memoryService = ChatMemoryService();
+      _activeConversation = _ChatConversationState(
+        id: _memoryService.sessionId,
+        memoryService: _memoryService,
+        messages: [_welcomeMessage()],
+      );
+      _conversations.add(_activeConversation);
+    }
+    notifyListeners();
   }
 
   void setModel(String model) {
@@ -143,13 +212,27 @@ class ChatController extends ChangeNotifier {
 
     try {
       _conversationFeatures = await apiService.getConversationFeatureFlags();
+      _rememberConversationFeatureDebug(_conversationFeatures);
     } catch (error) {
-      _conversationFeatures = const ConversationFeatureFlags.disabled();
+      _conversationFeatures = ConversationFeatureFlags.disabled(
+        error: error.toString(),
+      );
+      _rememberConversationFeatureDebug(_conversationFeatures);
       debugPrint('Conversation feature flags failed: $error');
     } finally {
       _loadingConversationFeatures = false;
+      debugPrint(
+        '[conversation-features] controller updated; menu should refresh',
+      );
       notifyListeners();
     }
+  }
+
+  void _rememberConversationFeatureDebug(ConversationFeatureFlags flags) {
+    _lastConversationFeatureSource = flags.source;
+    _lastConversationFeatureStatusCode = flags.statusCode;
+    _lastConversationFeatureError = flags.error;
+    _lastConversationFeatureParsedValues = Map.unmodifiable(flags.values);
   }
 
   Future<void> openConversation(String id) async {
@@ -183,6 +266,23 @@ class ChatController extends ChangeNotifier {
         .where((item) => item.id == id || item.remoteConversationId == id)
         .cast<_ChatConversationState?>()
         .firstWhere((item) => item != null, orElse: () => null);
+  }
+
+  _ChatConversationState _requireConversation(String id) {
+    final conversation = _findConversation(id);
+    if (conversation == null) {
+      throw const ApiException('会话不存在');
+    }
+    return conversation;
+  }
+
+  String _conversationActionId(_ChatConversationState conversation) {
+    final id = conversation.remoteConversationId ?? conversation.id;
+    final trimmed = id.trim();
+    if (trimmed.isEmpty) {
+      throw const ApiException('会话不存在');
+    }
+    return trimmed;
   }
 
   Future<void> loadCloudConversationHistory(String conversationId) async {
@@ -879,6 +979,7 @@ class _ChatConversationState {
   String? cloudSubtitle;
   DateTime? cloudUpdatedAt;
   bool pinned = false;
+  bool archived = false;
 
   bool get hasVisibleContent {
     if (remoteConversationId != null) {
