@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from "crypto";
 import { LicenseKeyStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { BOOTSTRAP_SUPER_ADMIN_PHONE, isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { normalizePhone } from "@/lib/auth/phone";
 import {
   ForbiddenError,
@@ -16,7 +17,7 @@ import {
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
-const BOOTSTRAP_ADMIN_PHONES = ["+8613352833602"];
+const BOOTSTRAP_ADMIN_PHONES = [BOOTSTRAP_SUPER_ADMIN_PHONE];
 const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "super_admin"] as const;
 const LICENSE_METADATA_ACTIONS = [
   "generate_user_app_license_key",
@@ -295,7 +296,8 @@ export async function checkUserLicense(userId: string) {
     where: { id: userId },
     select: {
       licenseActivated: true,
-      isActive: true
+      isActive: true,
+      phone: true
     }
   });
 
@@ -307,7 +309,7 @@ export async function checkUserLicense(userId: string) {
     throw new ForbiddenError("账号已禁用。");
   }
 
-  if (!user.licenseActivated) {
+  if (!user.licenseActivated && !isBootstrapSuperAdminUser(user)) {
     throw new LicenseRequiredError("请先输入卡密激活知识库。");
   }
 
