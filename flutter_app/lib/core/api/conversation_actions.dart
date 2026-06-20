@@ -63,6 +63,9 @@ Map<String, bool> parseConversationFeatureValues(Object? data) {
         'success.data.features.conversation.share.enabled',
         'success.data.conversation.share.enabled',
         'success.data.share',
+        'result.features.conversation.share.enabled',
+        'result.conversation.share.enabled',
+        'result.share',
         'data.share',
         'share',
         'shareEnabled',
@@ -131,13 +134,17 @@ bool conversationFeatureEnabled(Object? value) {
   if (value is bool) {
     return value;
   }
+  if (value is num) {
+    return value == 1;
+  }
   if (value is Map || value is List) {
     return conversationFeatureEnabled(_featureFlagValue(value, const [
       'enabled',
       'value',
     ]));
   }
-  return _stringValue(value).toLowerCase() == 'true';
+  return const {'true', '1', 'yes', 'on', 'enabled', 'open'}
+      .contains(_stringValue(value).toLowerCase());
 }
 
 String conversationFeatureMessage(Map<String, dynamic> data) {

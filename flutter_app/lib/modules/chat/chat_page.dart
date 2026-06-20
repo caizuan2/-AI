@@ -2953,8 +2953,8 @@ PopupMenuEntry<_ConversationMenuAction> _conversationMenuItem({
   final enabled =
       featureKey == null || (features?.isEnabled(featureKey) ?? false);
   return PopupMenuItem<_ConversationMenuAction>(
-    enabled: true,
-    value: action,
+    enabled: enabled,
+    value: enabled ? action : null,
     padding: EdgeInsets.zero,
     height: 42,
     child: _ConversationMenuItemRow(

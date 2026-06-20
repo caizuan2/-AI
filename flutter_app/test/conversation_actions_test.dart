@@ -20,6 +20,22 @@ void main() {
       expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
     });
 
+    test('share enabled supports result feature map and enabled-like values',
+        () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'result': {
+            'features': {
+              'conversation.share.enabled': 1,
+            },
+          },
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
     test('share disabled keeps the share menu unavailable', () {
       final flags = ConversationFeatureFlags(
         values: parseConversationFeatureValues({
@@ -31,9 +47,39 @@ void main() {
       expect(flags.isEnabled(ConversationFeatureKeys.share), isFalse);
       expect(flags.message, contains('暂未开放'));
     });
+
+    test('share disabled remains disabled for explicit false-like value', () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'data': {
+            'features': {
+              'conversation.share.enabled': 'false',
+            },
+          },
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isFalse);
+    });
   });
 
   group('share conversation action', () {
+    test('success response extracts result share link', () async {
+      final api = _apiReturning(
+        statusCode: 200,
+        body: {
+          'ok': true,
+          'result': {'link': 'https://example.com/share/abc'},
+        },
+      );
+      addTearDown(api.dispose);
+
+      final data = await api.shareConversation('conversation-1');
+
+      expect(extractShareUrl(data), 'https://example.com/share/abc');
+    });
+
     test('404 maps to deployed-endpoint message, not unavailable state',
         () async {
       final api = _apiReturning(
@@ -85,6 +131,24 @@ void main() {
       final data = await api.startConversationGroupChat('conversation-1');
 
       expect(extractGroupChatInviteUrl(data), 'https://example.com/group/abc');
+    });
+
+    test('success response exposes result nested invite link', () async {
+      final api = _apiReturning(
+        statusCode: 200,
+        body: {
+          'ok': true,
+          'result': {'joinUrl': 'https://example.com/group/result'},
+        },
+      );
+      addTearDown(api.dispose);
+
+      final data = await api.startConversationGroupChat('conversation-1');
+
+      expect(
+        extractGroupChatInviteUrl(data),
+        'https://example.com/group/result',
+      );
     });
 
     test('success response without link gives full explanatory message', () {
