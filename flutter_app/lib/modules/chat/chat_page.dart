@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api/api_service.dart';
+import '../../core/api/conversation_actions.dart';
 import '../update/test_update_dialog.dart';
 import '../update/test_update_service.dart';
 import '../update/update_page.dart';
@@ -973,6 +974,8 @@ class _ChatPageState extends State<ChatPage> {
           onSetConversationPinned: _controller.setConversationPinned,
           onShareConversation: _controller.shareConversation,
           onStartGroupChat: _controller.startConversationGroupChat,
+          onResetGroupChatLink: _controller.resetConversationGroupChatLink,
+          onDeleteGroupChatLink: _controller.deleteConversationGroupChatLink,
           onRenameConversation: _controller.renameConversation,
           onArchiveConversation: _controller.archiveConversation,
           onDeleteConversation: _controller.deleteConversation,
@@ -1415,6 +1418,8 @@ class _HistoryDrawer extends StatefulWidget {
     required this.onSetConversationPinned,
     required this.onShareConversation,
     required this.onStartGroupChat,
+    required this.onResetGroupChatLink,
+    required this.onDeleteGroupChatLink,
     required this.onRenameConversation,
     required this.onArchiveConversation,
     required this.onDeleteConversation,
@@ -1438,6 +1443,8 @@ class _HistoryDrawer extends StatefulWidget {
   final bool Function(String id, bool pinned) onSetConversationPinned;
   final Future<Map<String, dynamic>> Function(String id) onShareConversation;
   final Future<Map<String, dynamic>> Function(String id) onStartGroupChat;
+  final Future<Map<String, dynamic>> Function(String id) onResetGroupChatLink;
+  final Future<void> Function(String id) onDeleteGroupChatLink;
   final Future<String> Function(String id, String title) onRenameConversation;
   final Future<void> Function(String id) onArchiveConversation;
   final Future<void> Function(String id) onDeleteConversation;
@@ -1476,8 +1483,54 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
   }
 
   void _showActionError(Object error) {
-    final message = error is ApiException ? error.message : '网络异常，请稍后重试';
+    final message = _actionErrorMessage(error);
     _showLocalActionHint(context, message, error: true);
+  }
+
+  String _actionErrorMessage(Object error) {
+    return error is ApiException ? error.message : '网络异常，请稍后重试';
+  }
+
+  Future<void> _showConversationActionResultDialog({
+    required String title,
+    required String message,
+    bool error = false,
+  }) async {
+    final normalizedMessage = message.trim();
+    if (normalizedMessage.isEmpty || !mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final iconColor =
+            error ? const Color(0xFFDC2626) : const Color(0xFF2563EB);
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                error ? Icons.error_outline : Icons.info_outline,
+                color: iconColor,
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(title)),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SelectableText(normalizedMessage),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   Future<bool> _confirmDeleteConversation(
@@ -1557,33 +1610,312 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     }
   }
 
-  String _firstActionString(Object? value, List<String> keys, {int depth = 0}) {
-    if (value == null || depth > 4) {
-      return '';
-    }
-    if (value is Map) {
-      for (final key in keys) {
-        final raw = value[key];
-        if (raw is String && raw.trim().isNotEmpty) {
-          return raw.trim();
-        }
-      }
-      for (final item in value.values) {
-        final nested = _firstActionString(item, keys, depth: depth + 1);
-        if (nested.isNotEmpty) {
-          return nested;
-        }
-      }
-    }
-    if (value is List) {
-      for (final item in value) {
-        final nested = _firstActionString(item, keys, depth: depth + 1);
-        if (nested.isNotEmpty) {
-          return nested;
-        }
-      }
-    }
-    return '';
+  String _firstActionUrl(Object? value, List<String> keys, {int depth = 0}) {
+    return extractConversationActionUrl(value, keys, depth: depth);
+  }
+
+  String _groupChatNoInviteMessage(Map<String, dynamic> data) {
+    return buildGroupChatNoInviteMessage(data);
+  }
+
+  Future<bool> _confirmDeleteGroupLink() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('确认删除群组链接？'),
+          content: const Text('删除后旧链接将无法继续加入群聊。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFDC2626),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除链接'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _showGroupLinkDialog(
+    ChatConversationSummary conversation,
+    String inviteUrl,
+  ) async {
+    var currentLink = inviteUrl;
+    String? notice;
+    String? errorText;
+    var busy = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> copyLink() async {
+              if (currentLink.trim().isEmpty) {
+                setDialogState(() {
+                  errorText = '群聊已创建，但邀请链接暂未返回';
+                  notice = null;
+                });
+                return;
+              }
+              await Clipboard.setData(ClipboardData(text: currentLink));
+              debugPrint('[conversation-action] group-chat link copied');
+              setDialogState(() {
+                notice = '已将群组链接复制到剪贴板';
+                errorText = null;
+              });
+            }
+
+            Future<void> resetLink() async {
+              setDialogState(() {
+                busy = true;
+                notice = null;
+                errorText = null;
+              });
+              try {
+                final data = await widget.onResetGroupChatLink(conversation.id);
+                if (!mounted) return;
+                final nextLink = _firstActionUrl(data, const [
+                  'inviteUrl',
+                  'invite_url',
+                  'inviteLink',
+                  'invite_link',
+                  'groupLink',
+                  'group_link',
+                  'groupChatLink',
+                  'group_chat_link',
+                  'shareUrl',
+                  'share_url',
+                  'link',
+                  'url',
+                  'joinUrl',
+                  'join_url',
+                  'joinLink',
+                  'join_link',
+                ]);
+                setDialogState(() {
+                  if (nextLink.isNotEmpty) {
+                    currentLink = nextLink;
+                    notice = '群组链接已重置';
+                    errorText = null;
+                  } else {
+                    notice = null;
+                    errorText = '群组链接已重置，但邀请链接暂未返回';
+                  }
+                  busy = false;
+                });
+              } catch (error) {
+                if (!mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  notice = null;
+                  errorText =
+                      error is ApiException ? error.message : '网络异常，请稍后重试';
+                });
+              }
+            }
+
+            Future<void> deleteLink() async {
+              final confirmed = await _confirmDeleteGroupLink();
+              if (!mounted || !confirmed) {
+                return;
+              }
+              setDialogState(() {
+                busy = true;
+                notice = null;
+                errorText = null;
+              });
+              try {
+                await widget.onDeleteGroupChatLink(conversation.id);
+                if (!mounted || !dialogContext.mounted) return;
+                Navigator.of(dialogContext).pop();
+                _showLocalActionHint(context, '群组链接已删除');
+              } catch (error) {
+                if (!mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  notice = null;
+                  errorText =
+                      error is ApiException ? error.message : '网络异常，请稍后重试';
+                });
+              }
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              '群组链接',
+                              style: TextStyle(
+                                color: Color(0xFF0F172A),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          PopupMenuButton<_GroupLinkMenuAction>(
+                            tooltip: '更多',
+                            enabled: !busy,
+                            icon: const Icon(Icons.more_horiz),
+                            onSelected: (action) {
+                              switch (action) {
+                                case _GroupLinkMenuAction.reset:
+                                  unawaited(resetLink());
+                                  return;
+                                case _GroupLinkMenuAction.delete:
+                                  unawaited(deleteLink());
+                                  return;
+                              }
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: _GroupLinkMenuAction.reset,
+                                child: Text('重置链接'),
+                              ),
+                              PopupMenuItem(
+                                value: _GroupLinkMenuAction.delete,
+                                child: Text(
+                                  '删除链接',
+                                  style: TextStyle(color: Color(0xFFDC2626)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (notice != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF86EFAC),
+                            ),
+                          ),
+                          child: Text(
+                            notice!,
+                            style: const TextStyle(
+                              color: Color(0xFF166534),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (errorText != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          errorText!,
+                          style: const TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              constraints: const BoxConstraints(minHeight: 44),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 11,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              child: SelectableText(
+                                currentLink,
+                                maxLines: 2,
+                                style: const TextStyle(
+                                  color: Color(0xFF0F172A),
+                                  fontSize: 13,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          if (busy)
+                            const SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        '使用群组链接邀请他人加入群聊。任何人都可通过此链接加入群聊，并查看本群历史消息。',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: busy
+                                ? null
+                                : () => Navigator.of(dialogContext).pop(),
+                            child: const Text('取消'),
+                          ),
+                          const SizedBox(width: 10),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF0F172A),
+                            ),
+                            onPressed: busy ? null : copyLink,
+                            child: const Text('复制链接'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _handleConversationMenu(
@@ -1599,20 +1931,25 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
         try {
           final data = await widget.onShareConversation(conversation.id);
           if (!mounted) return;
-          final link = _firstActionString(data, const [
+          final link = _firstActionUrl(data, const [
             'shareUrl',
             'share_url',
+            'shareLink',
+            'share_link',
             'url',
             'link',
           ]);
           if (link.isNotEmpty) {
             await Clipboard.setData(ClipboardData(text: link));
-            debugPrint('[conversation-action] share success copied=true');
+            debugPrint('[conversation-action] share parsed link exists=true');
             if (!mounted) return;
             _showLocalActionHint(context, '分享链接已复制');
           } else {
-            debugPrint('[conversation-action] share success copied=false');
-            _showLocalActionHint(context, '分享已创建');
+            debugPrint('[conversation-action] share parsed link exists=false');
+            await _showConversationActionResultDialog(
+              title: '分享已创建',
+              message: '分享已创建，但服务器未返回分享链接。',
+            );
           }
         } catch (error) {
           if (!mounted) return;
@@ -1624,13 +1961,61 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
           _showUnavailableFeature();
           return;
         }
+        _showLocalActionHint(context, '正在创建群聊链接...');
         try {
-          await widget.onStartGroupChat(conversation.id);
+          final data = await widget.onStartGroupChat(conversation.id).timeout(
+                const Duration(seconds: 15),
+                onTimeout: () => throw const ApiException(
+                  '创建群聊链接超时，请稍后重试',
+                ),
+              );
           if (!mounted) return;
-          _showLocalActionHint(context, '群聊已创建，入口即将开放');
+          final inviteUrl = _firstActionUrl(data, const [
+            'inviteUrl',
+            'invite_url',
+            'inviteLink',
+            'invite_link',
+            'groupLink',
+            'group_link',
+            'groupChatLink',
+            'group_chat_link',
+            'shareUrl',
+            'share_url',
+            'link',
+            'url',
+            'joinUrl',
+            'join_url',
+            'joinLink',
+            'join_link',
+          ]);
+          if (inviteUrl.isEmpty) {
+            debugPrint(
+              '[conversation-action] group-chat parsed inviteUrl exists=false',
+            );
+            debugPrint(
+              '[conversation-action] group-chat no invite url returned; '
+              'known fields checked',
+            );
+            await _showConversationActionResultDialog(
+              title: '群聊已创建，但没有邀请链接',
+              message: _groupChatNoInviteMessage(data),
+            );
+            return;
+          }
+          debugPrint(
+            '[conversation-action] group-chat parsed inviteUrl exists=true',
+          );
+          debugPrint('[conversation-action] group-chat dialog open');
+          await _showGroupLinkDialog(conversation, inviteUrl);
         } catch (error) {
           if (!mounted) return;
-          _showActionError(error);
+          await _showConversationActionResultDialog(
+            title: '创建群聊失败',
+            message: _actionErrorMessage(error),
+            error: true,
+          );
+        } finally {
+          debugPrint('[conversation-action] group-chat loading cleared');
         }
         return;
       case _ConversationMenuAction.rename:
@@ -2325,6 +2710,11 @@ enum _ConversationMenuAction {
   rename,
   togglePinned,
   archive,
+  delete,
+}
+
+enum _GroupLinkMenuAction {
+  reset,
   delete,
 }
 

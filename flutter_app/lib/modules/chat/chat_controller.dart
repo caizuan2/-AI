@@ -104,6 +104,20 @@ class ChatController extends ChangeNotifier {
     );
   }
 
+  Future<Map<String, dynamic>> resetConversationGroupChatLink(String id) async {
+    final conversation = _requireConversation(id);
+    return apiService.resetConversationGroupChatLink(
+      _conversationActionId(conversation),
+    );
+  }
+
+  Future<void> deleteConversationGroupChatLink(String id) async {
+    final conversation = _requireConversation(id);
+    await apiService.deleteConversationGroupChatLink(
+      _conversationActionId(conversation),
+    );
+  }
+
   Future<String> renameConversation(String id, String title) async {
     final conversation = _requireConversation(id);
     final trimmedTitle = title.trim();

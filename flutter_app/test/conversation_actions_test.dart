@@ -1,0 +1,185 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:ai_knowledge_flutter_app/core/api/api_service.dart';
+import 'package:ai_knowledge_flutter_app/core/api/conversation_actions.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+
+void main() {
+  group('conversation feature flags', () {
+    test('share enabled makes the share menu logically clickable', () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'conversation.share.enabled': true,
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
+    test('share disabled keeps the share menu unavailable', () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'conversation.share.enabled': false,
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isFalse);
+      expect(flags.message, contains('暂未开放'));
+    });
+  });
+
+  group('share conversation action', () {
+    test('404 maps to deployed-endpoint message, not unavailable state',
+        () async {
+      final api = _apiReturning(
+        statusCode: 404,
+        body: {'message': 'not found'},
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.shareConversation('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.message, 'message', '分享接口未部署')
+              .having((error) => error.statusCode, 'statusCode', 404),
+        ),
+      );
+    });
+
+    test('405 maps to unimplemented-action message, not copy success',
+        () async {
+      final api = _apiReturning(
+        statusCode: 405,
+        body: {'message': 'method not allowed'},
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.shareConversation('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.message, 'message', '分享接口未接入')
+              .having((error) => error.statusCode, 'statusCode', 405),
+        ),
+      );
+    });
+  });
+
+  group('group chat action', () {
+    test('success response exposes invite link', () async {
+      final api = _apiReturning(
+        statusCode: 200,
+        body: {
+          'ok': true,
+          'data': {'inviteUrl': 'https://example.com/group/abc'},
+        },
+      );
+      addTearDown(api.dispose);
+
+      final data = await api.startConversationGroupChat('conversation-1');
+
+      expect(extractGroupChatInviteUrl(data), 'https://example.com/group/abc');
+    });
+
+    test('success response without link gives full explanatory message', () {
+      final message = buildGroupChatNoInviteMessage({
+        'groupChatId': 'abc',
+      });
+
+      expect(message, contains('服务器已创建群聊，但没有返回邀请链接'));
+      expect(message, contains('inviteUrl'));
+      expect(message, contains('link'));
+      expect(message, contains('url'));
+      expect(message, contains('群聊 ID：abc'));
+    });
+
+    test('404 maps to group chat deployment message', () async {
+      final api = _apiReturning(
+        statusCode: 404,
+        body: {'message': 'not found'},
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.startConversationGroupChat('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.message, 'message', '群聊接口未部署')
+              .having((error) => error.statusCode, 'statusCode', 404),
+        ),
+      );
+    });
+
+    test('405 maps to group chat unimplemented message', () async {
+      final api = _apiReturning(
+        statusCode: 405,
+        body: {'message': 'method not allowed'},
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.startConversationGroupChat('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having((error) => error.message, 'message', '群聊接口未接入')
+              .having((error) => error.statusCode, 'statusCode', 405),
+        ),
+      );
+    });
+
+    test('network timeout completes so loading can close in finally', () async {
+      final api = ApiService(
+        baseUrl: 'https://example.com',
+        client: MockClient((request) async {
+          throw TimeoutException('simulated timeout');
+        }),
+      );
+      addTearDown(api.dispose);
+
+      var loading = false;
+      Object? caught;
+
+      loading = true;
+      try {
+        await api.startConversationGroupChat('conversation-1');
+      } catch (error) {
+        caught = error;
+      } finally {
+        loading = false;
+      }
+
+      expect(loading, isFalse);
+      expect(
+        caught,
+        isA<ApiException>().having(
+          (error) => error.message,
+          'message',
+          '创建群聊链接超时，请稍后重试',
+        ),
+      );
+    });
+  });
+}
+
+ApiService _apiReturning({
+  required int statusCode,
+  required Map<String, dynamic> body,
+}) {
+  return ApiService(
+    baseUrl: 'https://example.com',
+    client: MockClient((request) async {
+      return http.Response(
+        jsonEncode(body),
+        statusCode,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+        request: request,
+      );
+    }),
+  );
+}
