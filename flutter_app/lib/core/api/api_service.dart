@@ -9,10 +9,16 @@ import '../../modules/upload/upload_models.dart';
 import 'conversation_actions.dart';
 
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode, this.debugDetails});
+  const ApiException(
+    this.message, {
+    this.statusCode,
+    this.code,
+    this.debugDetails,
+  });
 
   final String message;
   final int? statusCode;
+  final String? code;
   final String? debugDetails;
 
   @override
@@ -540,18 +546,32 @@ class ApiService {
       );
       debugPrint(
         '[conversation-action] $action failed '
-        'status=${response.statusCode} reason=$reason',
+        'status=${response.statusCode} '
+        'code=${_conversationActionErrorCode(envelope)} '
+        'reason=$reason',
       );
-      throw ApiException(reason, statusCode: response.statusCode);
+      final code = _conversationActionErrorCode(envelope);
+      throw ApiException(
+        reason,
+        statusCode: response.statusCode,
+        code: code.isEmpty ? null : code,
+      );
     }
 
     if (envelope['ok'] == false || envelope['success'] == false) {
       final reason = _messageFromEnvelope(envelope, '操作失败，请稍后重试');
       debugPrint(
         '[conversation-action] $action failed '
-        'status=${response.statusCode} reason=$reason',
+        'status=${response.statusCode} '
+        'code=${_conversationActionErrorCode(envelope)} '
+        'reason=$reason',
       );
-      throw ApiException(reason, statusCode: response.statusCode);
+      final code = _conversationActionErrorCode(envelope);
+      throw ApiException(
+        reason,
+        statusCode: response.statusCode,
+        code: code.isEmpty ? null : code,
+      );
     }
 
     final data = envelope['data'];
@@ -611,6 +631,31 @@ class ApiService {
       notFoundMessage: notFoundMessage,
       methodNotAllowedMessage: methodNotAllowedMessage,
     );
+  }
+
+  String _conversationActionErrorCode(Map<String, dynamic> envelope) {
+    final topLevelCode = _conversationActionStringValue(envelope['code']);
+    if (topLevelCode.isNotEmpty) {
+      return topLevelCode;
+    }
+    final error = envelope['error'];
+    if (error is Map) {
+      final nestedCode = _conversationActionStringValue(error['code']);
+      if (nestedCode.isNotEmpty) {
+        return nestedCode;
+      }
+    }
+    return '';
+  }
+
+  String _conversationActionStringValue(Object? value) {
+    if (value is String) {
+      return value.trim();
+    }
+    if (value is num || value is bool) {
+      return value.toString();
+    }
+    return '';
   }
 
   String _conversationActionPath(String conversationId, String action) {

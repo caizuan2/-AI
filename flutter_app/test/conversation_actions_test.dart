@@ -178,6 +178,7 @@ void main() {
         body: {
           'ok': false,
           'success': false,
+          'code': 'FORBIDDEN',
           'message': '该会话功能暂未开放，请联系超级管理员。',
         },
       );
@@ -192,9 +193,63 @@ void main() {
                 'message',
                 '该会话功能暂未开放，请联系超级管理员。',
               )
+              .having((error) => error.code, 'code', 'FORBIDDEN')
               .having((error) => error.statusCode, 'statusCode', 403),
         ),
       );
+    });
+
+    test('502 maps to gateway failure message', () async {
+      final api = _apiReturning(
+        statusCode: 502,
+        body: {'message': 'Bad Gateway'},
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.shareConversation('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having(
+                (error) => error.message,
+                'message',
+                '服务器网关异常，请稍后重试或联系管理员',
+              )
+              .having((error) => error.statusCode, 'statusCode', 502),
+        ),
+      );
+    });
+
+    test('success response without link gives full explanatory message', () {
+      final message = buildShareNoLinkMessage({
+        'shareId': 'share-1',
+      });
+
+      expect(message, contains('服务器已创建分享记录，但没有返回分享链接'));
+      expect(message, contains('shareUrl'));
+      expect(message, contains('shareLink'));
+      expect(message, contains('link'));
+      expect(message, contains('url'));
+      expect(message, contains('分享 ID：share-1'));
+    });
+
+    test('failure dialog message includes endpoint status code and suggestion',
+        () {
+      final message = buildShareFailureMessage(
+        conversationId: 'conversation/1',
+        message: '该会话功能暂未开放，请联系超级管理员。',
+        statusCode: 403,
+        code: 'FEATURE_DISABLED',
+      );
+
+      expect(
+        message,
+        contains('接口：POST /api/user/conversations/conversation%2F1/share'),
+      );
+      expect(message, contains('状态码：403'));
+      expect(message, contains('错误 code：FEATURE_DISABLED'));
+      expect(message, contains('该会话功能暂未开放，请联系超级管理员。'));
+      expect(message, contains('后端拒绝分享'));
     });
   });
 

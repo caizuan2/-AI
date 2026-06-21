@@ -52,6 +52,12 @@ const conversationGroupIdKeys = <String>[
   'conversation_id',
 ];
 
+const conversationShareIdKeys = <String>[
+  'shareId',
+  'share_id',
+  'id',
+];
+
 Map<String, bool> parseConversationFeatureValues(Object? data) {
   final groupChat = _featureEnabledFromAliases(
     data,
@@ -281,6 +287,7 @@ String conversationActionFailureMessage(
     403 => conversationMessageFromEnvelope(envelope, forbiddenMessage),
     404 => notFoundMessage,
     405 => methodNotAllowedMessage,
+    502 => '服务器网关异常，请稍后重试或联系管理员',
     >= 500 => '服务器异常，请稍后重试',
     _ => conversationMessageFromEnvelope(envelope, '操作失败，请稍后重试'),
   };
@@ -415,6 +422,49 @@ String buildGroupChatNoInviteMessage(Map<String, dynamic> data) {
       ..write('群聊 ID：$id');
   }
   return buffer.toString();
+}
+
+String buildShareNoLinkMessage(Map<String, dynamic> data) {
+  final id = extractConversationActionString(data, conversationShareIdKeys);
+  final buffer = StringBuffer()
+    ..writeln('服务器已创建分享记录，但没有返回分享链接。')
+    ..writeln('请联系管理员检查 share 接口返回字段。')
+    ..write('用户端支持 shareUrl、shareLink、link、url 等字段。');
+  if (id.isNotEmpty) {
+    buffer
+      ..writeln()
+      ..write('分享 ID：$id');
+  }
+  return buffer.toString();
+}
+
+String buildShareFailureMessage({
+  required String conversationId,
+  required String message,
+  int? statusCode,
+  String? code,
+}) {
+  final normalizedCode = code?.trim() ?? '';
+  final encodedId = Uri.encodeComponent(conversationId);
+  return [
+    '接口：POST /api/user/conversations/$encodedId/share',
+    '状态码：${statusCode?.toString() ?? '无'}',
+    '错误 code：${normalizedCode.isEmpty ? '无' : normalizedCode}',
+    '错误信息：$message',
+    '处理建议：${shareFailureSuggestion(statusCode)}',
+  ].join('\n');
+}
+
+String shareFailureSuggestion(int? statusCode) {
+  return switch (statusCode) {
+    401 => '请先登录后再操作。',
+    403 => '后端拒绝分享。请检查超级管理员分享开关、会话权限或账号授权。',
+    404 => '分享接口未部署，请联系管理员发布分享接口。',
+    405 => '分享接口未接入，请联系管理员检查接口方法。',
+    500 => '服务器异常，请稍后重试或联系管理员。',
+    502 => '服务器网关异常，请稍后重试或联系管理员。',
+    _ => '请联系超级管理员检查分享接口权限和功能开关。',
+  };
 }
 
 Object? _featureFlagValue(

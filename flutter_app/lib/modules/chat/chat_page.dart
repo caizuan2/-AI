@@ -971,6 +971,8 @@ class _ChatPageState extends State<ChatPage> {
           syncError: _controller.lastSyncError,
           conversationFeatures: _controller.conversationFeatures,
           useOfficialBrand: _useWindowsBrand,
+          onRefreshConversationFeatures: () =>
+              _controller.loadConversationFeatures(force: true),
           onSetConversationPinned: _controller.setConversationPinned,
           onShareConversation: _controller.shareConversation,
           onStartGroupChat: _controller.startConversationGroupChat,
@@ -1415,6 +1417,7 @@ class _HistoryDrawer extends StatefulWidget {
     required this.syncError,
     required this.conversationFeatures,
     required this.useOfficialBrand,
+    required this.onRefreshConversationFeatures,
     required this.onSetConversationPinned,
     required this.onShareConversation,
     required this.onStartGroupChat,
@@ -1440,6 +1443,7 @@ class _HistoryDrawer extends StatefulWidget {
   final String? syncError;
   final ConversationFeatureFlags conversationFeatures;
   final bool useOfficialBrand;
+  final Future<void> Function() onRefreshConversationFeatures;
   final bool Function(String id, bool pinned) onSetConversationPinned;
   final Future<Map<String, dynamic>> Function(String id) onShareConversation;
   final Future<Map<String, dynamic>> Function(String id) onStartGroupChat;
@@ -1533,6 +1537,31 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     );
   }
 
+  Future<void> _showShareFailureDialog(
+    Object error,
+    ChatConversationSummary conversation,
+  ) async {
+    debugPrint('[conversation-action] share dialog open');
+    await _showConversationActionResultDialog(
+      title: '分享失败',
+      message: _shareFailureMessage(error, conversation),
+      error: true,
+    );
+  }
+
+  String _shareFailureMessage(
+    Object error,
+    ChatConversationSummary conversation,
+  ) {
+    final apiError = error is ApiException ? error : null;
+    return buildShareFailureMessage(
+      conversationId: conversation.id,
+      message: _actionErrorMessage(error),
+      statusCode: apiError?.statusCode,
+      code: apiError?.code,
+    );
+  }
+
   Future<bool> _confirmDeleteConversation(
     ChatConversationSummary conversation,
   ) async {
@@ -1616,6 +1645,10 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
 
   String _groupChatNoInviteMessage(Map<String, dynamic> data) {
     return buildGroupChatNoInviteMessage(data);
+  }
+
+  String _shareNoLinkMessage(Map<String, dynamic> data) {
+    return buildShareNoLinkMessage(data);
   }
 
   Future<bool> _confirmDeleteGroupLink() async {
@@ -1924,10 +1957,6 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
   ) async {
     switch (action) {
       case _ConversationMenuAction.share:
-        if (!_isFeatureEnabled(ConversationFeatureKeys.share)) {
-          _showUnavailableFeature();
-          return;
-        }
         try {
           final data = await widget.onShareConversation(conversation.id);
           if (!mounted) return;
@@ -1947,13 +1976,13 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
           } else {
             debugPrint('[conversation-action] share parsed link exists=false');
             await _showConversationActionResultDialog(
-              title: '分享已创建',
-              message: '分享已创建，但服务器未返回分享链接。',
+              title: '分享已创建，但没有分享链接',
+              message: _shareNoLinkMessage(data),
             );
           }
         } catch (error) {
           if (!mounted) return;
-          _showActionError(error);
+          await _showShareFailureDialog(error, conversation);
         }
         return;
       case _ConversationMenuAction.startGroupChat:
@@ -2125,6 +2154,7 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
             conversationFeatures: widget.conversationFeatures,
             index: conversations.indexOf(conversation),
             onTap: () => widget.onOpenConversation(conversation.id),
+            onPrepareMenu: widget.onRefreshConversationFeatures,
             onMenuSelected: (action) =>
                 _handleConversationMenu(action, conversation),
           ),
@@ -2724,6 +2754,7 @@ class _ConversationTile extends StatefulWidget {
     required this.conversationFeatures,
     required this.index,
     required this.onTap,
+    required this.onPrepareMenu,
     required this.onMenuSelected,
   });
 
@@ -2731,6 +2762,7 @@ class _ConversationTile extends StatefulWidget {
   final ConversationFeatureFlags conversationFeatures;
   final int index;
   final VoidCallback onTap;
+  final Future<void> Function() onPrepareMenu;
   final ValueChanged<_ConversationMenuAction> onMenuSelected;
 
   @override
@@ -2747,6 +2779,10 @@ class _ConversationTileState extends State<_ConversationTile> {
   Future<void> _showMenuAt(Offset globalPosition) async {
     final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
     if (overlay is! RenderBox) {
+      return;
+    }
+    await widget.onPrepareMenu();
+    if (!mounted) {
       return;
     }
     final action = await showMenu<_ConversationMenuAction>(
@@ -2899,8 +2935,6 @@ List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
   return [
     _conversationMenuItem(
       action: _ConversationMenuAction.share,
-      featureKey: ConversationFeatureKeys.share,
-      features: features,
       icon: Icons.ios_share,
       label: '分享',
     ),
