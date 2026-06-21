@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Check, Copy, Download, Maximize2, Pencil, X } from "lucide-react";
 
 interface IngestKnowledgeDraftCardProps {
@@ -9,17 +9,45 @@ interface IngestKnowledgeDraftCardProps {
   body: string;
 }
 
+const KNOWLEDGE_DRAFT_SUBTITLE = "以下为 GPT 根据当前资料生成的入库草稿参考，管理员可编辑确认后保存入库。";
+
+const defaultNumberBadgeTone = {
+  className: "bg-[#fff3df] text-[#a95400] ring-[#f1d6ab]",
+  shadow: "inset 0 -2px 0 rgba(169,84,0,0.16), 0 8px 16px rgba(169,84,0,0.10)"
+};
+
+const numberBadgeTones = [
+  defaultNumberBadgeTone,
+  {
+    className: "bg-[#eaf2ff] text-[#315bf6] ring-[#c9d8ff]",
+    shadow: "inset 0 -2px 0 rgba(49,91,246,0.14), 0 8px 16px rgba(49,91,246,0.10)"
+  },
+  {
+    className: "bg-[#e8f8ef] text-[#128246] ring-[#bee8cf]",
+    shadow: "inset 0 -2px 0 rgba(18,130,70,0.14), 0 8px 16px rgba(18,130,70,0.10)"
+  },
+  {
+    className: "bg-[#f3efff] text-[#6d4aff] ring-[#dacfff]",
+    shadow: "inset 0 -2px 0 rgba(109,74,255,0.14), 0 8px 16px rgba(109,74,255,0.10)"
+  }
+];
+
 export function IngestKnowledgeDraftCard({
   title,
-  subtitle = "下面这份可以直接复制到投喂版，作为第一批“结构化知识草稿”。",
+  subtitle = KNOWLEDGE_DRAFT_SUBTITLE,
   body
 }: IngestKnowledgeDraftCardProps) {
-  const initialDraft = useMemo(() => body.trim(), [body]);
+  const initialDraft = useMemo(() => stripDraftIntroLines(body).trim(), [body]);
   const [draftText, setDraftText] = useState(initialDraft);
   const [isEditing, setIsEditing] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
-  const fullDraft = `${title}\n\n${subtitle}\n\n${draftText}`.trim();
+  const fullDraft = draftText.trim();
+  const displaySubtitle = normalizeDraftSubtitle(subtitle);
+
+  useEffect(() => {
+    setDraftText(initialDraft);
+  }, [initialDraft]);
 
   async function handleCopy() {
     try {
@@ -73,46 +101,57 @@ export function IngestKnowledgeDraftCard({
 
   return (
     <>
-      <section
-        className="group relative my-6 overflow-hidden rounded-[28px] border border-[#ddddda] bg-[#fbfbf8] shadow-[0_18px_55px_rgba(15,23,42,0.07)]"
-        data-ingest-knowledge-draft-card="true"
-      >
-        <div className="flex items-start justify-between gap-3 border-b border-[#e8e8e4] bg-white/72 px-5 py-4">
-          <button
-            type="button"
-            onClick={() => setIsEditing((current) => !current)}
-            className="inline-flex h-9 items-center gap-2 rounded-full border border-[#e7e7e3] bg-white px-3 text-xs font-semibold text-[#444] shadow-sm transition hover:bg-[#f3f3f1]"
-            data-draft-edit-button="true"
-          >
-            {isEditing ? <Check className="h-3.5 w-3.5 text-[#128246]" aria-hidden="true" /> : <Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
-            {isEditing ? "保存编辑" : "编辑"}
-          </button>
-          <div className="relative flex shrink-0 items-center gap-1.5" data-draft-top-actions="true">
-            <DraftIconButton label={copied ? "已复制" : "复制草稿"} onClick={() => void handleCopy()}>
-              {copied ? <Check className="h-3.5 w-3.5 text-[#128246]" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-            </DraftIconButton>
-            <DraftIconButton label="下载草稿" onClick={handleDownload}>
-              <Download className="h-3.5 w-3.5" aria-hidden="true" />
-            </DraftIconButton>
-            <DraftIconButton label="放大查看" onClick={() => setIsExpanded(true)}>
-              <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
-            </DraftIconButton>
-            {copied ? (
-              <span className="pointer-events-none absolute right-0 top-10 rounded-full bg-[#202020] px-2 py-1 text-[11px] font-semibold text-white shadow-lg">
-                已复制
-              </span>
-            ) : null}
-          </div>
+      <section className="my-8 space-y-3" data-ingest-knowledge-draft-section="true">
+        <div className="space-y-2">
+          <h3 className="text-[22px] font-bold leading-8 text-[#202020]" data-draft-title-outside-card="true">
+            {renderInlineMarkdown(title)}
+          </h3>
+          {displaySubtitle ? (
+            <p className="text-sm font-medium leading-6 text-[#666]" data-draft-subtitle-outside-card="true">
+              {displaySubtitle}
+            </p>
+          ) : null}
         </div>
 
-        <div className="px-5 pb-5 pt-4">
-          <div className="mb-5">
-            <p className="text-[11px] font-semibold uppercase text-[#8b8b86]">Knowledge Draft</p>
-            <h3 className="mt-2 text-[22px] font-bold leading-8 text-[#202020]">{renderInlineMarkdown(title)}</h3>
-            <p className="mt-2 text-sm leading-6 text-[#6b6b66]">{subtitle}</p>
+        {!fullDraft && !isEditing ? (
+          <div className="rounded-2xl border border-dashed border-[#dededb] bg-[#f7f7f6] px-4 py-5 text-sm leading-6 text-[#777]">
+            当前回复未生成可编辑草稿，可点击“继续优化”生成。
           </div>
-          {draftBody}
-        </div>
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-[#ddddda] bg-white shadow-none" data-ingest-knowledge-draft-card="true">
+            <div className="flex items-start justify-between gap-3 border-b border-[#eeeeeb] bg-white px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setIsEditing((current) => !current)}
+                className="inline-flex h-9 items-center gap-2 rounded-full border border-[#e7e7e3] bg-white px-3 text-xs font-semibold text-[#444] transition hover:bg-[#f3f3f1]"
+                data-draft-edit-button="true"
+              >
+                {isEditing ? <Check className="h-3.5 w-3.5 text-[#128246]" aria-hidden="true" /> : <Pencil className="h-3.5 w-3.5" aria-hidden="true" />}
+                {isEditing ? "保存编辑" : "编辑"}
+              </button>
+              <div className="relative flex shrink-0 items-center gap-1.5" data-draft-top-actions="true">
+                <DraftIconButton label={copied ? "已复制" : "复制草稿"} onClick={() => void handleCopy()}>
+                  {copied ? <Check className="h-3.5 w-3.5 text-[#128246]" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+                </DraftIconButton>
+                <DraftIconButton label="下载草稿" onClick={handleDownload}>
+                  <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                </DraftIconButton>
+                <DraftIconButton label="放大查看" onClick={() => setIsExpanded(true)}>
+                  <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
+                </DraftIconButton>
+                {copied ? (
+                  <span className="pointer-events-none absolute right-0 top-10 rounded-full bg-[#202020] px-2 py-1 text-[11px] font-semibold text-white shadow-lg">
+                    已复制
+                  </span>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="px-4 pb-5 pt-4">
+              {draftBody}
+            </div>
+          </div>
+        )}
       </section>
 
       {isExpanded ? (
@@ -126,7 +165,7 @@ export function IngestKnowledgeDraftCard({
               <div>
                 <p className="text-[11px] font-semibold uppercase text-[#8b8b86]">Knowledge Draft</p>
                 <h3 className="mt-2 text-[24px] font-bold leading-8 text-[#202020]">{renderInlineMarkdown(title)}</h3>
-                <p className="mt-2 text-sm leading-6 text-[#777]">{subtitle}</p>
+                <p className="mt-2 text-sm leading-6 text-[#777]">{displaySubtitle}</p>
               </div>
               <button
                 type="button"
@@ -228,7 +267,7 @@ function DraftMarkdownPreview({ content }: { content: string }) {
     if (ordered) {
       nodes.push(
         <div key={key} className="flex gap-3 pl-1">
-          <span className="mt-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-white text-[12px] font-semibold text-[#666] shadow-sm">{ordered[1]}</span>
+          <NumberBadge value={ordered[1]} />
           <p className="min-w-0 leading-7 text-[#333]">{renderInlineMarkdown(ordered[2])}</p>
         </div>
       );
@@ -252,6 +291,45 @@ function DraftMarkdownPreview({ content }: { content: string }) {
   }
 
   return <div className="space-y-2 text-sm">{nodes}</div>;
+}
+
+function NumberBadge({ value }: { value: string }) {
+  const number = Number.parseInt(value, 10);
+  const tone = numberBadgeTones[Number.isFinite(number) && number > 0 ? (number - 1) % numberBadgeTones.length : 0] ?? defaultNumberBadgeTone;
+
+  return (
+    <span
+      className={["mt-1 flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full px-2 text-[12px] font-bold ring-1", tone.className].join(" ")}
+      style={{ boxShadow: tone.shadow }}
+    >
+      {value}
+    </span>
+  );
+}
+
+function normalizeDraftSubtitle(value: string) {
+  const text = value.trim();
+
+  if (!text || /复制到投喂版|下面这份|第一批|结构化知识草稿/.test(text)) {
+    return KNOWLEDGE_DRAFT_SUBTITLE;
+  }
+
+  return text;
+}
+
+function stripDraftIntroLines(value: string) {
+  return value
+    .split(/\n/g)
+    .filter((line) => !isDraftIntroLine(line.trim()))
+    .join("\n");
+}
+
+function isDraftIntroLine(value: string) {
+  if (!value) {
+    return false;
+  }
+
+  return /^(以下为 GPT 根据当前资料生成的入库草稿参考|下面这份可以直接复制到投喂版|这份可以直接复制到投喂版|作为第一批[“"]?结构化知识草稿)/.test(value);
 }
 
 function DraftTable({ lines }: { lines: string[] }) {

@@ -15,8 +15,6 @@ export function buildIngestUserMessageCopyText(message: Pick<IngestChatMessage, 
 
 export function IngestChatGPTFileMessage({
   message,
-  agentLabel,
-  modelLabel,
   onCopy,
   onEdit
 }: {
@@ -29,21 +27,15 @@ export function IngestChatGPTFileMessage({
   const prompt = message.content.trim() || "学习与总结一下";
 
   return (
-    <div className="ml-auto flex w-full max-w-[520px] flex-col items-end gap-2">
+    <div className="ml-auto flex w-full max-w-[860px] flex-col items-end gap-2">
       {message.attachments?.length ? (
-        <div className="w-full rounded-[22px] border border-[#e7e7e4] bg-white p-2 shadow-sm">
+        <div className="flex w-full justify-end">
           <IngestAttachmentPreview files={message.attachments} compact />
         </div>
       ) : null}
 
       <div className="max-w-full rounded-[24px] bg-[#202020] px-4 py-3 text-sm leading-6 text-white shadow-sm">
         <p className="whitespace-pre-wrap">{prompt}</p>
-      </div>
-
-      <div className="flex max-w-full flex-wrap justify-end gap-2 text-[11px] text-[#777]">
-        <span className="rounded-full bg-[#f4f4f2] px-2 py-1">Agent：{agentLabel}</span>
-        <span className="rounded-full bg-[#f4f4f2] px-2 py-1">模型：{modelLabel}</span>
-        <span className="rounded-full bg-[#f4f4f2] px-2 py-1">Web / EXE / APK</span>
       </div>
 
       <IngestMessageQuickActions onCopy={onCopy} onEdit={onEdit} tone="light" />

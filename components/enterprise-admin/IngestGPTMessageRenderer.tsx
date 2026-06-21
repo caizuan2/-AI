@@ -4,11 +4,34 @@ import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { IngestKnowledgeDraftCard } from "@/components/enterprise-admin/IngestKnowledgeDraftCard";
 
+const KNOWLEDGE_DRAFT_SUBTITLE = "以下为 GPT 根据当前资料生成的入库草稿参考，管理员可编辑确认后保存入库。";
+
+const defaultNumberBadgeTone = {
+  className: "bg-[#fff3df] text-[#a95400] ring-[#f1d6ab]",
+  shadow: "inset 0 -2px 0 rgba(169,84,0,0.16), 0 8px 16px rgba(169,84,0,0.10)"
+};
+
+const numberBadgeTones = [
+  defaultNumberBadgeTone,
+  {
+    className: "bg-[#eaf2ff] text-[#315bf6] ring-[#c9d8ff]",
+    shadow: "inset 0 -2px 0 rgba(49,91,246,0.14), 0 8px 16px rgba(49,91,246,0.10)"
+  },
+  {
+    className: "bg-[#e8f8ef] text-[#128246] ring-[#bee8cf]",
+    shadow: "inset 0 -2px 0 rgba(18,130,70,0.14), 0 8px 16px rgba(18,130,70,0.10)"
+  },
+  {
+    className: "bg-[#f3efff] text-[#6d4aff] ring-[#dacfff]",
+    shadow: "inset 0 -2px 0 rgba(109,74,255,0.14), 0 8px 16px rgba(109,74,255,0.10)"
+  }
+];
+
 export function IngestGPTMessageRenderer({ content }: { content: string }) {
   const segments = content.split(/```/g);
 
   return (
-    <article className="max-w-[840px] space-y-4 text-[15px] leading-[1.78] text-[#2f2f2f]">
+    <article className="w-full max-w-[860px] space-y-4 text-[15px] leading-[1.78] text-[#2f2f2f]">
       {segments.map((segment, index) => {
         const key = `${index}-${segment.slice(0, 12)}`;
 
@@ -50,12 +73,14 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
 
     if (knowledgeDraftTitle) {
       const { draftLines, nextIndex } = collectKnowledgeDraftLines(lines, index + 1);
+      const { subtitle, bodyLines } = splitKnowledgeDraftIntro(draftLines);
 
       nodes.push(
         <IngestKnowledgeDraftCard
           key={key}
           title={knowledgeDraftTitle}
-          body={draftLines.join("\n")}
+          subtitle={subtitle}
+          body={bodyLines.join("\n")}
         />
       );
       index = nextIndex;
@@ -88,17 +113,39 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
 
     if (isFlowStart(lines, index)) {
       const { nextIndex, flowLines } = collectFlowLines(lines, index);
+      const displayFlowLines = normalizeFlowLines(flowLines);
       index = nextIndex;
 
       nodes.push(
-        <CopyableBlock key={key} copyText={flowLines.join("\n")}>
-          <div className="space-y-2 text-[14px] leading-7 text-[#333]">
-            {flowLines.map((flowLine, flowIndex) => (
+        <CopyableBlock key={key} copyText={displayFlowLines.join("\n")}>
+          <div className="flex flex-col gap-2 text-[14px] leading-7 text-[#202020]" data-ingest-flow-block="true">
+            {displayFlowLines.map((flowLine, flowIndex) => (
               <p
                 key={`${key}-flow-${flowIndex}`}
-                className={flowLine === "↓" ? "text-center text-[#9a9a94]" : isFlowLabel(flowLine) ? "font-semibold text-[#202020]" : "whitespace-pre-wrap"}
+                className={flowLine === "↓" ? "w-full text-center text-base font-semibold leading-6 text-[#6f6f68]" : isStrongSubtitleLine(flowLine) || isFlowLabel(flowLine) ? "font-semibold text-[#202020]" : "whitespace-pre-wrap"}
               >
-                {renderInlineMarkdown(flowLine)}
+                {renderLabeledInlineMarkdown(flowLine)}
+              </p>
+            ))}
+          </div>
+        </CopyableBlock>
+      );
+      continue;
+    }
+
+    if (isCalloutStart(lines, index)) {
+      const { calloutLines, nextIndex } = collectCalloutLines(lines, index);
+      index = nextIndex;
+
+      nodes.push(
+        <CopyableBlock key={key} copyText={calloutLines.join("\n")}>
+          <div className="space-y-2 text-[14px] leading-7 text-[#202020]" data-ingest-callout-block="true">
+            {calloutLines.map((calloutLine, calloutIndex) => (
+              <p
+                key={`${key}-callout-${calloutIndex}`}
+                className={isStrongSubtitleLine(calloutLine) ? "font-semibold text-[#202020]" : "whitespace-pre-wrap"}
+              >
+                {renderLabeledInlineMarkdown(calloutLine)}
               </p>
             ))}
           </div>
@@ -122,7 +169,7 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
 
       nodes.push(
         <CopyableBlock key={key} copyText={quoteLines.join("\n")}>
-          <div className="border-l-4 border-[#d4d4d0] pl-4 text-[#444]">
+          <div className="space-y-2 text-[14px] leading-7 text-[#202020]">
             {quoteLines.map((quote, quoteIndex) => (
               <p key={`${key}-quote-${quoteIndex}`} className="my-1.5 whitespace-pre-wrap">
                 {renderInlineMarkdown(quote)}
@@ -139,7 +186,7 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
     if (ordered) {
       nodes.push(
         <div key={key} className="flex gap-3 pl-1">
-          <span className="mt-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-[#f0f0ee] text-[12px] font-semibold text-[#6b6b67]">{ordered[1]}</span>
+          <NumberBadge value={ordered[1]} />
           <p className="min-w-0">{renderInlineMarkdown(ordered[2])}</p>
         </div>
       );
@@ -158,7 +205,14 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
       continue;
     }
 
-    nodes.push(<p key={key} className="min-w-0">{renderInlineMarkdown(trimmed)}</p>);
+    nodes.push(
+      <p
+        key={key}
+        className={isStrongSubtitleLine(trimmed) ? "mt-3 mb-1 min-w-0 font-semibold text-[#202020]" : "min-w-0"}
+      >
+        {renderLabeledInlineMarkdown(trimmed)}
+      </p>
+    );
     index += 1;
   }
 
@@ -186,6 +240,20 @@ function SectionHeading({
       <HeadingTag className={className}>{renderInlineMarkdown(text)}</HeadingTag>
       {withRule ? <div className="mt-3 h-px w-full bg-[#ecece9]" /> : null}
     </div>
+  );
+}
+
+function NumberBadge({ value }: { value: string }) {
+  const number = Number.parseInt(value, 10);
+  const tone = numberBadgeTones[Number.isFinite(number) && number > 0 ? (number - 1) % numberBadgeTones.length : 0] ?? defaultNumberBadgeTone;
+
+  return (
+    <span
+      className={["mt-1 flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full px-2 text-[12px] font-bold ring-1", tone.className].join(" ")}
+      style={{ boxShadow: tone.shadow }}
+    >
+      {value}
+    </span>
   );
 }
 
@@ -261,7 +329,7 @@ function collectKnowledgeDraftLines(lines: string[], startIndex: number) {
     const hasDraftContent = draftLines.some((draftLine) => draftLine.trim());
     const heading = parseHeading(trimmed);
 
-    if (hasDraftContent && heading?.level === 1 && !parseKnowledgeDraftTitle(trimmed)) {
+    if (hasDraftContent && heading?.level === 1 && isMajorChineseSectionTitle(heading.text) && !parseKnowledgeDraftTitle(trimmed)) {
       break;
     }
 
@@ -278,9 +346,62 @@ function collectKnowledgeDraftLines(lines: string[], startIndex: number) {
   }
 
   return {
-    draftLines: draftLines.length ? draftLines : ["这部分草稿内容仍在生成中，可先复制当前标题并继续让 GPT 补齐可入库问答。"],
+    draftLines,
     nextIndex: index
   };
+}
+
+function splitKnowledgeDraftIntro(draftLines: string[]) {
+  const lines = [...draftLines];
+  const firstTextIndex = lines.findIndex((line) => Boolean(line.trim()));
+  const fallbackSubtitle = KNOWLEDGE_DRAFT_SUBTITLE;
+
+  if (firstTextIndex === -1) {
+    return {
+      subtitle: fallbackSubtitle,
+      bodyLines: []
+    };
+  }
+
+  const first = lines[firstTextIndex]?.trim() ?? "";
+  const looksLikeIntro = first.length <= 80
+    && !first.startsWith("|")
+    && !/^[-*]\s+/.test(first)
+    && !/^#{1,6}\s+/.test(first)
+    && !/^[一二三四五六七八九十]+[、.．]\s*\S+/.test(first)
+    && /下面|这份|草稿|复制|投喂版|第一批|结构化知识|根据当前资料|管理员可编辑/.test(first);
+
+  if (!looksLikeIntro) {
+    return {
+      subtitle: fallbackSubtitle,
+      bodyLines: lines
+    };
+  }
+
+  lines.splice(firstTextIndex, 1);
+
+  while (lines.length > 0 && !lines[0]?.trim()) {
+    lines.shift();
+  }
+
+  return {
+    subtitle: normalizeKnowledgeDraftSubtitle(first.replace(/^[-*]\s+/, "")),
+    bodyLines: lines
+  };
+}
+
+function normalizeKnowledgeDraftSubtitle(value: string) {
+  const text = value.trim();
+
+  if (!text || /复制到投喂版|下面这份|第一批|结构化知识草稿/.test(text)) {
+    return KNOWLEDGE_DRAFT_SUBTITLE;
+  }
+
+  return text;
+}
+
+function isMajorChineseSectionTitle(value: string) {
+  return /^[一二三四五六七八九十]+[、.．]\s*\S+/.test(value.trim());
 }
 
 function isNumericSectionHeading(text: string, lines: string[], index: number) {
@@ -305,7 +426,11 @@ function isFlowStart(lines: string[], index: number) {
     return false;
   }
 
-  return isFlowLabel(current) || current.includes("↓") || (nearby.includes("↓") && !isHeading(next));
+  if (current && (next === "↓" || next.startsWith("↓"))) {
+    return true;
+  }
+
+  return isFlowLabel(current) || current.includes("↓") || (nearby.trim().startsWith("↓") && !isHeading(next));
 }
 
 function collectFlowLines(lines: string[], startIndex: number) {
@@ -349,6 +474,96 @@ function collectFlowLines(lines: string[], startIndex: number) {
 
   return {
     flowLines: flowLines.length ? flowLines : [lines[startIndex]?.trim() ?? ""],
+    nextIndex: index
+  };
+}
+
+function normalizeFlowLines(lines: string[]) {
+  const normalized: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      continue;
+    }
+
+    if (!trimmed.includes("↓") || trimmed === "↓") {
+      normalized.push(trimmed);
+      continue;
+    }
+
+    const labelMatch = trimmed.match(/^([^：:]{2,24}[：:])\s*(.+)$/);
+    const body = labelMatch ? labelMatch[2] : trimmed;
+
+    if (labelMatch) {
+      normalized.push(labelMatch[1]);
+    }
+
+    const parts = body.split("↓").map((part) => part.trim()).filter(Boolean);
+
+    parts.forEach((part, index) => {
+      normalized.push(part);
+
+      if (index < parts.length - 1) {
+        normalized.push("↓");
+      }
+    });
+  }
+
+  return normalized;
+}
+
+function isCalloutLabel(value: string) {
+  return /^(客户问|用户问|可以这样答|建议表达|优化成|售后处理话术|售后答疑|招商会转化话术|招商转化|合规提醒|风险提醒|第一批入库|第二批入库|下一步建议|用户端调用策略|回答公式|标准问答方向|保存优先级|分类建议|适用 Agent)[:：]/.test(value);
+}
+
+function isCardWorthyLine(value: string) {
+  return /知识库检索\s*\+\s*GPT|GPT\s*二次思考|不承诺|不替代医疗|遵医嘱|如果明显不适|先不要慌|真正有说服力|案例因人而异|产品基础层|科学控体认知层|人群适配层|常见反应处理层|客户异议处理层|招商会转化层|合规风控层|第一批优先|第二批再入库|第三批可以继续|先共情客户问题|再解释科学逻辑|最后引导评估/.test(value);
+}
+
+function isCalloutStart(lines: string[], index: number) {
+  const current = lines[index]?.trim() ?? "";
+
+  if (!current || isHeading(current) || isTableStart(lines, index)) {
+    return false;
+  }
+
+  return isCalloutLabel(current) || isCardWorthyLine(current);
+}
+
+function collectCalloutLines(lines: string[], startIndex: number) {
+  const calloutLines: string[] = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = lines[index]?.trim() ?? "";
+
+    if (!current) {
+      index += 1;
+      break;
+    }
+
+    if (calloutLines.length > 0 && (isHeading(current) || isTableStart(lines, index))) {
+      break;
+    }
+
+    calloutLines.push(current);
+    index += 1;
+
+    if (calloutLines.length >= 6) {
+      break;
+    }
+
+    const next = lines[index]?.trim() ?? "";
+
+    if (calloutLines.length > 1 && next && !isCalloutLabel(next) && !isCardWorthyLine(next) && !/^[-*]\s+/.test(next)) {
+      break;
+    }
+  }
+
+  return {
+    calloutLines,
     nextIndex: index
   };
 }
@@ -410,7 +625,7 @@ function CopyableBlock({
   copyText: string;
 }) {
   return (
-    <section className="group relative my-5 rounded-[22px] border border-[#eeeeeb] bg-[#f7f7f5] p-4 pr-12 shadow-[0_8px_26px_rgba(15,23,42,0.035)]">
+    <section className="group relative my-5 rounded-2xl border border-[#dededb] bg-[#f5f5f5] p-4 pr-12 text-[#202020] shadow-sm">
       <CopyButton copyText={copyText} className="absolute right-3 top-3" />
       {children}
     </section>
@@ -481,4 +696,23 @@ function renderInlineMarkdown(text: string) {
 
     return <span key={`${part}-${index}`}>{part}</span>;
   });
+}
+
+function isStrongSubtitleLine(value: string) {
+  return /^(核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议)[:：]/.test(value);
+}
+
+function renderLabeledInlineMarkdown(text: string) {
+  const match = text.match(/^(核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议|流程|流程块|建议话术)[:：]\s*(.*)$/);
+
+  if (!match) {
+    return renderInlineMarkdown(text);
+  }
+
+  return (
+    <>
+      <strong className="font-semibold text-[#202020]">{match[1]}：</strong>
+      {match[2] ? <span className="font-normal text-[#202020]"> {renderInlineMarkdown(match[2])}</span> : null}
+    </>
+  );
 }

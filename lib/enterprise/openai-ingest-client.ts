@@ -25,6 +25,7 @@ import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-cal
 import { assessGptProResponseQuality } from "@/lib/enterprise/gpt-pro-response-quality";
 import { buildGptProRetryDeepenPrompt } from "@/lib/enterprise/gpt-pro-retry-deepen";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
+import type { GptOutputIntent } from "@/lib/enterprise/gpt-output-intent-classifier";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -79,6 +80,8 @@ export interface OpenAIAdminIngestResult {
   createdAt: string;
   usage: OpenAIGptUsage;
   gptProof: GptCallProof;
+  intent: GptOutputIntent;
+  fixedTemplateRisk: boolean;
   modelDisplayName: string;
   modelMode: "highest" | "fixed";
   fallback: false;
@@ -356,8 +359,10 @@ function buildResponsesBody(input: {
   };
 }
 
-function buildMissingReplyQuality(rawText: string) {
-  const quality = assessGptProResponseQuality(rawText);
+function buildMissingReplyQuality(rawText: string, userInput: string) {
+  const quality = assessGptProResponseQuality(rawText, {
+    userInput
+  });
 
   return {
     ...quality,
@@ -619,7 +624,7 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       signal: controller.signal
     });
     let normalized: ReturnType<typeof normalizeGptOutput> | null = null;
-    let quality = buildMissingReplyQuality(response.text);
+    let quality = buildMissingReplyQuality(response.text, input.input);
     let deepenAttempts = 0;
 
     try {
@@ -629,7 +634,9 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         fallbackCategory: input.category ?? "",
         strictReply: true
       });
-      quality = assessGptProResponseQuality(normalized.replyMarkdown);
+      quality = assessGptProResponseQuality(normalized.replyMarkdown, {
+        userInput: input.input
+      });
     } catch (error) {
       logger.warn("enterprise_admin_ingest.openai_missing_reply_quality_check", {
         requestId: input.requestId,
@@ -637,7 +644,9 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         responseId: response.responseId,
         message: error instanceof Error ? error.message : String(error),
         chineseCharCount: quality.chineseCharCount,
-        missingSignals: quality.missingSignals
+        missingSignals: quality.missingSignals,
+        intent: quality.intent,
+        fixedTemplateRisk: quality.fixedTemplateRisk
       });
     }
 
@@ -652,6 +661,9 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         customerQuestionCount: quality.customerQuestionCount,
         missingSignals: quality.missingSignals,
         forbiddenPhrases: quality.forbiddenPhrases,
+        intent: quality.intent,
+        fixedTemplateRisk: quality.fixedTemplateRisk,
+        sectionTitles: quality.sectionTitles,
         failedReasons: quality.failedReasons
       });
       response = await callResponsesApi({
@@ -674,15 +686,19 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
           fallbackCategory: input.category ?? "",
           strictReply: true
         });
-        quality = assessGptProResponseQuality(normalized.replyMarkdown);
+        quality = assessGptProResponseQuality(normalized.replyMarkdown, {
+          userInput: input.input
+        });
       } catch (error) {
         normalized = null;
-        quality = buildMissingReplyQuality(response.text);
+        quality = buildMissingReplyQuality(response.text, input.input);
         logger.warn("enterprise_admin_ingest.openai_deepen_missing_reply", {
           requestId: input.requestId,
           attempt: deepenAttempts,
           model: response.model,
           responseId: response.responseId,
+          intent: quality.intent,
+          fixedTemplateRisk: quality.fixedTemplateRisk,
           message: error instanceof Error ? error.message : String(error),
           failedReasons: quality.failedReasons
         });
@@ -732,6 +748,8 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       responsesApi: true,
       proQualityChineseChars: quality.chineseCharCount,
       proQualityQuestions: quality.customerQuestionCount,
+      intent: quality.intent,
+      fixedTemplateRisk: quality.fixedTemplateRisk,
       outputTokens: response.usage.outputTokens,
       reasoningTokens: response.usage.reasoningTokens,
       deepenAttempts
@@ -746,6 +764,8 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       createdAt: response.createdAt,
       usage: response.usage,
       gptProof,
+      intent: quality.intent,
+      fixedTemplateRisk: quality.fixedTemplateRisk,
       modelDisplayName: resolved.selectedModelLabel,
       modelMode: resolved.modelMode,
       fallback: false,
@@ -761,7 +781,11 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
         limitationNote: attachment.limitationNote
       })),
       saveRecommendation: normalized.saveRecommendation,
-      diagnostics: normalized.diagnostics,
+      diagnostics: [
+        `intent:${quality.intent}`,
+        `fixedTemplateRisk:${quality.fixedTemplateRisk ? "true" : "false"}`,
+        ...normalized.diagnostics
+      ],
       structured: normalized.structured,
       structuredResult: normalized.structured,
       sync: {

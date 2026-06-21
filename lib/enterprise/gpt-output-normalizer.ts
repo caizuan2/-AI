@@ -229,7 +229,7 @@ export function normalizeGptOutput(input: {
     || readLikelyReplyMarkdown(parsed)
     || rawMarkdown;
 
-  if (input.strictReply && !replyMarkdownCandidate && !input.rawText.trim()) {
+  if (input.strictReply && !replyMarkdownCandidate) {
     throw new Error("OpenAI Responses API 未返回 replyMarkdown。");
   }
 

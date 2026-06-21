@@ -25,6 +25,7 @@ const parseStatusLabels: Record<NonNullable<IngestUploadState["parseStatus"]>, s
 
 type AttachmentKind = {
   label: "PDF" | "Word" | "PPT" | "图片" | "TXT" | "MD" | "文件";
+  description: string;
   Icon: ComponentType<{ className?: string }>;
   tone: string;
 };
@@ -57,35 +58,35 @@ function getAttachmentKind(file: IngestUploadState): AttachmentKind {
   const mime = file.fileType.toLowerCase();
 
   if (file.isImage || mime.startsWith("image/") || ["png", "jpg", "jpeg", "gif", "webp", "bmp"].includes(extension)) {
-    return { label: "图片", Icon: FileImage, tone: "bg-[#e8f8ef] text-[#128246]" };
+    return { label: "图片", description: "图片素材", Icon: FileImage, tone: "bg-[#e8f8ef] text-[#128246]" };
   }
 
   if (extension === "pdf" || mime.includes("pdf")) {
-    return { label: "PDF", Icon: FileText, tone: "bg-[#fff0f0] text-[#c2413a]" };
+    return { label: "PDF", description: "PDF 文档", Icon: FileText, tone: "bg-[#fff0f0] text-[#c2413a]" };
   }
 
   if (["doc", "docx"].includes(extension) || mime.includes("word")) {
-    return { label: "Word", Icon: FileText, tone: "bg-[#eaf2ff] text-[#315bf6]" };
+    return { label: "Word", description: "Word 文档", Icon: FileText, tone: "bg-[#eaf2ff] text-[#315bf6]" };
   }
 
   if (["ppt", "pptx"].includes(extension) || mime.includes("presentation")) {
-    return { label: "PPT", Icon: Presentation, tone: "bg-[#fff2df] text-[#b45f06]" };
+    return { label: "PPT", description: "演示文稿", Icon: Presentation, tone: "bg-[#fff2df] text-[#b45f06]" };
   }
 
   if (extension === "txt" || mime.includes("text/plain")) {
-    return { label: "TXT", Icon: FileText, tone: "bg-[#f0f1f3] text-[#475569]" };
+    return { label: "TXT", description: "文本文件", Icon: FileText, tone: "bg-[#f0f1f3] text-[#475569]" };
   }
 
   if (extension === "md" || mime.includes("markdown")) {
-    return { label: "MD", Icon: FileText, tone: "bg-[#f3efff] text-[#6d4aff]" };
+    return { label: "MD", description: "Markdown", Icon: FileText, tone: "bg-[#f3efff] text-[#6d4aff]" };
   }
 
-  return { label: "文件", Icon: File, tone: "bg-[#f0f1f3] text-[#475569]" };
+  return { label: "文件", description: "附件文件", Icon: File, tone: "bg-[#f0f1f3] text-[#475569]" };
 }
 
 function getWrapperClass(fileCount: number, compact: boolean) {
   if (compact) {
-    return "flex max-h-[156px] max-w-full flex-wrap items-stretch gap-2 overflow-hidden";
+    return "flex max-h-[220px] w-full max-w-[420px] flex-col items-end gap-2 overflow-hidden";
   }
 
   if (fileCount <= 1) {
@@ -127,32 +128,41 @@ export function IngestAttachmentPreview({
           <div
             key={file.id}
             className={[
-              "relative min-w-0 overflow-hidden rounded-2xl border border-[#e7e7e4] bg-[#fbfbfa] shadow-sm",
-              compact ? "h-[74px] w-[148px] shrink-0 p-2" : "h-[86px] p-2.5"
+              "relative min-w-0 overflow-hidden rounded-2xl border border-[#e7e7e4] bg-white shadow-[0_10px_26px_rgba(15,23,42,0.04)]",
+              compact ? "h-16 w-full min-w-[260px] max-w-[420px] p-2.5 pr-3" : "min-h-[74px] p-3"
             ].join(" ")}
           >
-            <div className="flex h-full min-w-0 items-center gap-2">
-              <div className={["relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white", compact ? "h-12 w-12" : "h-14 w-14"].join(" ")}>
+            <div className="flex h-full min-w-0 items-center gap-3">
+              <div className={["relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl", kind.tone, compact ? "h-11 w-11" : "h-12 w-12"].join(" ")}>
                 {isImage && file.previewUrl ? (
-                  <Image src={file.previewUrl} alt={file.fileName} fill sizes={compact ? "48px" : "56px"} unoptimized className="object-cover" />
+                  <Image src={file.previewUrl} alt={file.fileName} fill sizes={compact ? "44px" : "48px"} unoptimized className="object-cover" />
                 ) : (
-                  <Icon className="h-5 w-5 text-[#60646c]" aria-hidden="true" />
+                  <Icon className="h-5 w-5 text-current" aria-hidden="true" />
                 )}
               </div>
-              <div className="min-w-0 flex-1">
-                <div className="mb-1 flex min-w-0 items-center gap-1.5">
-                  <span className={["shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold leading-none", kind.tone].join(" ")}>
-                    {kind.label}
-                  </span>
-                  <span className="truncate text-xs font-semibold text-[#202020]">{file.fileName}</span>
-                </div>
-                <p className="truncate text-[11px] text-[#858580]">{formatFileSize(file.fileSize)}</p>
-                <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-semibold">
-                  <span className="rounded-full bg-[#e9f8ef] px-2 py-0.5 text-[#128246]">{statusLabels[file.status]}</span>
-                  {file.parseStatus ? <span className="truncate rounded-full bg-white px-2 py-0.5 text-[#777]">{parseStatusLabels[file.parseStatus]}</span> : null}
-                  {!compact ? <span className="truncate rounded-full bg-white px-2 py-0.5 text-[#777]">Web / EXE / APK</span> : null}
+              <div className="min-w-0 flex-1 pr-20">
+                <p
+                  className="overflow-hidden text-[13px] font-semibold leading-[17px] text-[#202020]"
+                  style={{ display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: 2 }}
+                  title={file.fileName}
+                >
+                  {file.fileName}
+                </p>
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[11px] font-medium text-[#858580]">
+                  <span className="shrink-0">{kind.description}</span>
+                  <span className="h-1 w-1 shrink-0 rounded-full bg-[#d1d1cc]" />
+                  <span className="truncate">{formatFileSize(file.fileSize)}</span>
+                  {file.parseStatus && !compact ? (
+                    <>
+                      <span className="h-1 w-1 shrink-0 rounded-full bg-[#d1d1cc]" />
+                      <span className="truncate">{parseStatusLabels[file.parseStatus]}</span>
+                    </>
+                  ) : null}
                 </div>
               </div>
+              <span className="absolute bottom-2 right-2 rounded-full bg-[#e9f8ef] px-2 py-0.5 text-[10px] font-semibold text-[#128246]">
+                {statusLabels[file.status]}
+              </span>
               {onRemove ? (
                 <button
                   type="button"
@@ -172,7 +182,7 @@ export function IngestAttachmentPreview({
           type="button"
           className={[
             "flex shrink-0 items-center justify-center rounded-2xl border border-dashed border-[#d9d9d4] bg-[#f3f3f1] text-sm font-bold text-[#555] shadow-sm",
-            compact ? "h-[74px] w-[74px]" : "h-[86px] min-w-[86px]"
+            compact ? "h-16 w-20" : "h-[74px] min-w-[86px]"
           ].join(" ")}
           title={`还有 ${extraCount} 个附件`}
           aria-label={`还有 ${extraCount} 个附件`}
