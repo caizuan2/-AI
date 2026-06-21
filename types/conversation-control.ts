@@ -36,4 +36,9 @@ export type ConversationControlAuditAction =
   | "delete_conversation"
   | "share_conversation"
   | "create_group_chat"
+  | "conversation.share.created"
+  | "conversation.group_chat.created"
+  | "conversation.group_chat.link_reset"
+  | "conversation.group_chat.link_deleted"
+  | "conversation.action.denied"
   | "update_feature_flag";

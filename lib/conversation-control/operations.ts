@@ -1,10 +1,11 @@
 import "server-only";
 
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
 import { getConversationFeatureFlags } from "@/lib/conversation-control/feature-flags";
+import { buildConversationShareUrl, buildGroupChatInviteUrl } from "@/lib/conversation-control/links";
 import { writeAuditLog } from "@/lib/audit-log";
-import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
+import { AppError, NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type { RbacUser } from "@/lib/auth/rbac";
 import type {
@@ -41,6 +42,14 @@ function getConversationControl(metadata: unknown) {
   };
 }
 
+function readString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function createPublicToken() {
+  return randomBytes(24).toString("base64url");
+}
+
 function getSoftDeletedAt(metadata: unknown) {
   const { control } = getConversationControl(metadata);
   return typeof control.deletedAt === "string" && control.deletedAt ? control.deletedAt : null;
@@ -66,6 +75,7 @@ async function writeConversationAudit(input: {
   request?: Request;
   status: "allowed" | "denied";
   reason?: string;
+  requestedAction?: ConversationControlAuditAction;
   before?: Record<string, unknown> | null;
   after?: Record<string, unknown> | null;
 }) {
@@ -82,6 +92,7 @@ async function writeConversationAudit(input: {
       action: input.action,
       resourceType: "conversation",
       resourceId: input.conversationId,
+      requestedAction: input.requestedAction ?? null,
       before: input.before ?? null,
       after: input.after ?? null,
       status: input.status,
@@ -102,15 +113,16 @@ async function ensureFeatureEnabled(
   if (!flags[feature]) {
     await writeConversationAudit({
       actor,
-      action,
+      action: "conversation.action.denied",
       conversationId,
       targetUserId: actor.id,
       request,
       status: "denied",
+      requestedAction: action,
       reason: "feature_disabled"
     });
 
-    throw new ForbiddenError("该会话功能暂未开放，请联系超级管理员。");
+    throw new AppError("FEATURE_DISABLED", "该会话功能暂未开放，请联系超级管理员。", 403);
   }
 }
 
@@ -349,14 +361,21 @@ export async function shareConversation(
 
   const conversation = await getOwnedConversation(actor, conversationId);
   const before = buildConversationSnapshot(conversation);
-  const shareId = randomUUID();
+  const existingShare = isRecord(before.conversationControl.share) ? before.conversationControl.share : {};
+  const shareId = readString(existingShare.id) ?? randomUUID();
+  const shareToken = readString(existingShare.token) ?? createPublicToken();
+  const shareUrl = buildConversationShareUrl(request, shareToken);
   const metadata = buildMetadata(conversation.metadata, {
     share: {
       id: shareId,
+      token: shareToken,
       enabled: true,
-      status: "policy_ready",
-      createdAt: new Date().toISOString(),
-      createdByUserId: actor.id
+      status: "active",
+      shareUrl,
+      createdAt: readString(existingShare.createdAt) ?? new Date().toISOString(),
+      createdByUserId: readString(existingShare.createdByUserId) ?? actor.id,
+      updatedAt: new Date().toISOString(),
+      updatedByUserId: actor.id
     }
   });
   const updated = await prisma.conversation.update({
@@ -378,7 +397,7 @@ export async function shareConversation(
 
   await writeConversationAudit({
     actor,
-    action: "share_conversation",
+    action: "conversation.share.created",
     conversationId: conversation.id,
     targetUserId: conversation.userId,
     request,
@@ -388,7 +407,11 @@ export async function shareConversation(
   });
 
   return {
+    conversationId: conversation.id,
     shareId,
+    shareUrl,
+    link: shareUrl,
+    url: shareUrl,
     shareEnabled: true,
     conversation: after
   };
@@ -403,13 +426,21 @@ export async function createGroupChatFromConversation(
 
   const conversation = await getOwnedConversation(actor, conversationId);
   const before = buildConversationSnapshot(conversation);
-  const groupChatId = randomUUID();
+  const existingGroupChat = isRecord(before.conversationControl.groupChat) ? before.conversationControl.groupChat : {};
+  const groupChatId = readString(existingGroupChat.id) ?? randomUUID();
+  const inviteToken = readString(existingGroupChat.inviteToken) ?? createPublicToken();
+  const inviteUrl = buildGroupChatInviteUrl(request, inviteToken);
   const metadata = buildMetadata(conversation.metadata, {
     groupChat: {
       id: groupChatId,
+      inviteToken,
+      inviteUrl,
       status: "created",
-      createdAt: new Date().toISOString(),
-      createdByUserId: actor.id,
+      createdAt: readString(existingGroupChat.createdAt) ?? new Date().toISOString(),
+      createdByUserId: readString(existingGroupChat.createdByUserId) ?? actor.id,
+      updatedAt: new Date().toISOString(),
+      updatedByUserId: actor.id,
+      inviteDeletedAt: null,
       memberPolicy: "owner_only_until_group_schema"
     }
   });
@@ -432,7 +463,7 @@ export async function createGroupChatFromConversation(
 
   await writeConversationAudit({
     actor,
-    action: "create_group_chat",
+    action: "conversation.group_chat.created",
     conversationId: conversation.id,
     targetUserId: conversation.userId,
     request,
@@ -442,8 +473,138 @@ export async function createGroupChatFromConversation(
   });
 
   return {
+    conversationId: conversation.id,
     groupChatId,
+    inviteUrl,
+    link: inviteUrl,
+    url: inviteUrl,
+    joinUrl: inviteUrl,
     status: "created",
+    conversation: after
+  };
+}
+
+export async function resetGroupChatInviteLink(
+  actor: ConversationActor,
+  conversationId: string,
+  request?: Request
+) {
+  await ensureFeatureEnabled(actor, "groupChat", "create_group_chat", conversationId, request);
+
+  const conversation = await getOwnedConversation(actor, conversationId);
+  const before = buildConversationSnapshot(conversation);
+  const existingGroupChat = isRecord(before.conversationControl.groupChat) ? before.conversationControl.groupChat : {};
+  const groupChatId = readString(existingGroupChat.id) ?? randomUUID();
+  const inviteToken = createPublicToken();
+  const inviteUrl = buildGroupChatInviteUrl(request, inviteToken);
+  const metadata = buildMetadata(conversation.metadata, {
+    groupChat: {
+      ...existingGroupChat,
+      id: groupChatId,
+      inviteToken,
+      inviteUrl,
+      status: "created",
+      createdAt: readString(existingGroupChat.createdAt) ?? new Date().toISOString(),
+      createdByUserId: readString(existingGroupChat.createdByUserId) ?? actor.id,
+      inviteResetAt: new Date().toISOString(),
+      inviteResetByUserId: actor.id,
+      inviteDeletedAt: null,
+      memberPolicy: readString(existingGroupChat.memberPolicy) ?? "owner_only_until_group_schema"
+    }
+  });
+  const updated = await prisma.conversation.update({
+    where: {
+      id: conversation.id
+    },
+    data: {
+      metadata
+    },
+    select: {
+      id: true,
+      userId: true,
+      title: true,
+      metadata: true,
+      updatedAt: true
+    }
+  });
+  const after = buildConversationSnapshot(updated);
+
+  await writeConversationAudit({
+    actor,
+    action: "conversation.group_chat.link_reset",
+    conversationId: conversation.id,
+    targetUserId: conversation.userId,
+    request,
+    status: "allowed",
+    before,
+    after
+  });
+
+  return {
+    conversationId: conversation.id,
+    groupChatId,
+    inviteUrl,
+    link: inviteUrl,
+    url: inviteUrl,
+    joinUrl: inviteUrl,
+    conversation: after
+  };
+}
+
+export async function deleteGroupChatInviteLink(
+  actor: ConversationActor,
+  conversationId: string,
+  request?: Request
+) {
+  await ensureFeatureEnabled(actor, "groupChat", "create_group_chat", conversationId, request);
+
+  const conversation = await getOwnedConversation(actor, conversationId);
+  const before = buildConversationSnapshot(conversation);
+  const existingGroupChat = isRecord(before.conversationControl.groupChat) ? before.conversationControl.groupChat : {};
+  const groupChatId = readString(existingGroupChat.id) ?? randomUUID();
+  const metadata = buildMetadata(conversation.metadata, {
+    groupChat: {
+      ...existingGroupChat,
+      id: groupChatId,
+      inviteToken: null,
+      inviteUrl: null,
+      inviteDeletedAt: new Date().toISOString(),
+      inviteDeletedByUserId: actor.id,
+      status: "link_deleted"
+    }
+  });
+  const updated = await prisma.conversation.update({
+    where: {
+      id: conversation.id
+    },
+    data: {
+      metadata
+    },
+    select: {
+      id: true,
+      userId: true,
+      title: true,
+      metadata: true,
+      updatedAt: true
+    }
+  });
+  const after = buildConversationSnapshot(updated);
+
+  await writeConversationAudit({
+    actor,
+    action: "conversation.group_chat.link_deleted",
+    conversationId: conversation.id,
+    targetUserId: conversation.userId,
+    request,
+    status: "allowed",
+    before,
+    after
+  });
+
+  return {
+    conversationId: conversation.id,
+    groupChatId,
+    message: "群聊链接已删除。",
     conversation: after
   };
 }

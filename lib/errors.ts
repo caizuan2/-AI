@@ -5,7 +5,9 @@ export type AppErrorCode =
   | "INVALID_INPUT"
   | "UNAUTHORIZED"
   | "FORBIDDEN"
+  | "FEATURE_DISABLED"
   | "NOT_FOUND"
+  | "NOT_IMPLEMENTED"
   | "AI_ERROR"
   | "MISSING_AI_API_KEY"
   | "MISSING_QWEN_API_KEY"
@@ -158,7 +160,9 @@ const appErrorCodes = new Set<AppErrorCode>([
   "INVALID_INPUT",
   "UNAUTHORIZED",
   "FORBIDDEN",
+  "FEATURE_DISABLED",
   "NOT_FOUND",
+  "NOT_IMPLEMENTED",
   "AI_ERROR",
   "MISSING_AI_API_KEY",
   "MISSING_QWEN_API_KEY",
