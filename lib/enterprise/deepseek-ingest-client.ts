@@ -25,6 +25,7 @@ import type { GptOutputIntent } from "@/lib/enterprise/gpt-output-intent-classif
 import type { AdminIngestPlatform } from "@/lib/enterprise/admin-ingest-platform";
 import type { OpenAIAdminIngestAttachment } from "@/lib/enterprise/openai-ingest-client";
 import { DEEPSEEK_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
+import type { GptOSWorkflowExecution } from "@/lib/enterprise/gpt-os-workflow-engine";
 
 export interface DeepSeekAdminIngestInput {
   input: string;
@@ -46,6 +47,7 @@ export interface DeepSeekAdminIngestInput {
   recentMessages?: GptIngestMemoryMessage[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
+  gptOS?: GptOSWorkflowExecution | null;
   requestId?: string;
 }
 
@@ -79,6 +81,7 @@ export interface DeepSeekAdminIngestResult {
   diagnostics: string[];
   structured: GptStructuredKnowledge;
   structuredResult: GptStructuredKnowledge;
+  gptOS?: GptOSWorkflowExecution | null;
   sync: {
     platform: AdminIngestPlatform;
     syncTarget: Array<"web" | "exe" | "apk">;
@@ -200,7 +203,9 @@ function buildUserPrompt(input: DeepSeekAdminIngestInput) {
       selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
       platform: input.platform,
       syncTarget: input.syncTarget
-    }
+    },
+    // GPT OS 只作为提示词上下文注入，DeepSeek chat/completions 参数保持原样。
+    gptOS: input.gptOS
   });
 }
 
@@ -324,7 +329,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
 
   try {
     const resolved = resolveDeepSeekConfig(input);
-    const systemPrompt = buildGptIngestBrainSystemPrompt();
+    const systemPrompt = buildGptIngestBrainSystemPrompt({ gptOS: input.gptOS });
     const userPrompt = buildUserPrompt(input);
 
     let response = await callDeepSeekChatCompletions({
@@ -483,6 +488,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       })),
       saveRecommendation: normalized.saveRecommendation,
       diagnostics: [
+        ...(input.gptOS ? input.gptOS.diagnostics.map((item) => `gptOS:${item}`) : []),
         "provider:deepseek",
         `proofIdSource:${response.proofIdSource}`,
         `intent:${quality.intent}`,
@@ -491,6 +497,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       ],
       structured: normalized.structured,
       structuredResult: normalized.structured,
+      gptOS: input.gptOS ?? null,
       sync: {
         platform: input.platform,
         syncTarget: input.syncTarget

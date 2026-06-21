@@ -14,7 +14,9 @@ import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
+import type { GptOSWorkflowExecution } from "@/lib/enterprise/gpt-os-workflow-engine";
 import { hasDatabaseUrl } from "@/lib/server-config";
+import { buildGptOSErrorUX } from "@/lib/enterprise/gpt-os-error-ux-layer";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -37,6 +39,11 @@ function readStringArray(value: unknown, limit = 10) {
   return Array.isArray(value)
     ? value.map((item) => readString(item)).filter(Boolean).slice(0, limit)
     : [];
+}
+
+function readGptOS(value: unknown): GptOSWorkflowExecution | null {
+  // GPT OS 上下文是可选增强字段；API 层只透传对象，不执行外部工具。
+  return isPlainObject(value) ? value as unknown as GptOSWorkflowExecution : null;
 }
 
 function readSlideTexts(value: unknown) {
@@ -156,54 +163,56 @@ function toGptFallbackErrorCode(error: unknown) {
 }
 
 function toGptFallbackMessage(errorCode: ReturnType<typeof toGptFallbackErrorCode>, error: unknown) {
-  const record = error && typeof error === "object" ? error as { message?: unknown } : {};
-  const message = typeof record.message === "string" ? record.message.trim() : "";
+  const ux = buildGptOSErrorUX(error, {
+    primaryProvider: errorCode.startsWith("DEEPSEEK") ? "deepseek" : "openai",
+    fallbackModel: errorCode.startsWith("DEEPSEEK") ? "safe-fallback" : "deepseek"
+  });
 
   if (errorCode === "OPENAI_API_KEY_MISSING") {
-    return "缺少 OPENAI_API_KEY，无法调用 GPT-5.5。请配置后点击重新连接 GPT 或重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "DEEPSEEK_API_KEY_MISSING") {
-    return "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "OPENAI_TIMEOUT") {
-    return message || "GPT-5.5 深度分析请求超时，请稍后点击重新连接 GPT 或重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "OPENAI_BASE_URL_INVALID") {
-    return "OPENAI_BASE_URL 无效，无法调用 GPT-5.5。请检查配置后重试。";
+    return ux.userMessage;
   }
 
   if (errorCode === "DEEPSEEK_BASE_URL_INVALID") {
-    return "DEEPSEEK_BASE_URL 无效，无法调用 DeepSeek-V4-Pro。请检查配置后重试。";
+    return ux.userMessage;
   }
 
   if (errorCode === "OPENAI_RESPONSES_PARSE_FAILED") {
-    return "OpenAI Responses API 返回解析失败，请点击重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "DEEPSEEK_RESPONSE_PARSE_FAILED") {
-    return "DeepSeek-V4-Pro 返回解析失败，请点击重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "OPENAI_PRO_QUALITY_FAILED") {
-    return message || "GPT-5.5 已返回，但回复未达到 ChatGPT Pro 投喂深度，请点击重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "DEEPSEEK_PRO_QUALITY_FAILED") {
-    return message || "DeepSeek-V4-Pro 已返回，但回复未达到投喂深度，请点击重新生成。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "OPENAI_RESPONSES_REQUEST_FAILED") {
-    return message || "OpenAI Responses API 请求失败，请检查模型权限、额度或网络后重试。";
+    return ux.recoveryMessage;
   }
 
   if (errorCode === "DEEPSEEK_REQUEST_FAILED") {
-    return message || "DeepSeek-V4-Pro 请求失败，请检查 DEEPSEEK_MODEL、额度或网络后重试。";
+    return ux.recoveryMessage;
   }
 
-  return message || "GPT-5.5 暂时无法完成本次投喂，请点击重新连接 GPT 或重新生成。";
+  return ux.userMessage || "系统正在优化回答，请稍后再试";
 }
 
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
@@ -376,6 +385,7 @@ function readRequest(body: unknown) {
     gptVersion: readString(body.gptVersion) || null,
     selectedModelLabel: readString(body.selectedModelLabel) || null,
     modelDisplayName: readString(body.modelDisplayName) || null,
+    gptOS: readGptOS(body.gptOS),
     recentMessages: readRecentMessages(body.recentMessages),
     previousKnowledgeDrafts: readPreviousKnowledgeDrafts(body.previousKnowledgeDrafts),
     recentTrainingRecords: readRecentTrainingRecords(body.recentTrainingRecords)
@@ -437,6 +447,7 @@ export async function POST(request: Request) {
       gptVersion: input.gptVersion,
       selectedModelLabel: input.selectedModelLabel,
       modelDisplayName: input.modelDisplayName,
+      gptOS: input.gptOS,
       recentMessages: input.recentMessages,
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
@@ -468,6 +479,7 @@ export async function POST(request: Request) {
       sourceFiles: result.sourceFiles,
       saveRecommendation: result.saveRecommendation,
       diagnostics: result.diagnostics,
+      gptOS: result.gptOS ?? input.gptOS,
       structuredResult: result.structuredResult,
       structured: result.structured,
       sync: result.sync,
@@ -475,6 +487,10 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
+    const errorUx = buildGptOSErrorUX(error, {
+      primaryProvider: errorCode.startsWith("DEEPSEEK") ? "deepseek" : "openai",
+      fallbackModel: errorCode.startsWith("DEEPSEEK") ? "safe-fallback" : "deepseek"
+    });
     const message = toGptFallbackMessage(errorCode, error);
     const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT";
     const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING";
@@ -492,6 +508,11 @@ export async function POST(request: Request) {
       errorCode,
       message,
       retryable: true,
+      errorHandled: true,
+      fallbackUsed: true,
+      fallbackModel: errorUx.fallbackModel,
+      userFacingError: false,
+      systemRecovered: false,
       provider: modelOption.provider,
       selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || modelOption.label,
       model: input.preferredModel

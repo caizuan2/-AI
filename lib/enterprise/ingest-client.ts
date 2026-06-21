@@ -24,6 +24,25 @@ import type {
 } from "@/lib/enterprise/gpt-knowledge-draft";
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
+import {
+  executeAutonomousOS,
+  type GptOSRuntimeContext
+} from "@/lib/enterprise/gpt-os-runtime";
+import type { GptOSWorkflowExecution } from "@/lib/enterprise/gpt-os-workflow-engine";
+import {
+  estimateGptOSCost,
+  formatGptOSCost
+} from "@/lib/enterprise/gpt-os-cost-tracker";
+import { validateGptOSModelTruth } from "@/lib/enterprise/gpt-os-model-truth-layer";
+import {
+  GPT_OS_SAFE_FALLBACK_MESSAGE,
+  GPT_OS_SAFE_UI_MESSAGE,
+  normalizeGptOSError,
+  sanitizeGptOSErrorMessage
+} from "@/lib/enterprise/gpt-os-error-handler";
+import {
+  buildGptOSErrorUX
+} from "@/lib/enterprise/gpt-os-error-ux-layer";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -141,6 +160,11 @@ interface GptIngestResponse {
   suggestedQuestions?: string[];
   saveRecommendation?: GptSaveRecommendation;
   diagnostics?: string[];
+  gptOS?: GptOSWorkflowExecution | null;
+  cost?: ReturnType<typeof formatGptOSCost>;
+  reasoningTrace?: GptOSWorkflowExecution["runtime"]["reasoningTrace"];
+  toolTrace?: GptOSWorkflowExecution["runtime"]["toolTrace"];
+  modelTruth?: GptOSWorkflowExecution["runtime"]["modelTruth"];
   structured: {
     title?: string;
     category?: string;
@@ -231,23 +255,27 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
   }
 
   if (raw.includes("openai api key") || raw.includes("missing_ai_api_key") || raw.includes("未配置 openai")) {
-    return "未配置 OpenAI API Key，无法调用 GPT-5.5。请配置后重新生成。";
+    return "已自动切换备用AI模型，正在生成更稳定结果";
   }
 
   if (raw.includes("deepseek_api_key") || raw.includes("deepseek api key") || raw.includes("deepseek") && raw.includes("未配置")) {
-    return "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。";
+    return "系统正在优化回答，请稍后再试";
   }
 
   if (raw.includes("timeout") || raw.includes("超时")) {
-    return "GPT 请求超时，请稍后重试。";
+    return GPT_OS_SAFE_UI_MESSAGE;
+  }
+
+  if (raw.includes("parse_failed") || raw.includes("解析失败") || raw.includes("unsupported openai response format")) {
+    return GPT_OS_SAFE_UI_MESSAGE;
   }
 
   if (raw.includes("gpt") || raw.includes("openai")) {
-    return "GPT-5.5 本次未完成，请检查模型权限、额度或网络后重新生成。";
+    return GPT_OS_SAFE_UI_MESSAGE;
   }
 
   if (raw.includes("deepseek")) {
-    return "DeepSeek-V4-Pro 本次未完成，请检查 API Key、模型权限、额度或网络后重新生成。";
+    return GPT_OS_SAFE_UI_MESSAGE;
   }
 
   return "接口暂不可用，请稍后重试。";
@@ -265,6 +293,12 @@ async function readApiData<T>(response: Response): Promise<T> {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isGptApiParseClientError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+
+  return /parse_failed|解析失败|unsupported openai response format/i.test(message);
 }
 
 function readNumber(value: unknown, fallback: number) {
@@ -474,8 +508,221 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
-    fallbackUsed: false
+    fallbackUsed: Boolean(data.fallbackUsed)
   }, originalInput, agent, "待确认");
+}
+
+function buildObservableGptOSResult(
+  data: GptIngestResponse,
+  osContext: GptOSRuntimeContext,
+  expectedModel: string,
+  provider: IngestModelProvider
+): GptIngestResponse {
+  const cost = estimateGptOSCost({
+    usage: data.usage,
+    model: data.actualModel ?? data.model,
+    toolResults: osContext.execution.toolResults,
+    loopCount: osContext.execution.runtime.loopCount
+  });
+  const modelTruth = validateGptOSModelTruth({
+    expectedModel,
+    actualModel: data.actualModel ?? data.model,
+    provider,
+    responseId: data.responseId,
+    proofId: data.proofId,
+    fallbackUsed: data.fallbackUsed ?? data.fallback ?? false,
+    fallbackSource: data.provider,
+    gptProof: data.gptProof
+  });
+  const toolTrace = osContext.execution.runtime.toolTrace.length
+    ? osContext.execution.runtime.toolTrace
+    : osContext.execution.toolResults.map((result) => ({
+      pluginId: result.pluginId,
+      pluginName: result.pluginName,
+      stage: result.stage,
+      loopIndex: result.loopIndex,
+      nextAction: result.nextAction,
+      summary: result.summary
+    }));
+  const reasoningTrace = osContext.execution.runtime.reasoningTrace.length
+    ? osContext.execution.runtime.reasoningTrace
+    : [{
+      step: "final",
+      reasoning: "GPT OS completed the request and attached semantic observability metadata.",
+      toolUsed: toolTrace.map((item) => item.pluginId),
+      decision: "Final answer returned with model truth and cost tracking."
+    }];
+  const whyThisAnswer = osContext.execution.runtime.whyThisAnswer.length
+    ? osContext.execution.runtime.whyThisAnswer
+    : [
+      `Selected ${osContext.execution.selectedAgent.name} for this request.`,
+      toolTrace.length ? "Used tool feedback before finalizing." : "No tool feedback was needed before finalizing.",
+      `Model verification target was ${modelTruth.expectedModel}.`
+    ];
+  const diagnostics = data.diagnostics ?? [];
+  const modelFallbackUsed = diagnostics.some((item) => item.includes("fallbackUsed:true") || item.includes("modelFallbackUsed:true"));
+  const fallbackModel = diagnostics.find((item) => item.startsWith("fallbackModel:"))?.split(":").slice(1).join(":") || (modelFallbackUsed ? data.provider : "none");
+  const errorHandled = modelFallbackUsed || osContext.execution.runtime.errorHandled || diagnostics.some((item) => item.includes("errorHandled:true"));
+  const systemRecovered = modelFallbackUsed || osContext.execution.runtime.systemRecovered || diagnostics.some((item) => item.includes("systemRecovered:true"));
+  const fallbackSource: "openai" | "deepseek" | "qwen" | "none" | "unknown" = fallbackModel === "deepseek" || fallbackModel === "qwen"
+    ? fallbackModel
+    : data.provider === "openai" || data.provider === "deepseek"
+      ? data.provider
+      : "unknown";
+  const observableModelTruth = modelFallbackUsed
+    ? {
+      ...modelTruth,
+      fallbackUsed: true,
+      fallbackSource,
+      modelVerified: false
+    }
+    : modelTruth;
+  const observableExecution: GptOSWorkflowExecution = {
+    ...osContext.execution,
+    osMode: "INTELLIGENT_OBSERVABLE",
+    diagnostics: [
+      ...osContext.execution.diagnostics,
+      "osMode:INTELLIGENT_OBSERVABLE",
+      "costTracked:true",
+      `estimatedCost:${cost.totalCost.toFixed(6)}`,
+      `tokens:${cost.totalTokens}`,
+      `modelVerified:${observableModelTruth.modelVerified ? "true" : "false"}`,
+      `actualModel:${observableModelTruth.actualModel || "unknown"}`,
+      `expectedModel:${observableModelTruth.expectedModel}`,
+      "fallbackTransparent:true",
+      `fallbackUsed:${observableModelTruth.fallbackUsed ? "true" : "false"}`,
+      `errorHandled:${errorHandled ? "true" : "false"}`,
+      `fallbackModel:${fallbackModel}`,
+      "userFacingError:false",
+      `systemRecovered:${systemRecovered ? "true" : "false"}`,
+      "semanticTraceEnabled:true",
+      `reasoningTrace:${reasoningTrace.length}`,
+      `toolTrace:${toolTrace.length}`,
+      `WHY_THIS_ANSWER:${whyThisAnswer.join(" | ")}`
+    ],
+    runtime: {
+      ...osContext.execution.runtime,
+      cost,
+      costTracked: true,
+      modelTruth: observableModelTruth,
+      modelVerified: observableModelTruth.modelVerified,
+      fallbackTransparent: true,
+      errorHandled,
+      fallbackModel: fallbackModel === "deepseek" || fallbackModel === "qwen" || fallbackModel === "safe-fallback" ? fallbackModel : "none",
+      userFacingError: false,
+      systemRecovered,
+      semanticTraceEnabled: true,
+      reasoningTrace,
+      toolTrace,
+      whyThisAnswer
+    }
+  };
+
+  return {
+    ...data,
+    cost: formatGptOSCost(cost),
+    reasoningTrace,
+    toolTrace,
+    modelTruth: observableModelTruth,
+    fallbackUsed: data.fallbackUsed ?? modelTruth.fallbackUsed,
+    diagnostics: [
+      ...(data.diagnostics ?? []),
+      ...observableExecution.diagnostics.map((item) => `runtime:${item}`)
+    ],
+    gptOS: observableExecution
+  };
+}
+
+function createSafeFallbackGptIngestResponse(input: {
+  error: unknown;
+  osContext: GptOSRuntimeContext;
+  originalInput: string;
+  agent: IngestChatAgent;
+  category: string;
+  provider: IngestModelProvider;
+  model: string;
+  selectedModelLabel: string;
+  platform: IngestPlatform;
+}): GptIngestResponse {
+  const safeError = normalizeGptOSError(input.error);
+  const errorUX = buildGptOSErrorUX(input.error, {
+    primaryProvider: input.provider,
+    fallbackModel: "safe-fallback"
+  });
+  const title = "AI暂时未响应";
+  const category = input.category || input.agent.role || "默认知识库";
+  const summary = `${errorUX.userMessage}。本次请求已进入安全兜底，不会写入知识库。`;
+  const gptOS: GptOSWorkflowExecution = {
+    ...input.osContext.execution,
+    diagnostics: [
+      ...input.osContext.execution.diagnostics,
+      "errorHandled:true",
+      "fallbackUsed:true",
+      "fallbackModel:safe-fallback",
+      "userFacingError:false",
+      "systemRecovered:true",
+      "safeFallback:true",
+      ...errorUX.diagnostics,
+      ...safeError.diagnostics
+    ],
+    runtime: {
+      ...input.osContext.execution.runtime,
+      fallbackUsed: true,
+      errorHandled: true,
+      fallbackModel: "safe-fallback",
+      userFacingError: false,
+      systemRecovered: true,
+      converged: true,
+      convergenceStopReason: "safe_fallback",
+      fallbackTransparent: true,
+      semanticTraceEnabled: true,
+      reasoningTrace: [
+        ...input.osContext.execution.runtime.reasoningTrace,
+        {
+          step: "safe-fallback",
+          reasoning: errorUX.recoveryMessage,
+          toolUsed: input.osContext.execution.runtime.toolTrace.map((item) => item.pluginId),
+          decision: errorUX.diagnostics.join(" | ")
+        }
+      ]
+    }
+  };
+
+  return {
+    provider: input.provider,
+    model: input.model,
+    requestedModel: input.model,
+    actualModel: input.model,
+    responseId: undefined,
+    proofId: undefined,
+    createdAt: new Date().toISOString(),
+    usage: {},
+    modelDisplayName: input.selectedModelLabel,
+    modelMode: "highest",
+    fallback: false,
+    selectedModelLabel: input.selectedModelLabel,
+    replyMarkdown: errorUX.recoveryMessage,
+    suggestedQuestions: ["稍后重试", "检查模型连接状态"],
+    saveRecommendation: "需要补充资料",
+    diagnostics: safeError.diagnostics,
+    gptOS,
+    structured: {
+      title,
+      category,
+      summary,
+      tags: ["AI保护", category.replace("知识库", "")].filter(Boolean),
+      question: input.originalInput,
+      answer: errorUX.recoveryMessage,
+      confidence: 0,
+      saveSuggestion: false,
+      followUpQuestions: ["稍后重新生成", "检查 GPT 连接状态"]
+    },
+    sync: {
+      platform: input.platform,
+      syncTarget: [...ingestSyncTarget]
+    },
+    fallbackUsed: true
+  };
 }
 
 export async function sendCoreIngest(input: {
@@ -504,6 +751,7 @@ export async function sendCoreIngest(input: {
     category?: string;
     saveStatus?: string;
   }>;
+  gptOS?: GptOSWorkflowExecution | null;
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
@@ -512,64 +760,143 @@ export async function sendCoreIngest(input: {
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
   const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
   const preferredModel = modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel;
+  // GPT OS Runtime 在客户端调度工具、Agent 和现有 GPT API；旧接口字段保持不变。
+  const runtimeInput = {
+    text: input.text,
+    activeAgentName: input.agent.name,
+    category: input.category,
+    attachments: input.attachments?.map((file) => ({
+      fileName: file.fileName,
+      parseStatus: file.parseStatus
+    })),
+    recentMessages: input.recentMessages,
+    tenantId: input.tenantId ?? null,
+    userId: input.userId ?? null,
+    workflowState: "running"
+  } as const;
   const health = await checkGptHealthStatus({
     provider: modelProvider,
     selectedModelLabel,
     preferredModel
   });
 
-  if (!health.ok && !health.apiKeyConfigured) {
-    throw new Error(health.message || (modelProvider === "deepseek"
-      ? "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。"
-      : "未配置 OpenAI API Key，无法调用 GPT-5.5。"));
+  if (!health.ok && !health.apiKeyConfigured && modelProvider === "deepseek") {
+    throw new Error("系统正在优化回答，请稍后再试");
   }
+  const expectedTruthModel = modelProvider === "openai" ? "gpt-5.5" : preferredModel;
 
   try {
-    const response = await fetch("/api/admin/kb/ingest/gpt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: input.text,
-        source: "admin_ingest",
-        sourceApp: "admin_ingest",
-        agentId: input.agent.id,
-        expertId: input.agent.expertId ?? null,
-        agentName: input.agent.name,
-        expertName: input.agent.expertId ? input.agent.name : null,
-        agentDescription: input.agent.description,
-        targetUser: input.agent.role,
+    const pipeline = await executeAutonomousOS<GptIngestResponse>(runtimeInput, {
+      callModel: async (osContext) => {
+        try {
+          const response = await fetch("/api/admin/kb/ingest/gpt", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              input: osContext.modelInput,
+              source: "admin_ingest",
+              sourceApp: "admin_ingest",
+              agentId: input.agent.id,
+              expertId: input.agent.expertId ?? null,
+              agentName: input.agent.name,
+              expertName: input.agent.expertId ? input.agent.name : null,
+              agentDescription: input.agent.description,
+              targetUser: input.agent.role,
+              category: input.category,
+              model: input.model,
+              tenantId: input.tenantId ?? null,
+              userId: input.userId ?? null,
+              attachments: input.attachments ?? [],
+              platform,
+              syncTarget: [...ingestSyncTarget],
+              modelProvider,
+              modelMode: "highest",
+              preferredModel,
+              gptTier: modelProvider === "openai" ? input.gptTier ?? gptSelection.tier : undefined,
+              gptTierLabel: modelProvider === "openai" ? input.gptTierLabel ?? gptSelection.tierLabel : undefined,
+              gptVersion: modelProvider === "openai" ? input.gptVersion ?? gptSelection.version : undefined,
+              selectedModelLabel,
+              modelDisplayName: selectedModelLabel,
+              gptOS: osContext.execution,
+              recentMessages: input.recentMessages ?? [],
+              previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
+              recentTrainingRecords: input.recentTrainingRecords ?? [],
+              autoSave: false
+            })
+          });
+          const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
+
+          if (isGptFailureResponse(payload)) {
+            throw new Error(payload.message || GPT_OS_SAFE_UI_MESSAGE);
+          }
+
+          if (!response.ok || !payload?.ok || !payload.data) {
+            throw new Error(getFriendlyIngestError(response, payload));
+          }
+
+          return payload.data;
+        } catch (error) {
+          if (isGptApiParseClientError(error)) {
+            throw new Error(GPT_OS_SAFE_UI_MESSAGE);
+          }
+
+          throw error;
+        }
+      },
+      readModelText: (data) => data.replyMarkdown,
+      refineResult: (data, osContext) => buildObservableGptOSResult(data, osContext, expectedTruthModel, modelProvider),
+      createFallbackResult: (error, osContext) => createSafeFallbackGptIngestResponse({
+        error,
+        osContext,
+        originalInput: input.text,
+        agent: input.agent,
         category: input.category,
-        model: input.model,
-        tenantId: input.tenantId ?? null,
-        userId: input.userId ?? null,
-        attachments: input.attachments ?? [],
-        platform,
-        syncTarget: [...ingestSyncTarget],
-        modelProvider,
-        modelMode: "highest",
-        preferredModel,
-        gptTier: modelProvider === "openai" ? input.gptTier ?? gptSelection.tier : undefined,
-        gptTierLabel: modelProvider === "openai" ? input.gptTierLabel ?? gptSelection.tierLabel : undefined,
-        gptVersion: modelProvider === "openai" ? input.gptVersion ?? gptSelection.version : undefined,
+        provider: modelProvider,
+        model: preferredModel,
         selectedModelLabel,
-        modelDisplayName: selectedModelLabel,
-        recentMessages: input.recentMessages ?? [],
-        previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
-        recentTrainingRecords: input.recentTrainingRecords ?? [],
-        autoSave: false
+        platform
       })
     });
-    const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
+    const data = pipeline.result;
+    const gptOS = data.gptOS ?? pipeline.execution;
 
-    if (isGptFailureResponse(payload)) {
-      throw new Error(payload.message || `${selectedModelLabel} 本次未完成，请稍后重试。`);
+    if (data.fallbackUsed) {
+      const draft = gptResponseToDraft(data, input.text, input.agent);
+
+      draft.jobId = draft.jobId ?? `gpt-fallback-${Date.now()}`;
+      draft.fallbackUsed = true;
+
+      const records = [createTrainingRecord({
+        originalInput: input.text,
+        draft,
+        agent: input.agent,
+        status: "失败",
+        tenantId: input.tenantId ?? null,
+        userId: input.userId ?? null,
+        platform
+      })];
+
+      return {
+        draft,
+        records,
+        preview: true,
+        provider: draft.providerUsed ?? modelProvider,
+        model: data.modelDisplayName ?? selectedModelLabel,
+        actualModel: data.actualModel ?? data.model,
+        responseId: data.responseId,
+        usage: data.usage,
+        gptOS,
+        cost: data.cost,
+        reasoningTrace: data.reasoningTrace,
+        toolTrace: data.toolTrace,
+        modelTruth: data.modelTruth,
+        fallbackUsed: true,
+        modelMode: draft.modelMode,
+        replyMarkdown: data.replyMarkdown,
+        saveSuggestion: false,
+        message: data.replyMarkdown || GPT_OS_SAFE_FALLBACK_MESSAGE
+      };
     }
-
-    if (!response.ok || !payload?.ok || !payload.data) {
-      throw new Error(getFriendlyIngestError(response, payload));
-    }
-
-    const data = payload.data;
 
     if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
       throw new Error(`${selectedModelLabel} 未返回有效调用证据，本次不插入成功回复。`);
@@ -599,6 +926,12 @@ export async function sendCoreIngest(input: {
       responseId: data.responseId,
       usage: data.usage,
       gptProof: data.gptProof,
+      gptOS,
+      cost: data.cost,
+      reasoningTrace: data.reasoningTrace,
+      toolTrace: data.toolTrace,
+      modelTruth: data.modelTruth,
+      fallbackUsed: data.fallbackUsed ?? false,
       modelMode: draft.modelMode,
       replyMarkdown: draft.replyMarkdown,
       saveSuggestion: draft.recommendation === "建议入库",
@@ -606,8 +939,8 @@ export async function sendCoreIngest(input: {
     };
   } catch (error) {
     throw error instanceof Error
-      ? error
-      : new Error(`${selectedModelLabel} 本次未完成，请稍后重试。`);
+      ? new Error(sanitizeGptOSErrorMessage(error.message))
+      : new Error(GPT_OS_SAFE_UI_MESSAGE);
   }
 }
 

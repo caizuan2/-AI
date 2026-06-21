@@ -10,6 +10,7 @@ import {
 } from "@/components/enterprise-admin/IngestCreateAgentDialog";
 import { IngestChatGPTShell } from "@/components/enterprise-admin/IngestChatGPTShell";
 import { IngestEXEShell } from "@/components/enterprise-admin/IngestEXEShell";
+import { IngestGPTOSPanel } from "@/components/enterprise-admin/IngestGPTOSPanel";
 import { IngestNotificationPanel } from "@/components/enterprise-admin/IngestNotificationPanel";
 import {
   IngestSettingsPanel,
@@ -68,6 +69,18 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
+import {
+  planGptOSWorkflow,
+  type GptOSWorkflowExecution
+} from "@/lib/enterprise/gpt-os-workflow-engine";
+import {
+  GPT_OS_SAFE_UI_MESSAGE,
+  sanitizeGptOSErrorMessage
+} from "@/lib/enterprise/gpt-os-error-handler";
+import {
+  buildGptOSErrorUX,
+  sanitizeErrorUXMessage
+} from "@/lib/enterprise/gpt-os-error-ux-layer";
 
 type IngestMode = "chat" | "workbench";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -108,8 +121,8 @@ type SpeechWindow = Window & {
 const tenantId: string | null = null;
 const userId: string | null = null;
 const GPT_FALLBACK_TOAST = {
-  title: "当前模型本次未完成",
-  description: "本次没有生成成功回复，请检查模型连接后点击重新连接或重新生成。"
+  title: "AI正在优化回答路径",
+  description: "已自动切换备用方案，正在生成更稳定结果。"
 };
 const initialConnectionStatus: IngestConnectionStatus = {
   enterpriseSpace: "本地预览",
@@ -287,6 +300,7 @@ export function IngestModeToggle() {
   const [draft, setDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const [records, setRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
   const [lastInput, setLastInput] = useState("");
+  const [gptOSExecution, setGptOSExecution] = useState<GptOSWorkflowExecution | null>(null);
   const [noticeMessage, setNoticeMessage] = useState("管理员投喂端已就绪，登录后将同步企业知识库。");
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
@@ -333,6 +347,21 @@ export function IngestModeToggle() {
     }),
     [activeAgent, adminAvatar, appName, hasActiveAgent]
   );
+  const gptOSPreview = useMemo(() => planGptOSWorkflow({
+    text: input || lastInput || activeAgent.description || activeAgent.name,
+    activeAgentName: activeAgent.name,
+    category: activeAgent.role,
+    attachments: uploadedFiles.map((file) => ({
+      fileName: file.fileName,
+      parseStatus: file.parseStatus
+    })),
+    recentMessages: messages.slice(-6).map((message) => ({
+      role: message.role,
+      content: message.content
+    })),
+    workflowState: isParsing ? "running" : "planned"
+  }), [activeAgent.description, activeAgent.name, activeAgent.role, input, isParsing, lastInput, messages, uploadedFiles]);
+  const visibleGptOSExecution = gptOSExecution ?? gptOSPreview;
 
   useEffect(() => {
     const nextContext = resolveAdminIngestPlatformContext({
@@ -852,8 +881,24 @@ export function IngestModeToggle() {
     }
 
     const conversationId = ensureConversationForSend(activeAgent);
+    // GPT OS 计划在发送前生成，只作为当前投喂请求的路由上下文。
+    const nextGptOSExecution = planGptOSWorkflow({
+      text: effectiveInput,
+      activeAgentName: activeAgent.name,
+      category: activeAgent.role,
+      attachments: outgoingAttachments.map((file) => ({
+        fileName: file.fileName,
+        parseStatus: file.parseStatus
+      })),
+      recentMessages: messages.slice(-10).map((message) => ({
+        role: message.role,
+        content: message.content
+      })),
+      workflowState: "running"
+    });
 
     markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
+    setGptOSExecution(nextGptOSExecution);
     setIsParsing(true);
     setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
     setErrorMessage("");
@@ -911,12 +956,34 @@ export function IngestModeToggle() {
           category: record.category,
           saveStatus: record.saveStatus
         })),
+        gptOS: nextGptOSExecution,
         platform: platformContext.platform
       });
       const nextRecords = mergeTrainingRecords(result.records, records);
+      const completedGptOSExecution = result.gptOS ? {
+        ...result.gptOS,
+        steps: result.gptOS.steps.map((step) => ({
+          ...step,
+          status: "done" as const
+        }))
+      } : planGptOSWorkflow({
+        text: effectiveInput,
+        activeAgentName: activeAgent.name,
+        category: activeAgent.role,
+        attachments: outgoingAttachments.map((file) => ({
+          fileName: file.fileName,
+          parseStatus: file.parseStatus
+        })),
+        recentMessages: messages.slice(-10).map((message) => ({
+          role: message.role,
+          content: message.content
+        })),
+        workflowState: "completed"
+      });
 
       setDraft(result.draft);
       setRecords(nextRecords);
+      setGptOSExecution(completedGptOSExecution);
       setResolvedModel(result.model ?? currentModelLabel);
       setLastInput(effectiveInput);
       setGptFallbackToast(null);
@@ -960,11 +1027,16 @@ export function IngestModeToggle() {
         records: nextRecords
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : `${selectedModelOption.label} 本次未完成，请稍后重试。`;
+      const errorUX = buildGptOSErrorUX(error, {
+        primaryProvider: selectedModelOption.provider,
+        fallbackModel: selectedModelOption.provider === "openai" ? "deepseek" : "safe-fallback"
+      });
+      const message = error instanceof Error ? sanitizeErrorUXMessage(error.message) : errorUX.userMessage;
+      const friendlyMessage = message === GPT_OS_SAFE_UI_MESSAGE ? errorUX.recoveryMessage : message;
 
-      showGptFallbackToast(message);
-      setNoticeMessage(`AI 投喂暂未完成，请检查 ${selectedModelOption.label} 配置后点击重新生成。`);
-      setErrorMessage(message);
+      showGptFallbackToast(friendlyMessage);
+      setNoticeMessage(errorUX.recoveryMessage);
+      setErrorMessage(friendlyMessage);
       return null;
     } finally {
       setIsParsing(false);
@@ -1132,13 +1204,15 @@ export function IngestModeToggle() {
           description: nextStatus.selectedModelLabel
         });
       } else {
-        setNoticeMessage(nextStatus.message);
+        const safeMessage = sanitizeErrorUXMessage(sanitizeGptOSErrorMessage(nextStatus.message));
+
+        setNoticeMessage(safeMessage);
         showActionToast({
           type: "warning",
-          title: `${selectedModelOption.label} 本次未完成`,
-          description: nextStatus.message
+          title: "AI暂时未响应",
+          description: safeMessage
         });
-        showGptFallbackToast(nextStatus.message);
+        showGptFallbackToast(safeMessage);
       }
 
       pushNotification({
@@ -1673,6 +1747,15 @@ export function IngestModeToggle() {
             <MonitorCog className="h-4 w-4" aria-hidden="true" />
             工作室
           </button>
+        </div>
+      ) : null}
+      {activeRailKey !== "experts" ? (
+        <div className="pointer-events-none absolute right-5 top-5 z-40 hidden w-[276px] lg:block">
+          <IngestGPTOSPanel
+            execution={visibleGptOSExecution}
+            isRunning={isParsing}
+            selectedModel={resolvedModel || selectedModelLabel}
+          />
         </div>
       ) : null}
 

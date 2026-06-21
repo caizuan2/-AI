@@ -26,6 +26,8 @@ import { assessGptProResponseQuality } from "@/lib/enterprise/gpt-pro-response-q
 import { buildGptProRetryDeepenPrompt } from "@/lib/enterprise/gpt-pro-retry-deepen";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import type { GptOutputIntent } from "@/lib/enterprise/gpt-output-intent-classifier";
+import type { GptOSWorkflowExecution } from "@/lib/enterprise/gpt-os-workflow-engine";
+import { isGptOSRetryableError } from "@/lib/enterprise/gpt-os-error-handler";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -68,6 +70,7 @@ export interface OpenAIAdminIngestInput {
   recentMessages?: GptIngestMemoryMessage[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
+  gptOS?: GptOSWorkflowExecution | null;
   requestId?: string;
 }
 
@@ -100,6 +103,7 @@ export interface OpenAIAdminIngestResult {
   diagnostics: string[];
   structured: GptStructuredKnowledge;
   structuredResult: GptStructuredKnowledge;
+  gptOS?: GptOSWorkflowExecution | null;
   sync: {
     platform: AdminIngestPlatform;
     syncTarget: Array<"web" | "exe" | "apk">;
@@ -113,6 +117,8 @@ const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_MODEL_LABEL = "GPT-5.5 超高";
 const WINDOWS_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
+const OPENAI_RETRY_COUNT = 2;
+const OPENAI_RETRY_DELAY_MS = 500;
 
 type OpenAIResponsesErrorCode =
   | "OPENAI_API_KEY_MISSING"
@@ -130,6 +136,15 @@ class OpenAIResponsesError extends Error {
     super(message);
     this.name = "OpenAIResponsesError";
   }
+}
+
+type OpenAIResponseShape = "responses" | "chat" | "string" | "unknown";
+
+interface NormalizedOpenAIResponseText {
+  text: string;
+  rawResponseType: OpenAIResponseShape;
+  normalized: true;
+  parserUsed: "responses-api-normalizer";
 }
 
 function readEnv(name: string) {
@@ -191,6 +206,101 @@ function normalizeUsage(value: unknown): OpenAIGptUsage {
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readNestedText(value: unknown, depth = 0): string[] {
+  if (depth > 5) {
+    return [];
+  }
+
+  if (typeof value === "string") {
+    return value.trim() ? [value.trim()] : [];
+  }
+
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => readNestedText(item, depth + 1));
+  }
+
+  if (!isRecord(value)) {
+    return [];
+  }
+
+  const preferred = [
+    value.text,
+    value.output_text,
+    value.content,
+    value.value
+  ];
+
+  return preferred.flatMap((item) => readNestedText(item, depth + 1));
+}
+
+function readChatCompletionText(record: Record<string, unknown>) {
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  const parts: string[] = [];
+
+  for (const choice of choices) {
+    if (!isRecord(choice)) {
+      continue;
+    }
+
+    if (isRecord(choice.message)) {
+      parts.push(...readNestedText(choice.message.content));
+    }
+
+    if (isRecord(choice.delta)) {
+      parts.push(...readNestedText(choice.delta.content));
+    }
+  }
+
+  return parts.join("\n").trim();
+}
+
+function normalizeOpenAIResponseWithMetadata(response: unknown): NormalizedOpenAIResponseText {
+  if (typeof response === "string") {
+    return {
+      text: response.trim(),
+      rawResponseType: "string",
+      normalized: true,
+      parserUsed: "responses-api-normalizer"
+    };
+  }
+
+  if (!isRecord(response)) {
+    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "Unsupported OpenAI response format");
+  }
+
+  const responsesText = extractResponsesText(response);
+
+  if (responsesText) {
+    return {
+      text: responsesText,
+      rawResponseType: "responses",
+      normalized: true,
+      parserUsed: "responses-api-normalizer"
+    };
+  }
+
+  const chatText = readChatCompletionText(response);
+
+  if (chatText) {
+    return {
+      text: chatText,
+      rawResponseType: "chat",
+      normalized: true,
+      parserUsed: "responses-api-normalizer"
+    };
+  }
+
+  throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "Unsupported OpenAI response format");
+}
+
+export function normalizeOpenAIResponse(response: unknown) {
+  return normalizeOpenAIResponseWithMetadata(response).text;
+}
+
 function readProxyUrls() {
   return unique([
     readEnv("OPENAI_PROXY_URL"),
@@ -234,6 +344,29 @@ async function fetchOpenAIResponses(url: string, init: RequestInit) {
     }
 
     throw lastError;
+  }
+}
+
+function waitForRetry(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function callWithRetry<T>(fn: () => Promise<T>, retries = OPENAI_RETRY_COUNT): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (retries > 0 && isGptOSRetryableError(error)) {
+      logger.warn("enterprise_admin_ingest.openai_retry", {
+        retriesLeft: retries - 1,
+        errorName: error && typeof error === "object" ? (error as { name?: unknown }).name : undefined,
+        errorCode: error && typeof error === "object" ? (error as { code?: unknown }).code : undefined,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      await waitForRetry(OPENAI_RETRY_DELAY_MS);
+      return callWithRetry(fn, retries - 1);
+    }
+
+    throw error;
   }
 }
 
@@ -285,7 +418,9 @@ function buildUserPrompt(input: OpenAIAdminIngestInput) {
       selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
       platform: input.platform,
       syncTarget: input.syncTarget
-    }
+    },
+    // GPT OS 只作为提示词上下文注入，模型请求参数和 Responses API 调用保持不变。
+    gptOS: input.gptOS
   });
 }
 
@@ -408,57 +543,45 @@ async function callResponsesApi(input: {
   userPrompt: string;
   signal: AbortSignal;
 }) {
-  let response: Response;
-
-  try {
-    response = await fetchResponsesWithBody({
+  return callWithRetry(async () => {
+    let response = await fetchResponsesWithBody({
       ...input,
       highDepth: true
     });
-  } catch (error) {
-    logger.warn("enterprise_admin_ingest.openai_network_retry", {
-      errorName: error && typeof error === "object" ? (error as { name?: unknown }).name : undefined,
-      message: error instanceof Error ? error.message : String(error)
-    });
-    response = await fetchResponsesWithBody({
-      ...input,
-      highDepth: true
-    });
-  }
+    let bodyText = "";
 
-  let bodyText = "";
+    if (!response.ok) {
+      bodyText = await response.text();
+    }
 
-  if (!response.ok) {
+    if (!response.ok && isHighDepthParameterRejected(response.status, bodyText)) {
+      logger.warn("enterprise_admin_ingest.openai_high_depth_param_retry", {
+        status: response.status,
+        bodySnippet: bodyText.slice(0, 360)
+      });
+      response = await fetchResponsesWithBody({
+        ...input,
+        highDepth: false
+      });
+      bodyText = response.ok ? "" : await response.text();
+    }
+
+    if (!response.ok) {
+      logger.warn("enterprise_admin_ingest.openai_request_failed", {
+        status: response.status,
+        bodySnippet: bodyText.slice(0, 480)
+      });
+      throw normalizeOpenAIResponseError(response.status, bodyText);
+    }
+
+    if (response.body) {
+      return await readResponsesStream(response, input.model);
+    }
+
     bodyText = await response.text();
-  }
 
-  if (!response.ok && isHighDepthParameterRejected(response.status, bodyText)) {
-    logger.warn("enterprise_admin_ingest.openai_high_depth_param_retry", {
-      status: response.status,
-      bodySnippet: bodyText.slice(0, 360)
-    });
-    response = await fetchResponsesWithBody({
-      ...input,
-      highDepth: false
-    });
-    bodyText = response.ok ? "" : await response.text();
-  }
-
-  if (!response.ok) {
-    logger.warn("enterprise_admin_ingest.openai_request_failed", {
-      status: response.status,
-      bodySnippet: bodyText.slice(0, 480)
-    });
-    throw normalizeOpenAIResponseError(response.status, bodyText);
-  }
-
-  if (response.body) {
-    return await readResponsesStream(response, input.model);
-  }
-
-  bodyText = await response.text();
-
-  return parseResponsesPayload(bodyText, input.model);
+    return parseResponsesPayload(bodyText, input.model);
+  });
 }
 
 async function readResponsesStream(response: Response, fallbackModel: string) {
@@ -542,7 +665,16 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
     }
   }
 
-  const completedText = completedPayload ? extractResponsesText(completedPayload) : "";
+  let completedNormalized: NormalizedOpenAIResponseText | null = null;
+
+  if (completedPayload) {
+    try {
+      completedNormalized = normalizeOpenAIResponseWithMetadata(completedPayload);
+    } catch {
+      completedNormalized = null;
+    }
+  }
+  const completedText = completedNormalized?.text ?? "";
   const finalText = text.trim() || completedText;
   const rawModel = typeof completedPayload?.model === "string" ? completedPayload.model : model;
   const rawResponseId = typeof completedPayload?.id === "string" ? completedPayload.id : responseId;
@@ -566,7 +698,10 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
     model: rawModel || fallbackModel,
     responseId: rawResponseId,
     createdAt: finalCreatedAt,
-    usage: finalUsage
+    usage: finalUsage,
+    rawResponseType: completedNormalized?.rawResponseType ?? "responses",
+    normalized: true,
+    parserUsed: "responses-api-normalizer" as const
   };
 }
 
@@ -579,7 +714,8 @@ function parseResponsesPayload(bodyText: string, fallbackModel: string) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 返回解析失败。");
   }
 
-  const text = extractResponsesText(payload);
+  const normalizedResponse = normalizeOpenAIResponseWithMetadata(payload);
+  const text = normalizedResponse.text;
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
   const model = typeof record.model === "string" ? record.model : "";
   const responseId = typeof record.id === "string" ? record.id : "";
@@ -601,7 +737,10 @@ function parseResponsesPayload(bodyText: string, fallbackModel: string) {
     model: model || fallbackModel,
     responseId,
     createdAt: normalizeCreatedAt(record.created_at),
-    usage: normalizeUsage(record.usage)
+    usage: normalizeUsage(record.usage),
+    rawResponseType: normalizedResponse.rawResponseType,
+    normalized: normalizedResponse.normalized,
+    parserUsed: normalizedResponse.parserUsed
   };
 }
 
@@ -612,7 +751,7 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
 
   try {
     const resolved = resolveResponsesConfig(input);
-    const systemPrompt = buildGptIngestBrainSystemPrompt();
+    const systemPrompt = buildGptIngestBrainSystemPrompt({ gptOS: input.gptOS });
     const userPrompt = buildUserPrompt(input);
 
     let response = await callResponsesApi({
@@ -752,7 +891,10 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       fixedTemplateRisk: quality.fixedTemplateRisk,
       outputTokens: response.usage.outputTokens,
       reasoningTokens: response.usage.reasoningTokens,
-      deepenAttempts
+      deepenAttempts,
+      rawResponseType: response.rawResponseType,
+      normalized: response.normalized,
+      parserUsed: response.parserUsed
     });
 
     return {
@@ -782,12 +924,17 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       })),
       saveRecommendation: normalized.saveRecommendation,
       diagnostics: [
+        ...(input.gptOS ? input.gptOS.diagnostics.map((item) => `gptOS:${item}`) : []),
         `intent:${quality.intent}`,
         `fixedTemplateRisk:${quality.fixedTemplateRisk ? "true" : "false"}`,
+        `rawResponseType:${response.rawResponseType}`,
+        `normalized:${response.normalized ? "true" : "false"}`,
+        `parserUsed:${response.parserUsed}`,
         ...normalized.diagnostics
       ],
       structured: normalized.structured,
       structuredResult: normalized.structured,
+      gptOS: input.gptOS ?? null,
       sync: {
         platform: input.platform,
         syncTarget: input.syncTarget

@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { IngestKnowledgeDraftCard } from "@/components/enterprise-admin/IngestKnowledgeDraftCard";
+import { sanitizeErrorUXMessage } from "@/lib/enterprise/gpt-os-error-ux-layer";
 
 const KNOWLEDGE_DRAFT_SUBTITLE = "以下为 GPT 根据当前资料生成的入库草稿参考，管理员可编辑确认后保存入库。";
 
@@ -28,7 +29,8 @@ const numberBadgeTones = [
 ];
 
 export function IngestGPTMessageRenderer({ content }: { content: string }) {
-  const segments = content.split(/```/g);
+  const safeContent = sanitizeErrorUXMessage(content);
+  const segments = safeContent.split(/```/g);
 
   return (
     <article className="w-full max-w-[860px] space-y-4 text-[15px] leading-[1.78] text-[#2f2f2f]">
@@ -36,14 +38,10 @@ export function IngestGPTMessageRenderer({ content }: { content: string }) {
         const key = `${index}-${segment.slice(0, 12)}`;
 
         if (index % 2 === 1) {
-          const code = segment.replace(/^\w+\n/, "").trim();
+          const { code, language } = parseCodeFence(segment);
 
           return (
-            <CopyableBlock key={key} copyText={code}>
-              <pre className="overflow-x-auto whitespace-pre-wrap text-[13px] leading-6 text-[#303030]">
-                <code>{code}</code>
-              </pre>
-            </CopyableBlock>
+            <CodeBlock key={key} code={code} language={language} />
           );
         }
 
@@ -168,40 +166,24 @@ function renderMarkdownBlock(segment: string, keyPrefix: string) {
       }
 
       nodes.push(
-        <CopyableBlock key={key} copyText={quoteLines.join("\n")}>
-          <div className="space-y-2 text-[14px] leading-7 text-[#202020]">
+        <CopyableBlock key={key} copyText={quoteLines.join("\n")} variant="quote">
+          <blockquote className="space-y-2 border-l-4 border-[#d8d8d2] pl-4 text-[14px] leading-7 text-[#3f3f3a]">
             {quoteLines.map((quote, quoteIndex) => (
               <p key={`${key}-quote-${quoteIndex}`} className="my-1.5 whitespace-pre-wrap">
                 {renderInlineMarkdown(quote)}
               </p>
             ))}
-          </div>
+          </blockquote>
         </CopyableBlock>
       );
       continue;
     }
 
-    const ordered = trimmed.match(/^(\d+)[.)]\s+(.+)/);
+    if (isOrderedListItem(trimmed) || isUnorderedListItem(trimmed)) {
+      const { items, nextIndex, ordered } = collectListItems(lines, index);
 
-    if (ordered) {
-      nodes.push(
-        <div key={key} className="flex gap-3 pl-1">
-          <NumberBadge value={ordered[1]} />
-          <p className="min-w-0">{renderInlineMarkdown(ordered[2])}</p>
-        </div>
-      );
-      index += 1;
-      continue;
-    }
-
-    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-      nodes.push(
-        <div key={key} className="flex gap-3 pl-2">
-          <span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-[#777]" />
-          <p className="min-w-0">{renderInlineMarkdown(trimmed.slice(2))}</p>
-        </div>
-      );
-      index += 1;
+      nodes.push(<MarkdownList key={key} items={items} ordered={ordered} />);
+      index = nextIndex;
       continue;
     }
 
@@ -233,13 +215,51 @@ function SectionHeading({
     : level === 2
       ? "mt-6 text-[20px] font-semibold leading-8 text-[#202020]"
       : "mt-4 text-[17px] font-semibold leading-7 text-[#242424]";
-  const HeadingTag = level === 1 ? "h2" : level === 2 ? "h3" : "h4";
+  const HeadingTag = level === 1 ? "h1" : level === 2 ? "h2" : "h3";
 
   return (
     <div>
       <HeadingTag className={className}>{renderInlineMarkdown(text)}</HeadingTag>
       {withRule ? <div className="mt-3 h-px w-full bg-[#ecece9]" /> : null}
     </div>
+  );
+}
+
+function parseCodeFence(segment: string) {
+  const normalized = segment.replace(/^\n+|\n+$/g, "");
+  const firstLine = normalized.split(/\n/g)[0]?.trim() ?? "";
+  const hasLanguage = /^[a-z0-9_+#.-]{1,24}$/i.test(firstLine);
+
+  if (!hasLanguage) {
+    return {
+      language: "text",
+      code: normalized.trim()
+    };
+  }
+
+  return {
+    language: firstLine,
+    code: normalized.split(/\n/g).slice(1).join("\n").trim()
+  };
+}
+
+function CodeBlock({
+  code,
+  language
+}: {
+  code: string;
+  language: string;
+}) {
+  return (
+    <section className="group relative my-5 overflow-hidden rounded-2xl border border-[#dededb] bg-[#1f1f1f] text-[#f7f7f2] shadow-[0_16px_34px_rgba(15,23,42,0.12)]">
+      <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.04] px-4 py-2">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-white/58">{language || "text"}</span>
+        <CopyButton copyText={code} className="relative" tone="dark" />
+      </div>
+      <pre className="overflow-x-auto whitespace-pre px-4 py-4 text-[13px] leading-6">
+        <code className="font-mono text-[#f3f3ee]">{code}</code>
+      </pre>
+    </section>
   );
 }
 
@@ -254,6 +274,78 @@ function NumberBadge({ value }: { value: string }) {
     >
       {value}
     </span>
+  );
+}
+
+function isOrderedListItem(value: string) {
+  return /^(\d+)[.)]\s+(.+)/.test(value);
+}
+
+function isUnorderedListItem(value: string) {
+  return /^[-*]\s+(.+)/.test(value);
+}
+
+function collectListItems(lines: string[], startIndex: number) {
+  const first = lines[startIndex]?.trim() ?? "";
+  const ordered = isOrderedListItem(first);
+  const items: Array<{ marker?: string; text: string }> = [];
+  let index = startIndex;
+
+  while (index < lines.length) {
+    const current = lines[index]?.trim() ?? "";
+    const orderedMatch = current.match(/^(\d+)[.)]\s+(.+)/);
+    const unorderedMatch = current.match(/^[-*]\s+(.+)/);
+
+    if (ordered && orderedMatch) {
+      items.push({ marker: orderedMatch[1], text: orderedMatch[2] });
+      index += 1;
+      continue;
+    }
+
+    if (!ordered && unorderedMatch) {
+      items.push({ text: unorderedMatch[1] });
+      index += 1;
+      continue;
+    }
+
+    if (!current) {
+      index += 1;
+    }
+
+    break;
+  }
+
+  return {
+    items,
+    nextIndex: index,
+    ordered
+  };
+}
+
+function MarkdownList({
+  items,
+  ordered
+}: {
+  items: Array<{ marker?: string; text: string }>;
+  ordered: boolean;
+}) {
+  if (!items.length) {
+    return null;
+  }
+
+  return (
+    <div className="my-3 space-y-2.5">
+      {items.map((item, index) => (
+        <div key={`${item.marker ?? "bullet"}-${index}-${item.text.slice(0, 12)}`} className="flex gap-3 pl-1">
+          {ordered ? (
+            <NumberBadge value={item.marker ?? String(index + 1)} />
+          ) : (
+            <span className="mt-3 h-1.5 w-1.5 shrink-0 rounded-full bg-[#777]" />
+          )}
+          <p className="min-w-0 flex-1">{renderInlineMarkdown(item.text)}</p>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -515,7 +607,7 @@ function normalizeFlowLines(lines: string[]) {
 }
 
 function isCalloutLabel(value: string) {
-  return /^(客户问|用户问|可以这样答|建议表达|优化成|售后处理话术|售后答疑|招商会转化话术|招商转化|合规提醒|风险提醒|第一批入库|第二批入库|下一步建议|用户端调用策略|回答公式|标准问答方向|保存优先级|分类建议|适用 Agent)[:：]/.test(value);
+  return /^(WHY THIS ANSWER|为什么这样回答|执行过程|客户问|用户问|可以这样答|建议表达|优化成|售后处理话术|售后答疑|招商会转化话术|招商转化|合规提醒|风险提醒|第一批入库|第二批入库|下一步建议|用户端调用策略|回答公式|标准问答方向|保存优先级|分类建议|适用 Agent)[:：]/i.test(value);
 }
 
 function isCardWorthyLine(value: string) {
@@ -619,13 +711,20 @@ function MarkdownTable({ lines }: { lines: string[] }) {
 
 function CopyableBlock({
   children,
-  copyText
+  copyText,
+  variant = "default"
 }: {
   children: ReactNode;
   copyText: string;
+  variant?: "default" | "quote";
 }) {
   return (
-    <section className="group relative my-5 rounded-2xl border border-[#dededb] bg-[#f5f5f5] p-4 pr-12 text-[#202020] shadow-sm">
+    <section
+      className={[
+        "group relative my-5 rounded-2xl border p-4 pr-12 text-[#202020] shadow-sm",
+        variant === "quote" ? "border-[#dfdfdc] bg-[#fafafa]" : "border-[#dededb] bg-[#f5f5f5]"
+      ].join(" ")}
+    >
       <CopyButton copyText={copyText} className="absolute right-3 top-3" />
       {children}
     </section>
@@ -634,10 +733,12 @@ function CopyableBlock({
 
 function CopyButton({
   copyText,
-  className = ""
+  className = "",
+  tone = "light"
 }: {
   copyText: string;
   className?: string;
+  tone?: "light" | "dark";
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -667,7 +768,12 @@ function CopyButton({
       <button
         type="button"
         onClick={() => void handleCopy()}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e6e6e3] bg-white/95 text-[#666] shadow-sm transition hover:bg-[#eeeeeb] hover:text-[#202020]"
+        className={[
+          "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition",
+          tone === "dark"
+            ? "border-white/10 bg-white/10 text-white/72 hover:bg-white/18 hover:text-white"
+            : "border-[#e6e6e3] bg-white/95 text-[#666] hover:bg-[#eeeeeb] hover:text-[#202020]"
+        ].join(" ")}
         aria-label={copied ? "已复制" : "复制内容"}
         title={copied ? "已复制" : "复制"}
       >
@@ -699,11 +805,11 @@ function renderInlineMarkdown(text: string) {
 }
 
 function isStrongSubtitleLine(value: string) {
-  return /^(核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议)[:：]/.test(value);
+  return /^(WHY THIS ANSWER|为什么这样回答|执行过程|核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议)[:：]/i.test(value);
 }
 
 function renderLabeledInlineMarkdown(text: string) {
-  const match = text.match(/^(核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议|流程|流程块|建议话术)[:：]\s*(.*)$/);
+  const match = text.match(/^(WHY THIS ANSWER|为什么这样回答|执行过程|核心定位|适用 Agent|用户端调用策略|回答公式|客户问|用户问|可以这样答|优化成|建议表达|合规提醒|第一批入库|第二批入库|下一步建议|流程|流程块|建议话术)[:：]\s*(.*)$/i);
 
   if (!match) {
     return renderInlineMarkdown(text);

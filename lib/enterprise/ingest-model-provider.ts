@@ -14,6 +14,7 @@ import {
   getIngestModelOption,
   type IngestModelProvider
 } from "@/lib/enterprise/ingest-model-options";
+import { buildGptOSErrorUX } from "@/lib/enterprise/gpt-os-error-ux-layer";
 
 export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
@@ -39,18 +40,85 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
   const option = resolveAdminIngestModelProvider(input);
 
   if (option.provider === "deepseek") {
-    return runDeepSeekAdminIngest({
+    try {
+      return await runDeepSeekAdminIngest({
+        ...input,
+        selectedModelLabel: input.selectedModelLabel || option.label,
+        modelDisplayName: input.modelDisplayName || option.displayName,
+        preferredModel: input.preferredModel || option.defaultModel
+      } as DeepSeekAdminIngestInput);
+    } catch (error) {
+      const ux = buildGptOSErrorUX(error, {
+        primaryProvider: "deepseek",
+        fallbackModel: "safe-fallback"
+      });
+
+      throw new Error([
+        ux.userMessage,
+        ...ux.diagnostics
+      ].join(" | "));
+    }
+  }
+
+  try {
+    return await runOpenAIAdminIngest({
       ...input,
       selectedModelLabel: input.selectedModelLabel || option.label,
       modelDisplayName: input.modelDisplayName || option.displayName,
       preferredModel: input.preferredModel || option.defaultModel
-    } as DeepSeekAdminIngestInput);
-  }
+    } as OpenAIAdminIngestInput);
+  } catch (error) {
+    const ux = buildGptOSErrorUX(error, {
+      primaryProvider: "openai",
+      fallbackModel: "deepseek"
+    });
 
-  return runOpenAIAdminIngest({
-    ...input,
-    selectedModelLabel: input.selectedModelLabel || option.label,
-    modelDisplayName: input.modelDisplayName || option.displayName,
-    preferredModel: input.preferredModel || option.defaultModel
-  } as OpenAIAdminIngestInput);
+    if (!ux.shouldAttemptModelFallback) {
+      throw new Error([
+        ux.userMessage,
+        ...ux.diagnostics
+      ].join(" | "));
+    }
+
+    const fallbackOption = getIngestModelOption({
+      provider: "deepseek"
+    });
+
+    try {
+      const fallbackResult = await runDeepSeekAdminIngest({
+        ...input,
+        selectedModelLabel: fallbackOption.label,
+        modelDisplayName: fallbackOption.displayName,
+        preferredModel: fallbackOption.defaultModel,
+        requestId: input.requestId ? `${input.requestId}-fallback-deepseek` : undefined
+      } as DeepSeekAdminIngestInput);
+
+      return {
+        ...fallbackResult,
+        diagnostics: [
+          ...fallbackResult.diagnostics,
+          "errorHandled:true",
+          "fallbackUsed:true",
+          "fallbackModel:deepseek",
+          "userFacingError:false",
+          "systemRecovered:true",
+          ...ux.diagnostics
+        ]
+      };
+    } catch (fallbackError) {
+      const fallbackUx = buildGptOSErrorUX(fallbackError, {
+        primaryProvider: "deepseek",
+        fallbackModel: "safe-fallback"
+      });
+
+      throw new Error([
+        fallbackUx.userMessage,
+        "fallbackUsed:true",
+        "fallbackModel:safe-fallback",
+        "systemRecovered:false",
+        ...ux.diagnostics,
+        ...fallbackUx.diagnostics
+      ].join(" | "));
+    }
+  }
 }
