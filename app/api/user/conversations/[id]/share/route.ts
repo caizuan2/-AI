@@ -1,6 +1,7 @@
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiError, databaseConfigError } from "@/lib/api-response";
 import { requireConversationUser } from "@/lib/conversation-control/api";
 import { shareConversation } from "@/lib/conversation-control/operations";
+import { conversationActionSuccess } from "@/lib/conversation-control/response";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -16,7 +17,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
 
     const result = await shareConversation(actor, params.id, request);
 
-    return apiSuccess(result);
+    return conversationActionSuccess(result);
   } catch (error) {
     return apiError(error);
   }
