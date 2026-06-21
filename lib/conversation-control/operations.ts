@@ -2,10 +2,11 @@ import "server-only";
 
 import { randomBytes, randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
-import { getConversationFeatureFlags } from "@/lib/conversation-control/feature-flags";
+import { getConversationFeatureFlagSnapshot } from "@/lib/conversation-control/feature-flags";
 import { buildConversationShareUrl, buildGroupChatInviteUrl } from "@/lib/conversation-control/links";
 import { writeAuditLog } from "@/lib/audit-log";
 import { AppError, NotFoundError, ValidationError } from "@/lib/errors";
+import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import type { RbacUser } from "@/lib/auth/rbac";
 import type {
@@ -108,9 +109,23 @@ async function ensureFeatureEnabled(
   conversationId: string,
   request?: Request
 ) {
-  const flags = await getConversationFeatureFlags();
+  const snapshot = await getConversationFeatureFlagSnapshot();
+  const flags = snapshot.flags;
+  const enabled = flags[feature];
 
-  if (!flags[feature]) {
+  if (feature === "share") {
+    logger.info("[conversation-share] feature flag check", {
+      tenantId: null,
+      userId: actor.id,
+      conversationId,
+      shareEnabled: enabled,
+      source: snapshot.source,
+      sourceAuditLogId: snapshot.sourceAuditLogId,
+      sourceCreatedAt: snapshot.sourceCreatedAt
+    });
+  }
+
+  if (!enabled) {
     await writeConversationAudit({
       actor,
       action: "conversation.action.denied",
@@ -360,6 +375,10 @@ export async function shareConversation(
   await ensureFeatureEnabled(actor, "share", "share_conversation", conversationId, request);
 
   const conversation = await getOwnedConversation(actor, conversationId);
+  logger.info("[conversation-share] conversation owner check ok", {
+    userId: actor.id,
+    conversationId: conversation.id
+  });
   const before = buildConversationSnapshot(conversation);
   const existingShare = isRecord(before.conversationControl.share) ? before.conversationControl.share : {};
   const shareId = readString(existingShare.id) ?? randomUUID();

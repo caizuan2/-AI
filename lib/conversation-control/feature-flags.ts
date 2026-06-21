@@ -10,48 +10,73 @@ import type {
   ConversationFeatureFlags
 } from "@/types/conversation-control";
 
-const flagDefinitions: Array<Omit<ConversationFeatureFlagItem, "enabled">> = [
+type FlagDefinition = Omit<ConversationFeatureFlagItem, "enabled"> & {
+  aliases: string[];
+};
+
+const flagDefinitions: FlagDefinition[] = [
   {
     key: "conversation.rename.enabled",
     name: "rename",
     label: "重命名会话",
     description: "允许用户在本人历史会话范围内修改会话标题。",
-    riskLevel: "low"
+    riskLevel: "low",
+    aliases: ["conversation.rename.enabled", "rename", "rename.enabled", "conversationRenameEnabled"]
   },
   {
     key: "conversation.archive.enabled",
     name: "archive",
     label: "归档会话",
     description: "允许用户将本人历史会话标记为归档，不影响知识库数据。",
-    riskLevel: "low"
+    riskLevel: "low",
+    aliases: ["conversation.archive.enabled", "archive", "archive.enabled", "conversationArchiveEnabled"]
   },
   {
     key: "conversation.delete.enabled",
     name: "delete",
     label: "删除会话",
     description: "允许用户软删除本人历史会话；附件和知识库原始文档不会被物理删除。",
-    riskLevel: "high"
+    riskLevel: "high",
+    aliases: ["conversation.delete.enabled", "delete", "delete.enabled", "conversationDeleteEnabled"]
   },
   {
     key: "conversation.share.enabled",
     name: "share",
     label: "分享会话",
     description: "允许为本人会话生成分享预留状态，必须受审计和后续访问策略保护。",
-    riskLevel: "high"
+    riskLevel: "high",
+    aliases: ["conversation.share.enabled", "share", "share.enabled", "conversationShareEnabled"]
   },
   {
     key: "conversation.group_chat.enabled",
     name: "groupChat",
     label: "开始群聊",
     description: "允许基于本人会话创建群聊预留状态，后续需接入成员权限边界。",
-    riskLevel: "high"
+    riskLevel: "high",
+    aliases: [
+      "conversation.group_chat.enabled",
+      "conversation.groupChat.enabled",
+      "groupChat",
+      "group_chat",
+      "groupChat.enabled",
+      "group_chat.enabled",
+      "conversationGroupChatEnabled"
+    ]
   },
   {
     key: "conversation.pin.cloud_sync_enabled",
     name: "pinCloudSync",
     label: "云端置顶同步",
     description: "预留云端置顶同步开关；当前用户端仍可保持本地排序。",
-    riskLevel: "medium"
+    riskLevel: "medium",
+    aliases: [
+      "conversation.pin.cloud_sync_enabled",
+      "pinCloudSync",
+      "pin_cloud_sync",
+      "pinCloudSync.enabled",
+      "pin_cloud_sync.enabled",
+      "conversationPinCloudSyncEnabled"
+    ]
   }
 ];
 
@@ -72,18 +97,67 @@ function readBoolean(value: unknown) {
   return typeof value === "boolean" ? value : undefined;
 }
 
-function normalizeFlags(value: unknown): ConversationFeatureFlags | null {
+function readPathValue(record: Record<string, unknown>, path: string) {
+  if (Object.prototype.hasOwnProperty.call(record, path)) {
+    return record[path];
+  }
+
+  const parts = path.split(".");
+  let current: unknown = record;
+
+  for (const part of parts) {
+    if (!isRecord(current)) {
+      return undefined;
+    }
+
+    current = current[part];
+  }
+
+  return current;
+}
+
+function getCandidateRecords(value: Record<string, unknown>) {
+  return [
+    value,
+    value.after,
+    value.features,
+    value.flags,
+    value.conversationFeatures,
+    isRecord(value.after) ? value.after.features : null,
+    isRecord(value.after) ? value.after.flags : null,
+    isRecord(value.after) ? value.after.conversationFeatures : null
+  ].filter(isRecord);
+}
+
+function readFlagValue(candidates: Record<string, unknown>[], definition: FlagDefinition) {
+  for (const candidate of candidates) {
+    for (const alias of definition.aliases) {
+      const value = readBoolean(readPathValue(candidate, alias));
+
+      if (typeof value === "boolean") {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+export function normalizeConversationFeatureFlags(
+  value: unknown,
+  options: { includeDefaults?: boolean } = {}
+): Partial<ConversationFeatureFlags> | null {
   if (!isRecord(value)) {
     return null;
   }
 
-  const next = { ...defaultConversationFeatureFlags };
+  const includeDefaults = options.includeDefaults ?? true;
+  const candidates = getCandidateRecords(value);
+  const next: Partial<ConversationFeatureFlags> = includeDefaults ? { ...defaultConversationFeatureFlags } : {};
   let found = false;
 
   for (const definition of flagDefinitions) {
-    const byName = readBoolean(value[definition.name]);
-    const byKey = readBoolean(value[definition.key]);
-    const enabled = byName ?? byKey;
+    const enabled = readFlagValue(candidates, definition);
 
     if (typeof enabled === "boolean") {
       next[definition.name] = enabled;
@@ -95,11 +169,7 @@ function normalizeFlags(value: unknown): ConversationFeatureFlags | null {
 }
 
 function extractFlagsFromMetadata(metadata: unknown) {
-  if (!isRecord(metadata)) {
-    return null;
-  }
-
-  return normalizeFlags(metadata.after);
+  return normalizeConversationFeatureFlags(metadata, { includeDefaults: true }) as ConversationFeatureFlags | null;
 }
 
 function buildDisabledReasons(flags: ConversationFeatureFlags) {
@@ -128,7 +198,11 @@ export function buildConversationFeatureFlagResponse(
     ...flags,
     features: buildFeatureMap(flags),
     items: flagDefinitions.map((definition) => ({
-      ...definition,
+      key: definition.key,
+      name: definition.name,
+      label: definition.label,
+      description: definition.description,
+      riskLevel: definition.riskLevel,
       enabled: flags[definition.name]
     })),
     reasons: {
@@ -138,8 +212,13 @@ export function buildConversationFeatureFlagResponse(
   };
 }
 
-export async function getConversationFeatureFlags(): Promise<ConversationFeatureFlags> {
-  const latestUpdate = await prisma.auditLog.findFirst({
+export async function getConversationFeatureFlagSnapshot(): Promise<{
+  flags: ConversationFeatureFlags;
+  source: "audit_log" | "default";
+  sourceAuditLogId: string | null;
+  sourceCreatedAt: string | null;
+}> {
+  const updates = await prisma.auditLog.findMany({
     where: {
       action: "update_feature_flag",
       targetType: "conversation_feature_flags"
@@ -147,12 +226,39 @@ export async function getConversationFeatureFlags(): Promise<ConversationFeature
     orderBy: {
       createdAt: "desc"
     },
+    take: 20,
     select: {
+      id: true,
+      createdAt: true,
       metadata: true
     }
   });
 
-  return extractFlagsFromMetadata(latestUpdate?.metadata) ?? { ...defaultConversationFeatureFlags };
+  for (const update of updates) {
+    const flags = extractFlagsFromMetadata(update.metadata);
+
+    if (flags) {
+      return {
+        flags,
+        source: "audit_log",
+        sourceAuditLogId: update.id,
+        sourceCreatedAt: update.createdAt.toISOString()
+      };
+    }
+  }
+
+  return {
+    flags: { ...defaultConversationFeatureFlags },
+    source: "default",
+    sourceAuditLogId: null,
+    sourceCreatedAt: null
+  };
+}
+
+export async function getConversationFeatureFlags(): Promise<ConversationFeatureFlags> {
+  const snapshot = await getConversationFeatureFlagSnapshot();
+
+  return snapshot.flags;
 }
 
 export async function updateConversationFeatureFlags(
@@ -160,7 +266,7 @@ export async function updateConversationFeatureFlags(
   input: unknown,
   request?: Request
 ) {
-  const requestedFlags = normalizeFlags(input);
+  const requestedFlags = normalizeConversationFeatureFlags(input, { includeDefaults: false });
   const before = await getConversationFeatureFlags();
   const requestContext = getAuditRequestContext(request);
   const after = {
