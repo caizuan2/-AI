@@ -63,9 +63,13 @@ import type {
   IngestUploadState
 } from "@/lib/enterprise/ingest-client";
 import {
-  DEFAULT_GPT_MODEL_SELECTION,
   getGptModelSelectionByDisplayName
 } from "@/lib/enterprise/gpt-model-options";
+import {
+  DEFAULT_INGEST_MODEL_OPTION,
+  getIngestModelOptionByLabel,
+  type IngestModelProvider
+} from "@/lib/enterprise/ingest-model-options";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import {
   ingestChatInitialDraft,
@@ -95,6 +99,7 @@ const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: 
 
 const organizeActions = ["提取重点", "改写为标准问答", "生成分类标签", "检查是否需要 AI 修正"];
 const EMPTY_AGENTS: IngestChatAgent[] = [];
+const GPT_CLIENT_TIMEOUT_MS = 300000;
 
 type IngestActionResult = {
   draft: IngestKnowledgeDraft;
@@ -221,11 +226,12 @@ interface AdminTrainingRecordResponse {
 }
 
 interface AdminGptIngestResponse {
-  provider: "openai";
+  provider: IngestModelProvider;
   model: string;
   requestedModel?: string;
   actualModel?: string;
   responseId?: string;
+  proofId?: string;
   usage?: OpenAIGptUsage;
   gptProof?: GptCallProof;
   modelDisplayName?: string;
@@ -423,7 +429,7 @@ export function IngestChatGPTShell({
   onRailChange,
   searchKeyword: controlledSearchKeyword,
   onSearchKeywordChange,
-  selectedModel = DEFAULT_GPT_MODEL_SELECTION.displayName,
+  selectedModel = DEFAULT_INGEST_MODEL_OPTION.label,
   regenerateInput = "",
   onModelChange,
   connectionStatus = {
@@ -459,7 +465,6 @@ export function IngestChatGPTShell({
   onErrorChange,
   onSend,
   onSave,
-  onReconnectGpt,
   onUpload,
   onRemoveUpload,
   onVoiceToggle,
@@ -477,6 +482,8 @@ export function IngestChatGPTShell({
   const [internalIsParsing, setInternalIsParsing] = useState(false);
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [internalNoticeMessage, setInternalNoticeMessage] = useState("");
+  const [thinkingStartedAt, setThinkingStartedAt] = useState<number | null>(null);
+  const [thinkingElapsedSeconds, setThinkingElapsedSeconds] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<"draft" | "records">("draft");
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -668,6 +675,29 @@ export function IngestChatGPTShell({
     };
   }, [controlledRecords, setRecords]);
 
+  useEffect(() => {
+    if (!isParsing) {
+      setThinkingStartedAt(null);
+      setThinkingElapsedSeconds(0);
+      return;
+    }
+
+    const startedAt = thinkingStartedAt ?? Date.now();
+
+    if (thinkingStartedAt === null) {
+      setThinkingStartedAt(startedAt);
+    }
+
+    const updateElapsed = () => {
+      setThinkingElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    };
+
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+
+    return () => window.clearInterval(timer);
+  }, [isParsing, thinkingStartedAt]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -688,6 +718,8 @@ export function IngestChatGPTShell({
     const now = getTimeLabel();
 
     if (onSend) {
+      setThinkingStartedAt(Date.now());
+      setThinkingElapsedSeconds(0);
       setErrorMessage("");
       setNoticeMessage("");
 
@@ -700,6 +732,8 @@ export function IngestChatGPTShell({
       return;
     }
 
+    setThinkingStartedAt(Date.now());
+    setThinkingElapsedSeconds(0);
     setInternalIsParsing(true);
     setErrorMessage("");
     setNoticeMessage("");
@@ -722,9 +756,14 @@ export function IngestChatGPTShell({
     ]);
 
     try {
-      const gptSelection = getGptModelSelectionByDisplayName(selectedModelLabel);
+      const modelOption = getIngestModelOptionByLabel(selectedModelLabel);
+      const gptSelection = getGptModelSelectionByDisplayName(modelOption.provider === "openai" ? selectedModelLabel : "GPT-5.5 超高");
+      const preferredModel = modelOption.provider === "openai" ? gptSelection.apiModel : modelOption.defaultModel;
+      const abortController = new AbortController();
+      const timeout = window.setTimeout(() => abortController.abort(), GPT_CLIENT_TIMEOUT_MS);
       const response = await fetch("/api/admin/kb/ingest/gpt", {
         method: "POST",
+        signal: abortController.signal,
         headers: {
           "Content-Type": "application/json"
         },
@@ -739,21 +778,21 @@ export function IngestChatGPTShell({
           category: activeAgent.role,
           platform: "web",
           syncTarget: ["web", "exe", "apk"],
-          modelProvider: "openai",
+          modelProvider: modelOption.provider,
           modelMode: "highest",
-          preferredModel: gptSelection.apiModel,
-          gptTier: gptSelection.tier,
-          gptTierLabel: gptSelection.tierLabel,
-          gptVersion: gptSelection.version,
-          selectedModelLabel: gptSelection.displayName,
-          modelDisplayName: gptSelection.displayName,
+          preferredModel,
+          gptTier: modelOption.provider === "openai" ? gptSelection.tier : undefined,
+          gptTierLabel: modelOption.provider === "openai" ? gptSelection.tierLabel : undefined,
+          gptVersion: modelOption.provider === "openai" ? gptSelection.version : undefined,
+          selectedModelLabel: modelOption.label,
+          modelDisplayName: modelOption.displayName,
           attachments: uploadedFiles.map((file) => ({ ...file, status: "attached" }))
         })
-      });
+      }).finally(() => window.clearTimeout(timeout));
       const data = await readApiData<AdminGptIngestResponse>(response);
 
-      if (!data.gptProof || data.gptProof.fallback !== false || !data.responseId) {
-        throw new Error("GPT-5.5 未返回有效调用证据，本次不插入成功回复。");
+      if (!data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
+        throw new Error(`${modelOption.label} 未返回有效调用证据，本次不插入成功回复。`);
       }
 
       setErrorMessage("");
@@ -823,7 +862,7 @@ export function IngestChatGPTShell({
         }
       ]);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "AI投喂失败，请稍后重试。");
+      setErrorMessage(isAbortError(error) ? "GPT-5.5 本次响应超时，请稍后重试。" : error instanceof Error ? error.message : "AI投喂失败，请稍后重试。");
     } finally {
       setInternalIsParsing(false);
     }
@@ -881,16 +920,6 @@ export function IngestChatGPTShell({
     } finally {
       setInternalIsSaving(false);
     }
-  }
-
-  async function handleReconnectGpt() {
-    if (!onReconnectGpt) {
-      setNoticeMessage("GPT 重新连接入口已响应，请在设置面板检查 GPT 状态。");
-      return;
-    }
-
-    setNoticeMessage("正在重新连接 GPT...");
-    await onReconnectGpt();
   }
 
   async function handleRegenerate(messageContent: string) {
@@ -1254,7 +1283,7 @@ export function IngestChatGPTShell({
         ) : null}
 
         <div className={["min-h-0 flex-1 overflow-y-auto", isExpertMarketplace ? "bg-[#f7f7f6] px-5 py-5" : "px-5 pb-5 pt-4"].join(" ")}>
-          <div className={isExpertMarketplace ? "mx-auto flex min-h-full w-full max-w-[1280px] flex-col" : "mx-auto flex min-h-full w-full max-w-[980px] flex-col justify-center"}>
+          <div className={isExpertMarketplace ? "mx-auto flex min-h-full w-full max-w-[1280px] flex-col" : "mx-auto flex min-h-full w-full max-w-[860px] flex-col justify-center"}>
             {isExpertMarketplace ? (
               <IngestExpertMarketplace
                 addedExpertIds={addedExpertIds}
@@ -1273,7 +1302,7 @@ export function IngestChatGPTShell({
               />
             ) : null}
             {!hasMessages ? (
-              <div className="mx-auto flex w-full max-w-[980px] flex-col items-center text-center">
+              <div className="mx-auto flex w-full max-w-[860px] flex-col items-center text-center">
                 <IngestWelcomeHero
                   profile={activeDisplayProfile}
                   canIngest={canIngest}
@@ -1298,7 +1327,7 @@ export function IngestChatGPTShell({
                 </div>
               </div>
             ) : (
-              <div className="mx-auto w-full max-w-[980px] space-y-5 pt-8">
+              <div className="mx-auto w-full max-w-[860px] space-y-5 pt-8">
                 {messages.map((message) => {
                   const isStructuredResult = message.role === "assistant" && message.id.startsWith("assistant-result");
                   const messageAgent = agentById.get(message.agentId ?? "") ?? activeAgent;
@@ -1338,7 +1367,6 @@ export function IngestChatGPTShell({
                         <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
                           <IngestAgentAvatar profile={messageProfile} size="xs" />
                           <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
-                          <span className="rounded-full bg-[#f4f4f2] px-2 py-0.5 text-[#888]">{message.model ?? selectedModelLabel}</span>
                         </div>
                       ) : null}
                       {message.role === "assistant" ? (
@@ -1355,13 +1383,6 @@ export function IngestChatGPTShell({
                         </div>
                       ) : null}
                       {message.role === "user" ? (
-                        <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-white/70">
-                          <span className="rounded-full bg-white/10 px-2 py-1">Agent：{messageAgentLabel}</span>
-                          <span className="rounded-full bg-white/10 px-2 py-1">模型：{message.model ?? selectedModelLabel}</span>
-                          <span className="rounded-full bg-white/10 px-2 py-1">Web / EXE / APK</span>
-                        </div>
-                      ) : null}
-                      {message.role === "user" ? (
                         <div className="mt-3 flex flex-wrap justify-end gap-2">
                           <IngestMessageQuickActions
                             onCopy={() => void handleCopyMessage(buildIngestUserMessageCopyText(message))}
@@ -1370,18 +1391,9 @@ export function IngestChatGPTShell({
                           />
                         </div>
                       ) : null}
-                      {message.role === "assistant" && (message.model || message.saveSuggestion !== undefined) ? (
+                      {message.role === "assistant" && message.provider === "local-fallback" ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
-                          {message.model ? <span className="rounded-full bg-[#f4f4f2] px-2 py-1 font-semibold text-[#555]">模型：{message.model}</span> : null}
-                          <IngestGPTCallProofBadge proof={message.gptProof} />
-                          {message.provider === "local-fallback" ? (
-                            <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
-                          ) : null}
-                          {message.saveSuggestion !== undefined ? (
-                            <span className={message.saveSuggestion ? "rounded-full bg-[#e9f8ef] px-2 py-1 font-semibold text-[#128246]" : "rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]"}>
-                              {message.saveSuggestion ? "建议入库" : "建议复核"}
-                            </span>
-                          ) : null}
+                          <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
                         </div>
                       ) : null}
                       {message.role === "assistant" && message.id.startsWith("assistant-result") ? (
@@ -1394,7 +1406,6 @@ export function IngestChatGPTShell({
                           onSave={() => void handleSaveDraft()}
                           onRegenerate={() => void handleRegenerate(message.content)}
                           onContinueOptimize={handleContinueOptimize}
-                          onReconnectGpt={() => void handleReconnectGpt()}
                         />
                       ) : null}
                       <p className={message.role === "user" ? "mt-2 text-[11px] text-white/50" : "mt-2 text-[11px] text-[#999]"}>
@@ -1406,9 +1417,11 @@ export function IngestChatGPTShell({
                 })}
 
                 {isParsing ? (
-                  <div className="flex items-center gap-2 rounded-2xl bg-[#f8f8f7] px-4 py-3 text-sm text-[#666]">
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    AI 正在解析并生成知识结构...
+                  <div className="flex items-center gap-3 rounded-2xl border border-[#e2e2df] bg-[#f5f5f4] px-4 py-3 text-sm text-[#303030] shadow-sm">
+                    <span className="shrink-0 text-xs font-semibold text-[#777]">已思考 {formatThinkingDuration(thinkingElapsedSeconds)} &gt;</span>
+                    <span className="h-1 w-1 rounded-full bg-[#c7c7c1]" aria-hidden="true" />
+                    <Loader2 className="h-4 w-4 animate-spin text-[#666]" aria-hidden="true" />
+                    <span>AI 正在解析并生成知识结构...</span>
                   </div>
                 ) : null}
               </div>
@@ -1420,7 +1433,7 @@ export function IngestChatGPTShell({
 
         {!isExpertMarketplace ? (
         <div className="shrink-0 bg-white px-5 pb-7">
-          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[980px] rounded-[28px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
+          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-[860px] rounded-[28px] border border-[#e4e4e1] bg-white p-3 shadow-[0_14px_45px_rgba(15,23,42,0.07)]">
             {uploadedFiles.length > 0 ? (
               <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
                 <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} />
@@ -1446,7 +1459,8 @@ export function IngestChatGPTShell({
               <div className="flex min-w-0 flex-wrap items-center gap-2 text-xs font-semibold text-[#555]">
                 <IngestGPTModelPicker
                   selectedModel={selectedModelLabel}
-                  onModelChange={(selection) => onModelChange?.(selection.displayName)}
+                  disabled={isParsing}
+                  onModelChange={(selection) => onModelChange?.(selection.label)}
                   onOpen={() => {
                     setIsMoreOpen(false);
                     setIsConnectionOpen(false);
@@ -1658,6 +1672,12 @@ function KnowledgeDraftPanel({
         {draft.complianceNotes?.length ? <Field label="合规/风险提醒" value={draft.complianceNotes.join("\n")} /> : null}
         {draft.missingFields?.length ? <Field label="建议补充" value={draft.missingFields.join("、")} /> : null}
         {draft.suggestedQuestions?.length ? <Field label="建议继续追问" value={draft.suggestedQuestions.join("\n")} /> : null}
+        {draft.gptProof ? (
+          <div className="rounded-2xl bg-[#f8f8f7] p-3">
+            <p className="mb-2 text-xs font-semibold text-[#8b8b86]">GPT 调用证据</p>
+            <IngestGPTCallProofBadge proof={draft.gptProof} />
+          </div>
+        ) : null}
         <div className="rounded-2xl bg-[#f8f8f7] p-3">
           <div className="flex items-center justify-between text-xs font-semibold text-[#555]">
             <span>训练价值评分</span>
@@ -1676,11 +1696,6 @@ function KnowledgeDraftPanel({
           {isSaving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : draft.saveStatus === "已保存" ? <Check className="h-4 w-4" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
           {isSaving ? "正在保存入库..." : draft.saveStatus === "已保存" ? "已保存到知识库" : draft.jobId ? "保存知识入库" : "先发送AI投喂"}
         </button>
-        {draft.providerUsed ? (
-          <p className="text-center text-[11px] text-[#aaa]">
-            Provider：{draft.generatedBy ?? draft.providerUsed} · {draft.sourceModel ?? draft.model}{draft.fallbackUsed ? " · fallback" : ""}
-          </p>
-        ) : null}
       </div>
     </div>
   );
@@ -1739,6 +1754,21 @@ function RailStatusPanel({
       </span>
     </div>
   );
+}
+
+function formatThinkingDuration(totalSeconds: number) {
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s`;
+  }
+
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${minutes}m${seconds.toString().padStart(2, "0")}s`;
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 function TrainingRecords({ records }: { records: IngestTrainingRecord[] }) {

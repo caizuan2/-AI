@@ -6,11 +6,13 @@ export interface OpenAIGptUsage {
 }
 
 export interface GptCallProof {
-  provider: "openai";
-  endpoint: "/responses";
+  provider: "openai" | "deepseek";
+  endpoint: "/responses" | "/chat/completions";
   requestedModel: string;
   actualModel: string;
   responseId: string;
+  proofId?: string;
+  proofIdSource?: "provider_response_id" | "generated_from_provider_payload";
   fallback: false;
   requestTested: true;
   qualityPassed: boolean;

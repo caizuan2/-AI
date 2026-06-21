@@ -29,6 +29,8 @@ export interface OpenAIIngestHealthStatus {
   apiKeyConfigured: boolean;
   selectedModelLabel: string;
   model: string;
+  requestedModel: string;
+  actualModel?: string;
   mode: "highest" | "fixed";
   message: string;
   diagnostics: string[];
@@ -164,6 +166,7 @@ function baseStatus(input: {
       apiKeyConfigured: hasUsableApiKey(apiKey),
       selectedModelLabel: modelConfig.selectedModelLabel,
       model: modelConfig.model,
+      requestedModel: modelConfig.model,
       mode: modelConfig.mode,
       message: "",
       diagnostics: [] as string[],
@@ -259,6 +262,7 @@ export async function checkOpenAIIngestHealth(input: {
       const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
       const responseStatus = typeof record.status === "string" ? record.status : "";
       const responseText = extractResponsesText(payload);
+      const actualModel = typeof record.model === "string" ? record.model : status.model;
 
       if (payload && (responseStatus === "completed" || responseText || record.id)) {
         return {
@@ -266,6 +270,7 @@ export async function checkOpenAIIngestHealth(input: {
           ok: true,
           configured: true,
           requestTested: true,
+          actualModel,
           message: "GPT 接口可用",
           diagnostics: []
         };

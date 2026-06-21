@@ -14,6 +14,10 @@ import {
   type GptTier,
   type GptVersion
 } from "@/lib/enterprise/gpt-model-options";
+import {
+  getIngestModelOptionByLabel,
+  type IngestModelProvider
+} from "@/lib/enterprise/ingest-model-options";
 import type {
   GptKnowledgeDraft,
   GptSaveRecommendation
@@ -37,7 +41,7 @@ export interface IngestConnectionStatus {
 export interface IngestGptHealthStatus {
   ok: boolean;
   configured: boolean;
-  provider: "openai";
+  provider: IngestModelProvider;
   baseUrlConfigured: boolean;
   baseUrlSource?: "configured" | "default";
   modelConfigured: boolean;
@@ -45,12 +49,14 @@ export interface IngestGptHealthStatus {
   apiKeyConfigured: boolean;
   selectedModelLabel: string;
   model: string;
+  requestedModel?: string;
+  actualModel?: string;
   mode: "highest" | "fixed";
   message: string;
   diagnostics: string[];
   checkedAt?: string;
   requestTested?: boolean;
-  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT";
+  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT";
 }
 
 export interface IngestUploadState {
@@ -110,11 +116,12 @@ interface ApiEnvelope<T> {
 }
 
 interface GptIngestResponse {
-  provider: "openai";
+  provider: IngestModelProvider;
   model: string;
   requestedModel?: string;
   actualModel?: string;
   responseId?: string;
+  proofId?: string;
   createdAt?: string;
   usage?: OpenAIGptUsage;
   gptProof?: GptCallProof;
@@ -155,7 +162,8 @@ interface GptIngestResponse {
 interface GptFailureResponse {
   ok: false;
   fallback?: false;
-  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "OPENAI_PRO_QUALITY_FAILED";
+  provider?: IngestModelProvider;
+  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED";
   message: string;
   retryable?: boolean;
   selectedModelLabel?: string;
@@ -226,12 +234,20 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
     return "未配置 OpenAI API Key，无法调用 GPT-5.5。请配置后重新生成。";
   }
 
+  if (raw.includes("deepseek_api_key") || raw.includes("deepseek api key") || raw.includes("deepseek") && raw.includes("未配置")) {
+    return "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。";
+  }
+
   if (raw.includes("timeout") || raw.includes("超时")) {
     return "GPT 请求超时，请稍后重试。";
   }
 
   if (raw.includes("gpt") || raw.includes("openai")) {
     return "GPT-5.5 本次未完成，请检查模型权限、额度或网络后重新生成。";
+  }
+
+  if (raw.includes("deepseek")) {
+    return "DeepSeek-V4-Pro 本次未完成，请检查 API Key、模型权限、额度或网络后重新生成。";
   }
 
   return "接口暂不可用，请稍后重试。";
@@ -467,6 +483,7 @@ export async function sendCoreIngest(input: {
   agent: IngestChatAgent;
   category: string;
   model: string;
+  modelProvider?: IngestModelProvider;
   gptTier?: GptTier;
   gptTierLabel?: string;
   gptVersion?: GptVersion;
@@ -490,15 +507,21 @@ export async function sendCoreIngest(input: {
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
-  const gptSelection = getGptModelSelectionByDisplayName(input.selectedModelLabel ?? input.model);
-  const selectedModelLabel = input.selectedModelLabel ?? gptSelection.displayName;
+  const selectedModelOption = getIngestModelOptionByLabel(input.selectedModelLabel ?? input.model);
+  const modelProvider = input.modelProvider ?? selectedModelOption.provider;
+  const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
+  const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
+  const preferredModel = modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel;
   const health = await checkGptHealthStatus({
+    provider: modelProvider,
     selectedModelLabel,
-    preferredModel: gptSelection.apiModel
+    preferredModel
   });
 
   if (!health.ok && !health.apiKeyConfigured) {
-    throw new Error(health.message || "未配置 OpenAI API Key，无法调用 GPT-5.5。");
+    throw new Error(health.message || (modelProvider === "deepseek"
+      ? "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。"
+      : "未配置 OpenAI API Key，无法调用 GPT-5.5。"));
   }
 
   try {
@@ -522,12 +545,12 @@ export async function sendCoreIngest(input: {
         attachments: input.attachments ?? [],
         platform,
         syncTarget: [...ingestSyncTarget],
-        modelProvider: "openai",
+        modelProvider,
         modelMode: "highest",
-        preferredModel: gptSelection.apiModel,
-        gptTier: input.gptTier ?? gptSelection.tier,
-        gptTierLabel: input.gptTierLabel ?? gptSelection.tierLabel,
-        gptVersion: input.gptVersion ?? gptSelection.version,
+        preferredModel,
+        gptTier: modelProvider === "openai" ? input.gptTier ?? gptSelection.tier : undefined,
+        gptTierLabel: modelProvider === "openai" ? input.gptTierLabel ?? gptSelection.tierLabel : undefined,
+        gptVersion: modelProvider === "openai" ? input.gptVersion ?? gptSelection.version : undefined,
         selectedModelLabel,
         modelDisplayName: selectedModelLabel,
         recentMessages: input.recentMessages ?? [],
@@ -539,7 +562,7 @@ export async function sendCoreIngest(input: {
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 
     if (isGptFailureResponse(payload)) {
-      throw new Error(payload.message || "GPT-5.5 本次未完成，请稍后重试。");
+      throw new Error(payload.message || `${selectedModelLabel} 本次未完成，请稍后重试。`);
     }
 
     if (!response.ok || !payload?.ok || !payload.data) {
@@ -548,8 +571,8 @@ export async function sendCoreIngest(input: {
 
     const data = payload.data;
 
-    if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || !data.responseId) {
-      throw new Error("GPT-5.5 未返回有效调用证据，本次不插入成功回复。");
+    if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
+      throw new Error(`${selectedModelLabel} 未返回有效调用证据，本次不插入成功回复。`);
     }
 
     const draft = gptResponseToDraft(data, input.text, input.agent);
@@ -570,7 +593,7 @@ export async function sendCoreIngest(input: {
       draft,
       records,
       preview: false,
-      provider: draft.providerUsed ?? "openai",
+      provider: draft.providerUsed ?? modelProvider,
       model: data.modelDisplayName ?? selectedModelLabel,
       actualModel: data.actualModel ?? data.model,
       responseId: data.responseId,
@@ -579,12 +602,12 @@ export async function sendCoreIngest(input: {
       modelMode: draft.modelMode,
       replyMarkdown: draft.replyMarkdown,
       saveSuggestion: draft.recommendation === "建议入库",
-      message: `GPT 已生成结构化知识：${draft.title}`
+      message: `${selectedModelLabel} 已生成结构化知识：${draft.title}`
     };
   } catch (error) {
     throw error instanceof Error
       ? error
-      : new Error("GPT-5.5 本次未完成，请稍后重试。");
+      : new Error(`${selectedModelLabel} 本次未完成，请稍后重试。`);
   }
 }
 
@@ -807,6 +830,7 @@ export async function sendUrlIngestPreview(input: {
   agent: IngestChatAgent;
   category: string;
   model: string;
+  modelProvider?: IngestModelProvider;
   gptTier?: GptTier;
   gptTierLabel?: string;
   gptVersion?: GptVersion;
@@ -816,8 +840,10 @@ export async function sendUrlIngestPreview(input: {
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
-  const gptSelection = getGptModelSelectionByDisplayName(input.selectedModelLabel ?? input.model);
-  const selectedModelLabel = input.selectedModelLabel ?? gptSelection.displayName;
+  const selectedModelOption = getIngestModelOptionByLabel(input.selectedModelLabel ?? input.model);
+  const modelProvider = input.modelProvider ?? selectedModelOption.provider;
+  const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
+  const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
   const response = await fetch("/api/admin/kb/ingest/url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -837,12 +863,12 @@ export async function sendUrlIngestPreview(input: {
       userId: input.userId ?? null,
       platform,
       syncTarget: [...ingestSyncTarget],
-      modelProvider: "openai",
+      modelProvider,
       modelMode: "highest",
-      preferredModel: gptSelection.apiModel,
-      gptTier: input.gptTier ?? gptSelection.tier,
-      gptTierLabel: input.gptTierLabel ?? gptSelection.tierLabel,
-      gptVersion: input.gptVersion ?? gptSelection.version,
+      preferredModel: modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel,
+      gptTier: modelProvider === "openai" ? input.gptTier ?? gptSelection.tier : undefined,
+      gptTierLabel: modelProvider === "openai" ? input.gptTierLabel ?? gptSelection.tierLabel : undefined,
+      gptVersion: modelProvider === "openai" ? input.gptVersion ?? gptSelection.version : undefined,
       selectedModelLabel,
       modelDisplayName: selectedModelLabel,
       autoSave: false
@@ -929,10 +955,17 @@ export async function checkLicenseStatus(): Promise<IngestConnectionStatus> {
 }
 
 export async function checkGptHealthStatus(input: {
+  provider?: IngestModelProvider;
   selectedModelLabel?: string;
   preferredModel?: string;
 } = {}): Promise<IngestGptHealthStatus> {
   const params = new URLSearchParams();
+  const provider = input.provider ?? getIngestModelOptionByLabel(input.selectedModelLabel).provider;
+  const selectedOption = input.selectedModelLabel
+    ? getIngestModelOptionByLabel(input.selectedModelLabel)
+    : getIngestModelOptionByLabel(provider);
+
+  params.set("provider", provider);
 
   if (input.selectedModelLabel) {
     params.set("selectedModelLabel", input.selectedModelLabel);
@@ -945,7 +978,7 @@ export async function checkGptHealthStatus(input: {
   const suffix = params.toString() ? `?${params.toString()}` : "";
 
   try {
-    const response = await fetch(`/api/admin/kb/ingest/gpt/health${suffix}`, { cache: "no-store" });
+    const response = await fetch(`/api/admin/kb/ingest/models/health${suffix}`, { cache: "no-store" });
     const payload = await response.json().catch(() => null) as IngestGptHealthStatus | ApiEnvelope<IngestGptHealthStatus> | null;
 
     if (isPlainRecord(payload) && typeof payload.provider === "string") {
@@ -959,17 +992,17 @@ export async function checkGptHealthStatus(input: {
     return {
       ok: false,
       configured: false,
-      provider: "openai",
+      provider,
       baseUrlConfigured: true,
       baseUrlSource: "default",
       modelConfigured: true,
       modelSource: "default",
       apiKeyConfigured: false,
-      selectedModelLabel: input.selectedModelLabel ?? "GPT-5.5 超高",
-      model: input.preferredModel ?? "gpt-5.5",
+      selectedModelLabel: input.selectedModelLabel ?? selectedOption.label,
+      model: input.preferredModel ?? selectedOption.defaultModel,
       mode: "highest",
-      message: "GPT 健康检查接口暂不可用",
-      diagnostics: ["请确认 /api/admin/kb/ingest/gpt/health 可以访问。"],
+      message: "模型健康检查接口暂不可用",
+      diagnostics: ["请确认 /api/admin/kb/ingest/models/health 可以访问。"],
       checkedAt: new Date().toISOString(),
       requestTested: false
     };
@@ -977,17 +1010,17 @@ export async function checkGptHealthStatus(input: {
     return {
       ok: false,
       configured: false,
-      provider: "openai",
+      provider,
       baseUrlConfigured: true,
       baseUrlSource: "default",
       modelConfigured: true,
       modelSource: "default",
       apiKeyConfigured: false,
-      selectedModelLabel: input.selectedModelLabel ?? "GPT-5.5 超高",
-      model: input.preferredModel ?? "gpt-5.5",
+      selectedModelLabel: input.selectedModelLabel ?? selectedOption.label,
+      model: input.preferredModel ?? selectedOption.defaultModel,
       mode: "highest",
-      message: "GPT 健康检查请求失败",
-      diagnostics: ["请检查 Web 服务是否启动，或稍后重新连接 GPT。"],
+      message: "模型健康检查请求失败",
+      diagnostics: ["请检查 Web 服务是否启动，或稍后重新连接模型。"],
       checkedAt: new Date().toISOString(),
       requestTested: false
     };

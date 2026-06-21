@@ -55,8 +55,13 @@ import {
 import {
   DEFAULT_GPT_MODEL_SELECTION,
   getGptModelSelectionByDisplayName,
-  GPT_MODEL_DISPLAY_NAMES
 } from "@/lib/enterprise/gpt-model-options";
+import {
+  ADMIN_INGEST_MODEL_STORAGE_KEY,
+  DEFAULT_INGEST_MODEL_OPTION,
+  getIngestModelOptionByLabel,
+  INGEST_MODEL_DISPLAY_NAMES
+} from "@/lib/enterprise/ingest-model-options";
 import {
   ADMIN_INGEST_APP_NAME_STORAGE_KEY,
   DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
@@ -103,8 +108,8 @@ type SpeechWindow = Window & {
 const tenantId: string | null = null;
 const userId: string | null = null;
 const GPT_FALLBACK_TOAST = {
-  title: "GPT-5.5 本次未完成",
-  description: "本次没有生成 GPT 成功回复，请检查连接后点击重新连接 GPT 或重新生成。"
+  title: "当前模型本次未完成",
+  description: "本次没有生成成功回复，请检查模型连接后点击重新连接或重新生成。"
 };
 const initialConnectionStatus: IngestConnectionStatus = {
   enterpriseSpace: "本地预览",
@@ -252,8 +257,8 @@ export function IngestModeToggle() {
   const [isAgentDetailOpen, setIsAgentDetailOpen] = useState(false);
   const [deleteCandidateAgent, setDeleteCandidateAgent] = useState<IngestChatAgent | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
-  const [selectedModel, setSelectedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
-  const [resolvedModel, setResolvedModel] = useState(DEFAULT_GPT_MODEL_SELECTION.displayName);
+  const [selectedModel, setSelectedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
+  const [resolvedModel, setResolvedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
   const [connectionStatus, setConnectionStatus] = useState<IngestConnectionStatus>(initialConnectionStatus);
   const [gptHealthStatus, setGptHealthStatus] = useState<IngestGptHealthStatus | null>(null);
   const [isCheckingGptHealth, setIsCheckingGptHealth] = useState(false);
@@ -293,9 +298,13 @@ export function IngestModeToggle() {
   const [urlError, setUrlError] = useState("");
   const [isUrlIngesting, setIsUrlIngesting] = useState(false);
   const uploadState = uploadedFiles[0] ?? null;
-  const modelOptions = GPT_MODEL_DISPLAY_NAMES;
+  const modelOptions = INGEST_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
-  const selectedGptModel = useMemo(() => getGptModelSelectionByDisplayName(selectedModelLabel), [selectedModelLabel]);
+  const selectedModelOption = useMemo(() => getIngestModelOptionByLabel(selectedModelLabel), [selectedModelLabel]);
+  const selectedGptModel = useMemo(
+    () => getGptModelSelectionByDisplayName(selectedModelOption.provider === "openai" ? selectedModelLabel : DEFAULT_GPT_MODEL_SELECTION.displayName),
+    [selectedModelLabel, selectedModelOption.provider]
+  );
   const visibleAgents = useMemo(() => {
     const filtered = agents.filter((agent) => agent.status !== "deleted_local" && agent.status !== "archived");
 
@@ -360,6 +369,10 @@ export function IngestModeToggle() {
 
     setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
     setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
+    const storedModel = getIngestModelOptionByLabel(window.localStorage.getItem(ADMIN_INGEST_MODEL_STORAGE_KEY));
+
+    setSelectedModel(storedModel.label);
+    setResolvedModel(storedModel.label);
   }, []);
 
   useEffect(() => {
@@ -842,7 +855,7 @@ export function IngestModeToggle() {
 
     markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
     setIsParsing(true);
-    setNoticeMessage("GPT-5.5 正在深度分析资料...");
+    setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
     setErrorMessage("");
     setGptFallbackToast(null);
     setActionToast(null);
@@ -876,11 +889,12 @@ export function IngestModeToggle() {
         text: effectiveInput,
         agent: activeAgent,
         category: activeAgent.role,
-        model: selectedModelLabel,
-        gptTier: selectedGptModel.tier,
-        gptTierLabel: selectedGptModel.tierLabel,
-        gptVersion: selectedGptModel.version,
-        selectedModelLabel: selectedGptModel.displayName,
+        model: selectedModelOption.label,
+        modelProvider: selectedModelOption.provider,
+        gptTier: selectedModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
+        gptTierLabel: selectedModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
+        gptVersion: selectedModelOption.provider === "openai" ? selectedGptModel.version : undefined,
+        selectedModelLabel: selectedModelOption.label,
         tenantId,
         userId,
         attachments: outgoingAttachments,
@@ -946,10 +960,10 @@ export function IngestModeToggle() {
         records: nextRecords
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : "GPT-5.5 本次未完成，请稍后重试。";
+      const message = error instanceof Error ? error.message : `${selectedModelOption.label} 本次未完成，请稍后重试。`;
 
       showGptFallbackToast(message);
-      setNoticeMessage("AI 投喂暂未完成，请检查 GPT 配置后点击重新生成。");
+      setNoticeMessage(`AI 投喂暂未完成，请检查 ${selectedModelOption.label} 配置后点击重新生成。`);
       setErrorMessage(message);
       return null;
     } finally {
@@ -1065,12 +1079,19 @@ export function IngestModeToggle() {
   }
 
   function handleModelChange(model: string) {
-    const nextModel = getGptModelSelectionByDisplayName(model);
+    if (isParsing) {
+      setNoticeMessage("当前请求进行中，发送完成后再切换模型。");
+      return;
+    }
 
-    setSelectedModel(nextModel.displayName);
-    setResolvedModel(nextModel.displayName);
+    const nextModel = getIngestModelOptionByLabel(model);
+
+    setSelectedModel(nextModel.label);
+    setResolvedModel(nextModel.label);
     setErrorMessage("");
-    setNoticeMessage(`当前模型已切换为 ${nextModel.displayName}，下一次 GPT 投喂会携带档位、版本和三端同步字段。`);
+    setGptFallbackToast(null);
+    window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, nextModel.label);
+    setNoticeMessage(`当前模型已切换为 ${nextModel.label}，下一次投喂会携带 ${nextModel.provider} provider 和三端同步字段。`);
   }
 
   async function handleCheckConnection() {
@@ -1091,29 +1112,30 @@ export function IngestModeToggle() {
   async function handleCheckGptStatus(action: "check" | "reconnect" = "check") {
     setIsCheckingGptHealth(true);
     setErrorMessage("");
-    setNoticeMessage(action === "reconnect" ? "正在重新连接 GPT..." : "正在检查 GPT 接口状态...");
+    setNoticeMessage(action === "reconnect" ? `正在重新连接 ${selectedModelOption.label}...` : `正在检查 ${selectedModelOption.label} 接口状态...`);
 
     try {
       const nextStatus = await checkGptHealthStatus({
-        selectedModelLabel: selectedGptModel.displayName,
-        preferredModel: selectedGptModel.apiModel
+        provider: selectedModelOption.provider,
+        selectedModelLabel: selectedModelOption.label,
+        preferredModel: selectedModelOption.provider === "openai" ? selectedGptModel.apiModel : selectedModelOption.defaultModel
       });
 
       setGptHealthStatus(nextStatus);
 
       if (nextStatus.ok) {
         setGptFallbackToast(null);
-        setNoticeMessage(action === "reconnect" ? "GPT 接口已连接，可重新生成。" : "GPT 接口已连接。");
+        setNoticeMessage(action === "reconnect" ? `${selectedModelOption.label} 接口已连接，可重新生成。` : `${selectedModelOption.label} 接口已连接。`);
         showActionToast({
           type: "success",
-          title: action === "reconnect" ? "GPT 接口已连接，可重新生成" : "GPT 接口已连接",
+          title: action === "reconnect" ? `${selectedModelOption.label} 接口已连接，可重新生成` : `${selectedModelOption.label} 接口已连接`,
           description: nextStatus.selectedModelLabel
         });
       } else {
         setNoticeMessage(nextStatus.message);
         showActionToast({
           type: "warning",
-          title: "GPT-5.5 本次未完成",
+          title: `${selectedModelOption.label} 本次未完成`,
           description: nextStatus.message
         });
         showGptFallbackToast(nextStatus.message);
@@ -1121,7 +1143,7 @@ export function IngestModeToggle() {
 
       pushNotification({
         type: nextStatus.ok ? "success" : "fallback",
-        title: nextStatus.ok ? "GPT 接口已连接" : "GPT 接口诊断提醒",
+        title: nextStatus.ok ? `${selectedModelOption.label} 接口已连接` : `${selectedModelOption.label} 接口诊断提醒`,
         description: `${nextStatus.selectedModelLabel} · ${nextStatus.message}`
       });
 
@@ -1412,11 +1434,12 @@ export function IngestModeToggle() {
         url,
         agent: activeAgent,
         category: activeAgent.role,
-        model: selectedModelLabel,
-        gptTier: selectedGptModel.tier,
-        gptTierLabel: selectedGptModel.tierLabel,
-        gptVersion: selectedGptModel.version,
-        selectedModelLabel: selectedGptModel.displayName,
+        model: selectedModelOption.label,
+        modelProvider: selectedModelOption.provider,
+        gptTier: selectedModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
+        gptTierLabel: selectedModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
+        gptVersion: selectedModelOption.provider === "openai" ? selectedGptModel.version : undefined,
+        selectedModelLabel: selectedModelOption.label,
         tenantId,
         userId,
         platform: platformContext.platform

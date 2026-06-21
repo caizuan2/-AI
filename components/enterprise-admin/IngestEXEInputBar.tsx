@@ -261,7 +261,8 @@ export function IngestEXEInputBar({
           <div className="relative flex min-w-0 flex-wrap items-center gap-2 text-xs font-semibold text-[#555]">
             <IngestGPTModelPicker
               selectedModel={selectedModelLabel}
-              onModelChange={(selection) => onModelChange(selection.displayName)}
+              disabled={isParsing}
+              onModelChange={(selection) => onModelChange(selection.label)}
               onOpen={() => {
                 setIsMoreOpen(false);
                 setIsConnectionOpen(false);
