@@ -53,82 +53,149 @@ const conversationGroupIdKeys = <String>[
 ];
 
 Map<String, bool> parseConversationFeatureValues(Object? data) {
+  final groupChat = _featureEnabledFromAliases(
+    data,
+    _conversationGroupChatAliases,
+  );
+  final rename = _featureEnabledFromAliases(data, _conversationRenameAliases);
+  final archive = _featureEnabledFromAliases(data, _conversationArchiveAliases);
+  final delete = _featureEnabledFromAliases(data, _conversationDeleteAliases);
+  final pinCloudSync = _featureEnabledFromAliases(
+    data,
+    _conversationPinCloudSyncAliases,
+  );
+
+  final shareFallback = [
+    groupChat,
+    rename,
+    archive,
+    delete,
+  ].any((enabled) => enabled);
+
   return Map.unmodifiable(<String, bool>{
-    conversationFeatureShareKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeatureShareKey,
-        'features.conversation.share.enabled',
-        'data.features.conversation.share.enabled',
-        'data.conversation.share.enabled',
-        'success.data.features.conversation.share.enabled',
-        'success.data.conversation.share.enabled',
-        'success.data.share',
-        'result.features.conversation.share.enabled',
-        'result.conversation.share.enabled',
-        'result.share',
-        'data.share',
-        'share',
-        'shareEnabled',
-        'share_enabled',
-        'canShare',
-        'can_share',
-      ]),
+    conversationFeatureShareKey: _featureEnabledFromAliases(
+      data,
+      _conversationShareAliases,
+      fallback: shareFallback,
     ),
-    conversationFeatureGroupChatKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeatureGroupChatKey,
-        'groupChat',
-        'group_chat',
-        'groupChatEnabled',
-        'group_chat_enabled',
-        'canGroupChat',
-        'can_group_chat',
-      ]),
-    ),
-    conversationFeatureRenameKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeatureRenameKey,
-        'rename',
-        'renameEnabled',
-        'rename_enabled',
-        'canRename',
-        'can_rename',
-      ]),
-    ),
-    conversationFeatureArchiveKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeatureArchiveKey,
-        'archive',
-        'archiveEnabled',
-        'archive_enabled',
-        'canArchive',
-        'can_archive',
-      ]),
-    ),
-    conversationFeatureDeleteKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeatureDeleteKey,
-        'delete',
-        'deleteEnabled',
-        'delete_enabled',
-        'canDelete',
-        'can_delete',
-      ]),
-    ),
-    conversationFeaturePinCloudSyncKey: conversationFeatureEnabled(
-      _featureFlagValue(data, const [
-        conversationFeaturePinCloudSyncKey,
-        'conversation.pin_cloud_sync_enabled',
-        'pinCloudSync',
-        'pin_cloud_sync',
-        'pinCloudSyncEnabled',
-        'pin_cloud_sync_enabled',
-        'canSyncPinned',
-        'can_sync_pinned',
-      ]),
-    ),
+    conversationFeatureGroupChatKey: groupChat,
+    conversationFeatureRenameKey: rename,
+    conversationFeatureArchiveKey: archive,
+    conversationFeatureDeleteKey: delete,
+    conversationFeaturePinCloudSyncKey: pinCloudSync,
   });
 }
+
+const _conversationShareAliases = <String>[
+  conversationFeatureShareKey,
+  'features.conversation.share.enabled',
+  'data.features.conversation.share.enabled',
+  'data.conversation.share.enabled',
+  'success.data.features.conversation.share.enabled',
+  'success.data.conversation.share.enabled',
+  'success.data.share',
+  'result.features.conversation.share',
+  'result.features.conversation.share.enabled',
+  'result.features.shareEnabled',
+  'result.features.share_enabled',
+  'result.features.canShare',
+  'result.features.allowShare',
+  'result.conversation.share.enabled',
+  'result.share',
+  'features.conversation.share',
+  'features.share',
+  'features.shareEnabled',
+  'features.share_enabled',
+  'features.canShare',
+  'features.allowShare',
+  'featureFlags.share',
+  'featureFlags.shareEnabled',
+  'featureFlags.canShare',
+  'featureFlags.allowShare',
+  'feature_flags.share',
+  'feature_flags.share_enabled',
+  'feature_flags.can_share',
+  'feature_flags.allow_share',
+  'permissions.share',
+  'conversationFeatures.share',
+  'conversationFeatures.shareEnabled',
+  'conversationFeatures.canShare',
+  'conversationFeatures.allowShare',
+  'conversation_features.share',
+  'conversation_features.share_enabled',
+  'conversation_features.can_share',
+  'conversation_features.allow_share',
+  'conversationShare',
+  'conversation_share',
+  'allowShare',
+  'allow_share',
+  'enableShare',
+  'enable_share',
+  'enableSharing',
+  'enable_sharing',
+  'isShareEnabled',
+  'is_share_enabled',
+  'sharingEnabled',
+  'sharing_enabled',
+  'shareAvailable',
+  'share_available',
+  'canShareConversation',
+  'can_share_conversation',
+  'data.share',
+  'share',
+  'shareEnabled',
+  'share_enabled',
+  'canShare',
+  'can_share',
+];
+
+const _conversationGroupChatAliases = <String>[
+  conversationFeatureGroupChatKey,
+  'groupChat',
+  'group_chat',
+  'groupChatEnabled',
+  'group_chat_enabled',
+  'canGroupChat',
+  'can_group_chat',
+];
+
+const _conversationRenameAliases = <String>[
+  conversationFeatureRenameKey,
+  'rename',
+  'renameEnabled',
+  'rename_enabled',
+  'canRename',
+  'can_rename',
+];
+
+const _conversationArchiveAliases = <String>[
+  conversationFeatureArchiveKey,
+  'archive',
+  'archiveEnabled',
+  'archive_enabled',
+  'canArchive',
+  'can_archive',
+];
+
+const _conversationDeleteAliases = <String>[
+  conversationFeatureDeleteKey,
+  'delete',
+  'deleteEnabled',
+  'delete_enabled',
+  'canDelete',
+  'can_delete',
+];
+
+const _conversationPinCloudSyncAliases = <String>[
+  conversationFeaturePinCloudSyncKey,
+  'conversation.pin_cloud_sync_enabled',
+  'pinCloudSync',
+  'pin_cloud_sync',
+  'pinCloudSyncEnabled',
+  'pin_cloud_sync_enabled',
+  'canSyncPinned',
+  'can_sync_pinned',
+];
 
 bool conversationFeatureEnabled(Object? value) {
   if (value is bool) {
@@ -145,6 +212,50 @@ bool conversationFeatureEnabled(Object? value) {
   }
   return const {'true', '1', 'yes', 'on', 'enabled', 'open'}
       .contains(_stringValue(value).toLowerCase());
+}
+
+bool _featureEnabledFromAliases(
+  Object? source,
+  List<String> aliases, {
+  bool fallback = false,
+}) {
+  final values = _featureFlagValues(source, aliases);
+  if (values.any(conversationFeatureEnabled)) {
+    return true;
+  }
+  if (values.any(_featureValueLooksDisabled)) {
+    return false;
+  }
+  return fallback;
+}
+
+bool _featureValueLooksDisabled(Object? value) {
+  if (value is bool) {
+    return !value;
+  }
+  if (value is num) {
+    return value == 0;
+  }
+  if (value is Map || value is List) {
+    final nested = _featureFlagValue(value, const [
+      'enabled',
+      'value',
+      'active',
+      'status',
+      'state',
+    ]);
+    return nested != null && _featureValueLooksDisabled(nested);
+  }
+  return const {
+    'false',
+    '0',
+    'no',
+    'off',
+    'disabled',
+    'closed',
+    'close',
+    'inactive',
+  }.contains(_stringValue(value).toLowerCase());
 }
 
 String conversationFeatureMessage(Map<String, dynamic> data) {
@@ -167,7 +278,7 @@ String conversationActionFailureMessage(
 }) {
   return switch (statusCode) {
     401 => unauthenticatedMessage,
-    403 => forbiddenMessage,
+    403 => conversationMessageFromEnvelope(envelope, forbiddenMessage),
     404 => notFoundMessage,
     405 => methodNotAllowedMessage,
     >= 500 => '服务器异常，请稍后重试',
@@ -325,7 +436,7 @@ Object? _featureFlagValue(
             map['permission'] ??
             map['feature'],
       );
-      if (aliases.contains(key)) {
+      if (_matchesFeatureAlias(key, aliases)) {
         return map['enabled'] ??
             map['value'] ??
             map['active'] ??
@@ -368,6 +479,68 @@ Object? _featureFlagValue(
   return null;
 }
 
+List<Object?> _featureFlagValues(
+  Object? source,
+  List<String> aliases, {
+  int depth = 0,
+}) {
+  if (source == null || depth > 4) {
+    return const <Object?>[];
+  }
+
+  final values = <Object?>[];
+  if (source is List) {
+    for (final item in source) {
+      final map = _asStringKeyMap(item);
+      final key = _stringValue(
+        map['key'] ??
+            map['name'] ??
+            map['code'] ??
+            map['permission'] ??
+            map['feature'],
+      );
+      if (_matchesFeatureAlias(key, aliases)) {
+        values.add(
+          map['enabled'] ??
+              map['value'] ??
+              map['active'] ??
+              map['status'] ??
+              map['state'],
+        );
+      }
+      values.addAll(_featureFlagValues(item, aliases, depth: depth + 1));
+    }
+    return values;
+  }
+
+  final map = _asStringKeyMap(source);
+  if (map.isEmpty) {
+    return const <Object?>[];
+  }
+
+  for (final alias in aliases) {
+    final pathValue = _featurePathValue(source, alias);
+    if (pathValue != null) {
+      values.add(pathValue);
+    }
+    if (map.containsKey(alias)) {
+      values.add(map[alias]);
+    }
+  }
+
+  for (final entry in map.entries) {
+    if (_matchesFeatureAlias(entry.key, aliases)) {
+      values.add(entry.value);
+    }
+    final value = entry.value;
+    if (value is Map || value is List) {
+      values.addAll(_featureFlagValues(value, aliases, depth: depth + 1));
+    }
+  }
+
+  return values;
+}
+
 Object? _featurePathValue(Object? source, String path) {
   if (!path.contains('.')) {
     return null;
@@ -382,6 +555,21 @@ Object? _featurePathValue(Object? source, String path) {
     current = map[segment];
   }
   return current;
+}
+
+bool _matchesFeatureAlias(String key, List<String> aliases) {
+  if (key.isEmpty) {
+    return false;
+  }
+  if (aliases.contains(key)) {
+    return true;
+  }
+  final normalizedKey = _normalizeFeatureAlias(key);
+  return aliases.any((alias) => _normalizeFeatureAlias(alias) == normalizedKey);
+}
+
+String _normalizeFeatureAlias(String value) {
+  return value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '');
 }
 
 Map<String, dynamic> _asStringKeyMap(Object? value) {

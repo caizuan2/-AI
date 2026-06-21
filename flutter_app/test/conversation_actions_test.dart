@@ -36,6 +36,62 @@ void main() {
       expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
     });
 
+    test('share enabled supports compact backend feature aliases', () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'data': {
+            'featureFlags': {
+              'share': 'enabled',
+            },
+          },
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
+    test('share falls back to action endpoint when other actions are enabled',
+        () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'groupChat': true,
+          'rename': true,
+          'archive': true,
+          'delete': true,
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
+    test('share true alias wins when backend also includes stale share false',
+        () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'share': false,
+          'canShare': true,
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
+    test('share enabled supports array feature rows with uppercase key', () {
+      final flags = ConversationFeatureFlags(
+        values: parseConversationFeatureValues({
+          'features': [
+            {'key': 'SHARE', 'enabled': true},
+          ],
+        }),
+        loaded: true,
+      );
+
+      expect(flags.isEnabled(ConversationFeatureKeys.share), isTrue);
+    });
+
     test('share disabled keeps the share menu unavailable', () {
       final flags = ConversationFeatureFlags(
         values: parseConversationFeatureValues({
@@ -112,6 +168,31 @@ void main() {
           isA<ApiException>()
               .having((error) => error.message, 'message', '分享接口未接入')
               .having((error) => error.statusCode, 'statusCode', 405),
+        ),
+      );
+    });
+
+    test('403 keeps backend feature message', () async {
+      final api = _apiReturning(
+        statusCode: 403,
+        body: {
+          'ok': false,
+          'success': false,
+          'message': '该会话功能暂未开放，请联系超级管理员。',
+        },
+      );
+      addTearDown(api.dispose);
+
+      await expectLater(
+        api.shareConversation('conversation-1'),
+        throwsA(
+          isA<ApiException>()
+              .having(
+                (error) => error.message,
+                'message',
+                '该会话功能暂未开放，请联系超级管理员。',
+              )
+              .having((error) => error.statusCode, 'statusCode', 403),
         ),
       );
     });
