@@ -66,14 +66,6 @@ export function IngestGPTStatusPanel({
         <Info label="状态" value={status?.message || "尚未检查 GPT 接口状态"} />
       </div>
 
-      {status?.diagnostics?.length ? (
-        <div className="mt-3 rounded-2xl bg-white px-3 py-2 text-xs leading-5 text-[#777] shadow-sm">
-          {status.diagnostics.map((item) => (
-            <p key={item}>- {item}</p>
-          ))}
-        </div>
-      ) : null}
-
       <div className="mt-3 grid grid-cols-2 gap-2">
         <button
           type="button"

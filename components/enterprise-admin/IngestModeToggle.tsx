@@ -67,6 +67,7 @@ import {
   DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
+import { sanitizeGptOSUserMessage, toUserFriendlyMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
 type IngestMode = "chat" | "workbench";
@@ -108,8 +109,8 @@ type SpeechWindow = Window & {
 const tenantId: string | null = null;
 const userId: string | null = null;
 const GPT_FALLBACK_TOAST = {
-  title: "当前模型本次未完成",
-  description: "本次没有生成成功回复，请检查模型连接后点击重新连接或重新生成。"
+  title: "AI暂时不稳定",
+  description: "请稍后再试，或检查模型连接状态。"
 };
 const initialConnectionStatus: IngestConnectionStatus = {
   enterpriseSpace: "本地预览",
@@ -297,6 +298,7 @@ export function IngestModeToggle() {
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
   const [isUrlIngesting, setIsUrlIngesting] = useState(false);
+  const [autonomousEnabled, setAutonomousEnabled] = useState(false);
   const uploadState = uploadedFiles[0] ?? null;
   const modelOptions = INGEST_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
@@ -911,6 +913,10 @@ export function IngestModeToggle() {
           category: record.category,
           saveStatus: record.saveStatus
         })),
+        autonomous: {
+          enabled: autonomousEnabled,
+          mode: autonomousEnabled ? "execute_safe" : "plan_only"
+        },
         platform: platformContext.platform
       });
       const nextRecords = mergeTrainingRecords(result.records, records);
@@ -944,7 +950,8 @@ export function IngestModeToggle() {
           model: result.model ?? currentModelLabel,
           provider: result.provider,
           saveSuggestion: result.saveSuggestion,
-          gptProof: result.gptProof
+          gptProof: result.gptProof,
+          gptOS: result.draft.gptOS
         }
       ]);
       pushNotification({
@@ -960,10 +967,11 @@ export function IngestModeToggle() {
         records: nextRecords
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : `${selectedModelOption.label} 本次未完成，请稍后重试。`;
+      const friendlyError = toUserFriendlyMessage(error);
+      const message = friendlyError?.message ?? sanitizeGptOSUserMessage(error instanceof Error ? error.message : "AI服务暂时不稳定，请稍后再试。");
 
       showGptFallbackToast(message);
-      setNoticeMessage(`AI 投喂暂未完成，请检查 ${selectedModelOption.label} 配置后点击重新生成。`);
+      setNoticeMessage("AI服务暂时不稳定，请稍后再试。");
       setErrorMessage(message);
       return null;
     } finally {
@@ -1132,13 +1140,15 @@ export function IngestModeToggle() {
           description: nextStatus.selectedModelLabel
         });
       } else {
-        setNoticeMessage(nextStatus.message);
+        const safeMessage = sanitizeGptOSUserMessage(nextStatus.message);
+
+        setNoticeMessage(safeMessage);
         showActionToast({
           type: "warning",
-          title: `${selectedModelOption.label} 本次未完成`,
-          description: nextStatus.message
+          title: "AI连接暂时不可用",
+          description: safeMessage
         });
-        showGptFallbackToast(nextStatus.message);
+        showGptFallbackToast(safeMessage);
       }
 
       pushNotification({
@@ -1644,7 +1654,9 @@ export function IngestModeToggle() {
     onVoiceToggle: handleVoiceToggle,
     onSettingsChange: setSettingsState,
     onToolAction: handleToolAction,
-    onToast: showActionToast
+    onToast: showActionToast,
+    autonomousEnabled,
+    onAutonomousEnabledChange: setAutonomousEnabled
   };
 
   return (
@@ -1896,16 +1908,16 @@ function GptFallbackToastView({
   }
 
   return (
-    <div className="absolute right-5 top-32 z-[80] w-[min(360px,calc(100vw-40px))] rounded-[22px] border border-[#ffd7de] bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.16)]">
+    <div className="absolute right-5 top-32 z-[80] w-[min(360px,calc(100vw-40px))] rounded-[22px] border border-[#e7e7e4] bg-white p-4 shadow-[0_18px_60px_rgba(15,23,42,0.14)]">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-sm font-semibold text-[#b93b4a]">{toast.title}</p>
+          <p className="text-sm font-semibold text-[#444]">{toast.title}</p>
           <p className="mt-1 text-xs leading-5 text-[#555]">{toast.description}</p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#fff3f4] text-sm font-semibold text-[#b93b4a] transition hover:bg-[#ffe5e9]"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#f3f3f1] text-sm font-semibold text-[#666] transition hover:bg-[#e9e9e6]"
           aria-label="关闭 GPT 接口提示"
         >
           ×

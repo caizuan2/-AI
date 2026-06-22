@@ -41,6 +41,9 @@ import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResi
 import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
 import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
 import { IngestGPTMessageRenderer } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
+import { IngestGPTOSPanel } from "@/components/enterprise-admin/IngestGPTOSPanel";
+import { IngestAutonomousTaskPanel } from "@/components/enterprise-admin/IngestAutonomousTaskPanel";
+import { IngestGPTTaskChainPanel } from "@/components/enterprise-admin/IngestGPTTaskChainPanel";
 import { IngestGPTCallProofBadge } from "@/components/enterprise-admin/IngestGPTCallProofBadge";
 import { IngestKnowledgeDraftActions } from "@/components/enterprise-admin/IngestKnowledgeDraftActions";
 import {
@@ -81,6 +84,26 @@ import {
 } from "@/lib/enterprise/mock-chat";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
+import type { GptOSRouteResult } from "@/lib/enterprise/gpt-os-agent-router";
+import type { AutonomousTaskResult } from "@/lib/enterprise/gpt-os-autonomous-executor";
+import {
+  approveTaskChainStep,
+  cancelTaskChain,
+  pauseTaskChain,
+  resumeTaskChain,
+  type TaskChainExecutionResult
+} from "@/lib/enterprise/gpt-os-task-chain-engine";
+import {
+  loadTaskChainState,
+  loadAutonomousTaskState,
+  mergeTaskChainState,
+  mergeAutonomousTaskState,
+  saveTaskChainState,
+  saveAutonomousTaskState,
+  type AutonomousTaskStateSnapshot,
+  type TaskChainStateSnapshot
+} from "@/lib/enterprise/gpt-os-task-state";
+import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 
 const quickPrompts = [
   "把这段客服对话整理成标准问答",
@@ -88,6 +111,7 @@ const quickPrompts = [
   "生成售后流程的入库建议",
   "检查这条知识是否需要 AI 修正"
 ];
+const SHOW_INTERNAL_OS_UI = false;
 
 const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: string }> }> = [
   { label: "文件上传", icon: UploadCloud },
@@ -106,6 +130,7 @@ type IngestActionResult = {
   records: IngestTrainingRecord[];
   preview: boolean;
   message: string;
+  autonomousResult?: AutonomousTaskResult;
 };
 
 interface IngestChatGPTShellProps {
@@ -169,6 +194,8 @@ interface IngestChatGPTShellProps {
   onVoiceToggle?: () => void;
   onToolAction?: (label: string) => void;
   onToast?: (toast: { title: string; description?: string; type?: "success" | "warning" | "info" }) => void;
+  autonomousEnabled?: boolean;
+  onAutonomousEnabledChange?: (enabled: boolean) => void;
 }
 
 const uploadAcceptByTool: Record<string, string> = {
@@ -210,6 +237,7 @@ interface AdminIngestDraftResponse {
   responseId?: string;
   usage?: OpenAIGptUsage;
   gptProof?: GptCallProof;
+  gptOS?: GptOSRouteResult;
 }
 
 interface AdminTrainingRecordResponse {
@@ -260,6 +288,8 @@ interface AdminGptIngestResponse {
   }>;
   suggestedQuestions?: string[];
   saveRecommendation?: string;
+  gptOS?: GptOSRouteResult;
+  autonomousResult?: AutonomousTaskResult;
   structured: {
     title?: string;
     category?: string;
@@ -347,7 +377,8 @@ function mapDraft(draft: AdminIngestDraftResponse): IngestKnowledgeDraft {
     actualModel: draft.actualModel,
     responseId: draft.responseId,
     usage: draft.usage,
-    gptProof: draft.gptProof
+    gptProof: draft.gptProof,
+    gptOS: draft.gptOS
   };
 }
 
@@ -469,7 +500,9 @@ export function IngestChatGPTShell({
   onRemoveUpload,
   onVoiceToggle,
   onToolAction,
-  onToast
+  onToast,
+  autonomousEnabled: controlledAutonomousEnabled,
+  onAutonomousEnabledChange
 }: IngestChatGPTShellProps = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -490,6 +523,9 @@ export function IngestChatGPTShell({
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
   const [fileAccept, setFileAccept] = useState(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
+  const [internalAutonomousEnabled, setInternalAutonomousEnabled] = useState(false);
+  const [autonomousTask, setAutonomousTask] = useState<AutonomousTaskStateSnapshot | null>(null);
+  const [taskChain, setTaskChain] = useState<TaskChainStateSnapshot | null>(null);
 
   const agents = controlledAgents ?? EMPTY_AGENTS;
   const activeAgentId = controlledActiveAgentId ?? internalActiveAgentId;
@@ -511,6 +547,8 @@ export function IngestChatGPTShell({
   const setErrorMessage = onErrorChange ?? (() => undefined);
   const setNoticeMessage = onNoticeChange ?? setInternalNoticeMessage;
   const selectedModelLabel = selectedModel;
+  const autonomousEnabled = controlledAutonomousEnabled ?? internalAutonomousEnabled;
+  const setAutonomousEnabled = onAutonomousEnabledChange ?? setInternalAutonomousEnabled;
 
   const fallbackAgent = useMemo<IngestChatAgent>(() => ({
     id: "no-agent",
@@ -569,6 +607,11 @@ export function IngestChatGPTShell({
     () => new Map(agents.map((agent) => [agent.id, agent])),
     [agents]
   );
+
+  useEffect(() => {
+    setAutonomousTask(loadAutonomousTaskState());
+    setTaskChain(loadTaskChainState());
+  }, []);
 
   useEffect(() => {
     if (!drawerOpen) {
@@ -698,6 +741,114 @@ export function IngestChatGPTShell({
     return () => window.clearInterval(timer);
   }, [isParsing, thinkingStartedAt]);
 
+  function persistAutonomousTask(result?: AutonomousTaskResult | null) {
+    if (!result) {
+      return;
+    }
+
+    const snapshot = mergeAutonomousTaskState(autonomousTask, {
+      taskId: result.taskId,
+      goal: result.goal,
+      steps: result.steps,
+      status: result.status,
+      summaryResult: result.summaryResult
+    });
+
+    setAutonomousTask(snapshot);
+    saveAutonomousTaskState(snapshot);
+  }
+
+  function persistTaskChain(result?: TaskChainExecutionResult | null) {
+    if (!result) {
+      return;
+    }
+
+    const snapshot = mergeTaskChainState(taskChain, result);
+
+    setTaskChain(snapshot);
+    saveTaskChainState(snapshot);
+  }
+
+  function updateTaskChain(next: TaskChainExecutionResult, notice: string) {
+    const snapshot = mergeTaskChainState(taskChain, next);
+
+    setTaskChain(snapshot);
+    saveTaskChainState(snapshot);
+    setNoticeMessage(notice);
+  }
+
+  function updateAutonomousTaskStatus(status: AutonomousTaskStateSnapshot["status"], summaryResult?: string) {
+    if (!autonomousTask) {
+      return;
+    }
+
+    const snapshot = mergeAutonomousTaskState(autonomousTask, {
+      ...autonomousTask,
+      status,
+      summaryResult: summaryResult ?? autonomousTask.summaryResult
+    });
+
+    setAutonomousTask(snapshot);
+    saveAutonomousTaskState(snapshot);
+  }
+
+  function pauseCurrentTaskChain() {
+    if (!taskChain) {
+      return;
+    }
+
+    updateTaskChain(pauseTaskChain(taskChain), "任务链已暂停。");
+  }
+
+  function resumeCurrentTaskChain() {
+    if (!taskChain) {
+      return;
+    }
+
+    updateTaskChain(resumeTaskChain(taskChain), "任务链已继续，并会从下一步安全动作恢复。");
+  }
+
+  function cancelCurrentTaskChain() {
+    if (!taskChain) {
+      return;
+    }
+
+    updateTaskChain(cancelTaskChain(taskChain), "任务链已取消，不会继续推进后续步骤。");
+  }
+
+  function handleApproveTaskChainStep(stepId: string) {
+    if (!taskChain) {
+      return;
+    }
+
+    updateTaskChain(approveTaskChainStep(taskChain, stepId), "已确认该任务链步骤，系统已继续推进后续安全步骤。");
+  }
+
+  function handleApproveAutonomousStep(stepId: string) {
+    if (!autonomousTask) {
+      return;
+    }
+
+    const steps = autonomousTask.steps.map((step) => step.id === stepId
+      ? {
+        ...step,
+        status: "completed" as const,
+        result: `${step.title} 已由管理员确认。需要真实保存/写入时仍请使用明确保存入口。`
+      }
+      : step);
+    const hasPendingApproval = steps.some((step) => step.status === "needs_approval");
+    const snapshot = mergeAutonomousTaskState(autonomousTask, {
+      ...autonomousTask,
+      steps,
+      status: hasPendingApproval ? "needs_approval" : "completed",
+      summaryResult: hasPendingApproval ? "仍有步骤等待确认。" : "所有自主任务步骤已确认完成。"
+    });
+
+    setAutonomousTask(snapshot);
+    saveAutonomousTaskState(snapshot);
+    setNoticeMessage("已确认该自主任务步骤；真实入库仍需通过保存知识按钮完成。");
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -726,6 +877,8 @@ export function IngestChatGPTShell({
       const result = await onSend(value || undefined);
 
       if (result) {
+        persistAutonomousTask(result.autonomousResult ?? result.draft.gptOS?.autonomousResult);
+        persistTaskChain(result.draft.gptOS?.taskChain);
         setDrawerView("draft");
       }
 
@@ -786,16 +939,23 @@ export function IngestChatGPTShell({
           gptVersion: modelOption.provider === "openai" ? gptSelection.version : undefined,
           selectedModelLabel: modelOption.label,
           modelDisplayName: modelOption.displayName,
-          attachments: uploadedFiles.map((file) => ({ ...file, status: "attached" }))
+          attachments: uploadedFiles.map((file) => ({ ...file, status: "attached" })),
+          autonomous: {
+            enabled: autonomousEnabled,
+            taskId: autonomousTask?.taskId,
+            mode: autonomousEnabled ? "execute_safe" : "plan_only"
+          }
         })
       }).finally(() => window.clearTimeout(timeout));
       const data = await readApiData<AdminGptIngestResponse>(response);
 
       if (!data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
-        throw new Error(`${modelOption.label} 未返回有效调用证据，本次不插入成功回复。`);
+        throw new Error("AI服务暂时不稳定，请稍后再试。");
       }
 
       setErrorMessage("");
+      persistAutonomousTask(data.autonomousResult ?? data.gptOS?.autonomousResult);
+      persistTaskChain(data.gptOS?.taskChain);
       const knowledgeDraft = data.knowledgeDraft;
       const nextDraft = mapDraft({
         jobId: `gpt-${Date.now()}`,
@@ -822,6 +982,7 @@ export function IngestChatGPTShell({
         responseId: data.responseId,
         usage: data.usage,
         gptProof: data.gptProof,
+        gptOS: data.gptOS,
         generatedBy: data.provider,
         fallbackUsed: false,
         saveStatus: "pending"
@@ -858,11 +1019,16 @@ export function IngestChatGPTShell({
           model: data.modelDisplayName || data.model,
           provider: data.provider,
           saveSuggestion: data.structured.saveSuggestion,
-          gptProof: data.gptProof
+          gptProof: data.gptProof,
+          gptOS: data.gptOS
         }
       ]);
     } catch (error) {
-      setErrorMessage(isAbortError(error) ? "GPT-5.5 本次响应超时，请稍后重试。" : error instanceof Error ? error.message : "AI投喂失败，请稍后重试。");
+      setErrorMessage(sanitizeGptOSUserMessage(isAbortError(error)
+        ? "AI响应较慢，请稍后再试。"
+        : error instanceof Error
+          ? error.message
+          : "AI服务暂时不稳定，请稍后再试。"));
     } finally {
       setInternalIsParsing(false);
     }
@@ -1377,6 +1543,31 @@ export function IngestChatGPTShell({
                           <p className="whitespace-pre-wrap">{message.content}</p>
                         </div>
                       )}
+                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" ? (
+                        <IngestGPTOSPanel gptOS={message.gptOS} />
+                      ) : null}
+                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" && message.gptOS?.autonomousResult ? (
+                        <IngestAutonomousTaskPanel
+                          task={message.gptOS.autonomousResult}
+                          enabled={autonomousEnabled}
+                          onToggleEnabled={setAutonomousEnabled}
+                          onPause={() => updateAutonomousTaskStatus("paused", "自主任务已暂停。")}
+                          onResume={() => updateAutonomousTaskStatus("running", "自主任务已继续。")}
+                          onCancel={() => updateAutonomousTaskStatus("cancelled", "自主任务已取消，不会继续执行后续步骤。")}
+                          onApproveStep={handleApproveAutonomousStep}
+                          compact
+                        />
+                      ) : null}
+                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" && message.gptOS?.taskChain ? (
+                        <IngestGPTTaskChainPanel
+                          chain={taskChain ?? message.gptOS.taskChain}
+                          onPause={pauseCurrentTaskChain}
+                          onResume={resumeCurrentTaskChain}
+                          onCancel={cancelCurrentTaskChain}
+                          onApproveStep={handleApproveTaskChainStep}
+                          compact
+                        />
+                      ) : null}
                       {message.attachments?.length ? (
                         <div className="mt-3">
                           <IngestAttachmentPreview files={message.attachments} compact />
@@ -1467,6 +1658,22 @@ export function IngestChatGPTShell({
                     setIsOrganizeOpen(false);
                   }}
                 />
+                {SHOW_INTERNAL_OS_UI ? (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={autonomousEnabled}
+                    onClick={() => setAutonomousEnabled(!autonomousEnabled)}
+                    className={[
+                      "inline-flex h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold transition",
+                      autonomousEnabled ? "bg-[#202020] text-white" : "bg-[#f6f6f5] text-[#555] hover:bg-[#ededeb]"
+                    ].join(" ")}
+                    title="开启后只自动执行低风险步骤，高风险动作必须人工确认"
+                  >
+                    <span className={["h-2 w-2 rounded-full", autonomousEnabled ? "bg-[#74f0a7]" : "bg-[#bbb]"].join(" ")} aria-hidden="true" />
+                    自主执行
+                  </button>
+                ) : null}
                 <div ref={moreMenuRef} className="relative">
                   <button
                     type="button"
@@ -1601,7 +1808,23 @@ export function IngestChatGPTShell({
                 </button>
               </div>
               {drawerView === "draft" ? (
-                <KnowledgeDraftPanel draft={draft} isSaving={isSaving} onSave={handleSaveDraft} />
+                <KnowledgeDraftPanel
+                  draft={draft}
+                  isSaving={isSaving}
+                  onSave={handleSaveDraft}
+                  autonomousTask={autonomousTask ?? draft.gptOS?.autonomousResult}
+                  taskChain={taskChain ?? draft.gptOS?.taskChain}
+                  autonomousEnabled={autonomousEnabled}
+                  onAutonomousEnabledChange={setAutonomousEnabled}
+                  onPauseAutonomousTask={() => updateAutonomousTaskStatus("paused", "自主任务已暂停。")}
+                  onResumeAutonomousTask={() => updateAutonomousTaskStatus("running", "自主任务已继续。")}
+                  onCancelAutonomousTask={() => updateAutonomousTaskStatus("cancelled", "自主任务已取消，不会继续执行后续步骤。")}
+                  onApproveAutonomousStep={handleApproveAutonomousStep}
+                  onPauseTaskChain={pauseCurrentTaskChain}
+                  onResumeTaskChain={resumeCurrentTaskChain}
+                  onCancelTaskChain={cancelCurrentTaskChain}
+                  onApproveTaskChainStep={handleApproveTaskChainStep}
+                />
               ) : (
                 <TrainingRecords records={records} />
               )}
@@ -1616,11 +1839,35 @@ export function IngestChatGPTShell({
 function KnowledgeDraftPanel({
   draft,
   isSaving,
-  onSave
+  onSave,
+  autonomousTask,
+  taskChain,
+  autonomousEnabled,
+  onAutonomousEnabledChange,
+  onPauseAutonomousTask,
+  onResumeAutonomousTask,
+  onCancelAutonomousTask,
+  onApproveAutonomousStep,
+  onPauseTaskChain,
+  onResumeTaskChain,
+  onCancelTaskChain,
+  onApproveTaskChainStep
 }: {
   draft: IngestKnowledgeDraft;
   isSaving: boolean;
   onSave: () => void;
+  autonomousTask?: AutonomousTaskStateSnapshot | AutonomousTaskResult | null;
+  taskChain?: TaskChainStateSnapshot | TaskChainExecutionResult | null;
+  autonomousEnabled: boolean;
+  onAutonomousEnabledChange: (enabled: boolean) => void;
+  onPauseAutonomousTask: () => void;
+  onResumeAutonomousTask: () => void;
+  onCancelAutonomousTask: () => void;
+  onApproveAutonomousStep: (stepId: string) => void;
+  onPauseTaskChain: () => void;
+  onResumeTaskChain: () => void;
+  onCancelTaskChain: () => void;
+  onApproveTaskChainStep: (stepId: string) => void;
 }) {
   return (
     <div className="rounded-[24px] border border-[#e7e7e4] bg-white p-4 shadow-sm">
@@ -1672,6 +1919,27 @@ function KnowledgeDraftPanel({
         {draft.complianceNotes?.length ? <Field label="合规/风险提醒" value={draft.complianceNotes.join("\n")} /> : null}
         {draft.missingFields?.length ? <Field label="建议补充" value={draft.missingFields.join("、")} /> : null}
         {draft.suggestedQuestions?.length ? <Field label="建议继续追问" value={draft.suggestedQuestions.join("\n")} /> : null}
+        {SHOW_INTERNAL_OS_UI ? (
+          <>
+            <IngestGPTOSPanel gptOS={draft.gptOS} />
+            <IngestAutonomousTaskPanel
+              task={autonomousTask}
+              enabled={autonomousEnabled}
+              onToggleEnabled={onAutonomousEnabledChange}
+              onPause={onPauseAutonomousTask}
+              onResume={onResumeAutonomousTask}
+              onCancel={onCancelAutonomousTask}
+              onApproveStep={onApproveAutonomousStep}
+            />
+            <IngestGPTTaskChainPanel
+              chain={taskChain ?? null}
+              onPause={onPauseTaskChain}
+              onResume={onResumeTaskChain}
+              onCancel={onCancelTaskChain}
+              onApproveStep={onApproveTaskChainStep}
+            />
+          </>
+        ) : null}
         {draft.gptProof ? (
           <div className="rounded-2xl bg-[#f8f8f7] p-3">
             <p className="mb-2 text-xs font-semibold text-[#8b8b86]">GPT 调用证据</p>

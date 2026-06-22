@@ -25,6 +25,18 @@ import type { GptOutputIntent } from "@/lib/enterprise/gpt-output-intent-classif
 import type { AdminIngestPlatform } from "@/lib/enterprise/admin-ingest-platform";
 import type { OpenAIAdminIngestAttachment } from "@/lib/enterprise/openai-ingest-client";
 import { DEEPSEEK_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
+import {
+  routeGptOSAgent,
+  type GptOSRouteResult
+} from "@/lib/enterprise/gpt-os-agent-router";
+import type {
+  AutonomousTaskRequest,
+  AutonomousTaskResult
+} from "@/lib/enterprise/gpt-os-autonomous-executor";
+import {
+  normalizeLLMResponse,
+  withResilientLLMCall
+} from "@/lib/enterprise/gpt-os-api-adapter";
 
 export interface DeepSeekAdminIngestInput {
   input: string;
@@ -46,6 +58,7 @@ export interface DeepSeekAdminIngestInput {
   recentMessages?: GptIngestMemoryMessage[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
+  autonomous?: AutonomousTaskRequest;
   requestId?: string;
 }
 
@@ -77,6 +90,8 @@ export interface DeepSeekAdminIngestResult {
   }>;
   saveRecommendation: GptSaveRecommendation;
   diagnostics: string[];
+  gptOS: GptOSRouteResult;
+  autonomousResult: AutonomousTaskResult;
   structured: GptStructuredKnowledge;
   structuredResult: GptStructuredKnowledge;
   sync: {
@@ -180,9 +195,21 @@ function normalizeUsage(value: unknown): OpenAIGptUsage {
   };
 }
 
-function buildUserPrompt(input: DeepSeekAdminIngestInput) {
+function buildGptOSRouteInput(input: DeepSeekAdminIngestInput) {
+  return {
+    text: input.input,
+    activeAgentName: input.agentName,
+    category: input.category,
+    attachments: input.attachments,
+    recentMessages: input.recentMessages,
+    autonomous: input.autonomous
+  };
+}
+
+function buildUserPrompt(input: DeepSeekAdminIngestInput, gptOS?: GptOSRouteResult) {
   return buildGptIngestBrainUserPrompt({
     currentInput: input.input,
+    gptOS,
     memory: {
       currentInput: input.input,
       currentAgent: {
@@ -204,27 +231,16 @@ function buildUserPrompt(input: DeepSeekAdminIngestInput) {
   });
 }
 
-function normalizeDeepSeekResponseError(status: number, bodyText: string) {
-  let providerMessage = "";
-
-  try {
-    const payload = JSON.parse(bodyText) as { error?: { message?: unknown } };
-    providerMessage = typeof payload.error?.message === "string" ? payload.error.message.trim() : "";
-  } catch {
-    providerMessage = bodyText.trim().slice(0, 260);
-  }
-
-  const suffix = providerMessage ? `（HTTP ${status}：${providerMessage.slice(0, 260)}）` : `（HTTP ${status}）`;
-
+function normalizeDeepSeekResponseError(status: number) {
   if (status === 401 || status === 403) {
-    return new DeepSeekIngestError("DEEPSEEK_API_KEY_MISSING", `DeepSeek API Key 未配置或无权访问当前模型。${suffix}`);
+    return new DeepSeekIngestError("DEEPSEEK_API_KEY_MISSING", "AI服务授权暂不可用，请稍后再试。");
   }
 
   if (status === 408) {
-    return new DeepSeekIngestError("DEEPSEEK_TIMEOUT", `DeepSeek 请求超时，请稍后重试。${suffix}`);
+    return new DeepSeekIngestError("DEEPSEEK_TIMEOUT", "AI响应较慢，请稍后再试。");
   }
 
-  return new DeepSeekIngestError("DEEPSEEK_REQUEST_FAILED", `DeepSeek chat/completions 请求失败。${suffix}`);
+  return new DeepSeekIngestError("DEEPSEEK_REQUEST_FAILED", "AI暂时不稳定，请稍后再试。");
 }
 
 async function callDeepSeekChatCompletions(input: {
@@ -235,25 +251,29 @@ async function callDeepSeekChatCompletions(input: {
   userPrompt: string;
   signal: AbortSignal;
 }) {
-  const response = await fetch(input.chatCompletionsUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${input.apiKey}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: input.model,
-      messages: [
-        { role: "system", content: input.systemPrompt },
-        { role: "user", content: input.userPrompt }
-      ],
-      temperature: 0.7,
-      max_tokens: 6000,
-      stream: false
-    }),
-    signal: input.signal,
-    cache: "no-store"
+  const call = await withResilientLLMCall("deepseek:chat-completions", () => fetch(input.chatCompletionsUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: input.model,
+        messages: [
+          { role: "system", content: input.systemPrompt },
+          { role: "user", content: input.userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 6000,
+        stream: false
+      }),
+      signal: input.signal,
+      cache: "no-store"
+    }), {
+      retries: 2,
+      retryDelayMs: 500
   });
+  const response = call.value;
   const bodyText = await response.text();
 
   if (!response.ok) {
@@ -261,10 +281,15 @@ async function callDeepSeekChatCompletions(input: {
       status: response.status,
       bodySnippet: bodyText.slice(0, 480)
     });
-    throw normalizeDeepSeekResponseError(response.status, bodyText);
+    throw normalizeDeepSeekResponseError(response.status);
   }
 
-  return parseDeepSeekPayload(bodyText, input.model);
+  return {
+    ...parseDeepSeekPayload(bodyText, input.model),
+    retryCount: call.retryCount,
+    responseLatency: call.responseLatency,
+    circuitBreaker: call.circuitBreaker
+  };
 }
 
 function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
@@ -276,14 +301,15 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
     throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 返回解析失败。");
   }
 
+  const normalized = normalizeLLMResponse(payload, {
+    provider: "deepseek",
+    fallbackModel
+  });
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-  const choices = Array.isArray(record.choices) ? record.choices : [];
-  const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
-  const message = firstChoice.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : {};
-  const text = typeof message.content === "string" ? message.content.trim() : "";
-  const rawResponseId = typeof record.id === "string" ? record.id.trim() : "";
-  const actualModel = typeof record.model === "string" && record.model.trim() ? record.model.trim() : fallbackModel;
-  const createdAt = normalizeCreatedAt(record.created);
+  const text = normalized.text;
+  const rawResponseId = normalized.responseId ?? "";
+  const actualModel = normalized.model ?? fallbackModel;
+  const createdAt = normalized.createdAt ?? normalizeCreatedAt(record.created);
   const generatedProofId = `deepseek-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
   const responseId = rawResponseId || generatedProofId;
 
@@ -298,7 +324,10 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
     proofId: responseId,
     proofIdSource: rawResponseId ? "provider_response_id" as const : "generated_from_provider_payload" as const,
     createdAt,
-    usage: normalizeUsage(record.usage)
+    usage: normalized.usage ?? normalizeUsage(record.usage),
+    rawResponseType: normalized.rawResponseType,
+    normalized: normalized.normalized,
+    parserUsed: normalized.parserUsed
   };
 }
 
@@ -324,8 +353,9 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
 
   try {
     const resolved = resolveDeepSeekConfig(input);
+    const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
     const systemPrompt = buildGptIngestBrainSystemPrompt();
-    const userPrompt = buildUserPrompt(input);
+    const userPrompt = buildUserPrompt(input, gptOS);
 
     let response = await callDeepSeekChatCompletions({
       chatCompletionsUrl: resolved.chatCompletionsUrl,
@@ -474,7 +504,10 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       replyMarkdown: normalized.replyMarkdown,
       knowledgeDraft: normalized.knowledgeDraft,
       userClientCallPlan: normalized.userClientCallPlan,
-      suggestedQuestions: normalized.suggestedQuestions,
+      suggestedQuestions: Array.from(new Set([
+        ...normalized.suggestedQuestions,
+        ...gptOS.actions.map((action) => action.label)
+      ])).slice(0, 8),
       sourceFiles: (input.attachments ?? []).map((attachment) => ({
         fileName: attachment.fileName,
         mimeType: attachment.mimeType ?? attachment.fileType,
@@ -483,12 +516,67 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       })),
       saveRecommendation: normalized.saveRecommendation,
       diagnostics: [
+        "apiResilience:provider:deepseek",
+        `apiResilience:normalized:${response.normalized ? "true" : "false"}`,
+        `apiResilience:parserUsed:${response.parserUsed}`,
+        `apiResilience:rawResponseType:${response.rawResponseType}`,
+        `apiResilience:retryCount:${response.retryCount}`,
+        `apiResilience:fallbackUsed:false`,
+        `apiResilience:responseLatency:${response.responseLatency}`,
+        `apiResilience:circuitBreaker:${response.circuitBreaker}`,
+        `observability:traceId:${gptOS.observability.trace.traceId}`,
+        `observability:requestId:${gptOS.observability.trace.requestId}`,
+        `observability:latency:${gptOS.observability.latency.totalLatencyMs}`,
+        `observability:slowestStage:${gptOS.observability.latency.slowestStage?.name ?? "none"}`,
+        `observability:cost:${gptOS.observability.cost.totalCost}`,
+        `observability:tokens:${gptOS.observability.cost.total_tokens}`,
+        `observability:modelUsed:${response.model}`,
+        `observability:fallbackCount:${gptOS.observability.fallback.fallbackCount}`,
+        `observability:agent:${gptOS.observability.agent.selectedAgentId}`,
+        `observability:toolChain:${gptOS.observability.tools.toolChain.join("|") || "none"}`,
+        `gptOS:plannerIntent:${gptOS.planner.intent}`,
+        `gptOS:complexity:${gptOS.planner.complexity}`,
+        `gptOS:modality:${gptOS.multimodal.modality}`,
+        `gptOS:modalities:text=${gptOS.multimodal.flags.text},voice=${gptOS.multimodal.flags.voice},file=${gptOS.multimodal.flags.file},image=${gptOS.multimodal.flags.image}`,
+        `gptOS:persona:${gptOS.memory.personaLabel}`,
+        `gptOS:agent:${gptOS.selectedAgent.id}`,
+        `gptOS:loopStatus:${gptOS.reasoningLoop.loopStatus}`,
+        `gptOS:loopIterations:${gptOS.reasoningLoop.iterations}`,
+        `gptOS:loopConfidence:${gptOS.reasoningLoop.confidence}`,
+        `gptOS:selfScore:${gptOS.reasoningLoop.selfEvaluation.totalScore}`,
+        `gptOS:improvementStatus:${gptOS.reasoningLoop.improvementStatus}`,
+        `gptOS:goal:${gptOS.goal.goalKey}`,
+        `gptOS:agentEvolution:${gptOS.agentEvolution.performanceHint}`,
+        `gptOS:actions:${gptOS.actions.map((action) => action.label).join("|")}`,
+        `gptOS:autonomousStatus:${gptOS.autonomousResult.status}`,
+        `gptOS:autonomousMode:${gptOS.autonomousResult.mode}`,
+        `gptOS:approvalRequired:${gptOS.autonomousResult.approvalRequired ? "true" : "false"}`,
+        `gptOS:blockedActions:${gptOS.autonomousResult.blockedActions.join("|")}`,
+        `gptOS:taskChainStatus:${gptOS.taskChain.status}`,
+        `gptOS:taskChainProgress:${Math.round(gptOS.taskChain.progress * 100)}`,
+        `gptOS:taskChainCompleted:${gptOS.taskChain.completedSteps}/${gptOS.taskChain.steps.length}`,
+        `gptOS:schedulerQueue:${gptOS.executionScheduler.queue.length}`,
+        `gptOS:kernelLoop:${gptOS.kernel.loopState}`,
+        `gptOS:kernelQueue:${gptOS.kernel.resourceUsage.queueLength}`,
+        `gptOS:kernelWorkerTicks:${gptOS.kernel.backgroundWorker.ticks}`,
+        `gptOS:kernelTuning:${gptOS.kernel.selfTuning.status}`,
+        `gptOS:businessType:${gptOS.business.content.type}`,
+        `gptOS:businessValueScore:${gptOS.business.content.valueScore}`,
+        `gptOS:monetizationPotential:${gptOS.business.monetizationPotential}`,
+        `gptOS:revenueReadiness:${gptOS.business.revenueReadiness}`,
+        `gptOS:growthPotential:${gptOS.growth.growthPotential}`,
+        `gptOS:growthLifecycle:${gptOS.growth.lifecycle.currentStage}`,
+        `gptOS:growthValueAfter:${gptOS.growth.contentValueAfter}`,
+        `gptOS:growthSeoScore:${gptOS.growth.amplifier.seoScore}`,
+        `gptOS:growthReuseCount:${gptOS.growth.reuse.reuseCount}`,
         "provider:deepseek",
         `proofIdSource:${response.proofIdSource}`,
         `intent:${quality.intent}`,
         `fixedTemplateRisk:${quality.fixedTemplateRisk ? "true" : "false"}`,
         ...normalized.diagnostics
       ],
+      gptOS,
+      autonomousResult: gptOS.autonomousResult,
       structured: normalized.structured,
       structuredResult: normalized.structured,
       sync: {

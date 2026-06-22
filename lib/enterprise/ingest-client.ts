@@ -22,8 +22,14 @@ import type {
   GptKnowledgeDraft,
   GptSaveRecommendation
 } from "@/lib/enterprise/gpt-knowledge-draft";
+import type { GptOSRouteResult } from "@/lib/enterprise/gpt-os-agent-router";
+import type {
+  AutonomousTaskRequest,
+  AutonomousTaskResult
+} from "@/lib/enterprise/gpt-os-autonomous-executor";
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
+import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -141,6 +147,8 @@ interface GptIngestResponse {
   suggestedQuestions?: string[];
   saveRecommendation?: GptSaveRecommendation;
   diagnostics?: string[];
+  gptOS?: GptOSRouteResult;
+  autonomousResult?: AutonomousTaskResult;
   structured: {
     title?: string;
     category?: string;
@@ -161,13 +169,16 @@ interface GptIngestResponse {
 
 interface GptFailureResponse {
   ok: false;
-  fallback?: false;
+  success?: false;
+  fallback?: boolean;
   provider?: IngestModelProvider;
   errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED";
   message: string;
   retryable?: boolean;
   selectedModelLabel?: string;
   model?: string;
+  raw?: null;
+  diagnostics?: string[];
 }
 
 interface UrlIngestPreviewResponse {
@@ -231,23 +242,23 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
   }
 
   if (raw.includes("openai api key") || raw.includes("missing_ai_api_key") || raw.includes("未配置 openai")) {
-    return "未配置 OpenAI API Key，无法调用 GPT-5.5。请配置后重新生成。";
+    return "AI服务授权暂不可用，请检查模型连接后再试。";
   }
 
   if (raw.includes("deepseek_api_key") || raw.includes("deepseek api key") || raw.includes("deepseek") && raw.includes("未配置")) {
-    return "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。";
+    return "AI服务授权暂不可用，请检查模型连接后再试。";
   }
 
   if (raw.includes("timeout") || raw.includes("超时")) {
-    return "GPT 请求超时，请稍后重试。";
+    return "AI响应较慢，请稍后再试。";
   }
 
   if (raw.includes("gpt") || raw.includes("openai")) {
-    return "GPT-5.5 本次未完成，请检查模型权限、额度或网络后重新生成。";
+    return "AI服务暂时不稳定，请稍后再试。";
   }
 
   if (raw.includes("deepseek")) {
-    return "DeepSeek-V4-Pro 本次未完成，请检查 API Key、模型权限、额度或网络后重新生成。";
+    return "AI服务暂时不稳定，请稍后再试。";
   }
 
   return "接口暂不可用，请稍后重试。";
@@ -386,6 +397,7 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
     replyMarkdown: readString(record.replyMarkdown) || undefined,
     fallbackUsed: Boolean(record.fallbackUsed),
     gptProof: isPlainRecord(record.gptProof) ? record.gptProof as unknown as GptCallProof : undefined,
+    gptOS: isPlainRecord(record.gptOS) ? record.gptOS as unknown as GptOSRouteResult : undefined,
     actualModel: readString(record.actualModel) || undefined,
     responseId: readString(record.responseId) || undefined,
     usage: isPlainRecord(record.usage) ? record.usage as unknown as OpenAIGptUsage : undefined
@@ -471,6 +483,7 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     responseId: data.responseId,
     usage: data.usage,
     gptProof: data.gptProof,
+    gptOS: data.gptOS,
     generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
@@ -504,6 +517,7 @@ export async function sendCoreIngest(input: {
     category?: string;
     saveStatus?: string;
   }>;
+  autonomous?: AutonomousTaskRequest;
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
@@ -556,13 +570,14 @@ export async function sendCoreIngest(input: {
         recentMessages: input.recentMessages ?? [],
         previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
         recentTrainingRecords: input.recentTrainingRecords ?? [],
+        autonomous: input.autonomous,
         autoSave: false
       })
     });
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 
     if (isGptFailureResponse(payload)) {
-      throw new Error(payload.message || `${selectedModelLabel} 本次未完成，请稍后重试。`);
+      throw new Error(sanitizeGptOSUserMessage(payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
 
     if (!response.ok || !payload?.ok || !payload.data) {
@@ -572,7 +587,7 @@ export async function sendCoreIngest(input: {
     const data = payload.data;
 
     if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
-      throw new Error(`${selectedModelLabel} 未返回有效调用证据，本次不插入成功回复。`);
+      throw new Error("AI服务暂时不稳定，请稍后再试。");
     }
 
     const draft = gptResponseToDraft(data, input.text, input.agent);
@@ -599,15 +614,16 @@ export async function sendCoreIngest(input: {
       responseId: data.responseId,
       usage: data.usage,
       gptProof: data.gptProof,
+      autonomousResult: data.autonomousResult ?? data.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
       replyMarkdown: draft.replyMarkdown,
       saveSuggestion: draft.recommendation === "建议入库",
       message: `${selectedModelLabel} 已生成结构化知识：${draft.title}`
     };
   } catch (error) {
-    throw error instanceof Error
-      ? error
-      : new Error(`${selectedModelLabel} 本次未完成，请稍后重试。`);
+    throw new Error(sanitizeGptOSUserMessage(error instanceof Error
+      ? error.message
+      : "AI服务暂时不稳定，请稍后再试。"));
   }
 }
 

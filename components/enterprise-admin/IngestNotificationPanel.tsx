@@ -9,7 +9,7 @@ const typeTone: Record<IngestNotification["type"], string> = {
   license: "bg-[#fff3d8] text-[#9a6500]",
   tenant: "bg-[#edf0f4] text-[#475569]",
   sync: "bg-[#eef9f3] text-[#128246]",
-  fallback: "bg-[#ffecef] text-[#b93b4a]",
+  fallback: "bg-[#f0f0ee] text-[#555]",
   info: "bg-[#f0f0ee] text-[#555]"
 };
 

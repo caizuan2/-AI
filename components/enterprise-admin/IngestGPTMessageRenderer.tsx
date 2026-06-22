@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
 import { IngestKnowledgeDraftCard } from "@/components/enterprise-admin/IngestKnowledgeDraftCard";
+import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 
 const KNOWLEDGE_DRAFT_SUBTITLE = "以下为 GPT 根据当前资料生成的入库草稿参考，管理员可编辑确认后保存入库。";
 
@@ -28,7 +29,8 @@ const numberBadgeTones = [
 ];
 
 export function IngestGPTMessageRenderer({ content }: { content: string }) {
-  const segments = content.split(/```/g);
+  const safeContent = sanitizeGptOSUserMessage(content);
+  const segments = safeContent.split(/```/g);
 
   return (
     <article className="w-full max-w-[860px] space-y-4 text-[15px] leading-[1.78] text-[#2f2f2f]">

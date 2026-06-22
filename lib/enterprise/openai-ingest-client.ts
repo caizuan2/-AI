@@ -3,7 +3,6 @@ import "server-only";
 import { ProxyAgent } from "undici";
 import { logger } from "@/lib/logger";
 import {
-  extractResponsesText,
   normalizeGptOutput,
   type GptStructuredKnowledge
 } from "@/lib/enterprise/gpt-output-normalizer";
@@ -26,6 +25,21 @@ import { assessGptProResponseQuality } from "@/lib/enterprise/gpt-pro-response-q
 import { buildGptProRetryDeepenPrompt } from "@/lib/enterprise/gpt-pro-retry-deepen";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import type { GptOutputIntent } from "@/lib/enterprise/gpt-output-intent-classifier";
+import {
+  routeGptOSAgent,
+  type GptOSRouteResult
+} from "@/lib/enterprise/gpt-os-agent-router";
+import type {
+  AutonomousTaskRequest,
+  AutonomousTaskResult
+} from "@/lib/enterprise/gpt-os-autonomous-executor";
+import {
+  createRecoveredResponseId,
+  normalizeLLMResponse,
+  withResilientLLMCall,
+  type GptOSApiResponseType,
+  type NormalizedLLMResponse
+} from "@/lib/enterprise/gpt-os-api-adapter";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -68,6 +82,7 @@ export interface OpenAIAdminIngestInput {
   recentMessages?: GptIngestMemoryMessage[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
+  autonomous?: AutonomousTaskRequest;
   requestId?: string;
 }
 
@@ -98,6 +113,8 @@ export interface OpenAIAdminIngestResult {
   }>;
   saveRecommendation: GptSaveRecommendation;
   diagnostics: string[];
+  gptOS: GptOSRouteResult;
+  autonomousResult: AutonomousTaskResult;
   structured: GptStructuredKnowledge;
   structuredResult: GptStructuredKnowledge;
   sync: {
@@ -265,9 +282,21 @@ function resolveResponsesConfig(input: OpenAIAdminIngestInput) {
   };
 }
 
-function buildUserPrompt(input: OpenAIAdminIngestInput) {
+function buildGptOSRouteInput(input: OpenAIAdminIngestInput) {
+  return {
+    text: input.input,
+    activeAgentName: input.agentName,
+    category: input.category,
+    attachments: input.attachments,
+    recentMessages: input.recentMessages,
+    autonomous: input.autonomous
+  };
+}
+
+function buildUserPrompt(input: OpenAIAdminIngestInput, gptOS?: GptOSRouteResult) {
   return buildGptIngestBrainUserPrompt({
     currentInput: input.input,
+    gptOS,
     memory: {
       currentInput: input.input,
       currentAgent: {
@@ -291,30 +320,20 @@ function buildUserPrompt(input: OpenAIAdminIngestInput) {
 
 function normalizeOpenAIResponseError(status: number, bodyText: string) {
   const lower = bodyText.toLowerCase();
-  let providerMessage = "";
-
-  try {
-    const payload = JSON.parse(bodyText) as { error?: { message?: unknown } };
-    providerMessage = typeof payload.error?.message === "string" ? payload.error.message.trim() : "";
-  } catch {
-    providerMessage = bodyText.trim().slice(0, 260);
-  }
-
-  const suffix = providerMessage ? `（HTTP ${status}：${providerMessage.slice(0, 260)}）` : `（HTTP ${status}）`;
 
   if (status === 401 || status === 403) {
-    return new OpenAIResponsesError("OPENAI_API_KEY_MISSING", `OpenAI API Key 未配置或无权访问当前模型。${suffix}`);
+    return new OpenAIResponsesError("OPENAI_API_KEY_MISSING", "AI服务授权暂不可用，请稍后再试。");
   }
 
   if (status === 408 || lower.includes("timeout")) {
-    return new OpenAIResponsesError("OPENAI_TIMEOUT", `GPT 请求超时，请稍后重试。${suffix}`);
+    return new OpenAIResponsesError("OPENAI_TIMEOUT", "AI响应较慢，请稍后再试。");
   }
 
   if (status === 404 || lower.includes("model")) {
-    return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", `当前 GPT 模型不可用，请检查 OPENAI_MODEL 或模型权限。${suffix}`);
+    return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", "AI模型暂时不稳定，请稍后再试。");
   }
 
-  return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", `OpenAI Responses API 请求失败。${suffix}`);
+  return new OpenAIResponsesError("OPENAI_RESPONSES_REQUEST_FAILED", "AI暂时不稳定，请稍后再试。");
 }
 
 function isHighDepthParameterRejected(status: number, bodyText: string) {
@@ -409,22 +428,22 @@ async function callResponsesApi(input: {
   signal: AbortSignal;
 }) {
   let response: Response;
+  let retryCount = 0;
+  let responseLatency = 0;
+  let circuitBreaker: "closed" | "open" = "closed";
 
-  try {
-    response = await fetchResponsesWithBody({
+  const firstCall = await withResilientLLMCall("openai:responses", () => fetchResponsesWithBody({
       ...input,
       highDepth: true
+    }), {
+      retries: 2,
+      retryDelayMs: 500
     });
-  } catch (error) {
-    logger.warn("enterprise_admin_ingest.openai_network_retry", {
-      errorName: error && typeof error === "object" ? (error as { name?: unknown }).name : undefined,
-      message: error instanceof Error ? error.message : String(error)
-    });
-    response = await fetchResponsesWithBody({
-      ...input,
-      highDepth: true
-    });
-  }
+
+  response = firstCall.value;
+  retryCount += firstCall.retryCount;
+  responseLatency += firstCall.responseLatency;
+  circuitBreaker = firstCall.circuitBreaker;
 
   let bodyText = "";
 
@@ -437,10 +456,18 @@ async function callResponsesApi(input: {
       status: response.status,
       bodySnippet: bodyText.slice(0, 360)
     });
-    response = await fetchResponsesWithBody({
-      ...input,
-      highDepth: false
-    });
+    const fallbackParamCall = await withResilientLLMCall("openai:responses:fallback-params", () => fetchResponsesWithBody({
+        ...input,
+        highDepth: false
+      }), {
+        retries: 2,
+        retryDelayMs: 500
+      });
+
+    response = fallbackParamCall.value;
+    retryCount += fallbackParamCall.retryCount;
+    responseLatency += fallbackParamCall.responseLatency;
+    circuitBreaker = fallbackParamCall.circuitBreaker;
     bodyText = response.ok ? "" : await response.text();
   }
 
@@ -453,12 +480,22 @@ async function callResponsesApi(input: {
   }
 
   if (response.body) {
-    return await readResponsesStream(response, input.model);
+    return {
+      ...await readResponsesStream(response, input.model),
+      retryCount,
+      responseLatency,
+      circuitBreaker
+    };
   }
 
   bodyText = await response.text();
 
-  return parseResponsesPayload(bodyText, input.model);
+  return {
+    ...parseResponsesPayload(bodyText, input.model),
+    retryCount,
+    responseLatency,
+    circuitBreaker
+  };
 }
 
 async function readResponsesStream(response: Response, fallbackModel: string) {
@@ -476,9 +513,24 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
   let createdAt = "";
   let usage: OpenAIGptUsage = {};
   let completedPayload: Record<string, unknown> | null = null;
+  let streamInterrupted = false;
 
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      streamInterrupted = true;
+      logger.warn("enterprise_admin_ingest.openai_stream_recovery", {
+        fallbackModel,
+        partialLength: text.length,
+        message: error instanceof Error ? error.message : String(error)
+      });
+      break;
+    }
+
+    const { done, value } = chunk;
 
     if (done) {
       break;
@@ -542,31 +594,39 @@ async function readResponsesStream(response: Response, fallbackModel: string) {
     }
   }
 
-  const completedText = completedPayload ? extractResponsesText(completedPayload) : "";
+  let completed: NormalizedLLMResponse | null = null;
+
+  if (completedPayload) {
+    try {
+      completed = normalizeLLMResponse(completedPayload, {
+        provider: "openai",
+        fallbackModel
+      });
+    } catch {
+      completed = null;
+    }
+  }
+  const completedText = completed?.text ?? "";
   const finalText = text.trim() || completedText;
-  const rawModel = typeof completedPayload?.model === "string" ? completedPayload.model : model;
-  const rawResponseId = typeof completedPayload?.id === "string" ? completedPayload.id : responseId;
-  const finalCreatedAt = completedPayload && "created_at" in completedPayload ? normalizeCreatedAt(completedPayload.created_at) : createdAt || new Date().toISOString();
-  const finalUsage = completedPayload?.usage ? normalizeUsage(completedPayload.usage) : usage;
+  const rawModel = completed?.model ?? model;
+  const rawResponseId = completed?.responseId ?? responseId;
+  const finalCreatedAt = (completed?.createdAt ?? createdAt) || new Date().toISOString();
+  const finalUsage = completed?.usage ?? usage;
 
   if (!finalText) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可解析文本。");
   }
 
-  if (!rawResponseId) {
-    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 responseId，不能证明 GPT-5.5 调用。");
-  }
-
-  if (!rawModel) {
-    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 actualModel，不能证明 GPT-5.5 调用。");
-  }
-
   return {
     text: finalText,
     model: rawModel || fallbackModel,
-    responseId: rawResponseId,
+    responseId: rawResponseId || createRecoveredResponseId("openai"),
     createdAt: finalCreatedAt,
-    usage: finalUsage
+    usage: finalUsage,
+    rawResponseType: "responses" as GptOSApiResponseType,
+    normalized: true as const,
+    parserUsed: "gpt-os-api-adapter" as const,
+    partial: streamInterrupted || !completedPayload || !rawResponseId || !rawModel
   };
 }
 
@@ -579,29 +639,30 @@ function parseResponsesPayload(bodyText: string, fallbackModel: string) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 返回解析失败。");
   }
 
-  const text = extractResponsesText(payload);
+  const normalized = normalizeLLMResponse(payload, {
+    provider: "openai",
+    fallbackModel,
+    fallbackResponseId: createRecoveredResponseId("openai")
+  });
+  const text = normalized.text;
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-  const model = typeof record.model === "string" ? record.model : "";
-  const responseId = typeof record.id === "string" ? record.id : "";
+  const model = normalized.model ?? "";
+  const responseId = normalized.responseId ?? "";
 
   if (!text) {
     throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回可解析文本。");
-  }
-
-  if (!responseId) {
-    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 responseId，不能证明 GPT-5.5 调用。");
-  }
-
-  if (!model) {
-    throw new OpenAIResponsesError("OPENAI_RESPONSES_PARSE_FAILED", "OpenAI Responses API 未返回 actualModel，不能证明 GPT-5.5 调用。");
   }
 
   return {
     text,
     model: model || fallbackModel,
     responseId,
-    createdAt: normalizeCreatedAt(record.created_at),
-    usage: normalizeUsage(record.usage)
+    createdAt: normalized.createdAt ?? normalizeCreatedAt(record.created_at) ?? new Date().toISOString(),
+    usage: normalized.usage ?? normalizeUsage(record.usage),
+    rawResponseType: normalized.rawResponseType,
+    normalized: normalized.normalized,
+    parserUsed: normalized.parserUsed,
+    partial: normalized.partial ?? false
   };
 }
 
@@ -612,8 +673,9 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
 
   try {
     const resolved = resolveResponsesConfig(input);
+    const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
     const systemPrompt = buildGptIngestBrainSystemPrompt();
-    const userPrompt = buildUserPrompt(input);
+    const userPrompt = buildUserPrompt(input, gptOS);
 
     let response = await callResponsesApi({
       responsesUrl: resolved.responsesUrl,
@@ -773,7 +835,10 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       replyMarkdown: normalized.replyMarkdown,
       knowledgeDraft: normalized.knowledgeDraft,
       userClientCallPlan: normalized.userClientCallPlan,
-      suggestedQuestions: normalized.suggestedQuestions,
+      suggestedQuestions: unique([
+        ...normalized.suggestedQuestions,
+        ...gptOS.actions.map((action) => action.label)
+      ]).slice(0, 8),
       sourceFiles: (input.attachments ?? []).map((attachment) => ({
         fileName: attachment.fileName,
         mimeType: attachment.mimeType ?? attachment.fileType,
@@ -782,10 +847,66 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
       })),
       saveRecommendation: normalized.saveRecommendation,
       diagnostics: [
+        "apiResilience:provider:openai",
+        `apiResilience:normalized:${response.normalized ? "true" : "false"}`,
+        `apiResilience:parserUsed:${response.parserUsed}`,
+        `apiResilience:rawResponseType:${response.rawResponseType}`,
+        `apiResilience:retryCount:${response.retryCount}`,
+        `apiResilience:fallbackUsed:false`,
+        `apiResilience:responseLatency:${response.responseLatency}`,
+        `apiResilience:circuitBreaker:${response.circuitBreaker}`,
+        `apiResilience:streamRecovered:${response.partial ? "true" : "false"}`,
+        `observability:traceId:${gptOS.observability.trace.traceId}`,
+        `observability:requestId:${gptOS.observability.trace.requestId}`,
+        `observability:latency:${gptOS.observability.latency.totalLatencyMs}`,
+        `observability:slowestStage:${gptOS.observability.latency.slowestStage?.name ?? "none"}`,
+        `observability:cost:${gptOS.observability.cost.totalCost}`,
+        `observability:tokens:${gptOS.observability.cost.total_tokens}`,
+        `observability:modelUsed:${response.model}`,
+        `observability:fallbackCount:${gptOS.observability.fallback.fallbackCount}`,
+        `observability:agent:${gptOS.observability.agent.selectedAgentId}`,
+        `observability:toolChain:${gptOS.observability.tools.toolChain.join("|") || "none"}`,
+        `gptOS:plannerIntent:${gptOS.planner.intent}`,
+        `gptOS:complexity:${gptOS.planner.complexity}`,
+        `gptOS:modality:${gptOS.multimodal.modality}`,
+        `gptOS:modalities:text=${gptOS.multimodal.flags.text},voice=${gptOS.multimodal.flags.voice},file=${gptOS.multimodal.flags.file},image=${gptOS.multimodal.flags.image}`,
+        `gptOS:persona:${gptOS.memory.personaLabel}`,
+        `gptOS:agent:${gptOS.selectedAgent.id}`,
+        `gptOS:loopStatus:${gptOS.reasoningLoop.loopStatus}`,
+        `gptOS:loopIterations:${gptOS.reasoningLoop.iterations}`,
+        `gptOS:loopConfidence:${gptOS.reasoningLoop.confidence}`,
+        `gptOS:selfScore:${gptOS.reasoningLoop.selfEvaluation.totalScore}`,
+        `gptOS:improvementStatus:${gptOS.reasoningLoop.improvementStatus}`,
+        `gptOS:goal:${gptOS.goal.goalKey}`,
+        `gptOS:agentEvolution:${gptOS.agentEvolution.performanceHint}`,
+        `gptOS:actions:${gptOS.actions.map((action) => action.label).join("|")}`,
+        `gptOS:autonomousStatus:${gptOS.autonomousResult.status}`,
+        `gptOS:autonomousMode:${gptOS.autonomousResult.mode}`,
+        `gptOS:approvalRequired:${gptOS.autonomousResult.approvalRequired ? "true" : "false"}`,
+        `gptOS:blockedActions:${gptOS.autonomousResult.blockedActions.join("|")}`,
+        `gptOS:taskChainStatus:${gptOS.taskChain.status}`,
+        `gptOS:taskChainProgress:${Math.round(gptOS.taskChain.progress * 100)}`,
+        `gptOS:taskChainCompleted:${gptOS.taskChain.completedSteps}/${gptOS.taskChain.steps.length}`,
+        `gptOS:schedulerQueue:${gptOS.executionScheduler.queue.length}`,
+        `gptOS:kernelLoop:${gptOS.kernel.loopState}`,
+        `gptOS:kernelQueue:${gptOS.kernel.resourceUsage.queueLength}`,
+        `gptOS:kernelWorkerTicks:${gptOS.kernel.backgroundWorker.ticks}`,
+        `gptOS:kernelTuning:${gptOS.kernel.selfTuning.status}`,
+        `gptOS:businessType:${gptOS.business.content.type}`,
+        `gptOS:businessValueScore:${gptOS.business.content.valueScore}`,
+        `gptOS:monetizationPotential:${gptOS.business.monetizationPotential}`,
+        `gptOS:revenueReadiness:${gptOS.business.revenueReadiness}`,
+        `gptOS:growthPotential:${gptOS.growth.growthPotential}`,
+        `gptOS:growthLifecycle:${gptOS.growth.lifecycle.currentStage}`,
+        `gptOS:growthValueAfter:${gptOS.growth.contentValueAfter}`,
+        `gptOS:growthSeoScore:${gptOS.growth.amplifier.seoScore}`,
+        `gptOS:growthReuseCount:${gptOS.growth.reuse.reuseCount}`,
         `intent:${quality.intent}`,
         `fixedTemplateRisk:${quality.fixedTemplateRisk ? "true" : "false"}`,
         ...normalized.diagnostics
       ],
+      gptOS,
+      autonomousResult: gptOS.autonomousResult,
       structured: normalized.structured,
       structuredResult: normalized.structured,
       sync: {
