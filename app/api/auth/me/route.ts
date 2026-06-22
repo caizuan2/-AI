@@ -1,5 +1,6 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { requireUser } from "@/lib/auth";
+import { getUserRoles } from "@/lib/auth/rbac";
 
 export const dynamic = "force-dynamic";
 
@@ -11,12 +12,15 @@ interface MeResponse {
     name: string;
     avatar_url: null;
     licenseActivated: boolean;
+    isSuperAdmin: boolean;
   };
 }
 
 export async function GET() {
   try {
     const user = await requireUser();
+    const roles = await getUserRoles(user);
+    const isSuperAdmin = roles.includes("super_admin");
 
     return apiSuccess<MeResponse>({
       user: {
@@ -25,7 +29,8 @@ export async function GET() {
         email: user.email,
         name: user.name,
         avatar_url: null,
-        licenseActivated: user.licenseActivated
+        licenseActivated: user.licenseActivated || isSuperAdmin,
+        isSuperAdmin
       }
     });
   } catch (error) {

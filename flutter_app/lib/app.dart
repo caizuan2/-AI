@@ -10,6 +10,8 @@ import 'modules/settings/settings_page.dart';
 import 'modules/update/update_gate.dart';
 import 'modules/update/update_page.dart';
 import 'modules/update/update_service.dart';
+import 'modules/update/test_update_gate.dart';
+import 'modules/update/test_update_service.dart';
 
 class AiKnowledgeNativeApp extends StatefulWidget {
   const AiKnowledgeNativeApp({super.key});
@@ -22,6 +24,7 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
   late final SessionStore sessionStore;
   late final ApiService apiService;
   late final UpdateService updateService;
+  late final TestUpdateService testUpdateService;
   late final Future<void> bootstrapFuture;
 
   @override
@@ -37,6 +40,7 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
       latestManifestUrl: AppConfig.latestManifestUrl,
       latestManifestUrls: AppConfig.latestManifestUrls,
     );
+    testUpdateService = TestUpdateService();
     bootstrapFuture = apiService.restoreSession();
   }
 
@@ -44,6 +48,7 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
   void dispose() {
     apiService.dispose();
     updateService.dispose();
+    testUpdateService.dispose();
     super.dispose();
   }
 
@@ -53,6 +58,7 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
       providers: [
         Provider<ApiService>.value(value: apiService),
         Provider<UpdateService>.value(value: updateService),
+        Provider<TestUpdateService>.value(value: testUpdateService),
         Provider<SessionStore>.value(value: sessionStore),
       ],
       child: FutureBuilder<void>(
@@ -72,9 +78,12 @@ class _AiKnowledgeNativeAppState extends State<AiKnowledgeNativeApp> {
                 return const _BootstrapScreen();
               }
 
-              return UpdateGate(
-                updateService: updateService,
-                child: child ?? const SizedBox.shrink(),
+              return TestUpdateGate(
+                testUpdateService: testUpdateService,
+                child: UpdateGate(
+                  updateService: updateService,
+                  child: child ?? const SizedBox.shrink(),
+                ),
               );
             },
             initialRoute: LoginPage.routeName,

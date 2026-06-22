@@ -1,0 +1,125 @@
+{
+  "updated_at": "2026-06-14T05:16:04.122Z",
+  "version": "1.0.7",
+  "build": 107,
+  "minimum_build": 100,
+  "forceUpdate": false,
+  "force_update": false,
+  "apk": "ai-knowledge-chat-latest.apk",
+  "exe": "ai-knowledge-chat-latest.exe",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.exe",
+  "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+  "download": {
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.exe",
+    "web": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    "page": "https://stately-sawine-1efd4d.netlify.app/download"
+  },
+  "apps": {
+    "user": {
+      "id": "ai.chat.user",
+      "name": "AI知识库助手",
+      "platforms": [
+        "android",
+        "windows",
+        "ios",
+        "macos",
+        "web",
+        "electron"
+      ],
+      "active_version": "1.0.7",
+      "versions": [
+        {
+          "version": "1.0.7",
+          "build": 107,
+          "channel": "stable",
+          "rollout": 100,
+          "minimum_build": 100,
+          "force_update": false,
+          "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.exe",
+          "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
+          "changelog": [
+            "Released Flutter native Android APK",
+            "Updated user Android package",
+            "Version metadata synced to 1.0.7",
+            "Released user Windows EXE"
+          ],
+          "created_at": "2026-06-14T05:16:04.122Z"
+        }
+      ]
+    },
+    "admin": {
+      "id": "ai.chat.admin",
+      "name": "AI知识库管理后台",
+      "platforms": [
+        "android",
+        "windows",
+        "ios",
+        "macos",
+        "web",
+        "electron"
+      ],
+      "active_version": "1.0.6",
+      "versions": [
+        {
+          "version": "1.0.6",
+          "build": 106,
+          "channel": "stable",
+          "rollout": 100,
+          "minimum_build": 100,
+          "force_update": false,
+          "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
+          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
+          "changelog": [
+            "Updated admin app",
+            "Improved packaging workflow",
+            "Updated installer links"
+          ],
+          "created_at": "2026-06-13T14:59:09.473Z"
+        }
+      ]
+    }
+  },
+  "user": {
+    "app_name": "AI知识库助手",
+    "version": "1.0.7",
+    "build": 107,
+    "minimum_build": 100,
+    "force_update": false,
+    "web_url": "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.exe",
+    "download_page": "https://stately-sawine-1efd4d.netlify.app/download",
+    "changelog": [
+      "Released Flutter native Android APK",
+      "Updated user Android package",
+      "Version metadata synced to 1.0.7",
+      "Released user Windows EXE"
+    ]
+  },
+  "admin": {
+    "app_name": "AI知识库管理后台",
+    "version": "1.0.6",
+    "build": 106,
+    "minimum_build": 100,
+    "force_update": false,
+    "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
+    "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
+    "changelog": [
+      "Updated admin app",
+      "Improved packaging workflow",
+      "Updated installer links"
+    ]
+  },
+  "downloads": {
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.7/ai-knowledge-chat-latest.exe"
+  }
+}

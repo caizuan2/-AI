@@ -4,6 +4,7 @@ import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
+import { getUserRoles } from "@/lib/auth/rbac";
 import { ForbiddenError, UnauthorizedError, ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic";
 interface LoginResponse {
   success: true;
   licenseActivated: boolean;
+  isSuperAdmin: boolean;
   user: {
     id: string;
     phone: string;
@@ -84,11 +86,16 @@ export async function POST(request: Request) {
       throw new ForbiddenError("账号已禁用。");
     }
 
-    await createSession(user.id);
+    await createSession(user.id, request);
+
+    const roles = await getUserRoles(user);
+    const isSuperAdmin = roles.includes("super_admin");
+    const licenseActivated = user.licenseActivated || isSuperAdmin;
 
     return apiSuccess<LoginResponse>({
       success: true,
-      licenseActivated: user.licenseActivated,
+      licenseActivated,
+      isSuperAdmin,
       user: {
         id: user.id,
         phone: user.phone,

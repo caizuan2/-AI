@@ -1,9 +1,10 @@
 import "server-only";
 
+import { BOOTSTRAP_SUPER_ADMIN_PHONE } from "@/lib/auth/bootstrap-super-admin";
 import { normalizePhone } from "@/lib/auth/phone";
 import type { CurrentUser } from "@/lib/auth";
 
-const BOOTSTRAP_ADMIN_PHONES = ["+8613352833602"];
+const BOOTSTRAP_ADMIN_PHONES = [BOOTSTRAP_SUPER_ADMIN_PHONE];
 
 function readCsvEnv(name: string) {
   return (process.env[name] ?? "")

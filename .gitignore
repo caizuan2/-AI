@@ -27,3 +27,5 @@ pnpm-debug.log*
 *.exe
 *.asar
 *.app
+
+test-license.ps1

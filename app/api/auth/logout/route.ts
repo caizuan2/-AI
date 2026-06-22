@@ -7,9 +7,9 @@ interface LogoutResponse {
   signedOut: true;
 }
 
-export async function POST() {
+export async function POST(request: Request) {
   try {
-    await destroySession();
+    await destroySession(request);
 
     return apiSuccess<LogoutResponse>({ signedOut: true });
   } catch (error) {

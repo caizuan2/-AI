@@ -25,6 +25,7 @@ export interface RagAnswerResult {
   model: string;
   providerUsed: string;
   fallbackUsed: boolean;
+  answer_grounding_score: number;
   originalProviderErrorCode?: string;
 }
 
@@ -37,6 +38,41 @@ export interface GenerateRagAnswerOptions {
   confidence?: number;
   intentLabel?: string;
   retrievalMessage?: string | null;
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function averageContextRelevance(contexts: RagContext[]) {
+  if (contexts.length === 0) {
+    return 0;
+  }
+
+  const total = contexts.reduce((sum, context) => {
+    const score = typeof context.relevance_score === "number"
+      ? context.relevance_score
+      : typeof context.score === "number"
+        ? context.score
+        : 0;
+
+    return sum + score;
+  }, 0);
+
+  return clamp01(total / contexts.length);
+}
+
+function calculateAnswerGroundingScore(answer: string, contexts: RagContext[]) {
+  const relevance = averageContextRelevance(contexts);
+  const hasStructuredOutput = /(^|\n)#{1,3}\s|\n[-*]\s|\*\*|\|/.test(answer);
+  const answerPresence = answer.trim() ? 0.2 : 0;
+  const structureBonus = hasStructuredOutput ? 0.1 : 0;
+
+  return clamp01((relevance * 0.7) + answerPresence + structureBonus);
 }
 
 export async function generateRagAnswer(
@@ -79,6 +115,7 @@ export async function generateRagAnswer(
 
     const estimatedOutputTokens = estimateTokenCount(answer);
     const durationMs = Date.now() - startedAt;
+    const answerGroundingScore = calculateAnswerGroundingScore(answer, contexts);
 
     logger.info("ai.call", {
       requestId: options.requestId,
@@ -91,6 +128,7 @@ export async function generateRagAnswer(
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
       fallbackUsed: response.fallbackUsed,
       contextCount: contexts.length,
+      answerGroundingScore,
       answerMode: options.answerMode,
       confidence: options.confidence,
       intentLabel: options.intentLabel
@@ -108,6 +146,7 @@ export async function generateRagAnswer(
         fallbackUsed: response.fallbackUsed,
         originalProviderErrorCode: response.originalProviderErrorCode,
         contextCount: contexts.length,
+        answerGroundingScore,
         answerMode: options.answerMode,
         confidence: options.confidence,
         intentLabel: options.intentLabel
@@ -125,6 +164,7 @@ export async function generateRagAnswer(
       model: response.model,
       providerUsed: response.provider,
       fallbackUsed: response.fallbackUsed,
+      answer_grounding_score: answerGroundingScore,
       originalProviderErrorCode: response.originalProviderErrorCode
     };
   } catch (error) {

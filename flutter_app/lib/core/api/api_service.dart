@@ -6,21 +6,138 @@ import 'package:http/http.dart' as http;
 
 import '../storage/session_store.dart';
 import '../../modules/upload/upload_models.dart';
+import 'conversation_actions.dart';
 
 class ApiException implements Exception {
-  const ApiException(this.message, {this.statusCode, this.debugDetails});
+  const ApiException(
+    this.message, {
+    this.statusCode,
+    this.code,
+    this.debugDetails,
+  });
 
   final String message;
   final int? statusCode;
+  final String? code;
   final String? debugDetails;
 
   @override
   String toString() => message;
 }
 
+enum LicenseStatus {
+  unknown,
+  checking,
+  active,
+  inactive,
+  expired,
+  disabled,
+  invalid,
+  used,
+  serviceUnavailable,
+}
+
+class LicenseStatusResult {
+  const LicenseStatusResult({
+    required this.status,
+    required this.message,
+    this.raw = const <String, dynamic>{},
+  });
+
+  final LicenseStatus status;
+  final String message;
+  final Map<String, dynamic> raw;
+
+  bool get canEnterApp => status == LicenseStatus.active;
+}
+
+class ConversationFeatureKeys {
+  static const share = conversationFeatureShareKey;
+  static const groupChat = conversationFeatureGroupChatKey;
+  static const rename = conversationFeatureRenameKey;
+  static const archive = conversationFeatureArchiveKey;
+  static const delete = conversationFeatureDeleteKey;
+  static const pinCloudSync = conversationFeaturePinCloudSyncKey;
+
+  static const all = <String>[
+    share,
+    groupChat,
+    rename,
+    archive,
+    delete,
+    pinCloudSync,
+  ];
+}
+
+class ConversationFeatureFlags {
+  const ConversationFeatureFlags({
+    required this.values,
+    this.loaded = false,
+    this.message = '该功能暂未开放，请联系管理员开启。',
+    this.source = '',
+    this.statusCode,
+    this.contentType = '',
+    this.error,
+  });
+
+  const ConversationFeatureFlags.disabled({
+    this.message = '该功能暂未开放，请联系管理员开启。',
+    this.source = '',
+    this.statusCode,
+    this.contentType = '',
+    this.error,
+  })  : values = disabledValues,
+        loaded = false;
+
+  static const disabledValues = conversationFeatureDisabledValues;
+
+  final Map<String, bool> values;
+  final bool loaded;
+  final String message;
+  final String source;
+  final int? statusCode;
+  final String contentType;
+  final String? error;
+
+  bool isEnabled(String key) => values[key] == true;
+}
+
+class _ConversationFeatureHttpResult {
+  const _ConversationFeatureHttpResult({
+    required this.data,
+    required this.statusCode,
+    required this.contentType,
+  });
+
+  final Map<String, dynamic> data;
+  final int statusCode;
+  final String contentType;
+}
+
+class _ConversationFeatureLoadFailure implements Exception {
+  const _ConversationFeatureLoadFailure({
+    required this.source,
+    required this.reason,
+    this.statusCode,
+    this.contentType = '',
+  });
+
+  final String source;
+  final String reason;
+  final int? statusCode;
+  final String contentType;
+
+  @override
+  String toString() => reason;
+}
+
 class ApiService {
   static const supportedChatModels = ['gpt', 'deepseek', 'qwen'];
+  static const _maxUploadSizeMb = 300;
   static const _uploadTimeout = Duration(minutes: 5);
+  static const _conversationFeaturePath = '/api/user/conversation-features';
+  static const _conversationFeatureTimeout = Duration(seconds: 8);
+  static const _conversationActionTimeout = Duration(seconds: 15);
 
   ApiService({
     required this.baseUrl,
@@ -281,15 +398,20 @@ class ApiService {
   }
 
   String _messageFromEnvelope(Map<String, dynamic> envelope, String fallback) {
+    final code = envelope['code'];
+    if (code == 'FILE_TOO_LARGE') {
+      return '文件太大，单个附件不能超过 ${_maxUploadSizeMb}MB';
+    }
+
     final error = envelope['error'];
     if (error is Map && error['message'] is String) {
       return error['message'] as String;
     }
-    if (error is String && error.isNotEmpty) {
-      return error;
-    }
     if (envelope['message'] is String) {
       return envelope['message'] as String;
+    }
+    if (error is String && error.isNotEmpty) {
+      return error;
     }
     return fallback;
   }
@@ -340,6 +462,597 @@ class ApiService {
     return _unwrap(response);
   }
 
+  Future<Map<String, dynamic>> _requestConversationAction({
+    required String action,
+    required String method,
+    required String path,
+    required String conversationId,
+    Map<String, dynamic> body = const {},
+    String unauthenticatedMessage = '请先登录后再操作',
+    String forbiddenMessage = '无权限执行该操作',
+    String notFoundMessage = '操作接口未部署',
+    String methodNotAllowedMessage = '操作接口未接入',
+    String timeoutMessage = '网络异常，请稍后重试',
+    String invalidJsonMessage = '接口返回异常',
+  }) async {
+    debugPrint(
+      '[conversation-action] $action start conversationId=$conversationId',
+    );
+
+    late final http.Response response;
+    try {
+      final uri = _uri(path);
+      final headers = _headers(json: method != 'DELETE');
+      response = switch (method) {
+        'POST' => await _client
+            .post(uri, headers: headers, body: jsonEncode(body))
+            .timeout(_conversationActionTimeout),
+        'PATCH' => await _client
+            .patch(uri, headers: headers, body: jsonEncode(body))
+            .timeout(_conversationActionTimeout),
+        'DELETE' => await _client
+            .delete(uri, headers: _headers(json: false))
+            .timeout(_conversationActionTimeout),
+        _ => throw const ApiException('操作接口未接入', statusCode: 405),
+      };
+    } on ApiException catch (error) {
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${error.statusCode ?? ''} reason=${error.message}',
+      );
+      rethrow;
+    } on TimeoutException {
+      debugPrint(
+        '[conversation-action] $action failed status= reason=$timeoutMessage',
+      );
+      throw ApiException(timeoutMessage);
+    } catch (error) {
+      const message = '网络异常，请稍后重试';
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status= reason=$message detail=$error',
+      );
+      throw const ApiException(message);
+    }
+
+    debugPrint(
+      '[conversation-action] $action response status=${response.statusCode}',
+    );
+    _captureCookie(response);
+
+    late final Map<String, dynamic> envelope;
+    try {
+      envelope = _conversationActionEnvelope(
+        response,
+        strictJson: response.statusCode >= 200 && response.statusCode < 300,
+        invalidJsonMessage: invalidJsonMessage,
+      );
+    } on ApiException catch (error) {
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${error.statusCode ?? response.statusCode} '
+        'reason=${error.message}',
+      );
+      rethrow;
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      final reason = _conversationActionFailureMessage(
+        response.statusCode,
+        envelope,
+        unauthenticatedMessage: unauthenticatedMessage,
+        forbiddenMessage: forbiddenMessage,
+        notFoundMessage: notFoundMessage,
+        methodNotAllowedMessage: methodNotAllowedMessage,
+      );
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${response.statusCode} '
+        'code=${_conversationActionErrorCode(envelope)} '
+        'reason=$reason',
+      );
+      final code = _conversationActionErrorCode(envelope);
+      throw ApiException(
+        reason,
+        statusCode: response.statusCode,
+        code: code.isEmpty ? null : code,
+      );
+    }
+
+    if (envelope['ok'] == false || envelope['success'] == false) {
+      final reason = _messageFromEnvelope(envelope, '操作失败，请稍后重试');
+      debugPrint(
+        '[conversation-action] $action failed '
+        'status=${response.statusCode} '
+        'code=${_conversationActionErrorCode(envelope)} '
+        'reason=$reason',
+      );
+      final code = _conversationActionErrorCode(envelope);
+      throw ApiException(
+        reason,
+        statusCode: response.statusCode,
+        code: code.isEmpty ? null : code,
+      );
+    }
+
+    final data = envelope['data'];
+    debugPrint('[conversation-action] $action success');
+    return data is Map ? _asMap(data) : envelope;
+  }
+
+  Map<String, dynamic> _conversationActionEnvelope(
+    http.Response response, {
+    required bool strictJson,
+    required String invalidJsonMessage,
+  }) {
+    if (response.body.trim().isEmpty) {
+      return <String, dynamic>{};
+    }
+
+    if (!strictJson && _looksLikeHtml(response)) {
+      return <String, dynamic>{};
+    }
+
+    try {
+      return _asMap(_jsonBody(response));
+    } on ApiException catch (error) {
+      if (!strictJson) {
+        return <String, dynamic>{};
+      }
+      throw ApiException(
+        invalidJsonMessage,
+        statusCode: error.statusCode,
+        debugDetails: error.debugDetails,
+      );
+    } catch (error) {
+      if (!strictJson) {
+        return <String, dynamic>{};
+      }
+      throw ApiException(
+        invalidJsonMessage,
+        statusCode: response.statusCode,
+        debugDetails: error.toString(),
+      );
+    }
+  }
+
+  String _conversationActionFailureMessage(
+    int statusCode,
+    Map<String, dynamic> envelope, {
+    required String unauthenticatedMessage,
+    required String forbiddenMessage,
+    required String notFoundMessage,
+    required String methodNotAllowedMessage,
+  }) {
+    return conversationActionFailureMessage(
+      statusCode,
+      envelope,
+      unauthenticatedMessage: unauthenticatedMessage,
+      forbiddenMessage: forbiddenMessage,
+      notFoundMessage: notFoundMessage,
+      methodNotAllowedMessage: methodNotAllowedMessage,
+    );
+  }
+
+  String _conversationActionErrorCode(Map<String, dynamic> envelope) {
+    final topLevelCode = _conversationActionStringValue(envelope['code']);
+    if (topLevelCode.isNotEmpty) {
+      return topLevelCode;
+    }
+    final error = envelope['error'];
+    if (error is Map) {
+      final nestedCode = _conversationActionStringValue(error['code']);
+      if (nestedCode.isNotEmpty) {
+        return nestedCode;
+      }
+    }
+    return '';
+  }
+
+  String _conversationActionStringValue(Object? value) {
+    if (value is String) {
+      return value.trim();
+    }
+    if (value is num || value is bool) {
+      return value.toString();
+    }
+    return '';
+  }
+
+  String _conversationActionPath(String conversationId, String action) {
+    final encodedId = Uri.encodeComponent(conversationId);
+    return '/api/user/conversations/$encodedId/$action';
+  }
+
+  String _firstConversationActionUrl(
+    Object? value,
+    List<String> keys, {
+    int depth = 0,
+  }) {
+    return extractConversationActionUrl(value, keys, depth: depth);
+  }
+
+  bool _isMissingConversationActionEndpoint(ApiException error) {
+    return error.statusCode == 404 || error.statusCode == 405;
+  }
+
+  Future<_ConversationFeatureHttpResult> _getConversationFeatureJson(
+    String path,
+  ) async {
+    debugPrint('[conversation-features] request start: $path');
+
+    late final http.Response response;
+    try {
+      response = await _client
+          .get(
+            _uri(path),
+            headers: _headers(json: false),
+          )
+          .timeout(_conversationFeatureTimeout);
+    } on TimeoutException catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        reason: 'timeout: $error',
+      );
+    } catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        reason: error.toString(),
+      );
+    }
+
+    _captureCookie(response);
+    final contentType = _contentType(response);
+    debugPrint(
+        '[conversation-features] response status=${response.statusCode}');
+    debugPrint('[conversation-features] response contentType=$contentType');
+
+    late final Map<String, dynamic> envelope;
+    try {
+      envelope = _asMap(_jsonBody(response));
+    } on ApiException catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: error.message,
+      );
+    } catch (error) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: error.toString(),
+      );
+    }
+
+    final rawKeys = envelope.keys.map((key) => key.toString()).toList();
+    debugPrint('[conversation-features] raw keys=${rawKeys.join(',')}');
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: _messageFromEnvelope(envelope, 'Request failed.'),
+      );
+    }
+
+    if (envelope['ok'] == false || envelope['success'] == false) {
+      throw _ConversationFeatureLoadFailure(
+        source: path,
+        statusCode: response.statusCode,
+        contentType: contentType,
+        reason: _messageFromEnvelope(envelope, 'Request failed.'),
+      );
+    }
+
+    final data = envelope['data'];
+    return _ConversationFeatureHttpResult(
+      data: data is Map ? _asMap(data) : envelope,
+      statusCode: response.statusCode,
+      contentType: contentType,
+    );
+  }
+
+  Future<ConversationFeatureFlags> getConversationFeatureFlags() async {
+    if (mockMode) {
+      return const ConversationFeatureFlags.disabled();
+    }
+
+    try {
+      final result = await _getConversationFeatureJson(
+        _conversationFeaturePath,
+      );
+      final flags = _conversationFeatureFlagsFrom(
+        result.data,
+        source: _conversationFeaturePath,
+        statusCode: result.statusCode,
+        contentType: result.contentType,
+      );
+      _debugConversationFeatureFlags(flags);
+      return flags;
+    } on _ConversationFeatureLoadFailure catch (error) {
+      debugPrint(
+        '[conversation-features] load failed\n'
+        'source=${error.source}\n'
+        'status=${error.statusCode ?? ''}\n'
+        'contentType=${error.contentType}\n'
+        'reason=${error.reason}\n'
+        'fallback=all disabled',
+      );
+      if (error.statusCode == 401 || error.statusCode == 403) {
+        return ConversationFeatureFlags.disabled(
+          message: '请先登录后再使用该功能。',
+          source: error.source,
+          statusCode: error.statusCode,
+          contentType: error.contentType,
+          error: error.reason,
+        );
+      }
+      return ConversationFeatureFlags.disabled(
+        source: error.source,
+        statusCode: error.statusCode,
+        contentType: error.contentType,
+        error: error.reason,
+      );
+    } catch (error) {
+      debugPrint(
+        '[conversation-features] load failed\n'
+        'source=$_conversationFeaturePath\n'
+        'status=\n'
+        'contentType=\n'
+        'reason=$error\n'
+        'fallback=all disabled',
+      );
+      return ConversationFeatureFlags.disabled(
+        source: _conversationFeaturePath,
+        error: error.toString(),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>> shareConversation(String conversationId) async {
+    if (mockMode) {
+      throw const ApiException('分享接口未部署', statusCode: 404);
+    }
+    final data = await _requestConversationAction(
+      action: 'share',
+      method: 'POST',
+      path: _conversationActionPath(conversationId, 'share'),
+      conversationId: conversationId,
+      forbiddenMessage: '无权限分享该会话',
+      notFoundMessage: '分享接口未部署',
+      methodNotAllowedMessage: '分享接口未接入',
+      timeoutMessage: '分享请求超时，请稍后重试',
+      invalidJsonMessage: '分享接口返回异常',
+    );
+    final link = _firstConversationActionUrl(data, const [
+      'shareUrl',
+      'share_url',
+      'shareLink',
+      'share_link',
+      'link',
+      'url',
+    ]);
+    debugPrint(
+      '[conversation-action] share parsed link exists=${link.isNotEmpty}',
+    );
+    return data;
+  }
+
+  Future<Map<String, dynamic>> startConversationGroupChat(
+    String conversationId,
+  ) async {
+    if (mockMode) {
+      throw const ApiException('群聊接口未部署', statusCode: 404);
+    }
+    final data = await _requestConversationAction(
+      action: 'group-chat',
+      method: 'POST',
+      path: _conversationActionPath(conversationId, 'group-chat'),
+      conversationId: conversationId,
+      forbiddenMessage: '无权限创建群聊',
+      notFoundMessage: '群聊接口未部署',
+      methodNotAllowedMessage: '群聊接口未接入',
+      timeoutMessage: '创建群聊链接超时，请稍后重试',
+      invalidJsonMessage: '群聊接口返回异常',
+    );
+    final inviteUrl = _firstConversationActionUrl(data, const [
+      'inviteUrl',
+      'invite_url',
+      'inviteLink',
+      'invite_link',
+      'groupLink',
+      'group_link',
+      'groupChatLink',
+      'group_chat_link',
+      'shareUrl',
+      'share_url',
+      'link',
+      'url',
+      'joinUrl',
+      'join_url',
+      'joinLink',
+      'join_link',
+    ]);
+    debugPrint(
+      '[conversation-action] group-chat parsed inviteUrl '
+      'exists=${inviteUrl.isNotEmpty}',
+    );
+    return data;
+  }
+
+  Future<Map<String, dynamic>> resetConversationGroupChatLink(
+    String conversationId,
+  ) async {
+    if (mockMode) {
+      throw const ApiException('重置链接接口未接入', statusCode: 404);
+    }
+
+    try {
+      final data = await _requestConversationAction(
+        action: 'group-chat reset-link',
+        method: 'POST',
+        path: _conversationActionPath(conversationId, 'group-chat/reset-link'),
+        conversationId: conversationId,
+        notFoundMessage: '重置链接接口未接入',
+        methodNotAllowedMessage: '重置链接接口未接入',
+      );
+      debugPrint('[conversation-action] group-chat reset-link success');
+      return data;
+    } on ApiException catch (firstError) {
+      if (!_isMissingConversationActionEndpoint(firstError)) {
+        debugPrint(
+          '[conversation-action] group-chat reset-link failed '
+          'status=${firstError.statusCode ?? ''} reason=${firstError.message}',
+        );
+        rethrow;
+      }
+    }
+
+    try {
+      final data = await _requestConversationAction(
+        action: 'group-chat reset-link',
+        method: 'PATCH',
+        path: _conversationActionPath(conversationId, 'group-chat/link'),
+        conversationId: conversationId,
+        notFoundMessage: '重置链接接口未接入',
+        methodNotAllowedMessage: '重置链接接口未接入',
+      );
+      debugPrint('[conversation-action] group-chat reset-link success');
+      return data;
+    } on ApiException catch (error) {
+      final message = _isMissingConversationActionEndpoint(error)
+          ? '重置链接接口未接入'
+          : error.message;
+      debugPrint(
+        '[conversation-action] group-chat reset-link failed '
+        'status=${error.statusCode ?? ''} reason=$message',
+      );
+      throw ApiException(message, statusCode: error.statusCode);
+    }
+  }
+
+  Future<void> deleteConversationGroupChatLink(String conversationId) async {
+    if (mockMode) {
+      throw const ApiException('删除链接接口未接入', statusCode: 404);
+    }
+
+    try {
+      await _requestConversationAction(
+        action: 'group-chat delete-link',
+        method: 'DELETE',
+        path: _conversationActionPath(conversationId, 'group-chat/link'),
+        conversationId: conversationId,
+        notFoundMessage: '删除链接接口未接入',
+        methodNotAllowedMessage: '删除链接接口未接入',
+      );
+      debugPrint('[conversation-action] group-chat delete-link success');
+      return;
+    } on ApiException catch (firstError) {
+      if (!_isMissingConversationActionEndpoint(firstError)) {
+        debugPrint(
+          '[conversation-action] group-chat delete-link failed '
+          'status=${firstError.statusCode ?? ''} reason=${firstError.message}',
+        );
+        rethrow;
+      }
+    }
+
+    try {
+      await _requestConversationAction(
+        action: 'group-chat delete-link',
+        method: 'DELETE',
+        path: _conversationActionPath(conversationId, 'group-chat'),
+        conversationId: conversationId,
+        notFoundMessage: '删除链接接口未接入',
+        methodNotAllowedMessage: '删除链接接口未接入',
+      );
+      debugPrint('[conversation-action] group-chat delete-link success');
+    } on ApiException catch (error) {
+      final message = _isMissingConversationActionEndpoint(error)
+          ? '删除链接接口未接入'
+          : error.message;
+      debugPrint(
+        '[conversation-action] group-chat delete-link failed '
+        'status=${error.statusCode ?? ''} reason=$message',
+      );
+      throw ApiException(message, statusCode: error.statusCode);
+    }
+  }
+
+  Future<Map<String, dynamic>> renameConversation({
+    required String conversationId,
+    required String title,
+  }) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'rename',
+      method: 'PATCH',
+      path: _conversationActionPath(conversationId, 'rename'),
+      conversationId: conversationId,
+      body: {'title': title},
+    );
+  }
+
+  Future<Map<String, dynamic>> archiveConversation(String conversationId) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'archive',
+      method: 'PATCH',
+      path: _conversationActionPath(conversationId, 'archive'),
+      conversationId: conversationId,
+    );
+  }
+
+  Future<Map<String, dynamic>> deleteConversation(String conversationId) {
+    if (mockMode) {
+      throw const ApiException('操作接口未部署', statusCode: 404);
+    }
+    return _requestConversationAction(
+      action: 'delete',
+      method: 'DELETE',
+      path: '/api/user/conversations/${Uri.encodeComponent(conversationId)}',
+      conversationId: conversationId,
+    );
+  }
+
+  ConversationFeatureFlags _conversationFeatureFlagsFrom(
+    Map<String, dynamic> data, {
+    required String source,
+    required int statusCode,
+    required String contentType,
+  }) {
+    final values = parseConversationFeatureValues(data);
+
+    final message = conversationFeatureMessage(data);
+    return ConversationFeatureFlags(
+      values: values,
+      loaded: true,
+      message: message.isEmpty ? '该功能暂未开放，请联系管理员开启。' : message,
+      source: source,
+      statusCode: statusCode,
+      contentType: contentType,
+    );
+  }
+
+  void _debugConversationFeatureFlags(ConversationFeatureFlags flags) {
+    debugPrint(
+      '[conversation-features] parsed '
+      'share=${flags.isEnabled(ConversationFeatureKeys.share)} '
+      'groupChat=${flags.isEnabled(ConversationFeatureKeys.groupChat)} '
+      'rename=${flags.isEnabled(ConversationFeatureKeys.rename)} '
+      'archive=${flags.isEnabled(ConversationFeatureKeys.archive)} '
+      'delete=${flags.isEnabled(ConversationFeatureKeys.delete)} '
+      'pinCloudSync=${flags.isEnabled(ConversationFeatureKeys.pinCloudSync)} '
+      'source=${flags.source}',
+    );
+  }
+
   Future<Map<String, dynamic>> login({
     required String phone,
     required String password,
@@ -353,7 +1066,7 @@ class ApiService {
           'phone': phone,
           'name': phone.isEmpty ? '当前用户' : phone,
         },
-        'licenseActivated': true,
+        'licenseActivated': false,
       });
     }
 
@@ -377,7 +1090,7 @@ class ApiService {
           'phone': phone,
           'name': name.isEmpty ? '当前用户' : name,
         },
-        'licenseActivated': true,
+        'licenseActivated': false,
       });
     }
 
@@ -390,17 +1103,87 @@ class ApiService {
 
   Future<Map<String, dynamic>> redeemLicense(String licenseKey) {
     if (mockMode) {
-      return Future.value({
-        'license': {
-          'key': licenseKey,
-          'status': 'active',
-        },
-      });
+      throw const ApiException('卡密验证服务未接入，请联系超级管理员');
     }
 
     return _postJson('/api/license/redeem', {
       'licenseKey': licenseKey,
     });
+  }
+
+  Future<LicenseStatusResult> licenseStatus({
+    Map<String, dynamic>? authData,
+  }) async {
+    if (mockMode) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+      );
+    }
+
+    final authStatus = _licenseStatusFromEnvelope(authData);
+    if (authStatus.status != LicenseStatus.unknown) {
+      return authStatus;
+    }
+
+    try {
+      final userData = await currentUser();
+      final userStatus = _licenseStatusFromEnvelope(userData);
+      if (userStatus.status != LicenseStatus.unknown) {
+        return userStatus;
+      }
+      return LicenseStatusResult(
+        status: LicenseStatus.unknown,
+        message: _licenseMessageFromData(userData) ?? '请先完成卡密激活',
+        raw: userData,
+      );
+    } on ApiException catch (error) {
+      return _licenseStatusFromError(error);
+    } catch (error) {
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: {'error': error.toString()},
+      );
+    }
+  }
+
+  Future<LicenseStatusResult> activateLicense(String licenseKey) async {
+    final normalizedKey = licenseKey.trim();
+    if (normalizedKey.isEmpty) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.invalid,
+        message: '请输入卡密',
+      );
+    }
+
+    if (mockMode) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+      );
+    }
+
+    try {
+      final data = await redeemLicense(normalizedKey);
+      final status = _licenseStatusFromEnvelope(data);
+      if (status.status != LicenseStatus.unknown) {
+        return status;
+      }
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: data,
+      );
+    } on ApiException catch (error) {
+      return _licenseStatusFromError(error);
+    } catch (error) {
+      return LicenseStatusResult(
+        status: LicenseStatus.serviceUnavailable,
+        message: '卡密验证服务未接入，请联系超级管理员',
+        raw: {'error': error.toString()},
+      );
+    }
   }
 
   Future<Map<String, dynamic>> currentUser() {
@@ -415,6 +1198,232 @@ class ApiService {
     }
 
     return _getJson('/api/auth/me').then(_rememberUser);
+  }
+
+  LicenseStatusResult _licenseStatusFromEnvelope(Map<String, dynamic>? data) {
+    if (data == null || data.isEmpty) {
+      return const LicenseStatusResult(
+        status: LicenseStatus.unknown,
+        message: '请先完成卡密激活',
+      );
+    }
+
+    final message = _licenseMessageFromData(data) ?? '请先完成卡密激活';
+    final status = _readLicenseStatus(data);
+    if (status == LicenseStatus.unknown) {
+      return LicenseStatusResult(status: status, message: message, raw: data);
+    }
+    return LicenseStatusResult(
+      status: status,
+      message: _messageForLicenseStatus(status, fallback: message),
+      raw: data,
+    );
+  }
+
+  LicenseStatus _readLicenseStatus(Map<String, dynamic> data) {
+    for (final key in const [
+      'licenseActivated',
+      'license_activated',
+      'activationActivated',
+      'activation_activated',
+      'cardActivated',
+      'card_activated',
+      'isLicenseActive',
+      'is_license_active',
+      'isActivated',
+      'is_activated',
+    ]) {
+      final value = data[key];
+      if (value is bool) {
+        return value ? LicenseStatus.active : LicenseStatus.inactive;
+      }
+    }
+
+    for (final key in const [
+      'licenseStatus',
+      'license_status',
+      'activationStatus',
+      'activation_status',
+      'cardStatus',
+      'card_status',
+      'licenseState',
+      'license_state',
+      'activationState',
+      'activation_state',
+    ]) {
+      final status = _licenseStatusFromValue(data[key]);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+    }
+
+    for (final key in const ['license', 'activation', 'card', 'subscription']) {
+      final nested = _asMap(data[key]);
+      if (nested.isEmpty) {
+        continue;
+      }
+      final status = _readLicenseStatus(nested);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+      final nestedStatus = _licenseStatusFromValue(nested['status']);
+      if (nestedStatus != LicenseStatus.unknown) {
+        return nestedStatus;
+      }
+    }
+
+    for (final key in const ['user', 'profile', 'data']) {
+      final nested = _asMap(data[key]);
+      if (nested.isEmpty || identical(nested, data)) {
+        continue;
+      }
+      final status = _readLicenseStatus(nested);
+      if (status != LicenseStatus.unknown) {
+        return status;
+      }
+    }
+
+    return LicenseStatus.unknown;
+  }
+
+  LicenseStatus _licenseStatusFromValue(Object? value) {
+    if (value is bool) {
+      return value ? LicenseStatus.active : LicenseStatus.inactive;
+    }
+    final text = value?.toString().trim().toLowerCase() ?? '';
+    if (text.isEmpty) {
+      return LicenseStatus.unknown;
+    }
+    final normalized = text.replaceAll(RegExp(r'[\s_-]+'), '');
+
+    if (normalized.contains('expired') || normalized.contains('过期')) {
+      return LicenseStatus.expired;
+    }
+    if (normalized.contains('disabled') ||
+        normalized.contains('banned') ||
+        normalized.contains('suspended') ||
+        normalized.contains('禁用') ||
+        normalized.contains('停用')) {
+      return LicenseStatus.disabled;
+    }
+    if (normalized.contains('used') ||
+        normalized.contains('redeemed') ||
+        normalized.contains('bound') ||
+        normalized.contains('已使用') ||
+        normalized.contains('已绑定')) {
+      return LicenseStatus.used;
+    }
+    if (normalized.contains('invalid') ||
+        normalized.contains('notfound') ||
+        normalized.contains('notexist') ||
+        normalized.contains('无效') ||
+        normalized.contains('不存在')) {
+      return LicenseStatus.invalid;
+    }
+    if (normalized.contains('unavailable') ||
+        normalized.contains('notimplemented') ||
+        normalized.contains('未接入')) {
+      return LicenseStatus.serviceUnavailable;
+    }
+    if (normalized.contains('inactive') ||
+        normalized.contains('unactivated') ||
+        normalized.contains('pending') ||
+        normalized.contains('required') ||
+        normalized.contains('未激活') ||
+        normalized.contains('待激活')) {
+      return LicenseStatus.inactive;
+    }
+    if (normalized.contains('active') ||
+        normalized.contains('activated') ||
+        normalized.contains('valid') ||
+        normalized.contains('已激活') ||
+        normalized.contains('有效')) {
+      return LicenseStatus.active;
+    }
+
+    return LicenseStatus.unknown;
+  }
+
+  LicenseStatusResult _licenseStatusFromError(ApiException error) {
+    final status = _licenseStatusFromValue(error.message);
+    if (status != LicenseStatus.unknown) {
+      return LicenseStatusResult(
+        status: status,
+        message: _messageForLicenseStatus(status, fallback: error.message),
+        raw: {
+          'message': error.message,
+          if (error.statusCode != null) 'statusCode': error.statusCode,
+          if (error.debugDetails != null) 'debugDetails': error.debugDetails,
+        },
+      );
+    }
+
+    final mappedStatus = switch (error.statusCode) {
+      400 => LicenseStatus.invalid,
+      401 => LicenseStatus.inactive,
+      403 => LicenseStatus.disabled,
+      404 => LicenseStatus.serviceUnavailable,
+      409 => LicenseStatus.used,
+      410 => LicenseStatus.expired,
+      501 || 503 => LicenseStatus.serviceUnavailable,
+      _ => LicenseStatus.serviceUnavailable,
+    };
+    return LicenseStatusResult(
+      status: mappedStatus,
+      message: _messageForLicenseStatus(mappedStatus, fallback: error.message),
+      raw: {
+        'message': error.message,
+        if (error.statusCode != null) 'statusCode': error.statusCode,
+        if (error.debugDetails != null) 'debugDetails': error.debugDetails,
+      },
+    );
+  }
+
+  String? _licenseMessageFromData(Map<String, dynamic> data) {
+    for (final key in const ['message', 'reason', 'error', 'detail']) {
+      final value = data[key];
+      if (value is String && value.trim().isNotEmpty) {
+        return value.trim();
+      }
+      if (value is Map) {
+        final nested = _licenseMessageFromData(
+          value.map((key, item) => MapEntry(key?.toString() ?? '', item)),
+        );
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+
+    for (final key in const ['license', 'activation', 'card', 'user', 'data']) {
+      final value = data[key];
+      if (value is Map) {
+        final nested = _licenseMessageFromData(
+          value.map((key, item) => MapEntry(key?.toString() ?? '', item)),
+        );
+        if (nested != null) {
+          return nested;
+        }
+      }
+    }
+    return null;
+  }
+
+  String _messageForLicenseStatus(
+    LicenseStatus status, {
+    required String fallback,
+  }) {
+    return switch (status) {
+      LicenseStatus.active => '激活成功',
+      LicenseStatus.inactive => '请先完成卡密激活',
+      LicenseStatus.expired => '卡密已过期',
+      LicenseStatus.disabled => '卡密已禁用',
+      LicenseStatus.invalid => '卡密无效',
+      LicenseStatus.used => '卡密已使用',
+      LicenseStatus.serviceUnavailable => '卡密验证服务未接入，请联系超级管理员',
+      LicenseStatus.checking => '正在验证卡密...',
+      LicenseStatus.unknown => fallback,
+    };
   }
 
   Future<Map<String, dynamic>> changePassword({
@@ -607,8 +1616,11 @@ class ApiService {
       return _normalizeAttachmentEnvelope(_unwrap(response));
     } on ApiException catch (error) {
       debugPrint('Attachment upload failed:\n$debugDetails');
+      final message = error.statusCode == 413 || error.message.contains('不能超过')
+          ? '文件太大，单个附件不能超过 ${_maxUploadSizeMb}MB'
+          : error.message;
       throw ApiException(
-        error.message,
+        message,
         statusCode: error.statusCode,
         debugDetails: error.debugDetails ?? debugDetails,
       );
