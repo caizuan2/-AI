@@ -57,7 +57,13 @@
     "admin:ios": "node scripts/run-macos-packaging-script.cjs ios scripts/build-ios-admin-ipa.sh",
     "admin:macos": "node scripts/run-macos-packaging-script.cjs macos scripts/build-admin-macos-dmg.sh",
     "installers:copy": "powershell -ExecutionPolicy Bypass -File scripts/copy-mobile-desktop-installers-to-public.ps1",
-    "admin:copy-installers": "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1"
+    "admin:copy-installers": "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1",
+    "admin-ingest:desktop:dev": "electron electron/admin-ingest/main.js",
+    "admin-ingest:desktop:open": "electron electron/admin-ingest/main.js",
+    "admin-ingest:desktop:build": "electron-builder --config electron/admin-ingest/electron-builder.yml --win portable",
+    "admin-ingest:smoke:web": "node scripts/admin-ingest-smoke.mjs",
+    "admin-ingest:smoke:exe": "node scripts/admin-ingest-exe-smoke.mjs",
+    "admin-ingest:smoke": "npm run admin-ingest:smoke:web && npm run admin-ingest:smoke:exe"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -42,7 +42,7 @@ async function readApiData<T>(response: Response): Promise<T> {
 export function IngestTenantSummary({ compact = false }: { compact?: boolean }) {
   const [analytics, setAnalytics] = useState<TenantAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
-  const [errorMessage, setErrorMessage] = useState("");
+  const [statusMessage, setStatusMessage] = useState("本地预览模式，登录后将同步企业知识库。");
 
   useEffect(() => {
     let cancelled = false;
@@ -54,11 +54,11 @@ export function IngestTenantSummary({ compact = false }: { compact?: boolean }) 
 
         if (!cancelled) {
           setAnalytics(data);
-          setErrorMessage("");
+          setStatusMessage("本地预览模式，登录后将同步企业知识库。");
         }
-      } catch (error) {
+      } catch {
         if (!cancelled) {
-          setErrorMessage(error instanceof Error ? error.message : "企业上下文加载失败。");
+          setStatusMessage("本地预览模式，登录后将同步企业知识库。");
         }
       } finally {
         if (!cancelled) {
@@ -85,8 +85,8 @@ export function IngestTenantSummary({ compact = false }: { compact?: boolean }) 
 
   if (!analytics) {
     return (
-      <div className="rounded-2xl bg-[#fff6f7] px-3 py-2 text-xs font-semibold text-[#b93b4a]">
-        {errorMessage || "企业空间未连接"}
+      <div className="rounded-2xl bg-[#f1f1ef] px-3 py-2 text-xs font-medium text-[#777]">
+        {statusMessage}
       </div>
     );
   }

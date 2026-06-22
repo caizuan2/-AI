@@ -1,0 +1,29 @@
+{
+  "appId": "ingest-admin",
+  "appName": "AI知识库投喂端",
+  "syncTarget": ["web", "exe", "apk"],
+  "entries": {
+    "web": "/admin-ingest?app=ingest-admin&platform=web",
+    "exe": "http://localhost:3015/admin-ingest?app=ingest-admin&platform=exe",
+    "apk": "http://10.0.2.2:3015/admin-ingest?app=ingest-admin&platform=apk"
+  },
+  "desktop": {
+    "sessionPartition": "persist:admin-ingest",
+    "window": {
+      "title": "AI知识库投喂端",
+      "width": 1280,
+      "height": 820,
+      "minWidth": 1100,
+      "minHeight": 720
+    }
+  },
+  "android": {
+    "packageId": "com.aiknowledge.ingestadmin",
+    "webView": {
+      "javaScript": true,
+      "domStorage": true,
+      "cookies": true,
+      "fileUploadChooser": true
+    }
+  }
+}
