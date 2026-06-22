@@ -19,6 +19,11 @@ import type {
   AutonomousTaskRequest
 } from "@/lib/enterprise/gpt-os-autonomous-executor";
 import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import {
+  conversationalVersion,
+  enhanceGPTStyle,
+  naturalLanguageFirst
+} from "@/lib/enterprise/gpt-os-style-layer";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -121,6 +126,10 @@ function toGptFallbackErrorCode(error: unknown) {
     return "OPENAI_BASE_URL_INVALID" as const;
   }
 
+  if (code === "OPENAI_RATE_LIMIT" || message.includes("quota") || message.includes("429") || message.includes("rate limit")) {
+    return "OPENAI_RATE_LIMIT" as const;
+  }
+
   if (code === "DEEPSEEK_BASE_URL_INVALID") {
     return "DEEPSEEK_BASE_URL_INVALID" as const;
   }
@@ -135,6 +144,10 @@ function toGptFallbackErrorCode(error: unknown) {
 
   if (code === "OPENAI_RESPONSES_PARSE_FAILED") {
     return "OPENAI_RESPONSES_PARSE_FAILED" as const;
+  }
+
+  if (code === "OPENAI_FULL_REQUEST_FAILED") {
+    return "OPENAI_FULL_REQUEST_FAILED" as const;
   }
 
   if (code === "DEEPSEEK_RESPONSE_PARSE_FAILED") {
@@ -172,18 +185,21 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
       continue;
     }
 
-    const fileName = readString(item.fileName);
+    const fileName = readString(item.fileName) || readString(item.name);
 
     if (!fileName) {
       continue;
     }
 
+    const fileType = readString(item.fileType) || readString(item.mimeType) || readString(item.type);
+    const mimeType = readString(item.mimeType) || readString(item.fileType) || readString(item.type);
+
     attachments.push({
       fileName,
-      fileType: readString(item.fileType) || readString(item.mimeType) || undefined,
-      mimeType: readString(item.mimeType) || readString(item.fileType) || undefined,
-      fileSize: readPositiveNumber(item.fileSize, item.sizeBytes),
-      sizeBytes: readPositiveNumber(item.sizeBytes, item.fileSize),
+      fileType: fileType || undefined,
+      mimeType: mimeType || undefined,
+      fileSize: readPositiveNumber(item.fileSize, item.sizeBytes, item.size),
+      sizeBytes: readPositiveNumber(item.sizeBytes, item.fileSize, item.size),
       status: readString(item.status) || undefined,
       parseStatus: readString(item.parseStatus) || undefined,
       extractedText: readString(item.extractedText) || undefined,
@@ -317,7 +333,11 @@ function readRequest(body: unknown) {
     throw new ValidationError("请求体必须是 JSON 对象。");
   }
 
-  const input = readString(body.input) || readString(body.content);
+  const input = readString(body.input)
+    || readString(body.content)
+    || readString(body.message)
+    || readString(body.text)
+    || readString(body.question);
 
   if (!input) {
     throw new ValidationError("投喂内容不能为空。");
@@ -414,37 +434,60 @@ export async function POST(request: Request) {
       requestId
     });
 
+    const styledReply = enhanceGPTStyle(result.replyMarkdown, {
+      userInput: input.input
+    });
+    const styledResult = {
+      ...result,
+      replyMarkdown: styledReply.output,
+      diagnostics: [
+        ...result.diagnostics,
+        ...styledReply.diagnostics,
+        `gptStyle:changed:${styledReply.changed ? "true" : "false"}`
+      ]
+    };
+
     return jsonUtf8({
       ok: true,
-      data: result,
+      data: styledResult,
       fallback: false,
-      provider: result.provider,
-      requestedModel: result.requestedModel,
-      actualModel: result.actualModel,
-      responseId: result.responseId,
-      proofId: "proofId" in result ? result.proofId : result.responseId,
-      createdAt: result.createdAt,
-      usage: result.usage,
-      gptProof: result.gptProof,
-      intent: result.intent,
-      fixedTemplateRisk: result.fixedTemplateRisk,
-      qualityPassed: result.gptProof.qualityPassed,
-      deepenAttempts: result.gptProof.deepenAttempts,
-      model: result.model,
-      selectedModelLabel: result.selectedModelLabel,
-      replyMarkdown: result.replyMarkdown,
-      knowledgeDraft: result.knowledgeDraft,
-      userClientCallPlan: result.userClientCallPlan,
-      suggestedQuestions: result.suggestedQuestions,
-      sourceFiles: result.sourceFiles,
-      saveRecommendation: result.saveRecommendation,
-      diagnostics: result.diagnostics,
-      gptOS: result.gptOS,
-      autonomousResult: result.autonomousResult,
-      structuredResult: result.structuredResult,
-      structured: result.structured,
-      sync: result.sync,
-      sourceType: result.sourceType
+      fallbackUsed: false,
+      provider: styledResult.provider,
+      requestedModel: styledResult.requestedModel,
+      actualModel: styledResult.actualModel,
+      responseId: styledResult.responseId,
+      proofId: "proofId" in styledResult ? styledResult.proofId : styledResult.responseId,
+      createdAt: styledResult.createdAt,
+      usage: styledResult.usage,
+      gptProof: styledResult.gptProof,
+      intent: styledResult.intent,
+      fixedTemplateRisk: styledResult.fixedTemplateRisk,
+      qualityPassed: styledResult.gptProof.qualityPassed,
+      deepenAttempts: styledResult.gptProof.deepenAttempts,
+      model: styledResult.model,
+      selectedModelLabel: styledResult.selectedModelLabel,
+      content: styledReply.output,
+      answer: naturalLanguageFirst(result.replyMarkdown, { userInput: input.input }),
+      reply: conversationalVersion(result.replyMarkdown, { userInput: input.input }),
+      replyMarkdown: styledReply.output,
+      knowledgeDraft: styledResult.knowledgeDraft,
+      userClientCallPlan: styledResult.userClientCallPlan,
+      suggestedQuestions: styledResult.suggestedQuestions,
+      sourceFiles: styledResult.sourceFiles,
+      saveRecommendation: styledResult.saveRecommendation,
+      diagnostics: styledResult.diagnostics,
+      gptStyle: {
+        tone: styledReply.tone,
+        structure: styledReply.structure,
+        priority: styledReply.priority,
+        changed: styledReply.changed
+      },
+      gptOS: styledResult.gptOS,
+      autonomousResult: styledResult.autonomousResult,
+      structuredResult: styledResult.structuredResult,
+      structured: styledResult.structured,
+      sync: styledResult.sync,
+      sourceType: styledResult.sourceType
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
@@ -457,6 +500,34 @@ export async function POST(request: Request) {
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
+
+    if (errorCode === "OPENAI_FULL_REQUEST_FAILED") {
+      const diagnostics = error && typeof error === "object" && "details" in error
+        ? (error as { details?: { diagnostics?: unknown } }).details?.diagnostics
+        : undefined;
+      const safeDiagnostics = diagnostics && typeof diagnostics === "object" && !Array.isArray(diagnostics)
+        ? diagnostics as Record<string, unknown>
+        : {};
+      const userMessage = "AI服务暂时未完成，请稍后重试。";
+
+      return jsonUtf8({
+        ok: false,
+        success: false,
+        fallback: true,
+        fallbackUsed: true,
+        errorCode: "OPENAI_FULL_REQUEST_FAILED",
+        userMessage,
+        message: userMessage,
+        provider: modelOption.provider,
+        selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || modelOption.label,
+        model: input.preferredModel,
+        diagnostics: {
+          ...safeDiagnostics,
+          errorCode: "OPENAI_FULL_REQUEST_FAILED"
+        }
+      }, status);
+    }
+
     const fallback = normalizeGptOSFallback({
       error,
       provider: modelOption.provider,

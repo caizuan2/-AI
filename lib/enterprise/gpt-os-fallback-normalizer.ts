@@ -78,6 +78,10 @@ export function classifyGptOSError(error: unknown): GptOSFallbackErrorType {
     return "NETWORK_ERROR";
   }
 
+  if (code.includes("rate_limit") || message.includes("429") || message.includes("quota") || message.includes("rate limit")) {
+    return "MODEL_FAILURE";
+  }
+
   if (code.includes("request_failed") || message.includes("model") || message.includes("模型")) {
     return "MODEL_FAILURE";
   }

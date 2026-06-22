@@ -133,8 +133,14 @@ interface GptIngestResponse {
   gptProof?: GptCallProof;
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
-  fallback?: false;
+  fallback?: boolean;
   selectedModelLabel?: string;
+  content?: string;
+  answer?: string;
+  reply?: string;
+  message?: string | {
+    content?: string;
+  };
   replyMarkdown: string;
   knowledgeDraft?: GptKnowledgeDraft;
   userClientCallPlan?: GptUserClientCallPlan;
@@ -172,13 +178,14 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED";
+  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED";
   message: string;
+  userMessage?: string;
   retryable?: boolean;
   selectedModelLabel?: string;
   model?: string;
   raw?: null;
-  diagnostics?: string[];
+  diagnostics?: unknown;
 }
 
 interface UrlIngestPreviewResponse {
@@ -318,6 +325,24 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function isGptFailureResponse(value: unknown): value is GptFailureResponse {
   return isPlainRecord(value) && value.ok === false;
+}
+
+function readGptResponseContent(data: GptIngestResponse) {
+  const messageContent = typeof data.message === "string"
+    ? data.message
+    : isPlainRecord(data.message)
+      ? readString(data.message.content)
+      : "";
+
+  return readString(data.replyMarkdown)
+    || readString(data.content)
+    || readString(data.answer)
+    || readString(data.reply)
+    || messageContent;
+}
+
+function hasFallbackProof(proof: GptCallProof | undefined) {
+  return (proof as { fallback?: unknown } | undefined)?.fallback === true;
 }
 
 function toRecordTime(value?: string) {
@@ -577,7 +602,7 @@ export async function sendCoreIngest(input: {
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 
     if (isGptFailureResponse(payload)) {
-      throw new Error(sanitizeGptOSUserMessage(payload.message || "AI服务暂时不稳定，请稍后再试。"));
+      throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
 
     if (!response.ok || !payload?.ok || !payload.data) {
@@ -585,12 +610,18 @@ export async function sendCoreIngest(input: {
     }
 
     const data = payload.data;
+    const replyContent = readGptResponseContent(data);
+    const fallbackUsed = data.fallback === true || data.fallbackUsed === true || hasFallbackProof(data.gptProof);
 
-    if (data.fallback !== false || !data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
+    if (!replyContent || fallbackUsed) {
       throw new Error("AI服务暂时不稳定，请稍后再试。");
     }
 
-    const draft = gptResponseToDraft(data, input.text, input.agent);
+    const normalizedData = {
+      ...data,
+      replyMarkdown: data.replyMarkdown || replyContent
+    };
+    const draft = gptResponseToDraft(normalizedData, input.text, input.agent);
 
     draft.jobId = draft.jobId ?? `gpt-${Date.now()}`;
     draft.fallbackUsed = draft.fallbackUsed ?? false;
@@ -609,12 +640,12 @@ export async function sendCoreIngest(input: {
       records,
       preview: false,
       provider: draft.providerUsed ?? modelProvider,
-      model: data.modelDisplayName ?? selectedModelLabel,
-      actualModel: data.actualModel ?? data.model,
-      responseId: data.responseId,
-      usage: data.usage,
-      gptProof: data.gptProof,
-      autonomousResult: data.autonomousResult ?? data.gptOS?.autonomousResult,
+      model: normalizedData.modelDisplayName ?? selectedModelLabel,
+      actualModel: normalizedData.actualModel ?? normalizedData.model,
+      responseId: normalizedData.responseId,
+      usage: normalizedData.usage,
+      gptProof: normalizedData.gptProof,
+      autonomousResult: normalizedData.autonomousResult ?? normalizedData.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
       replyMarkdown: draft.replyMarkdown,
       saveSuggestion: draft.recommendation === "建议入库",

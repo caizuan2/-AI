@@ -21,6 +21,20 @@ export interface NormalizedLLMResponse {
   partial?: boolean;
 }
 
+export interface NormalizedLLMContentResult {
+  ok: true;
+  content: string;
+  provider: GptOSApiProvider;
+  requestedModel: string;
+  actualModel?: string;
+  responseId?: string;
+  usage?: GptOSApiUsage;
+  fallbackUsed: false;
+  rawResponseType: GptOSApiResponseType;
+  normalized: true;
+  parserUsed: "gpt-os-api-adapter";
+}
+
 export interface ResilientCallResult<T> {
   value: T;
   retryCount: number;
@@ -94,6 +108,9 @@ function readTextValue(value: unknown): string[] {
   }
 
   const record = value as Record<string, unknown>;
+  const nestedMessage = record.message && typeof record.message === "object"
+    ? readTextValue(record.message)
+    : [];
   const direct = [
     record.output_text,
     record.text,
@@ -105,7 +122,14 @@ function readTextValue(value: unknown): string[] {
 
     if (item && typeof item === "object" && !Array.isArray(item)) {
       const nested = item as Record<string, unknown>;
-      return typeof nested.value === "string" && nested.value.trim() ? [nested.value.trim()] : [];
+
+      if (typeof nested.value === "string" && nested.value.trim()) {
+        return [nested.value.trim()];
+      }
+
+      if (typeof nested.text === "string" && nested.text.trim()) {
+        return [nested.text.trim()];
+      }
     }
 
     return [];
@@ -113,8 +137,9 @@ function readTextValue(value: unknown): string[] {
 
   const nestedContent = Array.isArray(record.content) ? readTextValue(record.content) : [];
   const nestedOutput = Array.isArray(record.output) ? readTextValue(record.output) : [];
+  const nestedChoices = Array.isArray(record.choices) ? readTextValue(record.choices) : [];
 
-  return [...direct, ...nestedContent, ...nestedOutput];
+  return [...direct, ...nestedContent, ...nestedOutput, ...nestedChoices, ...nestedMessage];
 }
 
 function detectResponseType(response: unknown): GptOSApiResponseType {
@@ -196,6 +221,35 @@ export function normalizeLLMResponse(response: unknown, options: {
     createdAt: normalizeCreatedAt(record.created_at ?? record.created),
     usage: normalizeUsage(record.usage),
     partial: options.allowPartial && (!responseId || !model)
+  };
+}
+
+export function normalizeLLMContentResult(response: unknown, options: {
+  provider: GptOSApiProvider;
+  requestedModel: string;
+  fallbackModel?: string;
+  fallbackResponseId?: string;
+  allowPartial?: boolean;
+}): NormalizedLLMContentResult {
+  const normalized = normalizeLLMResponse(response, {
+    provider: options.provider,
+    fallbackModel: options.fallbackModel ?? options.requestedModel,
+    fallbackResponseId: options.fallbackResponseId,
+    allowPartial: options.allowPartial
+  });
+
+  return {
+    ok: true,
+    content: normalized.text,
+    provider: normalized.provider,
+    requestedModel: options.requestedModel,
+    actualModel: normalized.model,
+    responseId: normalized.responseId,
+    usage: normalized.usage,
+    fallbackUsed: false,
+    rawResponseType: normalized.rawResponseType,
+    normalized: true,
+    parserUsed: normalized.parserUsed
   };
 }
 

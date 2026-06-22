@@ -264,6 +264,14 @@ interface AdminGptIngestResponse {
   gptProof?: GptCallProof;
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
+  fallback?: boolean;
+  fallbackUsed?: boolean;
+  content?: string;
+  answer?: string;
+  reply?: string;
+  message?: string | {
+    content?: string;
+  };
   replyMarkdown: string;
   knowledgeDraft?: {
     title: string;
@@ -314,6 +322,32 @@ async function readApiData<T>(response: Response): Promise<T> {
   }
 
   return payload.data;
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readGptResponseContent(data: AdminGptIngestResponse) {
+  const messageContent = typeof data.message === "string"
+    ? data.message
+    : isPlainRecord(data.message)
+      ? readString(data.message.content)
+      : "";
+
+  return readString(data.replyMarkdown)
+    || readString(data.content)
+    || readString(data.answer)
+    || readString(data.reply)
+    || messageContent;
+}
+
+function hasFallbackProof(proof: GptCallProof | undefined) {
+  return (proof as { fallback?: unknown } | undefined)?.fallback === true;
 }
 
 function getTimeLabel(value?: string) {
@@ -948,8 +982,10 @@ export function IngestChatGPTShell({
         })
       }).finally(() => window.clearTimeout(timeout));
       const data = await readApiData<AdminGptIngestResponse>(response);
+      const replyContent = readGptResponseContent(data);
+      const fallbackUsed = data.fallback === true || data.fallbackUsed === true || hasFallbackProof(data.gptProof);
 
-      if (!data.gptProof || data.gptProof.fallback !== false || (!data.responseId && !data.proofId)) {
+      if (!replyContent || fallbackUsed) {
         throw new Error("AI服务暂时不稳定，请稍后再试。");
       }
 
@@ -1010,7 +1046,7 @@ export function IngestChatGPTShell({
         {
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
-          content: data.replyMarkdown || `GPT 已完成解析：AI解析 → 结构化为「${nextDraft.title}」→ 分类到「${nextDraft.category}」→ 等待保存确认。`,
+          content: data.replyMarkdown || replyContent || `GPT 已完成解析：AI解析 → 结构化为「${nextDraft.title}」→ 分类到「${nextDraft.category}」→ 等待保存确认。`,
           time: getTimeLabel(),
           agentId: activeAgent.id,
           expertId: activeAgent.expertId ?? null,
