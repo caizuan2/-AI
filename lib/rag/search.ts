@@ -18,6 +18,8 @@ export interface RetrievedRagChunk {
   sourceTitle: string | null;
   sourceUrl: string | null;
   score: number;
+  relevance_score: number;
+  chunk_rank: number;
   createdAt: string | null;
 }
 
@@ -298,6 +300,8 @@ function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRa
     sourceTitle: typeof item.sourceTitle === "string" ? item.sourceTitle : null,
     sourceUrl: typeof item.sourceUrl === "string" ? item.sourceUrl : null,
     score,
+    relevance_score: score,
+    chunk_rank: 0,
     createdAt: toIsoString(row.createdAt ?? item.createdAt)
   };
 }
@@ -347,7 +351,10 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
     .filter((item) => item.chunk.chunkId && item.chunk.content && item.score >= MIN_RELEVANT_SCORE)
     .sort((left, right) => right.score - left.score)
     .slice(0, topK)
-    .map((item) => item.chunk);
+    .map((item, index) => ({
+      ...item.chunk,
+      chunk_rank: index + 1,
+    }));
 }
 
 export function buildRagContext(chunks: RetrievedRagChunk[]): RagContext[] {
@@ -364,6 +371,8 @@ export function buildRagContext(chunks: RetrievedRagChunk[]): RagContext[] {
       sourceTitle: chunk.sourceTitle,
       sourceUrl: chunk.sourceUrl,
       score: chunk.score,
+      relevance_score: chunk.relevance_score,
+      chunk_rank: chunk.chunk_rank,
       similarity: chunk.score
     }))
     .filter((context) => context.content);

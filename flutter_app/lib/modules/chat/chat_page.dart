@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/api/api_service.dart';
+import '../../core/api/conversation_actions.dart';
 import '../update/test_update_dialog.dart';
 import '../update/test_update_service.dart';
 import '../update/update_page.dart';
@@ -191,9 +192,10 @@ class _ChatPageState extends State<ChatPage> {
     super.initState();
     _controller = ChatController(apiService: widget.apiService);
     _currentUserFuture = _loadCurrentUser();
-    _currentUserFuture
-        .then((_) => _controller.loadCloudConversations())
-        .catchError((error) {
+    _currentUserFuture.then((_) {
+      unawaited(_controller.loadConversationFeatures(force: true));
+      return _controller.loadCloudConversations();
+    }).catchError((error) {
       debugPrint('Initial cloud conversation sync failed: $error');
     });
     _controller.addListener(_scrollToBottom);
@@ -967,8 +969,18 @@ class _ChatPageState extends State<ChatPage> {
           sending: _controller.sending,
           syncing: _controller.syncing,
           syncError: _controller.lastSyncError,
+          conversationFeatures: _controller.conversationFeatures,
           useOfficialBrand: _useWindowsBrand,
+          onRefreshConversationFeatures: () =>
+              _controller.loadConversationFeatures(force: true),
           onSetConversationPinned: _controller.setConversationPinned,
+          onShareConversation: _controller.shareConversation,
+          onStartGroupChat: _controller.startConversationGroupChat,
+          onResetGroupChatLink: _controller.resetConversationGroupChatLink,
+          onDeleteGroupChatLink: _controller.deleteConversationGroupChatLink,
+          onRenameConversation: _controller.renameConversation,
+          onArchiveConversation: _controller.archiveConversation,
+          onDeleteConversation: _controller.deleteConversation,
           onNewConversation: () {
             _clearComposer();
             _controller.startNewConversation();
@@ -1403,8 +1415,17 @@ class _HistoryDrawer extends StatefulWidget {
     required this.sending,
     required this.syncing,
     required this.syncError,
+    required this.conversationFeatures,
     required this.useOfficialBrand,
+    required this.onRefreshConversationFeatures,
     required this.onSetConversationPinned,
+    required this.onShareConversation,
+    required this.onStartGroupChat,
+    required this.onResetGroupChatLink,
+    required this.onDeleteGroupChatLink,
+    required this.onRenameConversation,
+    required this.onArchiveConversation,
+    required this.onDeleteConversation,
     required this.onNewConversation,
     required this.onOpenConversation,
     required this.onOpenSettings,
@@ -1420,8 +1441,17 @@ class _HistoryDrawer extends StatefulWidget {
   final bool sending;
   final bool syncing;
   final String? syncError;
+  final ConversationFeatureFlags conversationFeatures;
   final bool useOfficialBrand;
+  final Future<void> Function() onRefreshConversationFeatures;
   final bool Function(String id, bool pinned) onSetConversationPinned;
+  final Future<Map<String, dynamic>> Function(String id) onShareConversation;
+  final Future<Map<String, dynamic>> Function(String id) onStartGroupChat;
+  final Future<Map<String, dynamic>> Function(String id) onResetGroupChatLink;
+  final Future<void> Function(String id) onDeleteGroupChatLink;
+  final Future<String> Function(String id, String title) onRenameConversation;
+  final Future<void> Function(String id) onArchiveConversation;
+  final Future<void> Function(String id) onDeleteConversation;
   final VoidCallback onNewConversation;
   final ValueChanged<String> onOpenConversation;
   final VoidCallback onOpenSettings;
@@ -1443,22 +1473,606 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
     super.dispose();
   }
 
+  bool _isFeatureEnabled(String key) {
+    return widget.conversationFeatures.isEnabled(key);
+  }
+
+  void _showUnavailableFeature() {
+    final message = widget.conversationFeatures.message.trim();
+    _showLocalActionHint(
+      context,
+      message.isEmpty ? '该功能暂未开放，请联系管理员开启。' : message,
+      error: true,
+    );
+  }
+
+  void _showActionError(Object error) {
+    final message = _actionErrorMessage(error);
+    _showLocalActionHint(context, message, error: true);
+  }
+
+  String _actionErrorMessage(Object error) {
+    return error is ApiException ? error.message : '网络异常，请稍后重试';
+  }
+
+  Future<void> _showConversationActionResultDialog({
+    required String title,
+    required String message,
+    bool error = false,
+  }) async {
+    final normalizedMessage = message.trim();
+    if (normalizedMessage.isEmpty || !mounted) {
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final iconColor =
+            error ? const Color(0xFFDC2626) : const Color(0xFF2563EB);
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                error ? Icons.error_outline : Icons.info_outline,
+                color: iconColor,
+              ),
+              const SizedBox(width: 10),
+              Expanded(child: Text(title)),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: SelectableText(normalizedMessage),
+          ),
+          actions: [
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('知道了'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showShareFailureDialog(
+    Object error,
+    ChatConversationSummary conversation,
+  ) async {
+    debugPrint('[conversation-action] share dialog open');
+    await _showConversationActionResultDialog(
+      title: '分享失败',
+      message: _shareFailureMessage(error, conversation),
+      error: true,
+    );
+  }
+
+  String _shareFailureMessage(
+    Object error,
+    ChatConversationSummary conversation,
+  ) {
+    final apiError = error is ApiException ? error : null;
+    return buildShareFailureMessage(
+      conversationId: conversation.id,
+      message: _actionErrorMessage(error),
+      statusCode: apiError?.statusCode,
+      code: apiError?.code,
+    );
+  }
+
+  Future<bool> _confirmDeleteConversation(
+    ChatConversationSummary conversation,
+  ) async {
+    debugPrint(
+      '[conversation-action] delete confirm conversationId=${conversation.id}',
+    );
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('删除会话'),
+          content: Text(
+            '确认删除该会话？\n\n'
+            '删除后该会话将从历史列表移除。\n\n'
+            '会话：${conversation.title}',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFDC2626),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('确认删除'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<String?> _promptRenameConversation(
+    ChatConversationSummary conversation,
+  ) async {
+    final controller = TextEditingController(text: conversation.title);
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: const Text('重命名会话'),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              maxLength: 40,
+              decoration: const InputDecoration(
+                labelText: '会话标题',
+                hintText: '请输入新的会话标题',
+              ),
+              onSubmitted: (value) {
+                Navigator.of(dialogContext).pop(value.trim());
+              },
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(dialogContext).pop(controller.text.trim());
+                },
+                child: const Text('保存'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
+  String _firstActionUrl(Object? value, List<String> keys, {int depth = 0}) {
+    return extractConversationActionUrl(value, keys, depth: depth);
+  }
+
+  String _groupChatNoInviteMessage(Map<String, dynamic> data) {
+    return buildGroupChatNoInviteMessage(data);
+  }
+
+  String _shareNoLinkMessage(Map<String, dynamic> data) {
+    return buildShareNoLinkMessage(data);
+  }
+
+  Future<bool> _confirmDeleteGroupLink() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('确认删除群组链接？'),
+          content: const Text('删除后旧链接将无法继续加入群聊。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFDC2626),
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('删除链接'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _showGroupLinkDialog(
+    ChatConversationSummary conversation,
+    String inviteUrl,
+  ) async {
+    var currentLink = inviteUrl;
+    String? notice;
+    String? errorText;
+    var busy = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            Future<void> copyLink() async {
+              if (currentLink.trim().isEmpty) {
+                setDialogState(() {
+                  errorText = '群聊已创建，但邀请链接暂未返回';
+                  notice = null;
+                });
+                return;
+              }
+              await Clipboard.setData(ClipboardData(text: currentLink));
+              debugPrint('[conversation-action] group-chat link copied');
+              setDialogState(() {
+                notice = '已将群组链接复制到剪贴板';
+                errorText = null;
+              });
+            }
+
+            Future<void> resetLink() async {
+              setDialogState(() {
+                busy = true;
+                notice = null;
+                errorText = null;
+              });
+              try {
+                final data = await widget.onResetGroupChatLink(conversation.id);
+                if (!mounted) return;
+                final nextLink = _firstActionUrl(data, const [
+                  'inviteUrl',
+                  'invite_url',
+                  'inviteLink',
+                  'invite_link',
+                  'groupLink',
+                  'group_link',
+                  'groupChatLink',
+                  'group_chat_link',
+                  'shareUrl',
+                  'share_url',
+                  'link',
+                  'url',
+                  'joinUrl',
+                  'join_url',
+                  'joinLink',
+                  'join_link',
+                ]);
+                setDialogState(() {
+                  if (nextLink.isNotEmpty) {
+                    currentLink = nextLink;
+                    notice = '群组链接已重置';
+                    errorText = null;
+                  } else {
+                    notice = null;
+                    errorText = '群组链接已重置，但邀请链接暂未返回';
+                  }
+                  busy = false;
+                });
+              } catch (error) {
+                if (!mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  notice = null;
+                  errorText =
+                      error is ApiException ? error.message : '网络异常，请稍后重试';
+                });
+              }
+            }
+
+            Future<void> deleteLink() async {
+              final confirmed = await _confirmDeleteGroupLink();
+              if (!mounted || !confirmed) {
+                return;
+              }
+              setDialogState(() {
+                busy = true;
+                notice = null;
+                errorText = null;
+              });
+              try {
+                await widget.onDeleteGroupChatLink(conversation.id);
+                if (!mounted || !dialogContext.mounted) return;
+                Navigator.of(dialogContext).pop();
+                _showLocalActionHint(context, '群组链接已删除');
+              } catch (error) {
+                if (!mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  notice = null;
+                  errorText =
+                      error is ApiException ? error.message : '网络异常，请稍后重试';
+                });
+              }
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 20,
+                vertical: 24,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 18),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Expanded(
+                            child: Text(
+                              '群组链接',
+                              style: TextStyle(
+                                color: Color(0xFF0F172A),
+                                fontSize: 20,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                          PopupMenuButton<_GroupLinkMenuAction>(
+                            tooltip: '更多',
+                            enabled: !busy,
+                            icon: const Icon(Icons.more_horiz),
+                            onSelected: (action) {
+                              switch (action) {
+                                case _GroupLinkMenuAction.reset:
+                                  unawaited(resetLink());
+                                  return;
+                                case _GroupLinkMenuAction.delete:
+                                  unawaited(deleteLink());
+                                  return;
+                              }
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: _GroupLinkMenuAction.reset,
+                                child: Text('重置链接'),
+                              ),
+                              PopupMenuItem(
+                                value: _GroupLinkMenuAction.delete,
+                                child: Text(
+                                  '删除链接',
+                                  style: TextStyle(color: Color(0xFFDC2626)),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      if (notice != null) ...[
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 9,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: const Color(0xFF86EFAC),
+                            ),
+                          ),
+                          child: Text(
+                            notice!,
+                            style: const TextStyle(
+                              color: Color(0xFF166534),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                      if (errorText != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          errorText!,
+                          style: const TextStyle(
+                            color: Color(0xFFDC2626),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              constraints: const BoxConstraints(minHeight: 44),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 11,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFF8FAFC),
+                                borderRadius: BorderRadius.circular(14),
+                                border: Border.all(
+                                  color: const Color(0xFFE2E8F0),
+                                ),
+                              ),
+                              child: SelectableText(
+                                currentLink,
+                                maxLines: 2,
+                                style: const TextStyle(
+                                  color: Color(0xFF0F172A),
+                                  fontSize: 13,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          if (busy)
+                            const SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        '使用群组链接邀请他人加入群聊。任何人都可通过此链接加入群聊，并查看本群历史消息。',
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          height: 1.45,
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: busy
+                                ? null
+                                : () => Navigator.of(dialogContext).pop(),
+                            child: const Text('取消'),
+                          ),
+                          const SizedBox(width: 10),
+                          FilledButton(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: const Color(0xFF0F172A),
+                            ),
+                            onPressed: busy ? null : copyLink,
+                            child: const Text('复制链接'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _handleConversationMenu(
     _ConversationMenuAction action,
     ChatConversationSummary conversation,
   ) async {
     switch (action) {
       case _ConversationMenuAction.share:
-        _showLocalActionHint(context, '分享接口未接入', error: true);
+        try {
+          final data = await widget.onShareConversation(conversation.id);
+          if (!mounted) return;
+          final link = _firstActionUrl(data, const [
+            'shareUrl',
+            'share_url',
+            'shareLink',
+            'share_link',
+            'url',
+            'link',
+          ]);
+          if (link.isNotEmpty) {
+            await Clipboard.setData(ClipboardData(text: link));
+            debugPrint('[conversation-action] share parsed link exists=true');
+            if (!mounted) return;
+            _showLocalActionHint(context, '分享链接已复制');
+          } else {
+            debugPrint('[conversation-action] share parsed link exists=false');
+            await _showConversationActionResultDialog(
+              title: '分享已创建，但没有分享链接',
+              message: _shareNoLinkMessage(data),
+            );
+          }
+        } catch (error) {
+          if (!mounted) return;
+          await _showShareFailureDialog(error, conversation);
+        }
         return;
       case _ConversationMenuAction.startGroupChat:
-        _showLocalActionHint(context, '群聊功能暂未开放', error: true);
+        if (!_isFeatureEnabled(ConversationFeatureKeys.groupChat)) {
+          _showUnavailableFeature();
+          return;
+        }
+        _showLocalActionHint(context, '正在创建群聊链接...');
+        try {
+          final data = await widget.onStartGroupChat(conversation.id).timeout(
+                const Duration(seconds: 15),
+                onTimeout: () => throw const ApiException(
+                  '创建群聊链接超时，请稍后重试',
+                ),
+              );
+          if (!mounted) return;
+          final inviteUrl = _firstActionUrl(data, const [
+            'inviteUrl',
+            'invite_url',
+            'inviteLink',
+            'invite_link',
+            'groupLink',
+            'group_link',
+            'groupChatLink',
+            'group_chat_link',
+            'shareUrl',
+            'share_url',
+            'link',
+            'url',
+            'joinUrl',
+            'join_url',
+            'joinLink',
+            'join_link',
+          ]);
+          if (inviteUrl.isEmpty) {
+            debugPrint(
+              '[conversation-action] group-chat parsed inviteUrl exists=false',
+            );
+            debugPrint(
+              '[conversation-action] group-chat no invite url returned; '
+              'known fields checked',
+            );
+            await _showConversationActionResultDialog(
+              title: '群聊已创建，但没有邀请链接',
+              message: _groupChatNoInviteMessage(data),
+            );
+            return;
+          }
+          debugPrint(
+            '[conversation-action] group-chat parsed inviteUrl exists=true',
+          );
+          debugPrint('[conversation-action] group-chat dialog open');
+          await _showGroupLinkDialog(conversation, inviteUrl);
+        } catch (error) {
+          if (!mounted) return;
+          await _showConversationActionResultDialog(
+            title: '创建群聊失败',
+            message: _actionErrorMessage(error),
+            error: true,
+          );
+        } finally {
+          debugPrint('[conversation-action] group-chat loading cleared');
+        }
         return;
       case _ConversationMenuAction.rename:
-        _showLocalActionHint(context, '重命名接口未接入', error: true);
+        if (!_isFeatureEnabled(ConversationFeatureKeys.rename)) {
+          _showUnavailableFeature();
+          return;
+        }
+        final nextTitle = await _promptRenameConversation(conversation);
+        if (!mounted || nextTitle == null) {
+          return;
+        }
+        if (nextTitle.trim().isEmpty) {
+          _showLocalActionHint(context, '标题不能为空', error: true);
+          return;
+        }
+        try {
+          await widget.onRenameConversation(conversation.id, nextTitle);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已重命名');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.togglePinned:
         final nextPinned = !conversation.pinned;
+        // Cloud pin sync still needs a dedicated operation endpoint; until then
+        // the visible pin action remains a local sort only.
         final updated = widget.onSetConversationPinned(
           conversation.id,
           nextPinned,
@@ -1471,10 +2085,36 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
         );
         return;
       case _ConversationMenuAction.archive:
-        _showLocalActionHint(context, '归档功能暂未开放', error: true);
+        if (!_isFeatureEnabled(ConversationFeatureKeys.archive)) {
+          _showUnavailableFeature();
+          return;
+        }
+        try {
+          await widget.onArchiveConversation(conversation.id);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已归档');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
       case _ConversationMenuAction.delete:
-        _showLocalActionHint(context, '删除接口未接入', error: true);
+        if (!_isFeatureEnabled(ConversationFeatureKeys.delete)) {
+          _showUnavailableFeature();
+          return;
+        }
+        final confirmed = await _confirmDeleteConversation(conversation);
+        if (!mounted || !confirmed) {
+          return;
+        }
+        try {
+          await widget.onDeleteConversation(conversation.id);
+          if (!mounted) return;
+          _showLocalActionHint(context, '已删除');
+        } catch (error) {
+          if (!mounted) return;
+          _showActionError(error);
+        }
         return;
     }
   }
@@ -1511,8 +2151,10 @@ class _HistoryDrawerState extends State<_HistoryDrawer> {
         tiles.add(
           _ConversationTile(
             conversation: conversation,
+            conversationFeatures: widget.conversationFeatures,
             index: conversations.indexOf(conversation),
             onTap: () => widget.onOpenConversation(conversation.id),
+            onPrepareMenu: widget.onRefreshConversationFeatures,
             onMenuSelected: (action) =>
                 _handleConversationMenu(action, conversation),
           ),
@@ -2101,39 +2743,26 @@ enum _ConversationMenuAction {
   delete,
 }
 
-class _ConversationFeatureKeys {
-  static const share = 'conversation.share.enabled';
-  static const groupChat = 'conversation.group_chat.enabled';
-  static const rename = 'conversation.rename.enabled';
-  static const archive = 'conversation.archive.enabled';
-  static const delete = 'conversation.delete.enabled';
-  static const pinCloudSync = 'conversation.pin.cloud_sync_enabled';
-}
-
-const _conversationFeatureDefaults = <String, bool>{
-  _ConversationFeatureKeys.share: false,
-  _ConversationFeatureKeys.groupChat: false,
-  _ConversationFeatureKeys.rename: false,
-  _ConversationFeatureKeys.archive: false,
-  _ConversationFeatureKeys.delete: false,
-  _ConversationFeatureKeys.pinCloudSync: false,
-};
-
-bool _isConversationFeatureEnabled(String key) {
-  return _conversationFeatureDefaults[key] ?? false;
+enum _GroupLinkMenuAction {
+  reset,
+  delete,
 }
 
 class _ConversationTile extends StatefulWidget {
   const _ConversationTile({
     required this.conversation,
+    required this.conversationFeatures,
     required this.index,
     required this.onTap,
+    required this.onPrepareMenu,
     required this.onMenuSelected,
   });
 
   final ChatConversationSummary conversation;
+  final ConversationFeatureFlags conversationFeatures;
   final int index;
   final VoidCallback onTap;
+  final Future<void> Function() onPrepareMenu;
   final ValueChanged<_ConversationMenuAction> onMenuSelected;
 
   @override
@@ -2152,6 +2781,10 @@ class _ConversationTileState extends State<_ConversationTile> {
     if (overlay is! RenderBox) {
       return;
     }
+    await widget.onPrepareMenu();
+    if (!mounted) {
+      return;
+    }
     final action = await showMenu<_ConversationMenuAction>(
       context: context,
       color: Colors.white,
@@ -2163,7 +2796,10 @@ class _ConversationTileState extends State<_ConversationTile> {
         overlay.size.width - globalPosition.dx,
         overlay.size.height - globalPosition.dy,
       ),
-      items: _conversationMenuItems(widget.conversation),
+      items: _conversationMenuItems(
+        widget.conversation,
+        widget.conversationFeatures,
+      ),
     );
     if (action != null && mounted) {
       widget.onMenuSelected(action);
@@ -2294,72 +2930,73 @@ class _ConversationTileState extends State<_ConversationTile> {
 
 List<PopupMenuEntry<_ConversationMenuAction>> _conversationMenuItems(
   ChatConversationSummary conversation,
+  ConversationFeatureFlags features,
 ) {
   return [
-    _unavailableConversationMenuItem(
+    _conversationMenuItem(
       action: _ConversationMenuAction.share,
-      featureKey: _ConversationFeatureKeys.share,
       icon: Icons.ios_share,
       label: '分享',
-      badge: '未开放',
     ),
-    _unavailableConversationMenuItem(
+    _conversationMenuItem(
       action: _ConversationMenuAction.startGroupChat,
-      featureKey: _ConversationFeatureKeys.groupChat,
+      featureKey: ConversationFeatureKeys.groupChat,
+      features: features,
       icon: Icons.group_add_outlined,
       label: '开始群聊',
-      badge: '未开放',
     ),
-    _unavailableConversationMenuItem(
+    _conversationMenuItem(
       action: _ConversationMenuAction.rename,
-      featureKey: _ConversationFeatureKeys.rename,
+      featureKey: ConversationFeatureKeys.rename,
+      features: features,
       icon: Icons.drive_file_rename_outline,
       label: '重命名',
-      badge: '未开放',
     ),
-    PopupMenuItem(
-      value: _ConversationMenuAction.togglePinned,
-      child: _ConversationMenuItemRow(
-        icon: Icons.push_pin_outlined,
-        label: conversation.pinned ? '取消置顶聊天' : '置顶聊天',
-      ),
+    _conversationMenuItem(
+      action: _ConversationMenuAction.togglePinned,
+      icon: Icons.push_pin_outlined,
+      label: conversation.pinned ? '取消置顶聊天' : '置顶聊天',
     ),
-    _unavailableConversationMenuItem(
+    _conversationMenuItem(
       action: _ConversationMenuAction.archive,
-      featureKey: _ConversationFeatureKeys.archive,
+      featureKey: ConversationFeatureKeys.archive,
+      features: features,
       icon: Icons.archive_outlined,
       label: '归档',
-      badge: '未开放',
     ),
     const PopupMenuDivider(height: 6),
-    _unavailableConversationMenuItem(
+    _conversationMenuItem(
       action: _ConversationMenuAction.delete,
-      featureKey: _ConversationFeatureKeys.delete,
+      featureKey: ConversationFeatureKeys.delete,
+      features: features,
       icon: Icons.delete_outline,
       label: '删除',
-      badge: '未开放',
+      destructive: true,
     ),
   ];
 }
 
-PopupMenuEntry<_ConversationMenuAction> _unavailableConversationMenuItem({
+PopupMenuEntry<_ConversationMenuAction> _conversationMenuItem({
   required _ConversationMenuAction action,
-  required String featureKey,
   required IconData icon,
   required String label,
-  required String badge,
+  ConversationFeatureFlags? features,
+  String? featureKey,
+  bool destructive = false,
 }) {
-  final featureEnabled = _isConversationFeatureEnabled(featureKey);
+  final enabled =
+      featureKey == null || (features?.isEnabled(featureKey) ?? false);
   return PopupMenuItem<_ConversationMenuAction>(
-    enabled: featureEnabled,
+    enabled: enabled,
+    value: enabled ? action : null,
     padding: EdgeInsets.zero,
     height: 42,
-    child: _UnavailableConversationMenuItem(
-      action: action,
-      featureEnabled: featureEnabled,
+    child: _ConversationMenuItemRow(
       icon: icon,
       label: label,
-      badge: badge,
+      enabled: enabled,
+      destructive: destructive && enabled,
+      badge: enabled ? null : '未开放',
     ),
   );
 }
@@ -2368,85 +3005,66 @@ class _ConversationMenuItemRow extends StatelessWidget {
   const _ConversationMenuItemRow({
     required this.icon,
     required this.label,
+    this.enabled = true,
+    this.destructive = false,
+    this.badge,
   });
 
   final IconData icon;
   final String label;
+  final bool enabled;
+  final bool destructive;
+  final String? badge;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 19, color: const Color(0xFF0F172A)),
-        const SizedBox(width: 12),
-        Text(
-          label,
-          style: const TextStyle(
-            color: Color(0xFF0F172A),
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
-    );
-  }
-}
+    final color = enabled
+        ? (destructive ? const Color(0xFFDC2626) : const Color(0xFF0F172A))
+        : const Color(0xFF94A3B8);
 
-class _UnavailableConversationMenuItem extends StatelessWidget {
-  const _UnavailableConversationMenuItem({
-    required this.action,
-    required this.featureEnabled,
-    required this.icon,
-    required this.label,
-    required this.badge,
-  });
-
-  final _ConversationMenuAction action;
-  final bool featureEnabled;
-  final IconData icon;
-  final String label;
-  final String badge;
-
-  @override
-  Widget build(BuildContext context) {
-    const disabledColor = Color(0xFF94A3B8);
     return MouseRegion(
-      cursor: SystemMouseCursors.basic,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: featureEnabled ? null : () => Navigator.of(context).pop(action),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 150, maxWidth: 190),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: 19, color: disabledColor),
+              Icon(icon, size: 19, color: color),
               const SizedBox(width: 12),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: disabledColor,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(width: 18),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF1F5F9),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
+              Flexible(
                 child: Text(
-                  badge,
-                  style: const TextStyle(
-                    color: Color(0xFF64748B),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    height: 1,
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: color,
+                    fontWeight: enabled ? FontWeight.w600 : FontWeight.w500,
                   ),
                 ),
               ),
+              if (badge != null) ...[
+                const SizedBox(width: 12),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF1F5F9),
+                    borderRadius: BorderRadius.circular(999),
+                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                  ),
+                  child: Text(
+                    badge!,
+                    style: const TextStyle(
+                      color: Color(0xFF64748B),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      height: 1,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
