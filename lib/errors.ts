@@ -5,7 +5,9 @@ export type AppErrorCode =
   | "INVALID_INPUT"
   | "UNAUTHORIZED"
   | "FORBIDDEN"
+  | "FEATURE_DISABLED"
   | "NOT_FOUND"
+  | "NOT_IMPLEMENTED"
   | "AI_ERROR"
   | "MISSING_AI_API_KEY"
   | "MISSING_QWEN_API_KEY"
@@ -27,6 +29,12 @@ export type AppErrorCode =
   | "INGEST_WRITE_FAILED"
   | "CONFIG_ERROR"
   | "LICENSE_REQUIRED"
+  | "LICENSE_NOT_FOUND"
+  | "INVALID_LICENSE_KEY"
+  | "LICENSE_APP_TYPE_MISMATCH"
+  | "LICENSE_DISABLED"
+  | "LICENSE_EXPIRED"
+  | "LICENSE_ACTIVATION_LIMIT_REACHED"
   | "RATE_LIMITED";
 
 export class AppError extends Error {
@@ -75,6 +83,48 @@ export class LicenseRequiredError extends AppError {
   }
 }
 
+export class LicenseNotFoundError extends AppError {
+  constructor(message = "卡密不存在或无效。") {
+    super("LICENSE_NOT_FOUND", message, 404);
+    this.name = "LicenseNotFoundError";
+  }
+}
+
+export class InvalidLicenseKeyError extends AppError {
+  constructor(message = "卡密格式无效。") {
+    super("INVALID_LICENSE_KEY", message, 400);
+    this.name = "InvalidLicenseKeyError";
+  }
+}
+
+export class LicenseAppTypeMismatchError extends AppError {
+  constructor(message = "卡密不适用于当前客户端。") {
+    super("LICENSE_APP_TYPE_MISMATCH", message, 403);
+    this.name = "LicenseAppTypeMismatchError";
+  }
+}
+
+export class LicenseDisabledError extends AppError {
+  constructor(message = "卡密已禁用。") {
+    super("LICENSE_DISABLED", message, 403);
+    this.name = "LicenseDisabledError";
+  }
+}
+
+export class LicenseExpiredError extends AppError {
+  constructor(message = "卡密已过期。") {
+    super("LICENSE_EXPIRED", message, 403);
+    this.name = "LicenseExpiredError";
+  }
+}
+
+export class LicenseActivationLimitReachedError extends AppError {
+  constructor(message = "卡密激活次数已达上限。") {
+    super("LICENSE_ACTIVATION_LIMIT_REACHED", message, 403);
+    this.name = "LicenseActivationLimitReachedError";
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message = "请求的资源不存在。") {
     super("NOT_FOUND", message, 404);
@@ -110,7 +160,9 @@ const appErrorCodes = new Set<AppErrorCode>([
   "INVALID_INPUT",
   "UNAUTHORIZED",
   "FORBIDDEN",
+  "FEATURE_DISABLED",
   "NOT_FOUND",
+  "NOT_IMPLEMENTED",
   "AI_ERROR",
   "MISSING_AI_API_KEY",
   "MISSING_QWEN_API_KEY",
@@ -132,6 +184,12 @@ const appErrorCodes = new Set<AppErrorCode>([
   "INGEST_WRITE_FAILED",
   "CONFIG_ERROR",
   "LICENSE_REQUIRED",
+  "LICENSE_NOT_FOUND",
+  "INVALID_LICENSE_KEY",
+  "LICENSE_APP_TYPE_MISMATCH",
+  "LICENSE_DISABLED",
+  "LICENSE_EXPIRED",
+  "LICENSE_ACTIVATION_LIMIT_REACHED",
   "RATE_LIMITED"
 ]);
 

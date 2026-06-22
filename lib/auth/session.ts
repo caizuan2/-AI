@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, randomBytes } from "crypto";
 import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
 import { ConfigError, ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { hasSessionSecret } from "@/lib/server-config-core";
@@ -29,11 +30,29 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(`${secret}:${token}`).digest("hex");
 }
 
-function getSessionCookieOptions(expiresAt: Date) {
+function isHttpsRequest(request?: Request) {
+  if (!request) {
+    return process.env.NODE_ENV === "production";
+  }
+
+  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
+
+  if (forwardedProto) {
+    return forwardedProto === "https";
+  }
+
+  try {
+    return new URL(request.url).protocol === "https:";
+  } catch {
+    return process.env.NODE_ENV === "production";
+  }
+}
+
+function getSessionCookieOptions(expiresAt: Date, request?: Request) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttpsRequest(request),
     path: "/",
     expires: expiresAt,
     maxAge: SESSION_MAX_AGE_SECONDS
@@ -54,11 +73,11 @@ function toAppUser(user: {
     phone: user.phone,
     name: user.name?.trim() || user.phone || user.email || user.id,
     isActive: user.isActive,
-    licenseActivated: user.licenseActivated
+    licenseActivated: user.licenseActivated || isBootstrapSuperAdminUser(user)
   };
 }
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, request?: Request) {
   const token = randomBytes(32).toString("base64url");
   const tokenHash = hashSessionToken(token);
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
@@ -71,7 +90,7 @@ export async function createSession(userId: string) {
     }
   });
 
-  cookies().set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt));
+  cookies().set(SESSION_COOKIE_NAME, token, getSessionCookieOptions(expiresAt, request));
 
   return { token, expiresAt };
 }
@@ -119,7 +138,7 @@ export async function requireUser() {
   return getCurrentUser();
 }
 
-export async function destroySession() {
+export async function destroySession(request?: Request) {
   const token = cookies().get(SESSION_COOKIE_NAME)?.value;
 
   if (token && hasSessionSecret()) {
@@ -133,7 +152,7 @@ export async function destroySession() {
   cookies().set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: isHttpsRequest(request),
     path: "/",
     maxAge: 0
   });

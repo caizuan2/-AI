@@ -4,6 +4,7 @@ import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
+import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { ensureRegistrationSchema } from "@/lib/db/registration-schema";
 import { AppError, ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders, logger } from "@/lib/logger";
@@ -19,6 +20,7 @@ interface RegisterResponse {
     phone: string;
     name: string;
     licenseActivated: boolean;
+    isSuperAdmin: boolean;
   };
 }
 
@@ -233,14 +235,18 @@ export async function POST(request: Request) {
       }
     });
 
-    await createSession(user.id);
+    await createSession(user.id, request);
+
+    const isSuperAdmin = isBootstrapSuperAdminUser(user);
+    const licenseActivated = user.licenseActivated || isSuperAdmin;
 
     return apiSuccess<RegisterResponse>({
       user: {
         id: user.id,
         phone: user.phone,
         name: user.name ?? user.phone,
-        licenseActivated: user.licenseActivated
+        licenseActivated,
+        isSuperAdmin
       }
     }, { status: 201 });
   } catch (error) {
