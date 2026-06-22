@@ -29,7 +29,10 @@ interface GptOSCostInput {
 
 const MODEL_RATES_PER_1K: Record<string, { input: number; output: number; reasoning: number }> = {
   "gpt-5.5": { input: 0.005, output: 0.015, reasoning: 0.006 },
+  "kimi": { input: 0.002, output: 0.006, reasoning: 0.002 },
   "deepseek": { input: 0.0005, output: 0.0015, reasoning: 0.0006 },
+  "deepseek-flash": { input: 0.0002, output: 0.0006, reasoning: 0.0002 },
+  "qwen": { input: 0.0008, output: 0.002, reasoning: 0.0008 },
   "gpt-os-router": { input: 0.0002, output: 0.0004, reasoning: 0.0002 },
   "default": { input: 0.001, output: 0.003, reasoning: 0.001 }
 };
@@ -41,8 +44,20 @@ function pickRate(model: string) {
     return MODEL_RATES_PER_1K["gpt-5.5"];
   }
 
+  if (normalized.includes("kimi") || normalized.includes("moonshot")) {
+    return MODEL_RATES_PER_1K.kimi;
+  }
+
+  if (normalized.includes("flash")) {
+    return MODEL_RATES_PER_1K["deepseek-flash"];
+  }
+
   if (normalized.includes("deepseek")) {
     return MODEL_RATES_PER_1K.deepseek;
+  }
+
+  if (normalized.includes("qwen")) {
+    return MODEL_RATES_PER_1K.qwen;
   }
 
   if (normalized.includes("gpt-os")) {

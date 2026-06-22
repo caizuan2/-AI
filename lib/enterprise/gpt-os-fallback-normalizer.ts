@@ -1,4 +1,4 @@
-export type GptOSFallbackProvider = "openai" | "deepseek" | "mock";
+export type GptOSFallbackProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi" | "mock";
 export type GptOSFallbackErrorType =
   | "NETWORK_ERROR"
   | "OPENAI_TIMEOUT"
@@ -45,6 +45,8 @@ export interface GptOSUserFriendlyMessage {
   showRedBox: false;
   raw?: undefined;
 }
+
+const LINEAR_FALLBACK_PATH: GptOSFallbackProvider[] = ["deepseek-pro", "qwen", "deepseek-flash", "openai"];
 
 function readErrorRecord(error: unknown) {
   return error && typeof error === "object"
@@ -169,9 +171,7 @@ export function buildGptOSFallbackAnalytics(input?: {
   const provider = input?.provider ?? "mock";
   const errorType = input?.errorType ?? "UNKNOWN_ERROR";
   const fallbackCount = fallbackUsed ? 1 : 0;
-  const fallbackModelPath = fallbackUsed
-    ? Array.from(new Set<GptOSFallbackProvider>(["openai", provider, "mock"]))
-    : [];
+  const fallbackModelPath = fallbackUsed ? LINEAR_FALLBACK_PATH : [];
 
   return {
     fallbackCount,

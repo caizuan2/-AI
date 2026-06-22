@@ -114,6 +114,14 @@ function toGptFallbackErrorCode(error: unknown) {
     return "DEEPSEEK_API_KEY_MISSING" as const;
   }
 
+  if (code === "QWEN_API_KEY_MISSING" || message.includes("qwen api key") || message.includes("qwen_api_key")) {
+    return "QWEN_API_KEY_MISSING" as const;
+  }
+
+  if (code === "KIMI_API_KEY_MISSING" || message.includes("kimi api key") || message.includes("kimi_api_key")) {
+    return "KIMI_API_KEY_MISSING" as const;
+  }
+
   if (code === "OPENAI_API_KEY_MISSING" || code === "MISSING_AI_API_KEY" || message.includes("openai api key") || message.includes("openai_api_key")) {
     return "OPENAI_API_KEY_MISSING" as const;
   }
@@ -130,8 +138,24 @@ function toGptFallbackErrorCode(error: unknown) {
     return "DEEPSEEK_BASE_URL_INVALID" as const;
   }
 
+  if (code === "QWEN_BASE_URL_INVALID") {
+    return "QWEN_BASE_URL_INVALID" as const;
+  }
+
+  if (code === "KIMI_BASE_URL_INVALID") {
+    return "KIMI_BASE_URL_INVALID" as const;
+  }
+
   if (code === "DEEPSEEK_TIMEOUT") {
     return "DEEPSEEK_TIMEOUT" as const;
+  }
+
+  if (code === "QWEN_TIMEOUT") {
+    return "QWEN_TIMEOUT" as const;
+  }
+
+  if (code === "KIMI_TIMEOUT") {
+    return "KIMI_TIMEOUT" as const;
   }
 
   if (name === "AbortError" || message.includes("timeout") || message.includes("超时")) {
@@ -150,6 +174,14 @@ function toGptFallbackErrorCode(error: unknown) {
     return "DEEPSEEK_RESPONSE_PARSE_FAILED" as const;
   }
 
+  if (code === "QWEN_RESPONSE_PARSE_FAILED") {
+    return "QWEN_RESPONSE_PARSE_FAILED" as const;
+  }
+
+  if (code === "KIMI_RESPONSE_PARSE_FAILED") {
+    return "KIMI_RESPONSE_PARSE_FAILED" as const;
+  }
+
   if (code === "OPENAI_PRO_QUALITY_FAILED") {
     return "OPENAI_PRO_QUALITY_FAILED" as const;
   }
@@ -158,8 +190,24 @@ function toGptFallbackErrorCode(error: unknown) {
     return "DEEPSEEK_PRO_QUALITY_FAILED" as const;
   }
 
+  if (code === "QWEN_PRO_QUALITY_FAILED") {
+    return "QWEN_PRO_QUALITY_FAILED" as const;
+  }
+
+  if (code === "KIMI_PRO_QUALITY_FAILED") {
+    return "KIMI_PRO_QUALITY_FAILED" as const;
+  }
+
   if (code === "DEEPSEEK_REQUEST_FAILED" || message.includes("deepseek")) {
     return "DEEPSEEK_REQUEST_FAILED" as const;
+  }
+
+  if (code === "QWEN_REQUEST_FAILED" || message.includes("qwen")) {
+    return "QWEN_REQUEST_FAILED" as const;
+  }
+
+  if (code === "KIMI_REQUEST_FAILED" || message.includes("kimi")) {
+    return "KIMI_REQUEST_FAILED" as const;
   }
 
   if (code === "OPENAI_RESPONSES_REQUEST_FAILED" || message.includes("model") || message.includes("模型不可用")) {
@@ -400,7 +448,9 @@ export async function POST(request: Request) {
       modelProvider: input.modelProvider,
       selectedModelLabel: input.selectedModelLabel,
       modelDisplayName: input.modelDisplayName,
-      preferredModel: input.preferredModel
+      preferredModel: input.preferredModel,
+      input: input.input,
+      attachments: input.attachments
     });
     const result = await runAdminIngestWithSelectedModel({
       input: input.input,
@@ -445,8 +495,8 @@ export async function POST(request: Request) {
     return jsonUtf8({
       ok: true,
       data: rawResult,
-      fallback: false,
-      fallbackUsed: false,
+      fallback: rawResult.fallback,
+      fallbackUsed: rawResult.fallbackUsed,
       provider: rawResult.provider,
       requestedModel: rawResult.requestedModel,
       actualModel: rawResult.actualModel,
@@ -486,14 +536,16 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
-    const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT";
-    const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING";
+    const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
+    const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
     const status = isTimeout ? 504 : isMissingKey ? 401 : 503;
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
       selectedModelLabel: input.selectedModelLabel,
       modelDisplayName: input.modelDisplayName,
-      preferredModel: input.preferredModel
+      preferredModel: input.preferredModel,
+      input: input.input,
+      attachments: input.attachments
     });
 
     if (errorCode === "OPENAI_FULL_REQUEST_FAILED") {

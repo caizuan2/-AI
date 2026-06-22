@@ -1,5 +1,6 @@
-export type GptOSApiProvider = "openai" | "deepseek" | "mock";
+export type GptOSApiProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi" | "mock";
 export type GptOSApiResponseType = "responses" | "chat_completions" | "string" | "unknown";
+export type LLMCallProvider = Exclude<GptOSApiProvider, "mock">;
 
 export interface GptOSApiUsage {
   inputTokens?: number;
@@ -42,6 +43,17 @@ export interface ResilientCallResult<T> {
   circuitBreaker: "closed" | "open";
 }
 
+export interface LLMCallPayload {
+  apiKey?: string;
+  baseUrl?: string;
+  model?: string;
+  input?: string;
+  messages?: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
 export class LLMResponseNormalizationError extends Error {
   readonly code = "LLM_RESPONSE_NORMALIZATION_FAILED";
 
@@ -57,6 +69,111 @@ type CircuitState = {
 };
 
 const circuitStates = new Map<string, CircuitState>();
+
+function readEnv(name: string) {
+  return process.env[name]?.trim() ?? "";
+}
+
+function trimUrl(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function buildChatCompletionsUrl(baseUrl: string) {
+  const normalized = trimUrl(baseUrl);
+
+  return normalized.endsWith("/chat/completions")
+    ? normalized
+    : `${normalized}/chat/completions`;
+}
+
+function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
+  if (provider === "openai") {
+    const baseUrl = trimUrl(payload.baseUrl || readEnv("OPENAI_BASE_URL") || "https://api.openai.com/v1");
+
+    return {
+      apiKey: payload.apiKey || readEnv("OPENAI_API_KEY"),
+      model: payload.model || readEnv("OPENAI_MODEL") || readEnv("OPENAI_PREFERRED_MODEL") || "gpt-5.5",
+      url: `${baseUrl}/responses`,
+      mode: "responses" as const
+    };
+  }
+
+  if (provider === "kimi") {
+    return {
+      apiKey: payload.apiKey || readEnv("KIMI_API_KEY"),
+      model: payload.model || readEnv("KIMI_MODEL") || "moonshot-v1-128k",
+      url: buildChatCompletionsUrl(payload.baseUrl || readEnv("KIMI_BASE_URL") || "https://api.moonshot.cn/v1"),
+      mode: "chat" as const
+    };
+  }
+
+  if (provider === "qwen") {
+    return {
+      apiKey: payload.apiKey || readEnv("QWEN_API_KEY"),
+      model: payload.model || readEnv("QWEN_MODEL") || "qwen-plus",
+      url: buildChatCompletionsUrl(payload.baseUrl || readEnv("QWEN_BASE_URL") || "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+      mode: "chat" as const
+    };
+  }
+
+  return {
+    apiKey: payload.apiKey || readEnv("DEEPSEEK_API_KEY"),
+    model: payload.model
+      || (provider === "deepseek-flash" ? readEnv("DEEPSEEK_FLASH_MODEL") : "")
+      || (provider === "deepseek-pro" ? readEnv("DEEPSEEK_PRO_MODEL") : "")
+      || readEnv("DEEPSEEK_MODEL")
+      || "deepseek-chat",
+    url: buildChatCompletionsUrl(payload.baseUrl || readEnv("DEEPSEEK_BASE_URL") || "https://api.deepseek.com"),
+    mode: "chat" as const
+  };
+}
+
+export async function callLLM(provider: LLMCallProvider, payload: LLMCallPayload) {
+  const config = getProviderConfig(provider, payload);
+
+  if (!config.apiKey) {
+    throw new Error(`${provider.toUpperCase()}_API_KEY_MISSING`);
+  }
+
+  const messages = payload.messages?.length
+    ? payload.messages
+    : [{ role: "user" as const, content: payload.input || "ping" }];
+  const body = config.mode === "responses"
+    ? {
+        model: config.model,
+        input: payload.input || messages.map((message) => message.content).join("\n"),
+        max_output_tokens: payload.maxTokens ?? 3000,
+        stream: false
+      }
+    : {
+        model: config.model,
+        messages,
+        temperature: payload.temperature ?? 0.7,
+        max_tokens: payload.maxTokens ?? 3000,
+        stream: false
+      };
+  const response = await fetch(config.url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(body),
+    signal: payload.signal,
+    cache: "no-store"
+  });
+  const bodyText = await response.text();
+
+  if (!response.ok) {
+    throw new Error(`${provider.toUpperCase()}_REQUEST_FAILED:${response.status}:${bodyText.slice(0, 200)}`);
+  }
+
+  try {
+    return bodyText ? JSON.parse(bodyText) as unknown : null;
+  } catch {
+    throw new LLMResponseNormalizationError(`${provider} returned invalid JSON`);
+  }
+}
 
 function readNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
