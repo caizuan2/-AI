@@ -1,3 +1,8 @@
+import { os_core } from "@/gpt-os/core/os_core";
+import { evaluateEvolutionHealth } from "@/gpt-os/core/evolution_engine";
+import { suggestKnowledgeImprovements } from "@/gpt-os/knowledge/auto_suggester";
+import { analyzeKnowledgeFeedback } from "@/gpt-os/knowledge/feedback_analyzer";
+import { detectKnowledgeGap } from "@/gpt-os/knowledge/gap_detector";
 import type { RagContext } from "@/lib/ai/rag-prompt";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import {
@@ -5,14 +10,12 @@ import {
   buildCustomerAnswerFromText,
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
-import { AppError, NotFoundError, ValidationError } from "@/lib/errors";
+import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
 import {
   buildRagContext,
   calculateConfidence,
-  getTopKForMode,
-  hasPromptInjectionRisk,
   normalizeAiChatMode,
   retrieveRelevantChunks,
   sanitizeRagInput,
@@ -46,6 +49,9 @@ export interface AiChatAnswerProviderInput {
   mode: AiChatMode;
   enableDeepThinking: boolean;
   confidence: RagConfidence;
+  model: string;
+  actualModel: string;
+  traceId: string;
 }
 
 export interface AiChatAnswerProviderResult {
@@ -53,6 +59,8 @@ export interface AiChatAnswerProviderResult {
   providerUsed?: string;
   modelUsed?: string;
   fallbackUsed?: boolean;
+  answerGroundingScore?: number;
+  originalProviderErrorCode?: string;
 }
 
 export interface AiChatAskOptions {
@@ -111,6 +119,80 @@ const allowedAttachmentTypes = new Set(["image", "camera_photo", "gallery_photo"
 
 function defaultDb() {
   return prisma as unknown as AiChatDb;
+}
+
+function isGptOsReasoningAvailable() {
+  return process.env.GPT_OS_REASONING_ENABLED === "true";
+}
+
+function needsReasoningModel(question: string) {
+  return question.length >= 120 || /分析|方案|步骤|对比|规划|拆解|复杂|风险|策略|流程/.test(question);
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function calculateRelevanceScore(chunks: RetrievedRagChunk[]) {
+  if (chunks.length === 0) {
+    return 0;
+  }
+
+  return clamp01(Math.max(...chunks.map((chunk) => chunk.relevance_score)));
+}
+
+function calculateRetrievalEfficiencyScore(hitCount: number, topK: number) {
+  return clamp01(topK > 0 ? hitCount / topK : 0);
+}
+
+function calculateFallbackGroundingScore(chunks: RetrievedRagChunk[], fallbackUsed: boolean) {
+  if (chunks.length === 0) {
+    return 0;
+  }
+
+  const average = chunks.reduce((sum, chunk) => sum + chunk.relevance_score, 0) / chunks.length;
+  return clamp01(average * (fallbackUsed ? 0.45 : 0.6));
+}
+
+function isStructuredAnswer(answer: string) {
+  return /(^|\n)#{1,3}\s|\n[-*]\s|\*\*|\|/.test(answer);
+}
+
+function calculateRagQualityScore(input: {
+  relevanceScore: number;
+  answerGroundingScore: number;
+  retrievalEfficiencyScore: number;
+  fallbackUsed: boolean;
+}) {
+  const fallbackPenalty = input.fallbackUsed ? 0.15 : 0;
+  return clamp01(
+    (input.relevanceScore * 0.45)
+      + (input.answerGroundingScore * 0.35)
+      + (input.retrievalEfficiencyScore * 0.2)
+      - fallbackPenalty
+  );
+}
+
+function classifyAnswerQuality(input: {
+  hitCount: number;
+  relevanceScore: number;
+  answerGroundingScore: number;
+  fallbackUsed: boolean;
+  structured: boolean;
+}): "high" | "medium" | "low" {
+  if (input.hitCount === 0 || input.fallbackUsed || input.relevanceScore < 0.3 || input.answerGroundingScore < 0.35) {
+    return "low";
+  }
+
+  if (input.relevanceScore >= 0.6 && input.answerGroundingScore >= 0.65 && input.structured) {
+    return "high";
+  }
+
+  return "medium";
 }
 
 function trimString(value: unknown) {
@@ -216,7 +298,9 @@ function toSource(chunk: RetrievedRagChunk) {
     chunk_id: chunk.chunkId,
     file_id: chunk.fileId,
     title: chunk.title,
-    score: chunk.score
+    score: chunk.score,
+    relevance_score: chunk.relevance_score,
+    chunk_rank: chunk.chunk_rank
   };
 }
 
@@ -331,8 +415,18 @@ export async function handleAiChatAsk(
   const enableWebSearch = input.enable_web_search === true;
   const conversationId = readConversationId(input);
   const attachments = validateAttachments(input.attachments);
+  const osContext = os_core.process({
+    query: question,
+    userId: actor.id,
+    sessionId: conversationId ?? "pending",
+    mode: "chat",
+    chatMode: mode,
+    intent: "qa",
+    reasoningRequested: enableDeepThinking || needsReasoningModel(question),
+    reasoningAvailable: isGptOsReasoningAvailable(),
+  });
 
-  if (hasPromptInjectionRisk(question)) {
+  if (osContext.rag.promptInjectionRisk) {
     await writeAuditLog(db, actor, "CHAT_BLOCKED_UNSAFE_INPUT", null, {
       mode,
       questionLength: question.length
@@ -356,7 +450,7 @@ export async function handleAiChatAsk(
     attachmentCount: attachments.length
   });
 
-  const topK = getTopKForMode(mode);
+  const topK = osContext.rag.topK;
   const chunks = await retrieveRelevantChunks(question, {
     userId: actor.id,
     mode,
@@ -379,6 +473,8 @@ export async function handleAiChatAsk(
   let providerUsed: string | undefined;
   let modelUsed: string | undefined;
   let fallbackUsed: boolean | undefined;
+  let providerErrorCode: string | undefined;
+  let answerGroundingScore: number | undefined;
 
   if (contexts.length > 0) {
     customerAnswer = buildCustomerAnswerFromChunks({
@@ -395,7 +491,10 @@ export async function handleAiChatAsk(
           contexts,
           mode,
           enableDeepThinking,
-          confidence
+          confidence,
+          model: osContext.route.model,
+          actualModel: osContext.route.actualModel,
+          traceId: osContext.trace_id,
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
@@ -404,23 +503,96 @@ export async function handleAiChatAsk(
         providerUsed = providerResult.providerUsed;
         modelUsed = providerResult.modelUsed;
         fallbackUsed = providerResult.fallbackUsed;
+        answerGroundingScore = providerResult.answerGroundingScore;
+        providerErrorCode = providerResult.originalProviderErrorCode;
 
         if (!answer) {
           throw new AppError("AI_PROVIDER_FAILED", "AI provider 返回了空回答。", 502);
         }
-      } catch {
+      } catch (error) {
+        const appError = toAppError(error);
         answer = RAG_CUSTOMER_DRAFT_ANSWER;
-        providerStatus = "provider_not_configured";
+        providerStatus = "error";
+        fallbackUsed = true;
+        providerErrorCode = appError.code;
       }
     } else {
       answer = RAG_CUSTOMER_DRAFT_ANSWER;
       providerStatus = "provider_not_configured";
+      fallbackUsed = true;
+      providerErrorCode = "PROVIDER_NOT_CONFIGURED";
       await writeAuditLog(db, actor, "CHAT_PROVIDER_NOT_CONFIGURED", normalizedConversationId, {
         mode,
         sourceCount: sources.length
       });
     }
   }
+
+  const actualModel = modelUsed ?? osContext.route.actualModel;
+  const visibleFallbackUsed = fallbackUsed ?? osContext.route.fallbackUsed;
+  const relevanceScore = calculateRelevanceScore(chunks);
+  const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
+  const ragDiagnostics = os_core.buildRagDiagnostics(osContext, chunks, contexts);
+  const retrievalEfficiencyScore = calculateRetrievalEfficiencyScore(ragDiagnostics.hitCount, ragDiagnostics.rag_topK);
+  const ragQualityScore = calculateRagQualityScore({
+    relevanceScore,
+    answerGroundingScore: visibleAnswerGroundingScore,
+    retrievalEfficiencyScore,
+    fallbackUsed: visibleFallbackUsed,
+  });
+  const answerQuality = classifyAnswerQuality({
+    hitCount: ragDiagnostics.hitCount,
+    relevanceScore,
+    answerGroundingScore: visibleAnswerGroundingScore,
+    fallbackUsed: visibleFallbackUsed,
+    structured: isStructuredAnswer(answer),
+  });
+  const knowledgeFeedbackEvent = analyzeKnowledgeFeedback({
+    relevanceScore,
+    hitCount: ragDiagnostics.hitCount,
+    answerGroundingScore: visibleAnswerGroundingScore,
+    fallbackUsed: visibleFallbackUsed,
+  });
+  const knowledgeGapEvent = detectKnowledgeGap({
+    query: question,
+    relevanceScore,
+    hitCount: ragDiagnostics.hitCount,
+    answerGroundingScore: visibleAnswerGroundingScore,
+  });
+  const optimizationSuggestions = suggestKnowledgeImprovements(knowledgeGapEvent, {
+    ragQualityScore,
+    fallbackUsed: visibleFallbackUsed,
+    answerQuality,
+  });
+  const evolutionReport = evaluateEvolutionHealth({
+    ragQualityScore,
+    relevanceScore,
+    hitCount: ragDiagnostics.hitCount,
+    topK: ragDiagnostics.rag_topK,
+    fallbackUsed: visibleFallbackUsed,
+    answerQuality,
+  });
+  const osTrace = os_core.recordTrace(osContext, {
+    provider_status: providerStatus,
+    fallbackUsed: visibleFallbackUsed,
+    actualModel,
+    diagnostics: ragDiagnostics,
+    metadata: {
+      conversationId: normalizedConversationId,
+      mode,
+      sourceCount: sources.length,
+      providerErrorCode: providerErrorCode ?? null,
+      relevanceScore,
+      answerGroundingScore: visibleAnswerGroundingScore,
+      retrievalEfficiencyScore,
+      ragQualityScore,
+      answerQuality,
+      knowledgeFeedbackEvent,
+      knowledgeGapEvent,
+      optimizationSuggestions,
+      evolutionReport,
+    },
+  });
 
   const assistantMessage = await saveAssistantMessage(db, actor, normalizedConversationId, answer, sources, customerAnswer, {
     mode,
@@ -432,7 +604,23 @@ export async function handleAiChatAsk(
     providerStatus,
     providerUsed: providerUsed ?? null,
     modelUsed: modelUsed ?? null,
-    fallbackUsed: fallbackUsed ?? null
+    fallbackUsed: visibleFallbackUsed,
+    providerErrorCode: providerErrorCode ?? null,
+    relevanceScore,
+    answerGroundingScore: visibleAnswerGroundingScore,
+    retrievalEfficiencyScore,
+    ragQualityScore,
+    answerQuality,
+    knowledgeFeedbackEvent,
+    knowledgeGapEvent,
+    optimizationSuggestions,
+    evolutionReport,
+    gptOsTraceId: osTrace.trace_id,
+    gptOsModel: osContext.route.model,
+    gptOsActualModel: actualModel,
+    gptOsRouteDecision: osContext.route.route_decision,
+    gptOsRagDiagnostics: ragDiagnostics,
+    gptOsGrowthEnhancer: osContext.growthEnhancer
   });
   await db.conversation.update({
     where: {
@@ -444,6 +632,13 @@ export async function handleAiChatAsk(
         lastMode: mode,
         lastConfidence: confidence,
         lastSourceCount: sources.length,
+        providerErrorCode: providerErrorCode ?? null,
+        ragQualityScore,
+        answerQuality,
+        knowledgeFeedbackEvent,
+        knowledgeGapEvent,
+        optimizationSuggestions,
+        evolutionReport,
         enableDeepThinking,
         enableWebSearch
       }
@@ -458,7 +653,44 @@ export async function handleAiChatAsk(
     customer_answer: customerAnswer,
     sources,
     confidence,
-    provider_status: providerStatus
+    provider_status: providerStatus,
+    model: osContext.route.model,
+    actualModel,
+    fallbackUsed: visibleFallbackUsed,
+    errorCode: providerErrorCode ?? null,
+    trace_id: osTrace.trace_id,
+    latency_ms: osTrace.latency_ms,
+    route_decision: osContext.route.route_decision,
+    rag_diagnostics: {
+      topK: ragDiagnostics.rag_topK,
+      hitCount: ragDiagnostics.hitCount,
+      contextChars: ragDiagnostics.contextChars,
+      retrieval_efficiency_score: retrievalEfficiencyScore
+    },
+    relevance_score: relevanceScore,
+    answer_grounding_score: visibleAnswerGroundingScore,
+    answer_quality: answerQuality,
+    auto_improvement: {
+      knowledge_gap_event: knowledgeGapEvent,
+      optimization_suggestions: optimizationSuggestions,
+      evolution_report: evolutionReport,
+    },
+    feedback_meta: {
+      message_id: String(assistantMessage.id),
+      trace_id: osTrace.trace_id,
+      model: osContext.route.model,
+      actualModel,
+      fallbackUsed: visibleFallbackUsed,
+      sources,
+      rag_quality_score: ragQualityScore,
+      relevance_score: relevanceScore,
+      answer_grounding_score: visibleAnswerGroundingScore,
+      answer_quality: answerQuality,
+      knowledge_feedback_event: knowledgeFeedbackEvent,
+      knowledge_gap_event: knowledgeGapEvent,
+      optimization_suggestions: optimizationSuggestions,
+      evolution_report: evolutionReport
+    }
   };
 }
 

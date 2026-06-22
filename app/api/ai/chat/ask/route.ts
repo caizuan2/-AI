@@ -6,8 +6,6 @@ import { requireRole } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
-  getChatModelForProvider,
-  getPrimaryAIProvider,
   hasDatabaseUrl,
   hasUsableChatProvider,
   type ChatProviderName
@@ -18,7 +16,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function normalizeProvider(value: string | null | undefined): ChatProviderName {
-  return value === "openai" || value === "deepseek" || value === "qwen" ? value : getPrimaryAIProvider();
+  return value === "openai" ? "openai" : "openai";
 }
 
 function confidenceToNumber(confidence: RagConfidence) {
@@ -62,7 +60,6 @@ export async function POST(request: Request) {
   try {
     const settings = await getOrCreateUserSettings(actor.id);
     const provider = normalizeProvider(settings.preferredProvider);
-    const model = settings.preferredModel?.trim() || getChatModelForProvider(provider);
     const providerConfigured = hasUsableChatProvider(provider);
     const result = await handleAiChatAsk({
       id: actor.id,
@@ -70,7 +67,7 @@ export async function POST(request: Request) {
     }, body, {
       providerConfigured,
       answerProvider: providerConfigured
-        ? async ({ question, contexts, mode, enableDeepThinking, confidence }) => {
+        ? async ({ question, contexts, mode, enableDeepThinking, confidence, model }) => {
             const ragAnswer = await generateRagAnswer(question, contexts, {
               userId: actor.id,
               provider,
@@ -84,7 +81,9 @@ export async function POST(request: Request) {
               answer: ragAnswer.answer,
               providerUsed: ragAnswer.providerUsed,
               modelUsed: ragAnswer.model,
-              fallbackUsed: ragAnswer.fallbackUsed
+              fallbackUsed: ragAnswer.fallbackUsed,
+              answerGroundingScore: ragAnswer.answer_grounding_score,
+              originalProviderErrorCode: ragAnswer.originalProviderErrorCode
             };
           }
         : undefined
