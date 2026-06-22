@@ -27,6 +27,8 @@ export interface GptOSContentGrowthResult {
   contentValueAfter: number;
   improvementDelta: number;
   growthPotential: "low" | "medium" | "high";
+  responseFormatInfluence: "none";
+  uiInfluence: "none";
   optimizationSummary: string;
   diagnostics: string[];
 }
@@ -69,13 +71,18 @@ export function runGptOSContentGrowthEngine(input: {
     contentValueAfter,
     improvementDelta,
     growthPotential: amplifier.growthPotential,
-    optimizationSummary: `${lifecycle.currentStage} 阶段：预计内容价值 ${contentValueBefore} → ${contentValueAfter}，可复用资产 ${reuse.reuseCount} 个，下一步 ${scheduler.nextGrowthTask}。`,
+    responseFormatInfluence: "none",
+    uiInfluence: "none",
+    optimizationSummary: `后台增长评分：${lifecycle.currentStage} 阶段预计内容价值 ${contentValueBefore} → ${contentValueAfter}，可复用资产 ${reuse.reuseCount} 个；该评分只用于运营 metadata，不能控制主回复格式、语气或段落顺序。`,
     diagnostics: [
       ...scheduler.diagnostics,
       `growth:valueBefore:${contentValueBefore}`,
       `growth:valueAfter:${contentValueAfter}`,
       `growth:delta:${improvementDelta}`,
-      `growth:reuseCount:${reuse.reuseCount}`
+      `growth:reuseCount:${reuse.reuseCount}`,
+      "growth:formattingInfluence:metadata_only",
+      "growth:responseFormatInfluence:none",
+      "growth:uiInfluence:none"
     ]
   };
 }

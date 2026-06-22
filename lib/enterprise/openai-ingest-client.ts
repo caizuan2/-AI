@@ -568,24 +568,28 @@ export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: Gp
   const agentGoal = gptOS?.planner.steps?.join(" → ") || "整理投喂内容、生成知识结构、给出可保存建议";
   const systemPrompt = [
     "你是管理员投喂版 GPT-5.5 兼容模式。",
+    "You are GPT-5.5 in ChatGPT-style conversational mode.",
     "请只基于用户问题、附件摘要、最近对话和 Agent 信息生成高质量中文回答。",
     "不要输出 diagnostics、debug、OS 状态、trace、cost、taskChain、kernel 或内部循环信息。",
-    "输出需要自然、清晰，可直接给管理员确认；同时包含标题、分类、标签、标准问答和保存建议。"
+    "输出必须像 ChatGPT：先自然解释、说明判断过程和建议。",
+    "不要表现得像知识库生成器，不要以“标题/分类/标签/训练价值评分/入库建议”开头，不要让结构化信息控制表达。",
+    "自然语言是唯一主输出；分类、标签、评分和结构化草稿只能作为后台 metadata，不得影响语气、顺序和第一段。",
+    "不要自动套编号列表、章节、分类、模板或结构化知识块；除非用户明确要求这种格式，否则保持原生 ChatGPT 对话表达。"
   ].join("\n");
   const sections = [
     `用户投喂内容：\n${compactText(input.input, 3_600)}`,
     `当前 Agent：${agentName}`,
     `Agent 目标：${compactText(input.agentDescription || input.targetUser || agentGoal, 900)}`,
-    `分类线索：${input.category || "未分类"}`,
+    `后台分类线索（仅 metadata，不控制主回复）：${input.category || "未分类"}`,
     fileSummaries ? `附件摘要（只保留摘要，不传原始大文件）：\n${fileSummaries}` : "附件摘要：无",
     recentMessages ? `最近对话（最多 3 轮）：\n${recentMessages}` : "最近对话：无",
     [
       "请完成：",
-      "1. 先给出面向管理员的自然分析与总结。",
-      "2. 生成可入库知识标题、分类、标签。",
-      "3. 生成 1-3 组标准问答。",
+      "1. 先给出面向管理员的自然分析与总结，像正常 ChatGPT 回复一样开场。",
+      "2. 说明你为什么这样拆、哪些内容值得沉淀、还缺什么信息。",
+      "3. 如果需要入库，结构化字段只作为后台元数据理解，不要让它们主导主回复。",
       "4. 给出是否建议入库和原因。",
-      "5. 不要使用技术错误提示，不要提及兼容模式。"
+      "5. 不要使用技术错误提示，不要提及兼容模式，不要让结构化字段主导主回复。"
     ].join("\n")
   ];
   const rawUserPrompt = sections.join("\n\n");

@@ -19,11 +19,7 @@ import type {
   AutonomousTaskRequest
 } from "@/lib/enterprise/gpt-os-autonomous-executor";
 import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normalizer";
-import {
-  conversationalVersion,
-  enhanceGPTStyle,
-  naturalLanguageFirst
-} from "@/lib/enterprise/gpt-os-style-layer";
+import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -434,60 +430,59 @@ export async function POST(request: Request) {
       requestId
     });
 
-    const styledReply = enhanceGPTStyle(result.replyMarkdown, {
-      userInput: input.input
-    });
-    const styledResult = {
+    const rawReply = result.replyMarkdown;
+    const stylePassThrough = enhanceGPTStyle(rawReply);
+    const rawResult = {
       ...result,
-      replyMarkdown: styledReply.output,
+      replyMarkdown: rawReply,
       diagnostics: [
         ...result.diagnostics,
-        ...styledReply.diagnostics,
-        `gptStyle:changed:${styledReply.changed ? "true" : "false"}`
+        ...stylePassThrough.diagnostics,
+        "gptStyle:changed:false"
       ]
     };
 
     return jsonUtf8({
       ok: true,
-      data: styledResult,
+      data: rawResult,
       fallback: false,
       fallbackUsed: false,
-      provider: styledResult.provider,
-      requestedModel: styledResult.requestedModel,
-      actualModel: styledResult.actualModel,
-      responseId: styledResult.responseId,
-      proofId: "proofId" in styledResult ? styledResult.proofId : styledResult.responseId,
-      createdAt: styledResult.createdAt,
-      usage: styledResult.usage,
-      gptProof: styledResult.gptProof,
-      intent: styledResult.intent,
-      fixedTemplateRisk: styledResult.fixedTemplateRisk,
-      qualityPassed: styledResult.gptProof.qualityPassed,
-      deepenAttempts: styledResult.gptProof.deepenAttempts,
-      model: styledResult.model,
-      selectedModelLabel: styledResult.selectedModelLabel,
-      content: styledReply.output,
-      answer: naturalLanguageFirst(result.replyMarkdown, { userInput: input.input }),
-      reply: conversationalVersion(result.replyMarkdown, { userInput: input.input }),
-      replyMarkdown: styledReply.output,
-      knowledgeDraft: styledResult.knowledgeDraft,
-      userClientCallPlan: styledResult.userClientCallPlan,
-      suggestedQuestions: styledResult.suggestedQuestions,
-      sourceFiles: styledResult.sourceFiles,
-      saveRecommendation: styledResult.saveRecommendation,
-      diagnostics: styledResult.diagnostics,
+      provider: rawResult.provider,
+      requestedModel: rawResult.requestedModel,
+      actualModel: rawResult.actualModel,
+      responseId: rawResult.responseId,
+      proofId: "proofId" in rawResult ? rawResult.proofId : rawResult.responseId,
+      createdAt: rawResult.createdAt,
+      usage: rawResult.usage,
+      gptProof: rawResult.gptProof,
+      intent: rawResult.intent,
+      fixedTemplateRisk: rawResult.fixedTemplateRisk,
+      qualityPassed: rawResult.gptProof.qualityPassed,
+      deepenAttempts: rawResult.gptProof.deepenAttempts,
+      model: rawResult.model,
+      selectedModelLabel: rawResult.selectedModelLabel,
+      content: rawReply,
+      answer: rawReply,
+      reply: rawReply,
+      replyMarkdown: rawReply,
+      knowledgeDraft: rawResult.knowledgeDraft,
+      userClientCallPlan: rawResult.userClientCallPlan,
+      suggestedQuestions: rawResult.suggestedQuestions,
+      sourceFiles: rawResult.sourceFiles,
+      saveRecommendation: rawResult.saveRecommendation,
+      diagnostics: rawResult.diagnostics,
       gptStyle: {
-        tone: styledReply.tone,
-        structure: styledReply.structure,
-        priority: styledReply.priority,
-        changed: styledReply.changed
+        tone: stylePassThrough.tone,
+        structure: stylePassThrough.structure,
+        priority: stylePassThrough.priority,
+        changed: false
       },
-      gptOS: styledResult.gptOS,
-      autonomousResult: styledResult.autonomousResult,
-      structuredResult: styledResult.structuredResult,
-      structured: styledResult.structured,
-      sync: styledResult.sync,
-      sourceType: styledResult.sourceType
+      gptOS: rawResult.gptOS,
+      autonomousResult: rawResult.autonomousResult,
+      structuredResult: rawResult.structuredResult,
+      structured: rawResult.structured,
+      sync: rawResult.sync,
+      sourceType: rawResult.sourceType
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);

@@ -12,6 +12,9 @@ export interface GptOSContentScore {
   virality: number;
   totalScore: number;
   scoreLabel: "low" | "medium" | "high";
+  formattingInfluence: "metadata_only";
+  primaryOutputInfluence: "none";
+  uiInfluence: "none";
   signals: string[];
   improvementSuggestions: string[];
 }
@@ -58,19 +61,19 @@ export function scoreGptOSBusinessContent(input: GptOSContentScoringInput): GptO
   const totalScore = Number(((readability + structure + businessValue + virality) / 4).toFixed(1));
 
   if (structure < 7) {
-    suggestions.add("补充标题、分段、步骤和检查点，让内容更容易复用。");
+    suggestions.add("在后台结构化草稿中补充标题、分段、步骤和检查点；主回复仍保持自然解释优先。");
   }
 
   if (businessValue < 7) {
-    suggestions.add("补充目标客户、使用场景、转化动作和价值主张。");
+    suggestions.add("在内容建议中补充目标客户、使用场景、转化动作和价值主张，不改变主回复语气。");
   }
 
   if (virality < 6) {
-    suggestions.add("补充传播标题、关键词、案例或前后对比。");
+    suggestions.add("可在后续运营草稿里补充传播标题、关键词、案例或前后对比。");
   }
 
   if (!hasKnowledge) {
-    suggestions.add("补充标准问答和知识库标签，方便后续检索。");
+    suggestions.add("在 structured metadata 中补充标准问答和知识库标签，方便后续检索。");
   }
 
   return {
@@ -80,6 +83,9 @@ export function scoreGptOSBusinessContent(input: GptOSContentScoringInput): GptO
     virality,
     totalScore,
     scoreLabel: scoreLabel(totalScore),
+    formattingInfluence: "metadata_only",
+    primaryOutputInfluence: "none",
+    uiInfluence: "none",
     signals: Array.from(signals),
     improvementSuggestions: Array.from(suggestions).slice(0, 4)
   };
