@@ -1,7 +1,7 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireUser } from "@/lib/auth";
-import { normalizeLicenseAppType, redeemLicenseKey } from "@/lib/auth/license";
+import { getLicenseAppTypeFromKey, normalizeLicenseAppType, redeemLicenseKey } from "@/lib/auth/license";
 import { ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -22,15 +22,15 @@ function parseActivateRequest(body: unknown, request: Request) {
     (typeof body.licenseKey === "string" ? body.licenseKey.trim() : "") ||
     (typeof body.key === "string" ? body.key.trim() : "");
   const userId = typeof body.user_id === "string" ? body.user_id.trim() : "";
-  const url = new URL(request.url);
-  const appType = normalizeLicenseAppType(
-    body.appType ?? body.app ?? url.searchParams.get("appType") ?? url.searchParams.get("app"),
-    "user_app"
-  );
-
   if (!code) {
     throw new ValidationError("请输入卡密。");
   }
+
+  const url = new URL(request.url);
+  const appType = normalizeLicenseAppType(
+    body.appType ?? body.app ?? url.searchParams.get("appType") ?? url.searchParams.get("app"),
+    getLicenseAppTypeFromKey(code) ?? "user_app"
+  );
 
   return { code, userId, appType };
 }

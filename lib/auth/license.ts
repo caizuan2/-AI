@@ -19,6 +19,7 @@ const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const BOOTSTRAP_ADMIN_PHONES = [BOOTSTRAP_SUPER_ADMIN_PHONE];
 const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "super_admin"] as const;
+const INGEST_ADMIN_DB_ROLE = "kb_admin" as const;
 const LICENSE_METADATA_ACTIONS = [
   "generate_user_app_license_key",
   "generate_ingest_admin_license_key",
@@ -78,6 +79,50 @@ export function normalizeLicenseAppType(value: unknown, fallback: LicenseAppType
   }
 
   return LICENSE_APP_TYPES.includes(normalized as LicenseAppType) ? (normalized as LicenseAppType) : fallback;
+}
+
+function getLicensePrefix(key: string) {
+  const normalized = normalizeLicenseKey(key);
+
+  if (normalized.startsWith("XT-INGEST-")) {
+    return "XT-INGEST";
+  }
+
+  if (normalized.startsWith("XT-USER-")) {
+    return "XT-USER";
+  }
+
+  if (normalized.startsWith("XT-SUPER-")) {
+    return "XT-SUPER";
+  }
+
+  if (normalized.startsWith("AIKB-")) {
+    return "AIKB";
+  }
+
+  return normalized.split("-")[0] || "UNKNOWN";
+}
+
+export function getLicenseAppTypeFromKey(key: string): LicenseAppType | null {
+  const prefix = getLicensePrefix(key);
+
+  if (prefix === "XT-INGEST") {
+    return "ingest_admin";
+  }
+
+  if (prefix === "XT-SUPER") {
+    return "super_admin";
+  }
+
+  if (prefix === "XT-USER" || prefix === "AIKB") {
+    return "user_app";
+  }
+
+  return null;
+}
+
+function getDatabaseRoleForLicenseAppType(appType: LicenseAppType) {
+  return appType === "ingest_admin" ? INGEST_ADMIN_DB_ROLE : null;
 }
 
 function randomLicenseGroup(length: number) {
@@ -175,7 +220,7 @@ function readLicenseMetadata(metadata: unknown): LicenseMetadata | null {
   };
 }
 
-async function getLicenseMetadata(licenseId: string): Promise<LicenseMetadata> {
+async function getLicenseMetadata(licenseId: string, fallbackAppType: LicenseAppType = "user_app"): Promise<LicenseMetadata> {
   const auditLog = await prisma.auditLog.findFirst({
     where: {
       action: {
@@ -193,7 +238,7 @@ async function getLicenseMetadata(licenseId: string): Promise<LicenseMetadata> {
   });
 
   return readLicenseMetadata(auditLog?.metadata) ?? {
-    appType: "user_app",
+    appType: fallbackAppType,
     maxActivations: 1
   };
 }
@@ -330,7 +375,9 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     throw new InvalidLicenseKeyError("卡密格式无效。");
   }
 
-  const requestedAppType = normalizeLicenseAppType(context?.appType);
+  const keyAppType = getLicenseAppTypeFromKey(key);
+  const requestedAppType = normalizeLicenseAppType(context?.appType, keyAppType ?? "user_app");
+  const licensePrefix = getLicensePrefix(key);
   const keyHashes = getAcceptedLicenseHashes(key);
   const primaryHash = hashLicenseKey(key);
   let licenses = await findAcceptedLicenseKeys(keyHashes);
@@ -340,6 +387,15 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     licenses = await findAcceptedLicenseKeys(keyHashes);
 
     if (licenses.length === 0) {
+      console.info("[ingest:activate-license]", {
+        userId,
+        appType: requestedAppType,
+        licensePrefix,
+        foundLicense: false,
+        status: null,
+        redeemedByUserId: "empty",
+        expiresAt: null
+      });
       await recordActivationLog({
         codeHash: primaryHash,
         userId,
@@ -362,7 +418,17 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
   }
 
   const license = licenses.find((item) => item.status === LicenseKeyStatus.UNUSED) ?? licenses[0];
-  const metadata = await getLicenseMetadata(license.id);
+  const metadata = await getLicenseMetadata(license.id, keyAppType ?? requestedAppType);
+
+  console.info("[ingest:activate-license]", {
+    userId,
+    appType: requestedAppType,
+    licensePrefix,
+    foundLicense: Boolean(license),
+    status: license?.status,
+    redeemedByUserId: license?.redeemedByUserId ? "present" : "empty",
+    expiresAt: license?.expiresAt
+  });
 
   if (metadata.appType !== requestedAppType) {
     await recordActivationLog({
@@ -470,6 +536,8 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     throw new LicenseExpiredError("卡密已过期。");
   }
 
+  const dbRole = getDatabaseRoleForLicenseAppType(requestedAppType);
+
   const redeemedUser = await prisma.$transaction(async (tx) => {
     const updatedLicense = await tx.licenseKey.updateMany({
       where: {
@@ -499,7 +567,8 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       where: { id: userId },
       data: {
         licenseActivated: true,
-        ...(requestedAppType === "ingest_admin" ? { role: "ingest_admin" as const } : {})
+        isActive: true,
+        ...(dbRole ? { role: dbRole } : {})
       },
       select: {
         id: true,
@@ -508,11 +577,15 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       }
     });
 
-    if (requestedAppType === "ingest_admin") {
-      const activeAssignment = await tx.userRoleAssignment.findFirst({
+    return user;
+  });
+
+  if (dbRole) {
+    try {
+      const activeAssignment = await prisma.userRoleAssignment.findFirst({
         where: {
           userId,
-          role: "ingest_admin",
+          role: dbRole,
           revokedAt: null,
           OR: [
             { expiresAt: null },
@@ -525,17 +598,25 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       });
 
       if (!activeAssignment) {
-        await tx.userRoleAssignment.create({
+        await prisma.userRoleAssignment.create({
           data: {
             userId,
-            role: "ingest_admin"
+            role: dbRole
           }
         });
       }
-    }
+    } catch (error) {
+      const value = error as { code?: unknown; message?: unknown };
 
-    return user;
-  });
+      console.warn("[ingest:activate-license:role-assignment-skipped]", {
+        userId,
+        appType: requestedAppType,
+        dbRole,
+        errorCode: typeof value?.code === "string" ? value.code : "unknown",
+        message: typeof value?.message === "string" ? value.message.slice(0, 160) : "unknown"
+      });
+    }
+  }
 
   await recordActivationLog({
     codeHash: primaryHash,
@@ -551,6 +632,7 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     context,
     metadata: {
       requestedAppType,
+      dbRole,
       licenseAppType: metadata.appType,
       maxActivations: metadata.maxActivations,
       activationCount: 1
