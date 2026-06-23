@@ -1,0 +1,13 @@
+appId: com.aiknowledge.ingestadmin.desktop
+productName: AI知识库投喂端
+directories:
+  output: dist-app/admin-ingest/windows
+files:
+  - electron/admin-ingest/**
+  - package.json
+extraMetadata:
+  main: electron/admin-ingest/main.js
+win:
+  target:
+    - portable
+  artifactName: "AI知识库投喂端.${ext}"

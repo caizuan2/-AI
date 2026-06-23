@@ -13,7 +13,13 @@ const toolIcons: Record<string, ComponentType<{ className?: string }>> = {
   fix: BookOpenCheck
 };
 
-export function IngestEXETools({ tools }: { tools: IngestEXETool[] }) {
+export function IngestEXETools({
+  tools,
+  onToolAction
+}: {
+  tools: IngestEXETool[];
+  onToolAction?: (label: string) => void;
+}) {
   return (
     <div className="rounded-[24px] border border-[#ececea] bg-white p-3 shadow-[0_12px_35px_rgba(15,23,42,0.05)]">
       <div className="mb-3 flex items-center justify-between px-1">
@@ -31,6 +37,7 @@ export function IngestEXETools({ tools }: { tools: IngestEXETool[] }) {
             <button
               key={tool.id}
               type="button"
+              onClick={() => onToolAction?.(tool.label)}
               className={["flex items-center gap-2 rounded-2xl border px-3 py-2.5 text-left transition", tool.active ? "border-[#202020] bg-[#202020] text-white" : "border-[#e7e7e4] bg-[#fafafa] text-[#333] hover:bg-white"].join(" ")}
             >
               <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
