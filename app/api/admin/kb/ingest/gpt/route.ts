@@ -20,6 +20,7 @@ import type {
 } from "@/lib/enterprise/gpt-os-autonomous-executor";
 import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
+import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -215,6 +216,28 @@ function toGptFallbackErrorCode(error: unknown) {
   }
 
   return "OPENAI_RESPONSES_REQUEST_FAILED" as const;
+}
+
+function readDiagnosticValue(diagnostics: string[] | undefined, prefix: string) {
+  return (diagnostics ?? []).find((item) => item.startsWith(prefix))?.slice(prefix.length) ?? "";
+}
+
+function buildModelDiagnostics(input: {
+  provider: string;
+  displayModelLabel: string;
+  actualModel: string;
+  routeDecision?: string;
+  fallbackUsed: boolean;
+  fallbackChain?: string[];
+}) {
+  return {
+    provider: input.provider,
+    displayModelLabel: input.displayModelLabel,
+    actualModel: input.actualModel,
+    routeDecision: input.routeDecision ?? input.provider,
+    fallbackUsed: input.fallbackUsed,
+    fallbackChain: input.fallbackChain ?? []
+  };
 }
 
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
@@ -452,6 +475,12 @@ export async function POST(request: Request) {
       input: input.input,
       attachments: input.attachments
     });
+    const modelRuntime = resolveIngestModelRuntime({
+      provider: modelOption.provider,
+      selectedModelLabel: input.selectedModelLabel,
+      modelDisplayName: input.modelDisplayName,
+      preferredModel: input.preferredModel
+    });
     const result = await runAdminIngestWithSelectedModel({
       input: input.input,
       attachments: input.attachments,
@@ -467,12 +496,12 @@ export async function POST(request: Request) {
       platform: input.platform,
       syncTarget: input.syncTarget,
       modelProvider: modelOption.provider,
-      preferredModel: input.preferredModel,
+      preferredModel: modelRuntime.actualModel,
       gptTier: input.gptTier,
       gptTierLabel: input.gptTierLabel,
       gptVersion: input.gptVersion,
-      selectedModelLabel: input.selectedModelLabel,
-      modelDisplayName: input.modelDisplayName,
+      selectedModelLabel: modelRuntime.displayModelLabel,
+      modelDisplayName: input.modelDisplayName || modelRuntime.displayModelLabel,
       recentMessages: input.recentMessages,
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
@@ -482,6 +511,15 @@ export async function POST(request: Request) {
 
     const rawReply = result.replyMarkdown;
     const stylePassThrough = enhanceGPTStyle(rawReply);
+    const fallbackChainText = readDiagnosticValue(result.diagnostics, "modelRouter:fallbackChain:");
+    const modelDiagnostics = buildModelDiagnostics({
+      provider: result.provider,
+      displayModelLabel: result.selectedModelLabel || modelRuntime.displayModelLabel,
+      actualModel: result.actualModel || modelRuntime.actualModel,
+      routeDecision: readDiagnosticValue(result.diagnostics, "modelRouter:routeDecision:"),
+      fallbackUsed: result.fallbackUsed,
+      fallbackChain: fallbackChainText ? fallbackChainText.split(">").filter(Boolean) : []
+    });
     const rawResult = {
       ...result,
       replyMarkdown: rawReply,
@@ -500,6 +538,7 @@ export async function POST(request: Request) {
       provider: rawResult.provider,
       requestedModel: rawResult.requestedModel,
       actualModel: rawResult.actualModel,
+      modelDiagnostics,
       responseId: rawResult.responseId,
       proofId: "proofId" in rawResult ? rawResult.proofId : rawResult.responseId,
       createdAt: rawResult.createdAt,
@@ -547,6 +586,20 @@ export async function POST(request: Request) {
       input: input.input,
       attachments: input.attachments
     });
+    const modelRuntime = resolveIngestModelRuntime({
+      provider: modelOption.provider,
+      selectedModelLabel: input.selectedModelLabel,
+      modelDisplayName: input.modelDisplayName,
+      preferredModel: input.preferredModel
+    });
+    const modelDiagnostics = buildModelDiagnostics({
+      provider: modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash" ? "deepseek" : modelOption.provider,
+      displayModelLabel: modelRuntime.displayModelLabel,
+      actualModel: modelRuntime.actualModel,
+      routeDecision: modelOption.provider,
+      fallbackUsed: true,
+      fallbackChain: []
+    });
 
     if (errorCode === "OPENAI_FULL_REQUEST_FAILED") {
       const diagnostics = error && typeof error === "object" && "details" in error
@@ -566,8 +619,10 @@ export async function POST(request: Request) {
         userMessage,
         message: userMessage,
         provider: modelOption.provider,
-        selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || modelOption.label,
-        model: input.preferredModel,
+        selectedModelLabel: modelRuntime.displayModelLabel,
+        model: modelRuntime.actualModel,
+        actualModel: modelRuntime.actualModel,
+        modelDiagnostics,
         diagnostics: {
           ...safeDiagnostics,
           errorCode: "OPENAI_FULL_REQUEST_FAILED"
@@ -589,8 +644,10 @@ export async function POST(request: Request) {
       ok: false,
       errorCode,
       provider: modelOption.provider,
-      selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || modelOption.label,
-      model: input.preferredModel
+      selectedModelLabel: modelRuntime.displayModelLabel,
+      model: modelRuntime.actualModel,
+      actualModel: modelRuntime.actualModel,
+      modelDiagnostics
     }, status);
   }
 }

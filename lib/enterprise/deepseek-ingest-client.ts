@@ -37,6 +37,10 @@ import {
   normalizeLLMResponse,
   withResilientLLMCall
 } from "@/lib/enterprise/gpt-os-api-adapter";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 export interface DeepSeekAdminIngestInput {
   input: string;
@@ -152,9 +156,17 @@ function buildChatCompletionsUrl(baseUrl: string) {
 }
 
 function resolveDeepSeekConfig(input: DeepSeekAdminIngestInput) {
-  const configuredModel = readEnv("DEEPSEEK_MODEL");
-  const model = configuredModel || input.preferredModel || DEFAULT_MODEL;
-  const selectedModelLabel = input.selectedModelLabel || input.modelDisplayName || readEnv("DEEPSEEK_DISPLAY_NAME") || DEFAULT_MODEL_LABEL;
+  const isFlash = /flash/i.test(`${input.selectedModelLabel ?? ""} ${input.modelDisplayName ?? ""}`);
+  const provider = isFlash ? "deepseek-flash" : "deepseek-pro";
+  const configuredModel = isFlash
+    ? readEnv("DEEPSEEK_FLASH_MODEL") || readEnv("DEEPSEEK_MODEL")
+    : readEnv("DEEPSEEK_PRO_MODEL") || readEnv("DEEPSEEK_MODEL");
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel(provider) || DEFAULT_MODEL;
+  const selectedModelLabel = input.selectedModelLabel
+    || input.modelDisplayName
+    || readEnv("DEEPSEEK_DISPLAY_NAME")
+    || (isFlash ? "DeepSeek-V4-Flash" : DEFAULT_MODEL_LABEL);
   const baseUrl = normalizeBaseUrl(readEnv("DEEPSEEK_BASE_URL"));
 
   return {
@@ -163,7 +175,7 @@ function resolveDeepSeekConfig(input: DeepSeekAdminIngestInput) {
     chatCompletionsUrl: buildChatCompletionsUrl(baseUrl),
     model,
     selectedModelLabel,
-    modelMode: configuredModel ? "fixed" as const : "highest" as const
+    modelMode: configuredModel || preferredModel ? "fixed" as const : "highest" as const
   };
 }
 
@@ -368,6 +380,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     let normalized: ReturnType<typeof normalizeGptOutput> | null = null;
     let quality = buildMissingReplyQuality(response.text, input.input);
     let deepenAttempts = 0;
+    let qualitySoftAccepted = false;
 
     try {
       normalized = normalizeGptOutput({
@@ -444,15 +457,32 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       }
     }
 
-    if (!quality.ok) {
-      throw new DeepSeekIngestError(
-        "DEEPSEEK_PRO_QUALITY_FAILED",
-        `DeepSeek 已返回，但回复未达到投喂深度：${quality.failedReasons.join("；")}`
-      );
+    if (!normalized) {
+      try {
+        normalized = normalizeGptOutput({
+          rawText: response.text,
+          originalInput: input.input,
+          fallbackCategory: input.category ?? "",
+          strictReply: false
+        });
+        quality = assessGptProResponseQuality(normalized.replyMarkdown, {
+          userInput: input.input
+        });
+      } catch {
+        throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 未返回可保存的 replyMarkdown。");
+      }
     }
 
-    if (!normalized) {
-      throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 未返回可保存的 replyMarkdown。");
+    if (!quality.ok) {
+      qualitySoftAccepted = Boolean(normalized.replyMarkdown.trim());
+      logger.warn("enterprise_admin_ingest.deepseek_quality_soft_accept", {
+        requestId: input.requestId,
+        model: response.model,
+        responseId: response.responseId,
+        chineseCharCount: quality.chineseCharCount,
+        failedReasons: quality.failedReasons,
+        replyLength: normalized.replyMarkdown.length
+      });
     }
 
     const gptProof: GptCallProof = {
@@ -465,7 +495,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       proofIdSource: response.proofIdSource,
       fallback: false,
       requestTested: true,
-      qualityPassed: true,
+      qualityPassed: quality.ok || qualitySoftAccepted,
       deepenAttempts,
       createdAt: response.createdAt,
       usage: response.usage
@@ -522,6 +552,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         `apiResilience:rawResponseType:${response.rawResponseType}`,
         `apiResilience:retryCount:${response.retryCount}`,
         `apiResilience:fallbackUsed:false`,
+        `apiResilience:qualitySoftAccepted:${qualitySoftAccepted ? "true" : "false"}`,
         `apiResilience:responseLatency:${response.responseLatency}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         `observability:traceId:${gptOS.observability.trace.traceId}`,

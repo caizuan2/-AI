@@ -41,6 +41,10 @@ import {
   normalizeLLMResponse,
   withResilientLLMCall
 } from "@/lib/enterprise/gpt-os-api-adapter";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 export interface QwenAdminIngestInput {
   input: string;
@@ -159,7 +163,8 @@ function buildChatCompletionsUrl(baseUrl: string) {
 
 function resolveQwenConfig(input: QwenAdminIngestInput) {
   const configuredModel = readEnv("QWEN_MODEL");
-  const model = configuredModel || input.preferredModel || getQwenModel();
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel("qwen") || getQwenModel();
   const selectedModelLabel = input.selectedModelLabel || input.modelDisplayName || readEnv("QWEN_DISPLAY_NAME") || DEFAULT_MODEL_LABEL;
   const baseUrl = normalizeBaseUrl(readEnv("QWEN_BASE_URL"));
 
@@ -169,7 +174,7 @@ function resolveQwenConfig(input: QwenAdminIngestInput) {
     chatCompletionsUrl: buildChatCompletionsUrl(baseUrl),
     model,
     selectedModelLabel,
-    modelMode: configuredModel ? "fixed" as const : "highest" as const
+    modelMode: configuredModel || preferredModel ? "fixed" as const : "highest" as const
   };
 }
 
@@ -260,7 +265,7 @@ export async function callQwen(payload: {
   signal?: AbortSignal;
 }) {
   const apiKey = payload.apiKey || readQwenKey();
-  const model = payload.model || getQwenModel();
+  const model = sanitizeIngestPreferredModel(payload.model) || resolveIngestActualModel("qwen") || getQwenModel();
   const url = buildChatCompletionsUrl(normalizeBaseUrl(payload.baseUrl || readEnv("QWEN_BASE_URL")));
   const messages = payload.messages?.length
     ? payload.messages

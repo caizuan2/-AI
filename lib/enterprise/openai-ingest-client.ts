@@ -41,6 +41,10 @@ import {
   type GptOSApiResponseType,
   type NormalizedLLMResponse
 } from "@/lib/enterprise/gpt-os-api-adapter";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 export interface OpenAIAdminIngestAttachment {
   fileName: string;
@@ -299,8 +303,9 @@ function readOpenAIKey() {
 function resolveResponsesConfig(input: OpenAIAdminIngestInput) {
   const configuredModel = readEnv("OPENAI_MODEL");
   const fixedModel = configuredModel && configuredModel.toLowerCase() !== "auto" ? configuredModel : "";
-  const model = input.preferredModel || fixedModel || readEnv("OPENAI_PREFERRED_MODEL") || DEFAULT_MODEL;
-  const modelMode = fixedModel && !input.preferredModel ? "fixed" as const : "highest" as const;
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel("openai") || fixedModel || readEnv("OPENAI_PREFERRED_MODEL") || DEFAULT_MODEL;
+  const modelMode = fixedModel || preferredModel ? "fixed" as const : "highest" as const;
   const selectedModelLabel = input.selectedModelLabel || input.modelDisplayName || DEFAULT_MODEL_LABEL;
   const baseUrl = normalizeBaseUrl(readEnv("OPENAI_BASE_URL"));
 
@@ -317,10 +322,9 @@ function resolveResponsesConfig(input: OpenAIAdminIngestInput) {
 function resolveHealthModel(input: {
   preferredModel?: string | null;
 }) {
-  const configuredModel = readEnv("OPENAI_MODEL");
-  const fixedModel = configuredModel && configuredModel.toLowerCase() !== "auto" ? configuredModel : "";
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
 
-  return input.preferredModel || fixedModel || readEnv("OPENAI_PREFERRED_MODEL") || DEFAULT_MODEL;
+  return preferredModel || resolveIngestActualModel("openai") || DEFAULT_MODEL;
 }
 
 function mapHealthStatus(status: number, bodyText: string): OpenAIIngestHealthErrorCode {

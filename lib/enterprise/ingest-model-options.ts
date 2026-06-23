@@ -34,11 +34,11 @@ export const INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   },
   {
     provider: "kimi",
-    label: "Kimi 128K",
+    label: "Kimi-K2.7-Code-HighSpeed",
     shortLabel: "Kimi",
-    displayName: "Kimi 文档版",
+    displayName: "Kimi-K2.7-Code-HighSpeed",
     modelEnvKey: "KIMI_MODEL",
-    defaultModel: "moonshot-v1-128k",
+    defaultModel: "kimi-k2.7-code-highspeed",
     description: "适合 PDF / Word / PPT 等长文档投喂和大上下文解析。",
     scenario: "文档投喂 / 长上下文 / 文件解析",
     speedLabel: "长文档",
@@ -62,9 +62,9 @@ export const INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   },
   {
     provider: "deepseek-flash",
-    label: "DeepSeek Flash",
+    label: "DeepSeek-V4-Flash",
     shortLabel: "Flash",
-    displayName: "DeepSeek Flash",
+    displayName: "DeepSeek-V4-Flash",
     modelEnvKey: "DEEPSEEK_FLASH_MODEL",
     defaultModel: "deepseek-chat",
     description: "适合低成本批量处理、草稿生成和快速资料初筛。",
@@ -92,6 +92,31 @@ export const INGEST_MODEL_OPTIONS: IngestModelOption[] = [
 
 export const DEFAULT_INGEST_MODEL_OPTION = INGEST_MODEL_OPTIONS[0];
 export const INGEST_MODEL_DISPLAY_NAMES = INGEST_MODEL_OPTIONS.map((option) => option.label);
+
+function readRuntimeEnv(name: string) {
+  return typeof process !== "undefined" ? process.env[name]?.trim() ?? "" : "";
+}
+
+function normalizeLabel(value: string | null | undefined) {
+  return (value ?? "").trim().toLowerCase();
+}
+
+const DISPLAY_MODEL_LABELS = new Set([
+  ...INGEST_MODEL_OPTIONS.flatMap((option) => [
+    option.label,
+    option.displayName,
+    option.shortLabel
+  ]),
+  "GPT-5.5",
+  "GPT-5.5 超高",
+  "DeepSeek-V4-Pro",
+  "DeepSeek-V4-Flash",
+  "DeepSeek Flash",
+  "Kimi 128K",
+  "Kimi-K2.7-Code-HighSpeed",
+  "Qwen Plus",
+  "千问"
+].map(normalizeLabel));
 
 export function normalizeIngestModelProvider(value: string | null | undefined): IngestModelProvider {
   const normalized = value?.trim().toLowerCase();
@@ -128,11 +153,17 @@ export function getIngestModelOptionByProvider(provider: string | null | undefin
 export function getIngestModelOptionByLabel(label: string | null | undefined) {
   const value = (label ?? "").trim();
   const lower = value.toLowerCase();
-
-  return INGEST_MODEL_OPTIONS.find((option) =>
+  const exactMatch = INGEST_MODEL_OPTIONS.find((option) =>
     option.label === value ||
     option.displayName === value ||
-    option.shortLabel === value ||
+    option.shortLabel === value
+  );
+
+  if (exactMatch) {
+    return exactMatch;
+  }
+
+  return INGEST_MODEL_OPTIONS.find((option) =>
     lower.includes(option.provider) ||
     lower.includes(option.defaultModel.toLowerCase()) ||
     lower.includes(option.shortLabel.toLowerCase())
@@ -150,4 +181,69 @@ export function getIngestModelOption(input: {
   }
 
   return getIngestModelOptionByLabel(input.selectedModelLabel || input.modelDisplayName || input.preferredModel);
+}
+
+export function isIngestDisplayModelLabel(value: string | null | undefined) {
+  const normalized = normalizeLabel(value);
+
+  return Boolean(normalized && DISPLAY_MODEL_LABELS.has(normalized));
+}
+
+export function sanitizeIngestPreferredModel(value: string | null | undefined) {
+  const model = (value ?? "").trim();
+
+  return model && !isIngestDisplayModelLabel(model) ? model : "";
+}
+
+export function resolveIngestActualModel(provider: string | null | undefined) {
+  const normalized = normalizeIngestModelProvider(provider);
+
+  if (normalized === "deepseek-pro") {
+    return readRuntimeEnv("DEEPSEEK_PRO_MODEL")
+      || readRuntimeEnv("DEEPSEEK_MODEL")
+      || "deepseek-chat";
+  }
+
+  if (normalized === "deepseek-flash") {
+    return readRuntimeEnv("DEEPSEEK_FLASH_MODEL")
+      || readRuntimeEnv("DEEPSEEK_MODEL")
+      || "deepseek-chat";
+  }
+
+  if (normalized === "kimi") {
+    return readRuntimeEnv("KIMI_MODEL") || "kimi-k2.7-code-highspeed";
+  }
+
+  if (normalized === "qwen") {
+    return readRuntimeEnv("QWEN_MODEL") || "qwen-plus";
+  }
+
+  const openAIModel = readRuntimeEnv("OPENAI_MODEL");
+  const fixedOpenAIModel = openAIModel && openAIModel.toLowerCase() !== "auto" ? openAIModel : "";
+
+  return fixedOpenAIModel
+    || readRuntimeEnv("OPENAI_PREFERRED_MODEL")
+    || "gpt-5.5";
+}
+
+export function resolveIngestModelRuntime(input: {
+  provider?: string | null;
+  selectedModelLabel?: string | null;
+  modelDisplayName?: string | null;
+  preferredModel?: string | null;
+}) {
+  const option = input.provider
+    ? getIngestModelOptionByProvider(input.provider)
+    : getIngestModelOption(input);
+  const displayModelLabel = input.selectedModelLabel
+    || input.modelDisplayName
+    || option.label;
+  const preferredActualModel = sanitizeIngestPreferredModel(input.preferredModel);
+
+  return {
+    option,
+    provider: option.provider,
+    displayModelLabel,
+    actualModel: preferredActualModel || resolveIngestActualModel(option.provider)
+  };
 }

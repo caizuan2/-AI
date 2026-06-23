@@ -1,6 +1,10 @@
 import "server-only";
 
 import { DEEPSEEK_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = "deepseek-chat";
@@ -54,9 +58,13 @@ function baseStatus(input: {
 }) {
   const rawBaseUrl = readEnv("DEEPSEEK_BASE_URL");
   const apiKey = readEnv("DEEPSEEK_API_KEY");
-  const configuredModel = readEnv("DEEPSEEK_MODEL");
-  const preferredModel = input.preferredModel || DEFAULT_MODEL;
-  const model = configuredModel || preferredModel;
+  const isFlash = /flash/i.test(input.selectedModelLabel ?? "");
+  const provider = isFlash ? "deepseek-flash" : "deepseek-pro";
+  const configuredModel = isFlash
+    ? readEnv("DEEPSEEK_FLASH_MODEL") || readEnv("DEEPSEEK_MODEL")
+    : readEnv("DEEPSEEK_PRO_MODEL") || readEnv("DEEPSEEK_MODEL");
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel(provider) || DEFAULT_MODEL;
 
   return {
     apiKey,
@@ -67,7 +75,7 @@ function baseStatus(input: {
       baseUrlConfigured: true,
       baseUrlSource: rawBaseUrl ? "configured" as const : "default" as const,
       modelConfigured: Boolean(configuredModel),
-      modelSource: configuredModel ? "configured" as const : input.preferredModel ? "preferred" as const : "default" as const,
+      modelSource: configuredModel ? "configured" as const : preferredModel ? "preferred" as const : "default" as const,
       apiKeyConfigured: hasUsableApiKey(apiKey),
       selectedModelLabel: input.selectedModelLabel || readEnv("DEEPSEEK_DISPLAY_NAME") || DEFAULT_MODEL_LABEL,
       model,

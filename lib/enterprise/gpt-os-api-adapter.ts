@@ -1,3 +1,8 @@
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
+
 export type GptOSApiProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi" | "mock";
 export type GptOSApiResponseType = "responses" | "chat_completions" | "string" | "unknown";
 export type LLMCallProvider = Exclude<GptOSApiProvider, "mock">;
@@ -87,12 +92,14 @@ function buildChatCompletionsUrl(baseUrl: string) {
 }
 
 function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
+  const requestedModel = sanitizeIngestPreferredModel(payload.model);
+
   if (provider === "openai") {
     const baseUrl = trimUrl(payload.baseUrl || readEnv("OPENAI_BASE_URL") || "https://api.openai.com/v1");
 
     return {
       apiKey: payload.apiKey || readEnv("OPENAI_API_KEY"),
-      model: payload.model || readEnv("OPENAI_MODEL") || readEnv("OPENAI_PREFERRED_MODEL") || "gpt-5.5",
+      model: requestedModel || resolveIngestActualModel("openai"),
       url: `${baseUrl}/responses`,
       mode: "responses" as const
     };
@@ -101,7 +108,7 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
   if (provider === "kimi") {
     return {
       apiKey: payload.apiKey || readEnv("KIMI_API_KEY"),
-      model: payload.model || readEnv("KIMI_MODEL") || "moonshot-v1-128k",
+      model: requestedModel || resolveIngestActualModel("kimi"),
       url: buildChatCompletionsUrl(payload.baseUrl || readEnv("KIMI_BASE_URL") || "https://api.moonshot.cn/v1"),
       mode: "chat" as const
     };
@@ -110,7 +117,7 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
   if (provider === "qwen") {
     return {
       apiKey: payload.apiKey || readEnv("QWEN_API_KEY"),
-      model: payload.model || readEnv("QWEN_MODEL") || "qwen-plus",
+      model: requestedModel || resolveIngestActualModel("qwen"),
       url: buildChatCompletionsUrl(payload.baseUrl || readEnv("QWEN_BASE_URL") || "https://dashscope.aliyuncs.com/compatible-mode/v1"),
       mode: "chat" as const
     };
@@ -118,11 +125,7 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
 
   return {
     apiKey: payload.apiKey || readEnv("DEEPSEEK_API_KEY"),
-    model: payload.model
-      || (provider === "deepseek-flash" ? readEnv("DEEPSEEK_FLASH_MODEL") : "")
-      || (provider === "deepseek-pro" ? readEnv("DEEPSEEK_PRO_MODEL") : "")
-      || readEnv("DEEPSEEK_MODEL")
-      || "deepseek-chat",
+    model: requestedModel || resolveIngestActualModel(provider),
     url: buildChatCompletionsUrl(payload.baseUrl || readEnv("DEEPSEEK_BASE_URL") || "https://api.deepseek.com"),
     mode: "chat" as const
   };

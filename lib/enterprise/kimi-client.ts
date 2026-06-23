@@ -36,6 +36,10 @@ import {
   normalizeLLMResponse,
   withResilientLLMCall
 } from "@/lib/enterprise/gpt-os-api-adapter";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 export interface KimiAdminIngestInput {
   input: string;
@@ -121,8 +125,8 @@ export class KimiIngestError extends Error {
 
 const REQUEST_TIMEOUT_MS = 180_000;
 const DEFAULT_BASE_URL = "https://api.moonshot.cn/v1";
-const DEFAULT_MODEL = "moonshot-v1-128k";
-const DEFAULT_MODEL_LABEL = "Kimi 128K";
+const DEFAULT_MODEL = "kimi-k2.7-code-highspeed";
+const DEFAULT_MODEL_LABEL = "Kimi-K2.7-Code-HighSpeed";
 const KIMI_PLACEHOLDER_API_KEY = "sk-your-kimi-api-key";
 
 function readEnv(name: string) {
@@ -157,7 +161,8 @@ function buildChatCompletionsUrl(baseUrl: string) {
 
 function resolveKimiConfig(input: KimiAdminIngestInput) {
   const configuredModel = readEnv("KIMI_MODEL");
-  const model = configuredModel || input.preferredModel || DEFAULT_MODEL;
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel("kimi") || DEFAULT_MODEL;
   const selectedModelLabel = input.selectedModelLabel || input.modelDisplayName || readEnv("KIMI_DISPLAY_NAME") || DEFAULT_MODEL_LABEL;
   const baseUrl = normalizeBaseUrl(readEnv("KIMI_BASE_URL"));
 
@@ -167,7 +172,7 @@ function resolveKimiConfig(input: KimiAdminIngestInput) {
     chatCompletionsUrl: buildChatCompletionsUrl(baseUrl),
     model,
     selectedModelLabel,
-    modelMode: configuredModel ? "fixed" as const : "highest" as const
+    modelMode: configuredModel || preferredModel ? "fixed" as const : "highest" as const
   };
 }
 
@@ -258,7 +263,7 @@ export async function callKimi(payload: {
   signal?: AbortSignal;
 }) {
   const apiKey = payload.apiKey || readKimiKey();
-  const model = payload.model || readEnv("KIMI_MODEL") || DEFAULT_MODEL;
+  const model = sanitizeIngestPreferredModel(payload.model) || resolveIngestActualModel("kimi") || DEFAULT_MODEL;
   const url = buildChatCompletionsUrl(normalizeBaseUrl(payload.baseUrl || readEnv("KIMI_BASE_URL")));
   const messages = payload.messages?.length
     ? payload.messages

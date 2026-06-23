@@ -5,6 +5,10 @@ import {
   getQwenModel,
   QWEN_PLACEHOLDER_API_KEY
 } from "@/lib/server-config-core";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 const DEFAULT_MODEL_LABEL = "Qwen Plus";
 const HEALTH_TIMEOUT_MS = 25_000;
@@ -61,8 +65,8 @@ function baseStatus(input: {
   const rawBaseUrl = readEnv("QWEN_BASE_URL");
   const apiKey = readEnv("QWEN_API_KEY");
   const configuredModel = readEnv("QWEN_MODEL");
-  const preferredModel = input.preferredModel || getQwenModel();
-  const model = configuredModel || preferredModel;
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel("qwen") || getQwenModel();
 
   return {
     apiKey,
@@ -73,7 +77,7 @@ function baseStatus(input: {
       baseUrlConfigured: true,
       baseUrlSource: rawBaseUrl ? "configured" as const : "default" as const,
       modelConfigured: Boolean(configuredModel),
-      modelSource: configuredModel ? "configured" as const : input.preferredModel ? "preferred" as const : "default" as const,
+      modelSource: configuredModel ? "configured" as const : preferredModel ? "preferred" as const : "default" as const,
       apiKeyConfigured: hasUsableApiKey(apiKey),
       selectedModelLabel: input.selectedModelLabel || readEnv("QWEN_DISPLAY_NAME") || DEFAULT_MODEL_LABEL,
       model,

@@ -22,6 +22,7 @@ import {
 } from "@/lib/enterprise/kimi-client";
 import {
   getIngestModelOptionByProvider,
+  resolveIngestActualModel,
   type IngestModelProvider
 } from "@/lib/enterprise/ingest-model-options";
 import {
@@ -115,14 +116,21 @@ function deriveTaskType(input: AdminIngestModelInput) {
 async function runProvider(provider: ModelType, input: AdminIngestModelInput, preserveUserSelection: boolean) {
   const option = getIngestModelOptionByProvider(provider);
   const baseInput = { ...input };
+  const actualModel = resolveIngestActualModel(provider);
+  const displayModelLabel = preserveUserSelection
+    ? input.selectedModelLabel || input.modelDisplayName || option.label
+    : option.label;
+  const modelDisplayName = preserveUserSelection
+    ? input.modelDisplayName || input.selectedModelLabel || option.displayName
+    : option.displayName;
 
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
 
   const payload = {
     ...baseInput,
-    selectedModelLabel: preserveUserSelection ? input.selectedModelLabel || option.label : option.label,
-    modelDisplayName: preserveUserSelection ? input.modelDisplayName || option.displayName : option.displayName,
-    preferredModel: preserveUserSelection ? input.preferredModel || option.defaultModel : option.defaultModel
+    selectedModelLabel: displayModelLabel,
+    modelDisplayName,
+    preferredModel: actualModel
   };
 
   if (provider === "deepseek-pro" || provider === "deepseek-flash") {
@@ -168,6 +176,8 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
     attachmentCount: input.attachmentCount
   });
   const fallbackCount = input.failedProviders.length;
+  const displayModelLabel = result.selectedModelLabel || result.modelDisplayName || "";
+  const actualModel = result.actualModel || result.model || result.gptProof.actualModel;
 
   return {
     ...result,
@@ -187,6 +197,8 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
       `modelRouter:failedProviders:${input.failedProviders.map((item) => `${item.provider}:${item.code}`).join("|") || "none"}`,
       `modelRouter:latency:${input.latency}`,
       `modelRouter:provider:${modelTypeToProvider(input.actualProvider)}`,
+      `modelRouter:displayModelLabel:${displayModelLabel}`,
+      `modelRouter:actualModel:${actualModel}`,
       `modelRouter:routeDecision:${input.primaryProvider}->${input.actualProvider}`,
       `modelRouter:cost:${cost.estimatedUnits}`,
       `modelRouter:costLevel:${cost.costLevel}`,

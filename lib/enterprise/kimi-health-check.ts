@@ -1,8 +1,13 @@
 import "server-only";
 
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
+
 const DEFAULT_BASE_URL = "https://api.moonshot.cn/v1";
-const DEFAULT_MODEL = "moonshot-v1-128k";
-const DEFAULT_MODEL_LABEL = "Kimi 128K";
+const DEFAULT_MODEL = "kimi-k2.7-code-highspeed";
+const DEFAULT_MODEL_LABEL = "Kimi-K2.7-Code-HighSpeed";
 const HEALTH_TIMEOUT_MS = 25_000;
 const KIMI_PLACEHOLDER_API_KEY = "sk-your-kimi-api-key";
 
@@ -58,8 +63,8 @@ function baseStatus(input: {
   const rawBaseUrl = readEnv("KIMI_BASE_URL");
   const apiKey = readEnv("KIMI_API_KEY");
   const configuredModel = readEnv("KIMI_MODEL");
-  const preferredModel = input.preferredModel || DEFAULT_MODEL;
-  const model = configuredModel || preferredModel;
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const model = preferredModel || resolveIngestActualModel("kimi") || DEFAULT_MODEL;
 
   return {
     apiKey,
@@ -70,7 +75,7 @@ function baseStatus(input: {
       baseUrlConfigured: true,
       baseUrlSource: rawBaseUrl ? "configured" as const : "default" as const,
       modelConfigured: Boolean(configuredModel),
-      modelSource: configuredModel ? "configured" as const : input.preferredModel ? "preferred" as const : "default" as const,
+      modelSource: configuredModel ? "configured" as const : preferredModel ? "preferred" as const : "default" as const,
       apiKeyConfigured: hasUsableApiKey(apiKey),
       selectedModelLabel: input.selectedModelLabel || readEnv("KIMI_DISPLAY_NAME") || DEFAULT_MODEL_LABEL,
       model,
@@ -100,7 +105,7 @@ export async function checkKimiIngestHealth(input: {
       diagnostics: [
         "请在本地 .env 或部署平台环境变量中配置 KIMI_API_KEY",
         "KIMI_BASE_URL 未配置时默认使用 https://api.moonshot.cn/v1",
-        "KIMI_MODEL 未配置时默认使用 moonshot-v1-128k"
+        "KIMI_MODEL 未配置时默认使用 kimi-k2.7-code-highspeed"
       ]
     };
   }

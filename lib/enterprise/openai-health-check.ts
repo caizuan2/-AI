@@ -4,6 +4,10 @@ import { ProxyAgent } from "undici";
 import { getGptModelSelectionByDisplayName } from "@/lib/enterprise/gpt-model-options";
 import { extractResponsesText } from "@/lib/enterprise/gpt-output-normalizer";
 import { OPENAI_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
+import {
+  resolveIngestActualModel,
+  sanitizeIngestPreferredModel
+} from "@/lib/enterprise/ingest-model-options";
 
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5";
@@ -126,7 +130,7 @@ function readModelConfig(input: {
 }) {
   const selection = getGptModelSelectionByDisplayName(input.selectedModelLabel ?? DEFAULT_MODEL_LABEL);
   const configuredModel = readEnv("OPENAI_MODEL");
-  const preferredModel = input.preferredModel || readEnv("OPENAI_PREFERRED_MODEL") || selection.apiModel || DEFAULT_MODEL;
+  const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
 
   if (configuredModel && configuredModel.toLowerCase() !== "auto") {
     return {
@@ -138,7 +142,7 @@ function readModelConfig(input: {
   }
 
   return {
-    model: preferredModel || DEFAULT_MODEL,
+    model: preferredModel || resolveIngestActualModel("openai") || selection.apiModel || DEFAULT_MODEL,
     mode: "highest" as const,
     modelSource: preferredModel ? "preferred" as const : "default" as const,
     selectedModelLabel: input.selectedModelLabel || selection.displayName || DEFAULT_MODEL_LABEL
