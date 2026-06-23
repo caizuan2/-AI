@@ -6,7 +6,7 @@ import {
   type RagAnswerMode,
   type RagContext
 } from "@/lib/ai/rag-prompt";
-import type { ChatProviderName } from "@/lib/ai/types";
+import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { recordAiUsage } from "@/lib/analytics";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
@@ -26,6 +26,7 @@ export interface RagAnswerResult {
   providerUsed: string;
   fallbackUsed: boolean;
   answer_grounding_score: number;
+  model_feedback_event: ModelFeedbackEvent;
   originalProviderErrorCode?: string;
 }
 
@@ -33,6 +34,7 @@ export interface GenerateRagAnswerOptions {
   requestId?: string;
   userId?: string;
   provider?: ChatProviderName;
+  providerChain?: ChatProviderName[];
   model?: string;
   answerMode?: RagAnswerMode;
   confidence?: number;
@@ -105,6 +107,7 @@ export async function generateRagAnswer(
       messages,
       requestId: options.requestId,
       provider: options.provider,
+      providerChain: options.providerChain,
       model: options.model
     });
     const answer = response.text.trim();
@@ -116,6 +119,11 @@ export async function generateRagAnswer(
     const estimatedOutputTokens = estimateTokenCount(answer);
     const durationMs = Date.now() - startedAt;
     const answerGroundingScore = calculateAnswerGroundingScore(answer, contexts);
+    const modelFeedbackEvent: ModelFeedbackEvent = {
+      ...response.model_feedback_event,
+      response_quality: answerGroundingScore,
+      latency: durationMs,
+    };
 
     logger.info("ai.call", {
       requestId: options.requestId,
@@ -127,6 +135,7 @@ export async function generateRagAnswer(
       estimatedOutputTokens,
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
       fallbackUsed: response.fallbackUsed,
+      model_feedback_event: modelFeedbackEvent,
       contextCount: contexts.length,
       answerGroundingScore,
       answerMode: options.answerMode,
@@ -144,6 +153,7 @@ export async function generateRagAnswer(
       metadata: {
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
+        model_feedback_event: modelFeedbackEvent,
         originalProviderErrorCode: response.originalProviderErrorCode,
         contextCount: contexts.length,
         answerGroundingScore,
@@ -165,6 +175,7 @@ export async function generateRagAnswer(
       providerUsed: response.provider,
       fallbackUsed: response.fallbackUsed,
       answer_grounding_score: answerGroundingScore,
+      model_feedback_event: modelFeedbackEvent,
       originalProviderErrorCode: response.originalProviderErrorCode
     };
   } catch (error) {

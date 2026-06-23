@@ -60,18 +60,22 @@ export async function POST(request: Request) {
   try {
     const settings = await getOrCreateUserSettings(actor.id);
     const provider = normalizeProvider(settings.preferredProvider);
-    const providerConfigured = hasUsableChatProvider(provider);
+    const providerConfigured = hasUsableChatProvider("deepseek")
+      || hasUsableChatProvider("qwen")
+      || hasUsableChatProvider("openai")
+      || hasUsableChatProvider(provider);
     const result = await handleAiChatAsk({
       id: actor.id,
       role: actor.role
     }, body, {
       providerConfigured,
       answerProvider: providerConfigured
-        ? async ({ question, contexts, mode, enableDeepThinking, confidence, model }) => {
+        ? async ({ question, contexts, mode, enableDeepThinking, confidence, actualModel, provider, providerFallbackChain }) => {
             const ragAnswer = await generateRagAnswer(question, contexts, {
               userId: actor.id,
               provider,
-              model,
+              providerChain: providerFallbackChain,
+              model: actualModel,
               answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
               confidence: confidenceToNumber(confidence),
               intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard"
@@ -83,6 +87,7 @@ export async function POST(request: Request) {
               modelUsed: ragAnswer.model,
               fallbackUsed: ragAnswer.fallbackUsed,
               answerGroundingScore: ragAnswer.answer_grounding_score,
+              modelFeedbackEvent: ragAnswer.model_feedback_event,
               originalProviderErrorCode: ragAnswer.originalProviderErrorCode
             };
           }

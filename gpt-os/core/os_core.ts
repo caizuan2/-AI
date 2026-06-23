@@ -54,8 +54,10 @@ export function createGptOsCore(input: GptOsCoreInput): GptOsCoreResult {
   const agentIntent = runtime.agentRuntime.canHandle(input.intent) ? input.intent : null;
   const route = routeModel({
     intent: input.intent,
+    query: input.query,
     reasoningRequested: input.reasoningRequested,
     reasoningAvailable: input.reasoningAvailable,
+    cost_mode: input.cost_mode,
     requestId: traceId,
   });
   const rag = createRagControllerPlan({
@@ -84,6 +86,19 @@ export function buildGptOsRagDiagnostics(
   return buildRagControllerDiagnostics(context.rag, chunks, ragContexts);
 }
 
+export function routeGptOsModel(
+  context: GptOsCoreResult,
+  input: Omit<ModelRouteInput, "requestId">,
+): GptOsCoreResult {
+  return {
+    ...context,
+    route: routeModel({
+      ...input,
+      requestId: context.trace_id,
+    }),
+  };
+}
+
 export function recordGptOsKernelTrace(
   context: GptOsCoreResult,
   input: GptOsTraceUpdateInput,
@@ -103,6 +118,19 @@ export function recordGptOsKernelTrace(
     metadata: {
       growthEnhancer: context.growthEnhancer,
       agentEnabled: context.agentEnabled,
+      modelRouter: {
+        provider: context.route.provider,
+        fallback_chain: context.route.fallback_chain,
+        fallback_chain_v2: context.route.fallback_chain_v2,
+        provider_fallback_chain: context.route.provider_fallback_chain,
+        model_weights: context.route.model_weights,
+        reasoning: context.route.reasoning,
+        reasoning_type: context.route.reasoning_type,
+        cost_mode: context.route.cost_mode,
+        rag_signal: context.route.rag_signal,
+        provider_status: context.route.provider_status,
+        learning_trace: context.route.learning_trace,
+      },
       ...(input.metadata ?? {}),
     },
   });
@@ -126,6 +154,7 @@ export function runGptOsAgent(context: GptOsCoreResult, query: string, userId: s
 
 export const os_core = {
   process: createGptOsCore,
+  routeModel: routeGptOsModel,
   buildRagDiagnostics: buildGptOsRagDiagnostics,
   recordTrace: recordGptOsKernelTrace,
   runAgent: runGptOsAgent,

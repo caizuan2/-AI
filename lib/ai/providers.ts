@@ -52,6 +52,18 @@ function getProviderMissingError(name: ChatProviderName) {
   return new AppError("MISSING_AI_API_KEY", `${label} 未配置，无法使用 ${name} provider。`, 500);
 }
 
+function normalizeProviderChain(primaryName: ChatProviderName, providerChain?: ChatProviderName[]) {
+  const normalized = (providerChain ?? [])
+    .filter((provider): provider is ChatProviderName => provider === "qwen" || provider === "openai" || provider === "deepseek")
+    .filter((provider, index, chain) => chain.indexOf(provider) === index);
+
+  if (normalized.length === 0) {
+    return getAIProviderFallbackChain(primaryName);
+  }
+
+  return normalized.includes(primaryName) ? normalized : [primaryName, ...normalized];
+}
+
 export function getEmbeddingProvider(): EmbeddingProvider {
   return createOpenAIEmbeddingProvider();
 }
@@ -60,13 +72,14 @@ export async function chatWithFallback(
   input: ChatProviderInput & { provider?: ChatProviderName }
 ): Promise<ChatWithFallbackResult> {
   const primaryName = input.provider ?? getPrimaryAIProvider();
-  const providerChain = getAIProviderFallbackChain(primaryName);
+  const providerChain = normalizeProviderChain(primaryName, input.providerChain);
   const requestId = input.requestId;
   let firstError: AppError | null = null;
   let lastError: unknown = null;
 
   for (let index = 0; index < providerChain.length; index += 1) {
     const providerName = providerChain[index];
+    const attemptStartedAt = Date.now();
 
     if (!providerName) {
       continue;
@@ -87,7 +100,14 @@ export async function chatWithFallback(
       return {
         ...result,
         fallbackUsed: index > 0,
-        originalProviderErrorCode: index > 0 ? firstError?.code : undefined
+        originalProviderErrorCode: index > 0 ? firstError?.code : undefined,
+        model_feedback_event: {
+          model_used: result.model,
+          was_successful: true,
+          fallback_triggered: index > 0,
+          response_quality: null,
+          latency: Date.now() - attemptStartedAt,
+        },
       };
     } catch (error) {
       const appError = toAppError(error);
@@ -100,6 +120,13 @@ export async function chatWithFallback(
         provider: providerName,
         nextProvider: providerChain[index + 1] ?? null,
         code: appError.code,
+        model_feedback_event: {
+          model_used: input.model ?? providerName,
+          was_successful: false,
+          fallback_triggered: index > 0,
+          response_quality: null,
+          latency: Date.now() - attemptStartedAt,
+        },
         error: toSafeErrorLog(error)
       });
     }
