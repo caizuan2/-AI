@@ -1,4 +1,5 @@
 import { os_core } from "@/gpt-os/core/os_core";
+import type { GptOsCostMode } from "@/gpt-os/core/model_router";
 import { evaluateEvolutionHealth } from "@/gpt-os/core/evolution_engine";
 import { suggestKnowledgeImprovements } from "@/gpt-os/knowledge/auto_suggester";
 import { analyzeKnowledgeFeedback } from "@/gpt-os/knowledge/feedback_analyzer";
@@ -12,6 +13,7 @@ import {
 } from "@/lib/ai-chat/customer-answer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
 import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
+import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
 import {
@@ -52,6 +54,9 @@ export interface AiChatAnswerProviderInput {
   confidence: RagConfidence;
   model: string;
   actualModel: string;
+  provider: ChatProviderName;
+  providerFallbackChain: ChatProviderName[];
+  fallbackChain: string[];
   traceId: string;
 }
 
@@ -61,6 +66,7 @@ export interface AiChatAnswerProviderResult {
   modelUsed?: string;
   fallbackUsed?: boolean;
   answerGroundingScore?: number;
+  modelFeedbackEvent?: ModelFeedbackEvent;
   originalProviderErrorCode?: string;
 }
 
@@ -128,6 +134,18 @@ function isGptOsReasoningAvailable() {
 
 function needsReasoningModel(question: string) {
   return question.length >= 120 || /分析|方案|步骤|对比|规划|拆解|复杂|风险|策略|流程/.test(question);
+}
+
+function resolveCostMode(mode: AiChatMode, enableDeepThinking: boolean, confidence: RagConfidence): GptOsCostMode {
+  if (enableDeepThinking) {
+    return "high_quality_required";
+  }
+
+  if (mode === "fast" && confidence !== "high") {
+    return "user_low_priority";
+  }
+
+  return "balanced";
 }
 
 function clamp01(value: number) {
@@ -416,7 +434,7 @@ export async function handleAiChatAsk(
   const enableWebSearch = input.enable_web_search === true;
   const conversationId = readConversationId(input);
   const attachments = validateAttachments(input.attachments);
-  const osContext = os_core.process({
+  let osContext = os_core.process({
     query: question,
     userId: actor.id,
     sessionId: conversationId ?? "pending",
@@ -461,6 +479,19 @@ export async function handleAiChatAsk(
   const contexts = buildRagContext(chunks);
   const sources = chunks.map(toSource);
   const confidence = calculateConfidence(chunks);
+  const ragDiagnostics = os_core.buildRagDiagnostics(osContext, chunks, contexts);
+  const relevanceScore = calculateRelevanceScore(chunks);
+  osContext = os_core.routeModel(osContext, {
+    query: question,
+    intent: "qa",
+    reasoningRequested: enableDeepThinking || needsReasoningModel(question),
+    reasoningAvailable: isGptOsReasoningAvailable(),
+    hitCount: ragDiagnostics.hitCount,
+    topK: ragDiagnostics.rag_topK,
+    relevance_score: relevanceScore,
+    contextChars: ragDiagnostics.contextChars,
+    cost_mode: resolveCostMode(mode, enableDeepThinking, confidence),
+  });
   await writeAuditLog(db, actor, "CHAT_RETRIEVE", normalizedConversationId, {
     mode,
     topK,
@@ -476,6 +507,7 @@ export async function handleAiChatAsk(
   let fallbackUsed: boolean | undefined;
   let providerErrorCode: string | undefined;
   let answerGroundingScore: number | undefined;
+  let modelFeedbackEvent: ModelFeedbackEvent | undefined;
 
   if (contexts.length > 0) {
     customerAnswer = buildCustomerAnswerFromChunks({
@@ -495,6 +527,9 @@ export async function handleAiChatAsk(
           confidence,
           model: osContext.route.model,
           actualModel: osContext.route.actualModel,
+          provider: osContext.route.provider,
+          providerFallbackChain: osContext.route.provider_fallback_chain,
+          fallbackChain: osContext.route.fallback_chain,
           traceId: osContext.trace_id,
         });
 
@@ -505,6 +540,7 @@ export async function handleAiChatAsk(
         modelUsed = providerResult.modelUsed;
         fallbackUsed = providerResult.fallbackUsed;
         answerGroundingScore = providerResult.answerGroundingScore;
+        modelFeedbackEvent = providerResult.modelFeedbackEvent;
         providerErrorCode = providerResult.originalProviderErrorCode;
 
         if (!answer) {
@@ -530,10 +566,15 @@ export async function handleAiChatAsk(
   }
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
-  const visibleFallbackUsed = fallbackUsed ?? osContext.route.fallbackUsed;
-  const relevanceScore = calculateRelevanceScore(chunks);
+  const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
-  const ragDiagnostics = os_core.buildRagDiagnostics(osContext, chunks, contexts);
+  const visibleModelFeedbackEvent: ModelFeedbackEvent = {
+    model_used: modelFeedbackEvent?.model_used ?? actualModel,
+    was_successful: modelFeedbackEvent?.was_successful ?? providerStatus === "ok",
+    fallback_triggered: modelFeedbackEvent?.fallback_triggered ?? visibleFallbackUsed,
+    response_quality: modelFeedbackEvent?.response_quality ?? visibleAnswerGroundingScore,
+    latency: modelFeedbackEvent?.latency ?? 0,
+  };
   const retrievalEfficiencyScore = calculateRetrievalEfficiencyScore(ragDiagnostics.hitCount, ragDiagnostics.rag_topK);
   const ragQualityScore = calculateRagQualityScore({
     relevanceScore,
@@ -607,6 +648,7 @@ export async function handleAiChatAsk(
     modelUsed: modelUsed ?? null,
     fallbackUsed: visibleFallbackUsed,
     providerErrorCode: providerErrorCode ?? null,
+    modelFeedbackEvent: visibleModelFeedbackEvent,
     relevanceScore,
     answerGroundingScore: visibleAnswerGroundingScore,
     retrievalEfficiencyScore,
@@ -619,7 +661,56 @@ export async function handleAiChatAsk(
     gptOsTraceId: osTrace.trace_id,
     gptOsModel: osContext.route.model,
     gptOsActualModel: actualModel,
+    gptOsProvider: osContext.route.provider,
     gptOsRouteDecision: osContext.route.route_decision,
+    gptOsReasoningType: osContext.route.reasoning_type,
+    gptOsCostMode: osContext.route.cost_mode,
+    gptOsFallbackChain: osContext.route.fallback_chain,
+    gptOsFallbackChainV2: osContext.route.fallback_chain_v2,
+    gptOsFallbackChainV3: osContext.route.fallback_chain_v3,
+    gptOsFallbackChainV4: osContext.route.fallback_chain_v4,
+    gptOsFallbackChainV5: osContext.route.fallback_chain_v5,
+    gptOsFallbackChainV6: osContext.route.fallback_chain_v6,
+    gptOsModelWeights: osContext.route.model_weights,
+    gptOsModelWeightsV3: osContext.route.model_weights_v3,
+    gptOsModelWeightsV4: osContext.route.model_weights_v4,
+    gptOsModelWeightsV5: osContext.route.model_weights_v5,
+    gptOsModelWeightsV6: osContext.route.model_weights_v6,
+    gptOsLearningTrace: osContext.route.learning_trace,
+    gptOsReasoning: osContext.route.reasoning,
+    gptOsReinforcement: osContext.route.reinforcement,
+    gptOsAbTest: osContext.route.ab_test,
+    gptOsLifecycle: osContext.route.lifecycle,
+    gptOsSelectedStrategy: osContext.route.selected_strategy,
+    gptOsStrategySet: osContext.route.strategy_set,
+    gptOsStrategyGeneration: osContext.route.strategy_generation,
+    gptOsStrategyEvolution: osContext.route.strategy_evolution,
+    gptOsIsAutoEvolving: osContext.route.is_auto_evolving,
+    gptOsStrategyUpdated: osContext.route.strategy_updated,
+    gptOsGlobalScore: osContext.route.global_score,
+    gptOsGlobalScores: osContext.route.global_scores,
+    gptOsNewStrategyName: osContext.route.new_strategy_name,
+    gptOsStrategyInvention: osContext.route.strategy_invention,
+    gptOsStrategyEvolver: osContext.route.strategy_evolver,
+    gptOsModelChain: osContext.route.model_chain,
+    gptOsAutonomousScore: osContext.route.autonomous_score,
+    gptOsSelfLoop: osContext.route.self_loop,
+    gptOsStrategyCombinedChain: osContext.route.strategy_combined_chain,
+    gptOsNewStrategyCreated: osContext.route.new_strategy_created,
+    gptOsStrategyDeprecated: osContext.route.strategy_deprecated,
+    gptOsAutonomousParadigm: osContext.route.autonomous_paradigm,
+    gptOsRoutingReconstruction: osContext.route.routing_reconstruction,
+    gptOsGlobalReasoning: osContext.route.global_reasoning,
+    gptOsSelfEvolvingBrain: osContext.route.self_evolving_brain,
+    gptOsNewParadigmName: osContext.route.new_paradigm_name,
+    gptOsRoutingPhilosophy: osContext.route.routing_philosophy,
+    gptOsModelAllocationStrategy: osContext.route.model_allocation_strategy,
+    gptOsNewParadigmGenerated: osContext.route.new_paradigm_generated,
+    gptOsRoutingGraphChanged: osContext.route.routing_graph_changed,
+    gptOsModelPriorityShift: osContext.route.model_priority_shift,
+    gptOsIsFullyAutonomous: osContext.route.is_fully_autonomous,
+    gptOsDecisionMode: osContext.route.decision_mode,
+    gptOsProviderFallbackChain: osContext.route.provider_fallback_chain,
     gptOsRagDiagnostics: ragDiagnostics,
     gptOsGrowthEnhancer: osContext.growthEnhancer
   });
@@ -640,6 +731,53 @@ export async function handleAiChatAsk(
         knowledgeGapEvent,
         optimizationSuggestions,
         evolutionReport,
+        gptOsModel: osContext.route.model,
+        gptOsActualModel: actualModel,
+        gptOsProvider: osContext.route.provider,
+        gptOsRouteDecision: osContext.route.route_decision,
+        gptOsFallbackChain: osContext.route.fallback_chain,
+        gptOsFallbackChainV2: osContext.route.fallback_chain_v2,
+        gptOsFallbackChainV3: osContext.route.fallback_chain_v3,
+        gptOsFallbackChainV4: osContext.route.fallback_chain_v4,
+        gptOsFallbackChainV5: osContext.route.fallback_chain_v5,
+        gptOsFallbackChainV6: osContext.route.fallback_chain_v6,
+        gptOsModelWeights: osContext.route.model_weights,
+        gptOsModelWeightsV3: osContext.route.model_weights_v3,
+        gptOsModelWeightsV4: osContext.route.model_weights_v4,
+        gptOsModelWeightsV5: osContext.route.model_weights_v5,
+        gptOsModelWeightsV6: osContext.route.model_weights_v6,
+        gptOsLearningTrace: osContext.route.learning_trace,
+        gptOsReinforcement: osContext.route.reinforcement,
+        gptOsAbTest: osContext.route.ab_test,
+        gptOsLifecycle: osContext.route.lifecycle,
+        gptOsSelectedStrategy: osContext.route.selected_strategy,
+        gptOsStrategySet: osContext.route.strategy_set,
+        gptOsStrategyEvolution: osContext.route.strategy_evolution,
+        gptOsIsAutoEvolving: osContext.route.is_auto_evolving,
+        gptOsStrategyUpdated: osContext.route.strategy_updated,
+        gptOsGlobalScore: osContext.route.global_score,
+        gptOsNewStrategyName: osContext.route.new_strategy_name,
+        gptOsStrategyInvention: osContext.route.strategy_invention,
+        gptOsStrategyEvolver: osContext.route.strategy_evolver,
+        gptOsModelChain: osContext.route.model_chain,
+        gptOsAutonomousScore: osContext.route.autonomous_score,
+        gptOsSelfLoop: osContext.route.self_loop,
+        gptOsStrategyCombinedChain: osContext.route.strategy_combined_chain,
+        gptOsNewStrategyCreated: osContext.route.new_strategy_created,
+        gptOsStrategyDeprecated: osContext.route.strategy_deprecated,
+        gptOsAutonomousParadigm: osContext.route.autonomous_paradigm,
+        gptOsRoutingReconstruction: osContext.route.routing_reconstruction,
+        gptOsGlobalReasoning: osContext.route.global_reasoning,
+        gptOsSelfEvolvingBrain: osContext.route.self_evolving_brain,
+        gptOsNewParadigmName: osContext.route.new_paradigm_name,
+        gptOsRoutingPhilosophy: osContext.route.routing_philosophy,
+        gptOsModelAllocationStrategy: osContext.route.model_allocation_strategy,
+        gptOsNewParadigmGenerated: osContext.route.new_paradigm_generated,
+        gptOsRoutingGraphChanged: osContext.route.routing_graph_changed,
+        gptOsModelPriorityShift: osContext.route.model_priority_shift,
+        gptOsIsFullyAutonomous: osContext.route.is_fully_autonomous,
+        gptOsDecisionMode: osContext.route.decision_mode,
+        modelFeedbackEvent: visibleModelFeedbackEvent,
         enableDeepThinking,
         enableWebSearch
       }
@@ -657,11 +795,63 @@ export async function handleAiChatAsk(
     provider_status: providerStatus,
     model: osContext.route.model,
     actualModel,
+    selected_model: osContext.route.selected_model,
+    provider: osContext.route.provider,
     fallbackUsed: visibleFallbackUsed,
+    fallback_chain: osContext.route.fallback_chain,
+    fallback_chain_v2: osContext.route.fallback_chain_v2,
+    fallback_chain_v3: osContext.route.fallback_chain_v3,
+    fallback_chain_v4: osContext.route.fallback_chain_v4,
+    fallback_chain_v5: osContext.route.fallback_chain_v5,
+    fallback_chain_v6: osContext.route.fallback_chain_v6,
+    provider_fallback_chain: osContext.route.provider_fallback_chain,
+    model_weights: osContext.route.model_weights,
+    model_weights_v3: osContext.route.model_weights_v3,
+    model_weights_v4: osContext.route.model_weights_v4,
+    model_weights_v5: osContext.route.model_weights_v5,
+    model_weights_v6: osContext.route.model_weights_v6,
+    reasoning: osContext.route.reasoning,
+    learning_trace: osContext.route.learning_trace,
+    reinforcement: osContext.route.reinforcement,
+    ab_test: osContext.route.ab_test,
+    lifecycle: osContext.route.lifecycle,
+    selected_strategy: osContext.route.selected_strategy,
+    strategy_set: osContext.route.strategy_set,
+    strategy_generation: osContext.route.strategy_generation,
+    strategy_evolution: osContext.route.strategy_evolution,
+    is_auto_evolving: osContext.route.is_auto_evolving,
+    strategy_updated: osContext.route.strategy_updated,
+    global_score: osContext.route.global_score,
+    global_scores: osContext.route.global_scores,
+    new_strategy_name: osContext.route.new_strategy_name,
+    strategy_invention: osContext.route.strategy_invention,
+    strategy_evolver: osContext.route.strategy_evolver,
+    model_chain: osContext.route.model_chain,
+    autonomous_score: osContext.route.autonomous_score,
+    self_loop: osContext.route.self_loop,
+    strategy_combined_chain: osContext.route.strategy_combined_chain,
+    new_strategy_created: osContext.route.new_strategy_created,
+    strategy_deprecated: osContext.route.strategy_deprecated,
+    autonomous_paradigm: osContext.route.autonomous_paradigm,
+    routing_reconstruction: osContext.route.routing_reconstruction,
+    global_reasoning: osContext.route.global_reasoning,
+    self_evolving_brain: osContext.route.self_evolving_brain,
+    new_paradigm_name: osContext.route.new_paradigm_name,
+    routing_philosophy: osContext.route.routing_philosophy,
+    model_allocation_strategy: osContext.route.model_allocation_strategy,
+    new_paradigm_generated: osContext.route.new_paradigm_generated,
+    routing_graph_changed: osContext.route.routing_graph_changed,
+    model_priority_shift: osContext.route.model_priority_shift,
+    is_fully_autonomous: osContext.route.is_fully_autonomous,
+    decision_mode: osContext.route.decision_mode,
+    model_feedback_event: visibleModelFeedbackEvent,
     errorCode: providerErrorCode ?? null,
     trace_id: osTrace.trace_id,
     latency_ms: osTrace.latency_ms,
     route_decision: osContext.route.route_decision,
+    reasoning_type: osContext.route.reasoning_type,
+    cost_mode: osContext.route.cost_mode,
+    rag_signal: osContext.route.rag_signal,
     rag_diagnostics: {
       topK: ragDiagnostics.rag_topK,
       hitCount: ragDiagnostics.hitCount,
@@ -681,7 +871,55 @@ export async function handleAiChatAsk(
       trace_id: osTrace.trace_id,
       model: osContext.route.model,
       actualModel,
+      selected_model: osContext.route.selected_model,
+      provider: osContext.route.provider,
       fallbackUsed: visibleFallbackUsed,
+      fallback_chain: osContext.route.fallback_chain,
+      fallback_chain_v2: osContext.route.fallback_chain_v2,
+      fallback_chain_v3: osContext.route.fallback_chain_v3,
+      fallback_chain_v4: osContext.route.fallback_chain_v4,
+      fallback_chain_v5: osContext.route.fallback_chain_v5,
+      fallback_chain_v6: osContext.route.fallback_chain_v6,
+      model_weights: osContext.route.model_weights,
+      model_weights_v3: osContext.route.model_weights_v3,
+      model_weights_v4: osContext.route.model_weights_v4,
+      model_weights_v5: osContext.route.model_weights_v5,
+      model_weights_v6: osContext.route.model_weights_v6,
+      reasoning: osContext.route.reasoning,
+      learning_trace: osContext.route.learning_trace,
+      reinforcement: osContext.route.reinforcement,
+      ab_test: osContext.route.ab_test,
+      lifecycle: osContext.route.lifecycle,
+      selected_strategy: osContext.route.selected_strategy,
+      strategy_set: osContext.route.strategy_set,
+      strategy_generation: osContext.route.strategy_generation,
+      strategy_evolution: osContext.route.strategy_evolution,
+      is_auto_evolving: osContext.route.is_auto_evolving,
+      strategy_updated: osContext.route.strategy_updated,
+      global_score: osContext.route.global_score,
+      global_scores: osContext.route.global_scores,
+      new_strategy_name: osContext.route.new_strategy_name,
+      strategy_invention: osContext.route.strategy_invention,
+      strategy_evolver: osContext.route.strategy_evolver,
+      model_chain: osContext.route.model_chain,
+      autonomous_score: osContext.route.autonomous_score,
+      self_loop: osContext.route.self_loop,
+      strategy_combined_chain: osContext.route.strategy_combined_chain,
+      new_strategy_created: osContext.route.new_strategy_created,
+      strategy_deprecated: osContext.route.strategy_deprecated,
+      autonomous_paradigm: osContext.route.autonomous_paradigm,
+      routing_reconstruction: osContext.route.routing_reconstruction,
+      global_reasoning: osContext.route.global_reasoning,
+      self_evolving_brain: osContext.route.self_evolving_brain,
+      new_paradigm_name: osContext.route.new_paradigm_name,
+      routing_philosophy: osContext.route.routing_philosophy,
+      model_allocation_strategy: osContext.route.model_allocation_strategy,
+      new_paradigm_generated: osContext.route.new_paradigm_generated,
+      routing_graph_changed: osContext.route.routing_graph_changed,
+      model_priority_shift: osContext.route.model_priority_shift,
+      is_fully_autonomous: osContext.route.is_fully_autonomous,
+      decision_mode: osContext.route.decision_mode,
+      model_feedback_event: visibleModelFeedbackEvent,
       sources,
       rag_quality_score: ragQualityScore,
       relevance_score: relevanceScore,
