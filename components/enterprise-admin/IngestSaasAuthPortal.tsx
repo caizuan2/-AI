@@ -21,16 +21,31 @@ import { unwrapApiResponse } from "@/lib/api/client";
 
 type IngestAuthMode = "login" | "register" | "activate";
 
+type IngestAuthUser = {
+  id: string;
+  phone: string;
+  name: string;
+  isActive?: boolean;
+  licenseActivated: boolean;
+  isSuperAdmin?: boolean;
+  roles?: string[];
+};
+
 type IngestAuthResponse = {
   success: true;
   sessionToken?: string;
   licenseActivated: boolean;
-  user: {
-    id: string;
-    phone: string;
-    name: string;
-    licenseActivated: boolean;
-  };
+  user: IngestAuthUser;
+};
+
+type IngestAuthMeState = {
+  success: boolean;
+  authenticated: boolean;
+  licenseActivated: boolean;
+  role: string | null;
+  user?: IngestAuthUser;
+  errorCode?: string;
+  message?: string;
 };
 
 const modeCopy: Record<IngestAuthMode, {
@@ -89,7 +104,50 @@ function safeNextPath(value: string | null) {
 }
 
 function getNextWithFallback(searchParams: ReturnType<typeof useSearchParams>) {
-  return safeNextPath(searchParams.get("next") || searchParams.get("redirectTo")) || "/admin-ingest";
+  return safeNextPath(searchParams.get("next") || searchParams.get("redirectTo")) || "/admin-ingest?app=ingest-admin&platform=web";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const source = isRecord(payload.data) ? payload.data : payload;
+  const user = isRecord(source.user) ? source.user as IngestAuthUser : undefined;
+  const authenticated = typeof source.authenticated === "boolean" ? source.authenticated : Boolean(user);
+  const licenseActivated = source.licenseActivated === true || user?.licenseActivated === true;
+  const role = typeof source.role === "string" ? source.role : null;
+  const errorCode = typeof source.errorCode === "string" ? source.errorCode : undefined;
+  const message = typeof source.message === "string" ? source.message : undefined;
+
+  return {
+    success: source.success !== false,
+    authenticated,
+    licenseActivated,
+    role,
+    user,
+    errorCode,
+    message
+  };
+}
+
+async function fetchAuthMeWithTimeout(timeoutMs = 8000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch("/api/ingest/auth/me", {
+      method: "GET",
+      cache: "no-store",
+      signal: controller.signal
+    });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 }
 
 export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
@@ -105,6 +163,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const [loading, setLoading] = useState(false);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
+  const [checkError, setCheckError] = useState("");
 
   const goNext = useCallback((licenseActivated: boolean) => {
     router.replace(licenseActivated ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
@@ -116,31 +175,40 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
     async function checkSession() {
       try {
-        const response = await fetch("/api/ingest/auth/me", {
-          method: "GET",
-          cache: "no-store"
-        });
+        setCheckError("");
+
+        const response = await fetchAuthMeWithTimeout();
 
         if (!active) {
           return;
         }
 
-        if (response.ok) {
-          const payload = await response.json().catch(() => null) as { data?: IngestAuthResponse } | null;
-          const activated = payload?.data?.user.licenseActivated === true || payload?.data?.licenseActivated === true;
+        const payload = await response.json().catch(() => null);
+        const authState = normalizeAuthMePayload(payload);
 
-          if (mode !== "activate" || activated) {
-            goNext(activated);
+        if (!authState || !authState.success) {
+          throw new Error(authState?.message || "登录状态检查失败，请重新登录。");
+        }
+
+        if (!authState.authenticated) {
+          if (mode === "activate") {
+            router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`);
             return;
           }
-        } else if (mode === "activate") {
-          router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+
+          setChecking(false);
+          return;
+        }
+
+        if (mode !== "activate" || authState.licenseActivated) {
+          goNext(authState.licenseActivated);
           return;
         }
 
         setChecking(false);
       } catch {
         if (active) {
+          setCheckError("登录状态检查失败，请重新登录。");
           setChecking(false);
         }
       }
@@ -248,6 +316,21 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             <div className="mt-8 flex items-center justify-center gap-2 rounded-2xl bg-slate-50 px-4 py-5 text-sm text-slate-500">
               <Loader2 className="h-4 w-4 animate-spin" />
               正在检查登录状态...
+            </div>
+          ) : checkError ? (
+            <div className="mt-8 space-y-4">
+              <div className="flex items-start gap-2 rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{checkError}</span>
+              </div>
+              <Button
+                type="button"
+                onClick={() => router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`)}
+                className="h-11 w-full rounded-2xl bg-[#111816] hover:bg-[#1d2a26]"
+              >
+                返回登录
+                <ArrowRight className="h-4 w-4" />
+              </Button>
             </div>
           ) : (
             <form onSubmit={submit} className="mt-8 space-y-4">
