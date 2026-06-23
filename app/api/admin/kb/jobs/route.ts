@@ -63,7 +63,8 @@ export async function GET(request: Request) {
   try {
     actor = await requireKbAdmin(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_kb_jobs"
+      targetType: "admin_kb_jobs",
+      requiredAppType: "ingest_admin"
     });
   } catch (error) {
     return apiError(error);

@@ -20,7 +20,8 @@ export async function GET(request: Request, context: RouteContext) {
     actor = await requireKbAdmin(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_kb_job",
-      targetId: context.params.id
+      targetId: context.params.id,
+      requiredAppType: "ingest_admin"
     });
   } catch (error) {
     return apiError(error);

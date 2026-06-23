@@ -112,6 +112,7 @@ export async function POST(request: Request) {
     currentUser = await requireKbAdmin(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "knowledge_item",
+      requiredAppType: "ingest_admin",
       metadata: {
         operation: "ingest_analyze"
       }

@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
+import { getProductFromPath, PRODUCT_ACCESS_HEADER } from "@/lib/auth/product-access";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
 
 type RateLimitBucket = {
@@ -116,8 +117,10 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
 
 const protectedPagePrefixes = [
   "/",
+  "/chat-ui",
   "/dashboard",
   "/ingest",
+  "/admin-ingest",
   "/upload",
   "/sources",
   "/knowledge",
@@ -134,6 +137,7 @@ const sessionOnlyPagePrefixes = ["/unlock"];
 const publicExactPaths = [
   "/login",
   "/register",
+  "/no-access",
   "/api/health",
   "/favicon.ico",
   "/robots.txt",
@@ -200,8 +204,42 @@ function redirectToLogin(request: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
+function redirectToNoAccess(request: NextRequest) {
+  const noAccessUrl = request.nextUrl.clone();
+
+  noAccessUrl.pathname = "/no-access";
+  noAccessUrl.search = "";
+
+  return NextResponse.redirect(noAccessUrl);
+}
+
+function apiAuthError(code: "UNAUTHORIZED" | "LICENSE_APP_TYPE_MISMATCH", status: 401 | 403, requestId: string) {
+  const message = code === "UNAUTHORIZED" ? "请先登录后再继续。" : "当前账号没有权限访问该产品。";
+
+  return NextResponse.json(
+    {
+      ok: false,
+      code,
+      message,
+      requestId,
+      success: false,
+      error: {
+        code,
+        message,
+        requestId
+      }
+    },
+    {
+      status
+    }
+  );
+}
+
 function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
   const pathname = request.nextUrl.pathname;
+  const product = getProductFromPath(pathname);
+
+  requestHeaders.set(PRODUCT_ACCESS_HEADER, product);
 
   if (isPublicPath(pathname)) {
     logger.info("auth.redirect_check", {
@@ -227,12 +265,29 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
     return nextWithRequestHeaders(requestHeaders);
   }
 
+  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+
   if (pathname.startsWith("/api/")) {
+    if (product !== "public" && !hasSession) {
+      const response = apiAuthError("UNAUTHORIZED", 401, requestId);
+
+      logger.warn("product.api_blocked", {
+        requestId,
+        pathname,
+        product,
+        reason: "unauthenticated"
+      });
+
+      return response;
+    }
+
     return nextWithRequestHeaders(requestHeaders);
   }
 
-  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
-  const needsSession = isPathUnder(pathname, protectedPagePrefixes) || isPathUnder(pathname, sessionOnlyPagePrefixes);
+  const needsSession =
+    product !== "public" ||
+    isPathUnder(pathname, protectedPagePrefixes) ||
+    isPathUnder(pathname, sessionOnlyPagePrefixes);
 
   if (needsSession && !hasSession) {
     const redirectResponse = redirectToLogin(request);
@@ -249,12 +304,17 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
     return redirectResponse;
   }
 
+  if (pathname === "/no-access" && product !== "public") {
+    return redirectToNoAccess(request);
+  }
+
   logger.info("auth.redirect_check", {
     requestId,
     pathname,
     hasSessionCookie: hasSession,
     sessionValid: hasSession ? null : false,
     redirectTarget: null,
+    product,
     reason: hasSession ? "session_cookie_present" : "public_or_unprotected"
   });
 

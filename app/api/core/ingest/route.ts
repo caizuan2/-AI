@@ -54,7 +54,8 @@ export async function POST(request: Request) {
     actor = await requireKbAdmin(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "core_ingest",
-      requireLicense: false
+      requireLicense: true,
+      requiredAppType: "ingest_admin"
     });
   } catch (error) {
     return apiError(error);

@@ -34,6 +34,8 @@ export async function POST(request: Request) {
     actor = await requireRole("user", {
       request,
       requireLicense: true,
+      requiredAppType: "user_app",
+      product: "user_app",
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "ai_chat_ask"
     });
