@@ -2,10 +2,11 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { requireUser, type AppUser } from "@/lib/auth";
-import { checkUserLicense } from "@/lib/auth/license";
+import { checkUserLicense, type LicenseAppType } from "@/lib/auth/license";
 import { isAdminUser } from "@/lib/auth/admin-config";
+import { roleCanAccessProduct, type ProductAccess } from "@/lib/auth/product-access";
 import { writeAuditLog, type AuditAction } from "@/lib/audit-log";
-import { ForbiddenError } from "@/lib/errors";
+import { ForbiddenError, LicenseAppTypeMismatchError } from "@/lib/errors";
 import {
   getHighestRole,
   normalizeAppRole,
@@ -21,6 +22,8 @@ export interface RbacUser extends AppUser {
 interface RoleGuardOptions {
   request?: Request;
   requireLicense?: boolean;
+  requiredAppType?: LicenseAppType;
+  product?: ProductAccess;
   deniedAction?: AuditAction;
   targetType?: string;
   targetId?: string | null;
@@ -128,8 +131,26 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
     throw new ForbiddenError("当前账号没有权限访问该资源。");
   }
 
+  if (options.product && !roleCanAccessProduct(options.product, highestRole)) {
+    await writeAuditLog({
+      userId: user.id,
+      role: highestRole,
+      action: options.deniedAction ?? "product.blocked",
+      targetType: options.targetType ?? "product_route",
+      targetId: options.targetId ?? null,
+      request: options.request,
+      metadata: {
+        product: options.product,
+        actualRole: highestRole,
+        ...(options.metadata ?? {})
+      }
+    });
+
+    throw new LicenseAppTypeMismatchError("当前账号不能访问该产品。");
+  }
+
   if (options.requireLicense) {
-    await checkUserLicense(user.id);
+    await checkUserLicense(user.id, options.requiredAppType);
   }
 
   return {
@@ -140,8 +161,11 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
 }
 
 export function requireKbAdmin(request?: Request, options: Omit<RoleGuardOptions, "request"> = {}) {
+  const product = options.product ?? (options.requiredAppType === "ingest_admin" ? "ingest_admin" : undefined);
+
   return requireRole("kb_admin", {
     ...options,
+    product,
     request,
     requireLicense: options.requireLicense ?? true
   });

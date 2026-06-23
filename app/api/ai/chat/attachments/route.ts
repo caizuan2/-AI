@@ -266,13 +266,18 @@ async function saveAttachmentToNetlifyBlobs(input: {
 }
 
 function unauthorizedUploadResponse() {
+  const message = "请先登录后再上传文件。";
+
   return NextResponse.json(
     {
       ok: false,
       success: false,
       code: "UNAUTHORIZED",
-      error: "UNAUTHORIZED",
-      message: "请先登录后再上传文件。",
+      message,
+      error: {
+        code: "UNAUTHORIZED",
+        message
+      },
     },
     { status: 401 },
   );
@@ -327,6 +332,8 @@ export async function POST(request: Request) {
     actor = await requireRole("user", {
       request,
       requireLicense: true,
+      requiredAppType: "user_app",
+      product: "user_app",
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "ai_chat_attachment",
     });
