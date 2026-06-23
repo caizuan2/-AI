@@ -2,6 +2,10 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { getProductFromPath, PRODUCT_ACCESS_HEADER } from "@/lib/auth/product-access";
+import {
+  INGEST_PORTAL_COOKIE_NAME,
+  verifyIngestPortalCookieValue
+} from "@/lib/enterprise/ingest-portal-cookie";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
 
 type RateLimitBucket = {
@@ -13,6 +17,7 @@ const apiRateLimitBuckets = new Map<string, RateLimitBucket>();
 
 const apiRateLimitRules = [
   { prefix: "/api/auth", limit: 20, windowMs: 60_000 },
+  { prefix: "/api/ingest/auth", limit: 20, windowMs: 60_000 },
   { prefix: "/api/admin/kb", limit: 30, windowMs: 60_000 },
   { prefix: "/api/admin", limit: 40, windowMs: 60_000 },
   { prefix: "/api/upload", limit: 8, windowMs: 60_000 },
@@ -138,6 +143,9 @@ const publicExactPaths = [
   "/login",
   "/register",
   "/no-access",
+  "/ingest/login",
+  "/ingest/register",
+  "/ingest/activate",
   "/api/health",
   "/favicon.ico",
   "/robots.txt",
@@ -145,6 +153,7 @@ const publicExactPaths = [
 ];
 const publicPathPrefixes = [
   "/api/auth",
+  "/api/ingest/auth",
   "/_next",
   "/static"
 ];
@@ -187,7 +196,13 @@ function isSafeNextPath(value: string) {
     return false;
   }
 
-  return !isPathUnder(value.split("?")[0] ?? value, ["/login", "/register"]);
+  return !isPathUnder(value.split("?")[0] ?? value, [
+    "/login",
+    "/register",
+    "/ingest/login",
+    "/ingest/register",
+    "/ingest/activate"
+  ]);
 }
 
 function redirectToLogin(request: NextRequest) {
@@ -213,6 +228,34 @@ function redirectToNoAccess(request: NextRequest) {
   return NextResponse.redirect(noAccessUrl);
 }
 
+function redirectToIngestLogin(request: NextRequest) {
+  const loginUrl = request.nextUrl.clone();
+  const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+
+  loginUrl.pathname = "/ingest/login";
+  loginUrl.search = "";
+
+  if (isSafeNextPath(currentTarget)) {
+    loginUrl.searchParams.set("next", currentTarget);
+  }
+
+  return NextResponse.redirect(loginUrl);
+}
+
+function redirectToIngestActivate(request: NextRequest) {
+  const activateUrl = request.nextUrl.clone();
+  const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+
+  activateUrl.pathname = "/ingest/activate";
+  activateUrl.search = "";
+
+  if (isSafeNextPath(currentTarget)) {
+    activateUrl.searchParams.set("next", currentTarget);
+  }
+
+  return NextResponse.redirect(activateUrl);
+}
+
 function apiAuthError(code: "UNAUTHORIZED" | "LICENSE_APP_TYPE_MISMATCH", status: 401 | 403, requestId: string) {
   const message = code === "UNAUTHORIZED" ? "请先登录后再继续。" : "当前账号没有权限访问该产品。";
 
@@ -235,7 +278,62 @@ function apiAuthError(code: "UNAUTHORIZED" | "LICENSE_APP_TYPE_MISMATCH", status
   );
 }
 
-function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
+async function applyAdminIngestGate(request: NextRequest, requestHeaders: Headers, requestId: string) {
+  const pathname = request.nextUrl.pathname;
+
+  if (pathname !== "/admin-ingest" && !pathname.startsWith("/admin-ingest/")) {
+    return null;
+  }
+
+  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+
+  if (!hasSession) {
+    const redirectResponse = redirectToIngestLogin(request);
+
+    logger.warn("auth.admin_ingest_gate", {
+      requestId,
+      pathname,
+      hasSessionCookie: false,
+      licenseGateValid: false,
+      redirectTarget: redirectResponse.headers.get("location"),
+      reason: "unauthenticated"
+    });
+
+    return redirectResponse;
+  }
+
+  const gate = await verifyIngestPortalCookieValue(request.cookies.get(INGEST_PORTAL_COOKIE_NAME)?.value);
+
+  if (!gate.valid || !gate.licenseActivated) {
+    const redirectResponse = redirectToIngestActivate(request);
+
+    logger.warn("auth.admin_ingest_gate", {
+      requestId,
+      pathname,
+      hasSessionCookie: true,
+      licenseGateValid: gate.valid,
+      licenseActivated: gate.licenseActivated,
+      redirectTarget: redirectResponse.headers.get("location"),
+      reason: gate.valid ? "license_not_activated" : "license_gate_missing_or_invalid"
+    });
+
+    return redirectResponse;
+  }
+
+  logger.info("auth.admin_ingest_gate", {
+    requestId,
+    pathname,
+    hasSessionCookie: true,
+    licenseGateValid: true,
+    licenseActivated: true,
+    redirectTarget: null,
+    reason: "allowed"
+  });
+
+  return nextWithRequestHeaders(requestHeaders);
+}
+
+async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
   const pathname = request.nextUrl.pathname;
   const product = getProductFromPath(pathname);
 
@@ -282,6 +380,12 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
     }
 
     return nextWithRequestHeaders(requestHeaders);
+  }
+
+  const adminIngestGateResponse = await applyAdminIngestGate(request, requestHeaders, requestId);
+
+  if (adminIngestGateResponse) {
+    return adminIngestGateResponse;
   }
 
   const needsSession =
@@ -355,7 +459,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  const response = withSecurityHeaders(applyPageAuth(request, requestHeaders, requestId), request.nextUrl.pathname);
+  const response = withSecurityHeaders(await applyPageAuth(request, requestHeaders, requestId), request.nextUrl.pathname);
 
   response.headers.set(REQUEST_ID_HEADER, requestId);
 

@@ -26,6 +26,7 @@ export type AppErrorCode =
   | "INVALID_DATABASE_URL"
   | "DATABASE_CONNECTION_FAILED"
   | "DATABASE_SCHEMA_MISSING"
+  | "DATABASE_ROLE_ENUM_UNSUPPORTED"
   | "INGEST_WRITE_FAILED"
   | "CONFIG_ERROR"
   | "LICENSE_REQUIRED"
@@ -35,6 +36,10 @@ export type AppErrorCode =
   | "LICENSE_DISABLED"
   | "LICENSE_EXPIRED"
   | "LICENSE_ACTIVATION_LIMIT_REACHED"
+  | "LICENSE_USED"
+  | "LICENSE_APP_MISMATCH"
+  | "USER_NOT_AUTHENTICATED"
+  | "REDEEM_FAILED"
   | "RATE_LIMITED";
 
 export class AppError extends Error {
@@ -181,6 +186,7 @@ const appErrorCodes = new Set<AppErrorCode>([
   "INVALID_DATABASE_URL",
   "DATABASE_CONNECTION_FAILED",
   "DATABASE_SCHEMA_MISSING",
+  "DATABASE_ROLE_ENUM_UNSUPPORTED",
   "INGEST_WRITE_FAILED",
   "CONFIG_ERROR",
   "LICENSE_REQUIRED",
@@ -190,6 +196,10 @@ const appErrorCodes = new Set<AppErrorCode>([
   "LICENSE_DISABLED",
   "LICENSE_EXPIRED",
   "LICENSE_ACTIVATION_LIMIT_REACHED",
+  "LICENSE_USED",
+  "LICENSE_APP_MISMATCH",
+  "USER_NOT_AUTHENTICATED",
+  "REDEEM_FAILED",
   "RATE_LIMITED"
 ]);
 
@@ -239,6 +249,10 @@ export function toAppError(error: unknown) {
 
     if (["P2021", "P2022"].includes(code) || /relation .* does not exist|column .* does not exist/i.test(message)) {
       return new AppError("DATABASE_SCHEMA_MISSING", "数据库表结构未就绪，请执行 pnpm prisma:migrate:deploy。", 500);
+    }
+
+    if (/UserRole|invalid input value for enum|not found in enum/i.test(message)) {
+      return new AppError("DATABASE_ROLE_ENUM_UNSUPPORTED", "当前数据库角色枚举不支持目标角色，请使用兼容角色后重试。", 500);
     }
   }
 
