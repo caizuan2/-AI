@@ -175,6 +175,24 @@ function readLicenseMetadata(metadata: unknown): LicenseMetadata | null {
   };
 }
 
+function inferLicenseAppTypeFromKey(key: string): LicenseAppType | null {
+  const normalized = normalizeLicenseKey(key);
+
+  if (normalized.startsWith("XT-USER-")) {
+    return "user_app";
+  }
+
+  if (normalized.startsWith("XT-INGEST-")) {
+    return "ingest_admin";
+  }
+
+  if (normalized.startsWith("XT-SUPER-")) {
+    return "super_admin";
+  }
+
+  return null;
+}
+
 async function getLicenseMetadata(licenseId: string): Promise<LicenseMetadata> {
   const auditLog = await prisma.auditLog.findFirst({
     where: {
@@ -219,6 +237,31 @@ async function recordLicenseAuditLog(input: {
       }
     })
     .catch(() => undefined);
+}
+
+async function getRedeemedLicenseMetadata(userId: string) {
+  const license = await prisma.licenseKey.findFirst({
+    where: {
+      redeemedByUserId: userId,
+      status: LicenseKeyStatus.USED
+    },
+    orderBy: [
+      { redeemedAt: "desc" },
+      { createdAt: "desc" }
+    ],
+    select: {
+      id: true
+    }
+  });
+
+  if (!license) {
+    return null;
+  }
+
+  return {
+    licenseId: license.id,
+    metadata: await getLicenseMetadata(license.id)
+  };
 }
 
 async function createAdminBootstrapLicenseIfAllowed(userId: string, key: string) {
@@ -291,13 +334,18 @@ async function recordActivationLog(input: {
     .catch(() => undefined);
 }
 
-export async function checkUserLicense(userId: string) {
+export async function checkUserLicense(
+  userId: string,
+  expectedAppType: LicenseAppType = "user_app",
+  context?: LicenseActivationContext
+) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
       licenseActivated: true,
       isActive: true,
-      phone: true
+      phone: true,
+      role: true
     }
   });
 
@@ -309,8 +357,70 @@ export async function checkUserLicense(userId: string) {
     throw new ForbiddenError("账号已禁用。");
   }
 
-  if (!user.licenseActivated && !isBootstrapSuperAdminUser(user)) {
+  if (expectedAppType === "super_admin") {
+    if (isBootstrapSuperAdminUser(user) || user.role === "super_admin") {
+      if (isBootstrapSuperAdminUser(user)) {
+        await recordLicenseAuditLog({
+          userId,
+          action: "bootstrap.admin.access",
+          context,
+          metadata: {
+            appType: expectedAppType
+          }
+        });
+      }
+
+      return true;
+    }
+
+    await recordLicenseAuditLog({
+      userId,
+      action: "route.access.denied",
+      context,
+      metadata: {
+        appType: expectedAppType,
+        reason: "missing_super_admin_role"
+      }
+    });
+    throw new ForbiddenError("当前账号没有权限访问该资源。");
+  }
+
+  if (!user.licenseActivated) {
     throw new LicenseRequiredError("请先输入卡密激活知识库。");
+  }
+
+  const redeemedLicense = await getRedeemedLicenseMetadata(userId);
+
+  if (!redeemedLicense) {
+    if (expectedAppType === "user_app") {
+      return true;
+    }
+
+    await recordLicenseAuditLog({
+      userId,
+      action: "license.mismatch",
+      context,
+      metadata: {
+        expectedAppType,
+        licenseAppType: null,
+        reason: "missing_redeemed_license_record"
+      }
+    });
+    throw new LicenseAppTypeMismatchError("卡密不适用于当前客户端。");
+  }
+
+  if (redeemedLicense.metadata.appType !== expectedAppType) {
+    await recordLicenseAuditLog({
+      userId,
+      action: "license.mismatch",
+      targetId: redeemedLicense.licenseId,
+      context,
+      metadata: {
+        expectedAppType,
+        licenseAppType: redeemedLicense.metadata.appType
+      }
+    });
+    throw new LicenseAppTypeMismatchError("卡密不适用于当前客户端。");
   }
 
   return true;
@@ -331,6 +441,20 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
   }
 
   const requestedAppType = normalizeLicenseAppType(context?.appType);
+
+  if (requestedAppType === "super_admin") {
+    await recordLicenseAuditLog({
+      userId,
+      action: "license.mismatch",
+      context,
+      metadata: {
+        requestedAppType,
+        reason: "super_admin_license_redeem_blocked"
+      }
+    });
+    throw new LicenseAppTypeMismatchError("超级管理员不允许使用普通卡密激活。");
+  }
+
   const keyHashes = getAcceptedLicenseHashes(key);
   const primaryHash = hashLicenseKey(key);
   let licenses = await findAcceptedLicenseKeys(keyHashes);
@@ -362,7 +486,12 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
   }
 
   const license = licenses.find((item) => item.status === LicenseKeyStatus.UNUSED) ?? licenses[0];
-  const metadata = await getLicenseMetadata(license.id);
+  const storedMetadata = await getLicenseMetadata(license.id);
+  const keyAppType = inferLicenseAppTypeFromKey(key);
+  const metadata: LicenseMetadata = {
+    ...storedMetadata,
+    appType: keyAppType ?? storedMetadata.appType
+  };
 
   if (metadata.appType !== requestedAppType) {
     await recordActivationLog({

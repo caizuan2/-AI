@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
+import { getProductFromPath } from "@/lib/auth/product";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
 
 type RateLimitBucket = {
@@ -116,6 +117,8 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
 
 const protectedPagePrefixes = [
   "/",
+  "/app",
+  "/chat-ui",
   "/dashboard",
   "/ingest",
   "/upload",
@@ -134,6 +137,7 @@ const sessionOnlyPagePrefixes = ["/unlock"];
 const publicExactPaths = [
   "/login",
   "/register",
+  "/no-access",
   "/api/health",
   "/favicon.ico",
   "/robots.txt",
@@ -200,13 +204,31 @@ function redirectToLogin(request: NextRequest) {
   return NextResponse.redirect(loginUrl);
 }
 
+function apiJsonError(code: "UNAUTHORIZED" | "FORBIDDEN" | "LICENSE_APP_TYPE_MISMATCH", status: 401 | 403, requestId: string) {
+  return NextResponse.json(
+    {
+      ok: false,
+      code,
+      success: false,
+      requestId,
+      error: {
+        code,
+        requestId
+      }
+    },
+    { status }
+  );
+}
+
 function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
   const pathname = request.nextUrl.pathname;
+  const product = getProductFromPath(pathname);
 
   if (isPublicPath(pathname)) {
     logger.info("auth.redirect_check", {
       requestId,
       pathname,
+      product,
       hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
       sessionValid: null,
       redirectTarget: null,
@@ -219,6 +241,7 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
     logger.info("auth.redirect_check", {
       requestId,
       pathname,
+      product,
       hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
       sessionValid: null,
       redirectTarget: null,
@@ -228,6 +251,21 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
   }
 
   if (pathname.startsWith("/api/")) {
+    const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
+
+    if (product !== "public" && !hasSession) {
+      const response = apiJsonError("UNAUTHORIZED", 401, requestId);
+
+      logger.warn("route.access.denied", {
+        requestId,
+        pathname,
+        product,
+        reason: "api_unauthenticated"
+      });
+
+      return response;
+    }
+
     return nextWithRequestHeaders(requestHeaders);
   }
 
@@ -240,6 +278,7 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
     logger.warn("auth.redirect_check", {
       requestId,
       pathname,
+      product,
       hasSessionCookie: false,
       sessionValid: false,
       redirectTarget: redirectResponse.headers.get("location"),
@@ -252,6 +291,7 @@ function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId:
   logger.info("auth.redirect_check", {
     requestId,
     pathname,
+    product,
     hasSessionCookie: hasSession,
     sessionValid: hasSession ? null : false,
     redirectTarget: null,

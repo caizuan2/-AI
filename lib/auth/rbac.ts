@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireUser, type AppUser } from "@/lib/auth";
 import { checkUserLicense } from "@/lib/auth/license";
 import { isAdminUser } from "@/lib/auth/admin-config";
+import { getLicenseAppTypeForProduct, getProductFromPath, type AppProduct } from "@/lib/auth/product";
 import { writeAuditLog, type AuditAction } from "@/lib/audit-log";
 import { ForbiddenError } from "@/lib/errors";
 import {
@@ -20,6 +21,7 @@ export interface RbacUser extends AppUser {
 
 interface RoleGuardOptions {
   request?: Request;
+  product?: AppProduct;
   requireLicense?: boolean;
   deniedAction?: AuditAction;
   targetType?: string;
@@ -103,11 +105,57 @@ export async function getUserRoles(user: Pick<AppUser, "id" | "phone">): Promise
   return Array.from(roles);
 }
 
+function inferProductFromRequest(request?: Request) {
+  if (!request) {
+    return null;
+  }
+
+  try {
+    return getProductFromPath(new URL(request.url).pathname);
+  } catch {
+    return null;
+  }
+}
+
+function inferProductFromRequiredRoles(requiredRoles: AppRole[], requireLicense?: boolean): AppProduct {
+  if (requiredRoles.includes("super_admin")) {
+    return "super_admin";
+  }
+
+  if (
+    requiredRoles.includes("kb_admin") ||
+    requiredRoles.includes("ingest_admin") ||
+    requiredRoles.includes("enterprise_admin")
+  ) {
+    return "ingest_admin";
+  }
+
+  return requireLicense ? "user_app" : "public";
+}
+
+function isRoleAllowedForProduct(product: AppProduct, roles: AppRole[], highestRole: AppRole) {
+  if (product === "public") {
+    return true;
+  }
+
+  if (product === "super_admin") {
+    return roles.includes("super_admin");
+  }
+
+  if (product === "ingest_admin") {
+    return roles.includes("ingest_admin") || roles.includes("kb_admin") || roles.includes("enterprise_admin");
+  }
+
+  return highestRole === "user";
+}
+
 export async function requireRole(required: AppRole | AppRole[], options: RoleGuardOptions = {}): Promise<RbacUser> {
   const user = await requireUser();
   const roles = await getUserRoles(user);
   const highestRole = getHighestRole(roles);
   const requiredRoles = Array.isArray(required) ? required : [required];
+  const requestProduct = inferProductFromRequest(options.request);
+  const product = options.product ?? requestProduct ?? inferProductFromRequiredRoles(requiredRoles, options.requireLicense);
   const allowed = requiredRoles.some((role) => roleSatisfies(highestRole, role));
 
   if (!allowed) {
@@ -128,8 +176,30 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
     throw new ForbiddenError("当前账号没有权限访问该资源。");
   }
 
+  if (!isRoleAllowedForProduct(product, roles, highestRole)) {
+    await writeAuditLog({
+      userId: user.id,
+      role: highestRole,
+      action: "product.blocked",
+      targetType: options.targetType ?? product,
+      targetId: options.targetId ?? null,
+      request: options.request,
+      metadata: {
+        requiredRoles,
+        actualRole: highestRole,
+        roles,
+        product,
+        ...(options.metadata ?? {})
+      }
+    });
+
+    throw new ForbiddenError("当前账号不能访问该产品入口。");
+  }
+
   if (options.requireLicense) {
-    await checkUserLicense(user.id);
+    const expectedAppType = getLicenseAppTypeForProduct(product) ?? "user_app";
+
+    await checkUserLicense(user.id, expectedAppType);
   }
 
   return {
@@ -143,6 +213,7 @@ export function requireKbAdmin(request?: Request, options: Omit<RoleGuardOptions
   return requireRole("kb_admin", {
     ...options,
     request,
+    product: options.product ?? "ingest_admin",
     requireLicense: options.requireLicense ?? true
   });
 }
@@ -150,6 +221,7 @@ export function requireKbAdmin(request?: Request, options: Omit<RoleGuardOptions
 export function requireSuperAdmin(request?: Request, options: Omit<RoleGuardOptions, "request"> = {}) {
   return requireRole("super_admin", {
     ...options,
-    request
+    request,
+    product: options.product ?? "super_admin"
   });
 }

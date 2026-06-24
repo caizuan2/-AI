@@ -3,8 +3,8 @@ import { enforceUserAppPageAccess } from "@/lib/auth/page-guards";
 
 export const dynamic = "force-dynamic";
 
-export default async function UserLayout({ children }: { children: ReactNode }) {
-  await enforceUserAppPageAccess("/chat-ui");
+export default async function ChatWorkspaceGuardLayout({ children }: { children: ReactNode }) {
+  await enforceUserAppPageAccess("/chat");
 
   return children;
 }

@@ -40,6 +40,7 @@ export interface GenerateRagAnswerOptions {
   confidence?: number;
   intentLabel?: string;
   retrievalMessage?: string | null;
+  businessExecutionContext?: string | null;
 }
 
 function clamp01(value: number) {
@@ -96,7 +97,8 @@ export async function generateRagAnswer(
     answerMode: options.answerMode,
     confidence: options.confidence,
     intentLabel: options.intentLabel,
-    retrievalMessage: options.retrievalMessage
+    retrievalMessage: options.retrievalMessage,
+    businessExecutionContext: options.businessExecutionContext
   });
   const startedAt = Date.now();
   const estimatedInputTokens = estimateTokenCount(messages.map((message) => message.content).join("\n\n"));

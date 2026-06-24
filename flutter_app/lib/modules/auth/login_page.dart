@@ -87,13 +87,35 @@ class _LoginPageState extends State<LoginPage> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
+        setState(() => _error = _formatSubmitError(error));
       }
     } finally {
       if (mounted) {
         setState(() => _loading = false);
       }
     }
+  }
+
+  String _formatSubmitError(Object error) {
+    if (error is! ApiException) {
+      return error.toString();
+    }
+
+    final apiBaseUrl = widget.apiService.baseUrl;
+    final details = error.debugDetails?.trim();
+    final showEndpoint =
+        apiBaseUrl.contains('127.0.0.1') || apiBaseUrl.contains('localhost');
+    const localStartHint =
+        '请确认本地 3051 服务是通过 scripts/start-user-local-3051.ps1 启动的。';
+    if (details != null && details.isNotEmpty) {
+      return showEndpoint
+          ? '${error.message}\n当前接口：$apiBaseUrl\n$details\n$localStartHint'
+          : '${error.message}\n当前接口：$apiBaseUrl\n$details';
+    }
+    if (showEndpoint) {
+      return '${error.message}\n当前接口：$apiBaseUrl\n$localStartHint';
+    }
+    return error.message;
   }
 
   Future<void> _activateLicense() async {
@@ -191,6 +213,7 @@ class _LoginPageState extends State<LoginPage> {
                             controller: _licenseController,
                             loading: _activating,
                             status: _licenseStatus,
+                            apiBaseUrl: widget.apiService.baseUrl,
                             onActivate: _activateLicense,
                             onBackToLogin: _backToLogin,
                           )
@@ -199,6 +222,7 @@ class _LoginPageState extends State<LoginPage> {
                             registerMode: _registerMode,
                             loading: _loading,
                             error: _error,
+                            apiBaseUrl: widget.apiService.baseUrl,
                             phoneController: _phoneController,
                             passwordController: _passwordController,
                             nameController: _nameController,
@@ -222,6 +246,7 @@ class _LoginForm extends StatelessWidget {
   const _LoginForm({
     required this.registerMode,
     required this.loading,
+    required this.apiBaseUrl,
     required this.phoneController,
     required this.passwordController,
     required this.nameController,
@@ -233,6 +258,7 @@ class _LoginForm extends StatelessWidget {
 
   final bool registerMode;
   final bool loading;
+  final String apiBaseUrl;
   final String? error;
   final TextEditingController phoneController;
   final TextEditingController passwordController;
@@ -242,6 +268,8 @@ class _LoginForm extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final showLocalEndpoint =
+        apiBaseUrl.contains('127.0.0.1') || apiBaseUrl.contains('localhost');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -253,6 +281,25 @@ class _LoginForm extends StatelessWidget {
         ),
         const SizedBox(height: 8),
         const Text('使用服务端账号体系，登录后需通过超级管理员卡密激活。'),
+        if (showLocalEndpoint) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Text(
+              '当前测试接口：$apiBaseUrl',
+              style: const TextStyle(
+                color: Color(0xFF475569),
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 24),
         if (registerMode) ...[
           TextField(
@@ -305,6 +352,7 @@ class _ActivationForm extends StatelessWidget {
   const _ActivationForm({
     required this.controller,
     required this.loading,
+    required this.apiBaseUrl,
     required this.onActivate,
     required this.onBackToLogin,
     this.status,
@@ -313,6 +361,7 @@ class _ActivationForm extends StatelessWidget {
 
   final TextEditingController controller;
   final bool loading;
+  final String apiBaseUrl;
   final LicenseStatusResult? status;
   final VoidCallback onActivate;
   final VoidCallback onBackToLogin;
@@ -320,6 +369,8 @@ class _ActivationForm extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = this.status;
+    final showLocalEndpoint =
+        apiBaseUrl.contains('127.0.0.1') || apiBaseUrl.contains('localhost');
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -353,6 +404,25 @@ class _ActivationForm extends StatelessWidget {
           '请输入超级管理员后台生成的卡密，激活后即可使用小董AI。',
           style: TextStyle(color: Color(0xFF475569), height: 1.5),
         ),
+        if (showLocalEndpoint) ...[
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF8FAFC),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Text(
+              '当前测试接口：$apiBaseUrl',
+              style: const TextStyle(
+                color: Color(0xFF475569),
+                fontSize: 12,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(height: 20),
         TextField(
           controller: controller,

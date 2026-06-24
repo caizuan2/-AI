@@ -169,6 +169,7 @@ class ApiService {
 
   Map<String, String> _headers({bool json = true}) {
     return {
+      'Accept': 'application/json',
       if (json) 'Content-Type': 'application/json',
       if (_cookie != null) 'Cookie': _cookie!,
     };

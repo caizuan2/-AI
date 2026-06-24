@@ -5,6 +5,7 @@ import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
 import { getUserRoles } from "@/lib/auth/rbac";
+import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
 import { ForbiddenError, UnauthorizedError, ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
@@ -14,6 +15,9 @@ interface LoginResponse {
   success: true;
   licenseActivated: boolean;
   isSuperAdmin: boolean;
+  role: EntryRole;
+  roles: string[];
+  entryPath: string;
   user: {
     id: string;
     phone: string;
@@ -91,11 +95,16 @@ export async function POST(request: Request) {
     const roles = await getUserRoles(user);
     const isSuperAdmin = roles.includes("super_admin");
     const licenseActivated = user.licenseActivated || isSuperAdmin;
+    const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
+    const entryPath = getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated });
 
     return apiSuccess<LoginResponse>({
       success: true,
       licenseActivated,
       isSuperAdmin,
+      role,
+      roles,
+      entryPath,
       user: {
         id: user.id,
         phone: user.phone,

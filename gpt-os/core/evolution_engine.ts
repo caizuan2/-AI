@@ -1,3 +1,5 @@
+import { optimizeRewardBatch, type ModelEvolutionFeedback } from "./reward_optimizer";
+
 export type EvolutionAnswerQuality = "high" | "medium" | "low";
 
 export interface EvolutionEngineInput {
@@ -27,6 +29,18 @@ export interface EvolutionRepairExecutionPlan {
   propose: boolean;
   approve: "manual_only";
   execute: false;
+}
+
+export interface ModelEvolutionLearningInput {
+  feedback_events?: ModelEvolutionFeedback[];
+}
+
+export interface ModelEvolutionLearningResult {
+  learning_enabled: true;
+  event_count: number;
+  average_reward: number;
+  recommended_weight_delta: Record<string, number>;
+  recommended_fallback_chain: string[];
 }
 
 export function evaluateEvolutionHealth(input: EvolutionEngineInput): EvolutionEngineResult {
@@ -61,6 +75,25 @@ export function createEvolutionRepairExecutionPlan(input: EvolutionEngineResult)
     propose: input.improvement_actions.length > 0,
     approve: "manual_only",
     execute: false,
+  };
+}
+
+export function evaluateModelEvolutionLearning(input: ModelEvolutionLearningInput): ModelEvolutionLearningResult {
+  const batch = optimizeRewardBatch(input.feedback_events ?? []);
+  const averageReward = batch.length > 0
+    ? batch.reduce((sum, item) => sum + item.average_reward, 0) / batch.length
+    : 0;
+
+  return {
+    learning_enabled: true,
+    event_count: batch.reduce((sum, item) => sum + item.event_count, 0),
+    average_reward: Math.round(averageReward * 1000) / 1000,
+    recommended_weight_delta: Object.fromEntries(
+      batch.map((item) => [item.model_used, item.total_weight_delta]),
+    ),
+    recommended_fallback_chain: batch
+      .sort((left, right) => right.average_reward - left.average_reward)
+      .map((item) => item.model_used),
   };
 }
 

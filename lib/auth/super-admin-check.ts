@@ -1,19 +1,21 @@
 import "server-only";
 
 import { redirect } from "next/navigation";
-import { requireSuperAdmin } from "@/lib/auth/rbac";
+import { requireSuperAdminAccess as requireSuperAdminGuard } from "@/lib/auth/guards";
+import { UnauthorizedError } from "@/lib/errors";
 
 export async function requireSuperAdminAccess(request?: Request) {
-  return requireSuperAdmin(request, {
-    deniedAction: "RBAC_ACCESS_DENIED",
-    targetType: "super_admin"
-  });
+  return requireSuperAdminGuard(request);
 }
 
 export async function enforceSuperAdminPageAccess() {
   try {
     return await requireSuperAdminAccess();
-  } catch {
-    redirect("/login?next=/super-admin");
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      redirect("/login?next=/super-admin");
+    }
+
+    redirect("/no-access");
   }
 }

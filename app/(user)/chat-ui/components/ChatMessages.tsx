@@ -1,12 +1,12 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy, FileText, Image as ImageIcon, Loader2, Pencil, User } from "lucide-react";
+import { Check, Copy, FileText, Image as ImageIcon, Pencil, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CustomerAnswerCard } from "./CustomerAnswerCard";
+import { ChatMessageRenderer } from "@/app/(user)/app/components/chat/message-renderer";
+import { formatIntentConfidence, getCommercialIntentLabel, type UserIntent } from "@/lib/user-intent-detector";
+import { submitChatBehaviorFeedback, type ChatBehaviorFeedbackInput } from "../api";
 import { EmptyState } from "./EmptyState";
-import { RichAnswerView } from "./RichAnswerView";
-import { SourceList } from "./SourceList";
 import {
   getCachedChatAttachmentPreviewUrl,
   getCurrentChatUserAvatarUrl,
@@ -49,14 +49,20 @@ function formatAttachmentSize(size?: number) {
   return `${Math.max(1, Math.round(size / 1024))}KB`;
 }
 
-function shouldShowDebugSources() {
-  return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
-}
-
 type UserAttachment = NonNullable<ChatMessageView["attachments"]>[number];
 
 function getStringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getRecordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function getBooleanValue(value: unknown) {
+  return typeof value === "boolean" ? value : false;
 }
 
 function looksLikeImageUrl(value: string) {
@@ -379,10 +385,34 @@ function UserMessageBlock({
             ) : null}
           </div>
         ) : null}
+        <UserCommercialIntentBadge message={message} />
         <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
       </div>
       <UserMessageAvatar currentUser={currentUser} userAvatarUrl={userAvatarUrl} />
     </>
+  );
+}
+
+function UserCommercialIntentBadge({ message }: { message: ChatMessageView }) {
+  const commercialExecution = getRecordValue(message.metadata?.commercialExecution);
+  const businessExecution = getRecordValue(message.metadata?.businessExecution);
+  const primaryAction = getRecordValue(businessExecution.primaryAction);
+  const intent = getStringValue(commercialExecution.intent) as UserIntent;
+  const actionLabel = getStringValue(primaryAction.label);
+  const confidence = typeof commercialExecution.confidence === "number" ? commercialExecution.confidence : null;
+
+  if (!intent) {
+    return null;
+  }
+
+  return (
+    <div className="max-w-full self-end rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+      商业意图：{getCommercialIntentLabel(intent)}
+      {actionLabel ? <span className="ml-1 text-emerald-600">→ {actionLabel}</span> : null}
+      {confidence !== null ? (
+        <span className="ml-1 text-emerald-500">{formatIntentConfidence(confidence)}</span>
+      ) : null}
+    </div>
   );
 }
 
@@ -431,7 +461,6 @@ function UserMessageAvatar({
 
 export function ChatMessages({
   messages,
-  loading,
   mode,
   onModeChange,
   onEditUserMessage,
@@ -439,12 +468,18 @@ export function ChatMessages({
   userAvatarUrl = null
 }: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
+  const dwellReportedRef = React.useRef(new Set<string>());
+  const clickReportedRef = React.useRef(new Set<string>());
+  const copyReportedRef = React.useRef(new Set<string>());
+  const dwellTimersRef = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
   React.useEffect(() => {
+    const dwellTimers = dwellTimersRef.current;
+
     return () => {
       const blobUrls = new Set<string>();
 
@@ -459,8 +494,88 @@ export function ChatMessages({
       }
 
       blobUrls.forEach((url) => URL.revokeObjectURL(url));
+      dwellTimers.forEach((timer) => window.clearTimeout(timer));
+      dwellTimers.clear();
     };
   }, []);
+
+  const reportAssistantBehavior = React.useCallback((
+    message: ChatMessageView,
+    eventType: ChatBehaviorFeedbackInput["eventType"],
+    overrides: Partial<ChatBehaviorFeedbackInput> = {}
+  ) => {
+    if (message.role !== "assistant" || message.pending) {
+      return;
+    }
+
+    const metadata = getRecordValue(message.metadata);
+    const seed = getRecordValue(metadata.behaviorFeedbackSeed);
+    const responseId = getStringValue(metadata.responseId) || message.id;
+    const query = getStringValue(metadata.userQuery);
+
+    void submitChatBehaviorFeedback({
+      userId: currentUser?.id ?? null,
+      query,
+      responseId,
+      eventType,
+      clickCount: 0,
+      copyCount: 0,
+      dwellTime: 0,
+      followUp: getBooleanValue(seed.followUp),
+      converted: getBooleanValue(seed.converted),
+      metadata: {
+        messageId: message.id,
+        confidence: message.confidence ?? null,
+        hasCustomerAnswer: Boolean(message.customer_answer),
+        providerStatus: message.provider_status ?? null
+      },
+      ...overrides
+    }).catch(() => undefined);
+  }, [currentUser?.id]);
+
+  React.useEffect(() => {
+    for (const message of messages) {
+      if (
+        message.role !== "assistant" ||
+        message.pending ||
+        !message.content.trim() ||
+        dwellReportedRef.current.has(message.id) ||
+        dwellTimersRef.current.has(message.id)
+      ) {
+        continue;
+      }
+
+      const timer = window.setTimeout(() => {
+        dwellReportedRef.current.add(message.id);
+        dwellTimersRef.current.delete(message.id);
+        reportAssistantBehavior(message, "dwellTime", {
+          dwellTime: 8000
+        });
+      }, 8000);
+
+      dwellTimersRef.current.set(message.id, timer);
+    }
+  }, [messages, reportAssistantBehavior]);
+
+  function handleAssistantClickCapture(event: React.MouseEvent<HTMLElement>, message: ChatMessageView) {
+    if (!clickReportedRef.current.has(message.id)) {
+      clickReportedRef.current.add(message.id);
+      reportAssistantBehavior(message, "click", {
+        clickCount: 1
+      });
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("button");
+    const buttonText = `${button?.getAttribute("aria-label") ?? ""} ${button?.textContent ?? ""}`;
+
+    if (/复制/.test(buttonText) && !copyReportedRef.current.has(message.id)) {
+      copyReportedRef.current.add(message.id);
+      reportAssistantBehavior(message, "copy", {
+        copyCount: 1
+      });
+    }
+  }
 
   if (messages.length === 0) {
     return <EmptyState mode={mode} onModeChange={onModeChange} />;
@@ -470,12 +585,12 @@ export function ChatMessages({
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 py-6 md:px-6">
       {messages.map((message) => {
         const isUser = message.role === "user";
-        const showSources = !isUser && shouldShowDebugSources();
 
         return (
           <article
             key={message.id}
             className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
+            onClickCapture={isUser ? undefined : (event) => handleAssistantClickCapture(event, message)}
           >
             {isUser ? (
               <UserMessageBlock
@@ -485,38 +600,12 @@ export function ChatMessages({
                 userAvatarUrl={userAvatarUrl}
               />
             ) : (
-              <div
-                className="max-w-[min(760px,88%)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-900 shadow-sm"
-              >
-                <RichAnswerView
-                  answer={message.content}
-                  customerAnswer={message.customer_answer}
-                  providerStatus={message.provider_status}
-                />
-                {message.pending ? (
-                  <div className="mt-2 text-xs opacity-80">发送中...</div>
-                ) : null}
-                <CustomerAnswerCard content={message.customer_answer} />
-                {showSources ? (
-                  <SourceList sources={message.sources} confidence={message.confidence} />
-                ) : null}
-                <div className="mt-2 text-xs text-slate-400">
-                  {formatMessageTime(message.created_at)}
-                </div>
-              </div>
+              <ChatMessageRenderer message={message} />
             )}
           </article>
         );
       })}
 
-      {loading ? (
-        <div className="flex items-center gap-3 text-sm text-slate-500">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          </span>
-          AI 正在检索知识库并生成回答...
-        </div>
-      ) : null}
     </div>
   );
 }

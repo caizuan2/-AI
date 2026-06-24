@@ -5,9 +5,11 @@ import { scoreGlobalReasoning, type GlobalReasoningScore } from "./global_reason
 import { buildModelChain, type ModelChainBuildResult } from "./model_chain_builder";
 import { evolveModelStrategy, type ModelEvolutionResult } from "./model_evolution_engine";
 import { scoreModelGlobally, type ModelGlobalScore } from "./model_global_scorer";
+import { runModelLearningLoop, type ModelLearningLoopResult } from "./model_learning_loop";
 import { evaluateModelLifecycle, type ModelLifecycleResult } from "./model_lifecycle_manager";
 import { generateModelStrategy, type ModelStrategyGenerationResult } from "./model_strategy_generator";
 import { applyRewardSignal, calculateRewardSignal, type ReinforcementFeedbackInput, type RewardSignal } from "./reinforcement_feedback";
+import type { ModelEvolutionFeedback } from "./reward_optimizer";
 import { reconstructRoutingGraph, type RoutingReconstructionResult } from "./routing_reconstructor";
 import { runSelfEvolvingBrain, type SelfEvolvingBrainDecision } from "./self_evolving_brain";
 import { optimizeSelfLoop, type SelfLoopOptimizerResult } from "./self_loop_optimizer";
@@ -61,6 +63,8 @@ export interface ModelRouteInput {
   quality_mode?: GptOsQualityMode;
   history?: Partial<ModelPerformanceRecord>[];
   reinforcement_feedback?: ReinforcementFeedbackInput[];
+  model_evolution_feedback?: ModelEvolutionFeedback[];
+  latest_model_feedback?: ModelEvolutionFeedback | null;
   previous_degraded_models?: string[];
   ab_test_enabled?: boolean;
   requestId?: string;
@@ -144,6 +148,15 @@ export interface ModelRouteDecision {
   };
   ab_test: ModelAbTestResult;
   lifecycle: ModelLifecycleResult;
+  learning_loop: ModelLearningLoopResult;
+  model_self_evolution: {
+    enabled: true;
+    event_count: number;
+    fallback_chain_hint: string[];
+    model_weight_deltas: Record<string, number>;
+    best_model: string | null;
+    weakest_model: string | null;
+  };
   requestId?: string;
 }
 
@@ -1039,11 +1052,34 @@ function chooseSelectedModelV6(
   return firstHealthyGraphModel ?? sortModelsByWeight(modelWeightsV6)[0] ?? GPT_OS_DEEPSEEK_PRO_MODEL;
 }
 
+function buildLearningLoop(input: ModelRouteInput): ModelLearningLoopResult {
+  return runModelLearningLoop({
+    store: createPerformanceStore(input.history),
+    feedback_events: input.model_evolution_feedback,
+    request_feedback: input.latest_model_feedback ?? null,
+  });
+}
+
+function applyLearningDeltas(
+  modelWeights: Record<string, number>,
+  modelWeightDeltas: Record<string, number>,
+): Record<string, number> {
+  const nextWeights: Record<string, number> = {};
+
+  for (const model of modelOrder) {
+    nextWeights[model] = roundWeight((modelWeights[model] ?? 0) + (modelWeightDeltas[model] ?? 0));
+  }
+
+  return nextWeights;
+}
+
 export function selectModelV6(input: ModelRouteInput = {}): string {
   const contextType = inferRouteContextType(input);
   const { modelWeightsV6, routingReconstruction, lifecycle } = calculateModelScoresV6(input, contextType);
+  const learningLoop = buildLearningLoop(input);
+  const learnedModelWeightsV6 = applyLearningDeltas(modelWeightsV6, learningLoop.model_weight_deltas);
 
-  return chooseSelectedModelV6(routingReconstruction, modelWeightsV6, lifecycle);
+  return chooseSelectedModelV6(routingReconstruction, learnedModelWeightsV6, lifecycle);
 }
 
 export function selectModel(input: ModelRouteInput = {}): string {
@@ -1074,14 +1110,16 @@ export function routeModel(input: ModelRouteInput = {}): ModelRouteDecision {
     globalReasoning,
     selfEvolvingBrain,
   } = calculateModelScoresV6(input, reasoningType);
+  const learningLoop = buildLearningLoop(input);
   const fallbackChainV2 = sortModelsByWeight(baseWeights);
   const fallbackChainV3 = sortModelsByWeight(modelWeightsV3);
   const v4SelectedModel = chooseSelectedModelV4(strategyGeneration.selected_strategy, modelWeightsV4, lifecycle);
   const fallbackChainV4 = orderModelsWithSelected(v4SelectedModel, modelWeightsV4);
   const selectedModel = chooseSelectedModelV5(modelChain, modelWeightsV5, lifecycle);
   const fallbackChainV5 = orderModelsWithSelected(selectedModel, modelWeightsV5);
-  const v6SelectedModel = chooseSelectedModelV6(routingReconstruction, modelWeightsV6, lifecycle);
-  const fallbackChainV6 = orderModelsWithSelected(v6SelectedModel, modelWeightsV6);
+  const learnedModelWeightsV6 = applyLearningDeltas(modelWeightsV6, learningLoop.model_weight_deltas);
+  const v6SelectedModel = chooseSelectedModelV6(routingReconstruction, learnedModelWeightsV6, lifecycle);
+  const fallbackChainV6 = orderModelsWithSelected(v6SelectedModel, learnedModelWeightsV6);
   const executableRoute = resolveExecutableRoute(v6SelectedModel, fallbackChainV6);
 
   return {
@@ -1100,7 +1138,7 @@ export function routeModel(input: ModelRouteInput = {}): ModelRouteDecision {
     model_weights_v3: modelWeightsV3,
     model_weights_v4: modelWeightsV4,
     model_weights_v5: modelWeightsV5,
-    model_weights_v6: modelWeightsV6,
+    model_weights_v6: learnedModelWeightsV6,
     reasoning: "autonomous_paradigm + routing_graph + global_reasoning + proposal_only",
     reasoning_type: reasoningType,
     route_decision: `autonomous_router_v6_${autonomousParadigm.new_paradigm_name}_${reasoningType}`,
@@ -1147,6 +1185,15 @@ export function routeModel(input: ModelRouteInput = {}): ModelRouteDecision {
     reinforcement,
     ab_test: abTest,
     lifecycle,
+    learning_loop: learningLoop,
+    model_self_evolution: {
+      enabled: true,
+      event_count: learningLoop.analytics.event_count,
+      fallback_chain_hint: learningLoop.fallback_chain_hint,
+      model_weight_deltas: learningLoop.model_weight_deltas,
+      best_model: learningLoop.analytics.best_model,
+      weakest_model: learningLoop.analytics.weakest_model,
+    },
     requestId: input.requestId,
   };
 }

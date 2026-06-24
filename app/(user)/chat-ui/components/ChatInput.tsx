@@ -12,6 +12,7 @@ interface ChatInputProps {
   loading: boolean;
   onValueChange: (value: string) => void;
   onSubmit: (attachments?: ChatAttachmentDraft[]) => Promise<boolean> | boolean | void;
+  onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
   openAttachmentSignal?: number;
   openCameraSignal?: number;
@@ -272,6 +273,7 @@ export function ChatInput({
   loading,
   onValueChange,
   onSubmit,
+  onCancel,
   onStatusMessage,
   openAttachmentSignal = 0,
   openCameraSignal = 0
@@ -514,12 +516,24 @@ export function ChatInput({
 
         <button
           type="button"
-          onClick={() => void submitCurrentMessage()}
-          disabled={!canSend}
-          className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-400 transition enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed"
-          aria-label="发送消息"
+          onClick={() => {
+            if (loading) {
+              onCancel?.();
+              return;
+            }
+
+            void submitCurrentMessage();
+          }}
+          disabled={!loading && !canSend}
+          className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-400 transition enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed data-[loading=true]:bg-slate-950 data-[loading=true]:text-white data-[loading=true]:hover:bg-slate-800"
+          aria-label={loading ? "停止生成" : "发送消息"}
+          data-loading={loading}
         >
-          <SendHorizontal className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          {loading ? (
+            <X className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          ) : (
+            <SendHorizontal className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          )}
         </button>
       </div>
       {listening || interimTranscript ? (

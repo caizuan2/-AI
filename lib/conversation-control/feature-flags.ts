@@ -81,11 +81,11 @@ const flagDefinitions: FlagDefinition[] = [
 ];
 
 export const defaultConversationFeatureFlags: ConversationFeatureFlags = {
-  rename: false,
-  archive: false,
-  delete: false,
-  share: false,
-  groupChat: false,
+  rename: true,
+  archive: true,
+  delete: true,
+  share: true,
+  groupChat: true,
   pinCloudSync: false
 };
 

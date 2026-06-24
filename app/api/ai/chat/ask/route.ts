@@ -1,6 +1,7 @@
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiError, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { handleAiChatAsk } from "@/lib/ai-chat/ask";
+import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
 import { generateRagAnswer } from "@/lib/ai/rag-answer";
 import { requireRole } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
@@ -25,6 +26,12 @@ function confidenceToNumber(confidence: RagConfidence) {
   }
 
   return confidence === "medium" ? 0.52 : 0.18;
+}
+
+function getSearchQuery(body: Record<string, unknown>) {
+  const value = body.question ?? body.message ?? body.text;
+
+  return typeof value === "string" ? value.trim() : "";
 }
 
 export async function POST(request: Request) {
@@ -57,45 +64,72 @@ export async function POST(request: Request) {
     return apiError(new ValidationError("请求体必须是 JSON 对象。"));
   }
 
-  try {
-    const settings = await getOrCreateUserSettings(actor.id);
-    const provider = normalizeProvider(settings.preferredProvider);
-    const providerConfigured = hasUsableChatProvider("deepseek")
-      || hasUsableChatProvider("qwen")
-      || hasUsableChatProvider("openai")
-      || hasUsableChatProvider(provider);
-    const result = await handleAiChatAsk({
-      id: actor.id,
-      role: actor.role
-    }, body, {
-      providerConfigured,
-      answerProvider: providerConfigured
-        ? async ({ question, contexts, mode, enableDeepThinking, confidence, actualModel, provider, providerFallbackChain }) => {
-            const ragAnswer = await generateRagAnswer(question, contexts, {
-              userId: actor.id,
+  return createAiChatSseResponse({
+    signal: request.signal,
+    producer: async ({ emit, streamResult }) => {
+      await emit({
+        type: "thinking",
+        content: "分析问题中..."
+      });
+
+      const settings = await getOrCreateUserSettings(actor.id);
+      const provider = normalizeProvider(settings.preferredProvider);
+      const providerConfigured = hasUsableChatProvider("deepseek")
+        || hasUsableChatProvider("qwen")
+        || hasUsableChatProvider("openai")
+        || hasUsableChatProvider(provider);
+
+      await emit({
+        type: "thinking",
+        content: "正在检索知识库..."
+      });
+      await emit({
+        type: "rag_search",
+        query: getSearchQuery(body)
+      });
+
+      const result = await handleAiChatAsk({
+        id: actor.id,
+        role: actor.role
+      }, body, {
+        providerConfigured,
+        answerProvider: providerConfigured
+          ? async ({
+              question,
+              contexts,
+              mode,
+              enableDeepThinking,
+              confidence,
+              actualModel,
               provider,
-              providerChain: providerFallbackChain,
-              model: actualModel,
-              answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
-              confidence: confidenceToNumber(confidence),
-              intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard"
-            });
+              providerFallbackChain,
+              businessExecutionContext
+            }) => {
+              const ragAnswer = await generateRagAnswer(question, contexts, {
+                userId: actor.id,
+                provider,
+                providerChain: providerFallbackChain,
+                model: actualModel,
+                answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
+                confidence: confidenceToNumber(confidence),
+                intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
+                businessExecutionContext
+              });
 
-            return {
-              answer: ragAnswer.answer,
-              providerUsed: ragAnswer.providerUsed,
-              modelUsed: ragAnswer.model,
-              fallbackUsed: ragAnswer.fallbackUsed,
-              answerGroundingScore: ragAnswer.answer_grounding_score,
-              modelFeedbackEvent: ragAnswer.model_feedback_event,
-              originalProviderErrorCode: ragAnswer.originalProviderErrorCode
-            };
-          }
-        : undefined
-    });
+              return {
+                answer: ragAnswer.answer,
+                providerUsed: ragAnswer.providerUsed,
+                modelUsed: ragAnswer.model,
+                fallbackUsed: ragAnswer.fallbackUsed,
+                answerGroundingScore: ragAnswer.answer_grounding_score,
+                modelFeedbackEvent: ragAnswer.model_feedback_event,
+                originalProviderErrorCode: ragAnswer.originalProviderErrorCode
+              };
+            }
+          : undefined
+      });
 
-    return apiSuccess(result);
-  } catch (error) {
-    return apiError(error);
-  }
+      await streamResult(result);
+    }
+  });
 }
