@@ -665,7 +665,7 @@ export function ChatShell() {
     <div className="min-h-screen bg-slate-100 text-slate-950">
       <CapacitorOtaUpdater />
       <AppUpdateNotice appKind={USER_APP_KIND} />
-      <div className="mx-auto flex h-screen w-full max-w-[430px] overflow-hidden bg-white shadow-2xl shadow-slate-300/40">
+      <div className="flex h-screen w-full overflow-hidden bg-white">
         <main className="relative flex min-w-0 flex-1 flex-col overflow-hidden">
           <ChatSidebarDrawer
             conversations={conversations}
@@ -702,7 +702,7 @@ export function ChatShell() {
 
               <div className="min-w-0 text-center">
                 <h1 className="truncate text-lg font-bold text-slate-950">小董AI</h1>
-                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">企业知识库 + AI 思考</p>
+                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">AI Knowledge OS 用户端 · 企业知识库 + AI 思考</p>
               </div>
 
               <button

@@ -87,7 +87,7 @@ export function getEntryPathForRole(role: EntryRole, licenseActivated = false) {
     return "/ingest";
   }
 
-  return licenseActivated ? "/app/chat" : "/unlock";
+  return licenseActivated ? "/app" : "/unlock";
 }
 
 export function getEntryPathFromRoles(input: {

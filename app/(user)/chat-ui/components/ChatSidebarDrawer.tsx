@@ -129,7 +129,7 @@ export function ChatSidebarDrawer({
 
     const searchText = [
       item.title,
-      item.mode === "expert" ? "专家" : "快速",
+      item.mode === "expert" ? "专家研判" : "业务处理",
       formatConversationTime(item.updatedAt),
       item.updatedAt
     ].join(" ").toLowerCase();
@@ -181,7 +181,7 @@ export function ChatSidebarDrawer({
       />
       <aside
         className={cn(
-          "fixed inset-y-0 left-0 z-50 flex w-[330px] max-w-[82vw] flex-col bg-white shadow-2xl transition-transform duration-200 sm:left-[calc(50%-215px)]",
+          "fixed inset-y-0 left-0 z-50 flex w-[330px] max-w-[82vw] flex-col bg-white shadow-2xl transition-transform duration-200",
           open ? "translate-x-0" : "pointer-events-none -translate-x-full"
         )}
         aria-label="历史对话抽屉"

@@ -109,7 +109,7 @@ export function ConversationSidebar({
                         </span>
                         <span className="mt-1 flex items-center justify-between gap-2 text-xs text-slate-500">
                           <span>{formatConversationTime(conversation.updated_at)}</span>
-                          <span>{conversation.mode === "expert" ? "专家" : "快速"}</span>
+                          <span>{conversation.mode === "expert" ? "专家研判" : "业务处理"}</span>
                         </span>
                       </span>
                     </div>
