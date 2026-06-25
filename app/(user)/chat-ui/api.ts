@@ -18,7 +18,7 @@ import type {
   ChatQuickActionItem
 } from "./types";
 
-export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app/chat";
+export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app";
 
 type ApiEnvelope<T> = {
   ok?: boolean;

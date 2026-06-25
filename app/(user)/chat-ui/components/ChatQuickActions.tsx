@@ -1,7 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { Camera, Images, Search, Sparkles, Upload, Video, Zap } from "lucide-react";
+import {
+  BookOpen,
+  Brain,
+  Camera,
+  ClipboardList,
+  MessageSquareText,
+  Search,
+  Sparkles,
+  Target,
+  Upload
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ChatMode, ChatQuickActionItem } from "../types";
@@ -22,32 +32,32 @@ type DefaultQuickAction = ChatQuickActionItem & { iconComponent: LucideIcon };
 
 const defaultActions: DefaultQuickAction[] = [
   {
-    id: "fast",
-    label: "快速",
-    iconComponent: Zap,
+    id: "business-problem",
+    label: "业务问题",
+    iconComponent: Target,
     kind: "mode",
     mode: "fast"
   },
   {
-    id: "creative",
-    label: "AI 创作",
-    iconComponent: Sparkles,
+    id: "customer-dialog",
+    label: "客户对话",
+    iconComponent: MessageSquareText,
     kind: "tool",
-    prompt: "请帮我进行 AI 创作："
+    prompt: "请分析这段客户对话，判断客户意图并生成可直接复制的回复话术："
   },
   {
-    id: "photo-motion",
-    label: "照片动起来",
-    iconComponent: Images,
+    id: "knowledge-rag",
+    label: "知识库检索",
+    iconComponent: BookOpen,
     kind: "tool",
-    prompt: "我想了解照片动起来功能："
+    prompt: "请基于企业知识库回答这个业务问题，并列出引用来源："
   },
   {
-    id: "video-call",
-    label: "视频通话",
-    iconComponent: Video,
+    id: "deal-plan",
+    label: "成交建议",
+    iconComponent: ClipboardList,
     kind: "tool",
-    prompt: "我想了解视频通话功能："
+    prompt: "请根据当前客户状态给出成交路径、标准回复话术和下一步行动："
   }
 ];
 
@@ -58,16 +68,24 @@ function hasDefaultIcon(action: ChatQuickActionItem): action is DefaultQuickActi
 function getActionIcon(action: ChatQuickActionItem): LucideIcon {
   const icon = action.icon?.toLowerCase();
 
-  if (icon === "zap" || icon === "bolt") {
-    return Zap;
+  if (icon === "target" || icon === "zap" || icon === "bolt") {
+    return Target;
   }
 
-  if (icon === "image" || icon === "images" || icon === "photo") {
-    return Images;
+  if (icon === "book" || icon === "bookopen" || icon === "knowledge") {
+    return BookOpen;
   }
 
-  if (icon === "video") {
-    return Video;
+  if (icon === "message" || icon === "chat") {
+    return MessageSquareText;
+  }
+
+  if (icon === "clipboard" || icon === "list") {
+    return ClipboardList;
+  }
+
+  if (icon === "brain") {
+    return Brain;
   }
 
   if (icon === "camera") {
@@ -82,19 +100,75 @@ function getActionIcon(action: ChatQuickActionItem): LucideIcon {
     return Sparkles;
   }
 
-  if (action.mode === "fast" || action.label.includes("快速")) {
-    return Zap;
+  if (action.mode === "fast" || action.label.includes("业务") || action.label.includes("快速")) {
+    return Target;
   }
 
-  if (action.label.includes("照片") || action.label.includes("图片")) {
-    return Images;
+  if (action.label.includes("客户") || action.label.includes("对话") || action.label.includes("话术")) {
+    return MessageSquareText;
   }
 
-  if (action.label.includes("视频")) {
-    return Video;
+  if (action.label.includes("知识") || action.label.toLowerCase().includes("rag")) {
+    return BookOpen;
+  }
+
+  if (action.label.includes("成交") || action.label.includes("下一步") || action.label.includes("方案")) {
+    return ClipboardList;
+  }
+
+  if (action.label.includes("截图") || action.label.includes("图片")) {
+    return Upload;
+  }
+
+  if (action.label.includes("思考")) {
+    return Brain;
   }
 
   return Sparkles;
+}
+
+function normalizeBusinessAction(action: ChatQuickActionItem): ChatQuickActionItem {
+  const label = action.label.trim();
+
+  if (label === "快速") {
+    return {
+      ...action,
+      label: "业务问题",
+      prompt: null,
+      kind: "mode",
+      mode: "fast",
+      icon: "target"
+    };
+  }
+
+  if (/创作/i.test(label)) {
+    return {
+      ...action,
+      label: "回复话术",
+      prompt: "请根据客户对话生成可直接复制的回复话术，并给出下一步引导：",
+      icon: "message"
+    };
+  }
+
+  if (label.includes("图片") || label.includes("照片")) {
+    return {
+      ...action,
+      label: "客户截图分析",
+      prompt: "我会上传客户对话截图，请识别关键信息并生成业务处理方案：",
+      icon: "upload"
+    };
+  }
+
+  if (label.includes("视频")) {
+    return {
+      ...action,
+      label: "成交路径",
+      prompt: "请把当前客户情况拆成成交路径、标准回复话术和跟进动作：",
+      icon: "clipboard"
+    };
+  }
+
+  return action;
 }
 
 export function ChatQuickActions({
@@ -114,7 +188,8 @@ export function ChatQuickActions({
     kind: "category" as const,
     prompt: label
   }));
-  const visibleActions = categoryActions.length > 0 ? categoryActions : defaultActions;
+  const visibleActions = (categoryActions.length > 0 ? categoryActions : defaultActions)
+    .map(normalizeBusinessAction);
 
   function handleAction(action: ChatQuickActionItem) {
     if (action.kind === "mode" && action.mode) {
@@ -163,7 +238,7 @@ export function ChatQuickActions({
           )}
         >
           <Sparkles className="h-4 w-4" aria-hidden="true" />
-          专家
+          专家研判
         </button>
 
         <button
@@ -193,7 +268,7 @@ export function ChatQuickActions({
           aria-pressed={enableWebSearch}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
-          智能搜索
+          知识搜索
         </button>
 
       </div>

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
-import { ClientAuthGate } from "@/app/(user)/chat-ui/components/ClientAuthGate";
-import { ChatShell } from "@/app/(user)/chat-ui/components/ChatShell";
+import { AppChatExperience } from "../AppChatExperience";
 import { enforceUserAppPageAccess } from "@/lib/auth/page-guards";
 
 export const dynamic = "force-dynamic";
@@ -13,9 +12,5 @@ export const metadata: Metadata = {
 export default async function AppChatPage() {
   await enforceUserAppPageAccess("/app/chat");
 
-  return (
-    <ClientAuthGate>
-      <ChatShell />
-    </ClientAuthGate>
-  );
+  return <AppChatExperience />;
 }

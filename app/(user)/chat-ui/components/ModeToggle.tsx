@@ -18,12 +18,12 @@ const options: Array<{
 }> = [
   {
     value: "fast",
-    label: "快速模式",
+    label: "业务处理",
     icon: Zap
   },
   {
     value: "expert",
-    label: "专家模式",
+    label: "专家研判",
     icon: GraduationCap
   }
 ];
