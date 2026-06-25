@@ -17,6 +17,9 @@ export async function searchKnowledgeChunks(
   return retrieveKnowledge({
     query,
     topK,
-    userId
+    userId,
+    appType: "user_app",
+    includeShared: true,
+    includePublished: true
   });
 }

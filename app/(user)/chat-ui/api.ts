@@ -93,7 +93,10 @@ export async function askChat(input: AskChatRequest) {
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(createAskRequestPayload(input))
+    body: JSON.stringify({
+      ...createAskRequestPayload(input),
+      runtime_entry: "user_chat_ui"
+    })
   });
 
   return readApiResponse<AskChatResponse>(response);

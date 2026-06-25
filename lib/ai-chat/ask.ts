@@ -11,6 +11,8 @@ import {
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
+import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
+import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
@@ -32,6 +34,7 @@ export const RAG_CUSTOMER_DRAFT_ANSWER = "已根据知识库资料整理如下�
 export interface AiChatActor {
   id: string;
   role: AppRole;
+  tenantId?: string | null;
 }
 
 export interface AiChatAskInput {
@@ -454,6 +457,10 @@ export async function handleAiChatAsk(
   const topK = osContext.rag.topK;
   const chunks = await retrieveRelevantChunks(question, {
     userId: actor.id,
+    tenantId: actor.tenantId,
+    appType: "user_app",
+    includeShared: true,
+    includePublished: true,
     mode,
     topK,
     db
@@ -461,6 +468,26 @@ export async function handleAiChatAsk(
   const contexts = buildRagContext(chunks);
   const sources = chunks.map(toSource);
   const confidence = calculateConfidence(chunks);
+  const runtimeOrchestrator = new AIRuntimeOrchestrator();
+  const runtimeResult = runtimeOrchestrator.handleRequest(question, {
+    source: "user_chat",
+    runtimeEntry: "user_chat_service",
+    userId: actor.id,
+    platform: "web",
+    category: mode,
+    agentRole: actor.role,
+    previousKnowledgeDrafts: chunks.map((chunk) => ({
+      id: chunk.knowledgeItemId || chunk.chunkId,
+      title: chunk.title,
+      summary: chunk.summary ?? chunk.content,
+      category: chunk.category ?? undefined,
+      tags: chunk.tags,
+      standardQuestion: question,
+      standardAnswer: chunk.content,
+      scenarios: chunk.category ? [chunk.category] : [],
+      sourceMaterials: [chunk.sourceTitle, chunk.sourceUrl, "retrieval-only:user-chat"].filter(Boolean) as string[]
+    }))
+  });
   await writeAuditLog(db, actor, "CHAT_RETRIEVE", normalizedConversationId, {
     mode,
     topK,
@@ -531,6 +558,19 @@ export async function handleAiChatAsk(
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = fallbackUsed ?? osContext.route.fallbackUsed;
+  const outputControlledAnswer = processAIOutput(answer, {
+    model: actualModel,
+    source: "ai_chat_ask",
+    mode
+  }).output;
+
+  if (outputControlledAnswer !== answer) {
+    answer = outputControlledAnswer;
+
+    if (providerStatus === "ok") {
+      customerAnswer = buildCustomerAnswerFromText(question, answer);
+    }
+  }
   const relevanceScore = calculateRelevanceScore(chunks);
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
   const ragDiagnostics = os_core.buildRagDiagnostics(osContext, chunks, contexts);
@@ -573,6 +613,30 @@ export async function handleAiChatAsk(
     fallbackUsed: visibleFallbackUsed,
     answerQuality,
   });
+  const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
+    query: question,
+    baseResponse: answer,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision,
+    strategy: runtimeResult.strategy
+  });
+  const runtimeFeedback = runtimeOrchestrator.collectFeedbackLoop({
+    query: question,
+    responseText: runtimeFinalOutput.replyMarkdown,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision
+  });
+  const aiRuntime = {
+    requestId: runtimeResult.requestId,
+    version: runtimeResult.version,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision,
+    strategy: runtimeResult.strategy,
+    finalOutput: runtimeFinalOutput,
+    feedback: runtimeFeedback,
+    validation: runtimeResult.validation,
+    diagnostics: runtimeResult.diagnostics
+  };
   const osTrace = os_core.recordTrace(osContext, {
     provider_status: providerStatus,
     fallbackUsed: visibleFallbackUsed,
@@ -592,6 +656,7 @@ export async function handleAiChatAsk(
       knowledgeGapEvent,
       optimizationSuggestions,
       evolutionReport,
+      aiRuntime,
     },
   });
 
@@ -621,7 +686,8 @@ export async function handleAiChatAsk(
     gptOsActualModel: actualModel,
     gptOsRouteDecision: osContext.route.route_decision,
     gptOsRagDiagnostics: ragDiagnostics,
-    gptOsGrowthEnhancer: osContext.growthEnhancer
+    gptOsGrowthEnhancer: osContext.growthEnhancer,
+    aiRuntime
   });
   await db.conversation.update({
     where: {
@@ -676,6 +742,7 @@ export async function handleAiChatAsk(
       optimization_suggestions: optimizationSuggestions,
       evolution_report: evolutionReport,
     },
+    ai_runtime: aiRuntime,
     feedback_meta: {
       message_id: String(assistantMessage.id),
       trace_id: osTrace.trace_id,

@@ -22,6 +22,12 @@ import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normali
 import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import {
+  createEnterpriseIngestLog,
+  listEnterpriseTrainingRecords,
+  normalizeEnterpriseStructuredKnowledge,
+  type EnterpriseIngestActor
+} from "@/lib/enterprise/ingest-logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -426,6 +432,56 @@ function readAutonomousRequest(value: unknown): AutonomousTaskRequest | undefine
   };
 }
 
+function buildStructuredKnowledgeForTrainingLog(input: {
+  rawResult: Record<string, unknown>;
+  userInput: string;
+  visibleReply: string;
+}) {
+  const directStructured = normalizeEnterpriseStructuredKnowledge(input.rawResult.structured);
+
+  if (directStructured) {
+    return directStructured;
+  }
+
+  const draft = isPlainObject(input.rawResult.knowledgeDraft) ? input.rawResult.knowledgeDraft : {};
+  const title = readString(draft.title) || readString(input.rawResult.title) || "GPT 投喂知识";
+  const category = readString(draft.category) || readString(input.rawResult.category) || "AI投喂";
+  const summary = readString(draft.summary) || readString(input.rawResult.summary) || input.visibleReply.slice(0, 240) || input.userInput;
+  const standardQuestion = readString(draft.standardQuestion)
+    || readString(input.rawResult.question)
+    || `关于“${title}”，应该如何理解和使用？`;
+  const standardAnswer = readString(draft.standardAnswer)
+    || readString(input.rawResult.answer)
+    || summary;
+  const confidence = readPositiveNumber(draft.trainingScore, input.rawResult.confidence) ?? 78;
+
+  return normalizeEnterpriseStructuredKnowledge({
+    title,
+    category,
+    tags: Array.isArray(draft.tags) ? draft.tags : input.rawResult.tags,
+    summary,
+    qa_pairs: [{ q: standardQuestion, a: standardAnswer }],
+    confidence,
+    should_save: true,
+    providerUsed: readString(input.rawResult.provider) || "unknown",
+    model: readString(input.rawResult.model) || "unknown",
+    fallbackUsed: input.rawResult.fallbackUsed === true
+  });
+}
+
+function toEnterpriseActor(actor: RbacUser | null): EnterpriseIngestActor | null {
+  if (!actor) {
+    return null;
+  }
+  const actorWithTenant = actor as RbacUser & { tenantId?: unknown };
+
+  return {
+    id: actor.id,
+    role: actor.role,
+    tenantId: typeof actorWithTenant.tenantId === "string" ? actorWithTenant.tenantId : null
+  };
+}
+
 function readRequest(body: unknown) {
   if (!isPlainObject(body)) {
     throw new ValidationError("请求体必须是 JSON 对象。");
@@ -541,7 +597,12 @@ export async function POST(request: Request) {
     });
 
     const rawReply = result.replyMarkdown || "";
-    const stylePassThrough = enhanceGPTStyle(rawReply);
+    const stylePassThrough = enhanceGPTStyle(rawReply, {
+      model: modelRuntime.actualModel,
+      source: "admin_ingest_gpt_route",
+      mode: "api_response"
+    });
+    const visibleReply = stylePassThrough.output;
     const fallbackChainText = readDiagnosticValue(result.diagnostics, "modelRouter:fallbackChain:");
     const routeDecision = readDiagnosticValue(result.diagnostics, "modelRouter:routeDecision:");
     const modelDiagnostics = buildModelDiagnostics({
@@ -554,13 +615,30 @@ export async function POST(request: Request) {
     });
     const rawResult = {
       ...result,
-      replyMarkdown: rawReply,
+      replyMarkdown: visibleReply,
       diagnostics: [
         ...result.diagnostics,
-        ...stylePassThrough.diagnostics,
-        "gptStyle:changed:false"
+        ...stylePassThrough.diagnostics
       ]
     };
+    const enterpriseActor = toEnterpriseActor(actor);
+    const structuredForTrainingLog = buildStructuredKnowledgeForTrainingLog({
+      rawResult,
+      userInput: input.input,
+      visibleReply
+    });
+    const trainingLog = enterpriseActor && hasDatabaseUrl() && structuredForTrainingLog
+      ? await createEnterpriseIngestLog(enterpriseActor, {
+        input: input.input,
+        sourceType: "chat",
+        agentId: input.agentId,
+        agentName: input.agentName,
+        structured: structuredForTrainingLog
+      })
+      : null;
+    const trainingRecords = enterpriseActor && hasDatabaseUrl()
+      ? await listEnterpriseTrainingRecords(enterpriseActor)
+      : trainingLog?.record ? [trainingLog.record] : [];
 
     logGptRoute({
       requestId,
@@ -573,7 +651,7 @@ export async function POST(request: Request) {
       attachmentCount: input.attachments.length,
       fallbackUsed: rawResult.fallbackUsed,
       ok: true,
-      contentLength: rawReply.length,
+      contentLength: visibleReply.length,
       errorCode: null
     });
 
@@ -587,6 +665,9 @@ export async function POST(request: Request) {
       actualModel: rawResult.actualModel,
       modelDiagnostics,
       responseId: rawResult.responseId,
+      jobId: trainingLog?.job.id ?? null,
+      trainingRecord: trainingLog?.record ?? null,
+      records: trainingRecords,
       proofId: "proofId" in rawResult ? rawResult.proofId : rawResult.responseId,
       createdAt: rawResult.createdAt,
       usage: rawResult.usage,
@@ -597,10 +678,10 @@ export async function POST(request: Request) {
       deepenAttempts: rawResult.gptProof.deepenAttempts,
       model: rawResult.model,
       selectedModelLabel: rawResult.selectedModelLabel,
-      content: rawReply,
-      answer: rawReply,
-      reply: rawReply,
-      replyMarkdown: rawReply,
+      content: visibleReply,
+      answer: visibleReply,
+      reply: visibleReply,
+      replyMarkdown: visibleReply,
       knowledgeDraft: rawResult.knowledgeDraft,
       userClientCallPlan: rawResult.userClientCallPlan,
       suggestedQuestions: rawResult.suggestedQuestions,
@@ -611,7 +692,7 @@ export async function POST(request: Request) {
         tone: stylePassThrough.tone,
         structure: stylePassThrough.structure,
         priority: stylePassThrough.priority,
-        changed: false
+        changed: stylePassThrough.changed
       },
       gptOS: rawResult.gptOS,
       autonomousResult: rawResult.autonomousResult,

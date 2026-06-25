@@ -21,16 +21,27 @@ import { unwrapApiResponse } from "@/lib/api/client";
 
 type IngestAuthMode = "login" | "register" | "activate";
 
+type IngestAuthUser = {
+  id: string;
+  phone: string;
+  name: string;
+  licenseActivated: boolean;
+  roles?: string[];
+};
+
 type IngestAuthResponse = {
   success: true;
   sessionToken?: string;
   licenseActivated: boolean;
-  user: {
-    id: string;
-    phone: string;
-    name: string;
-    licenseActivated: boolean;
-  };
+  user: IngestAuthUser;
+};
+
+type IngestAuthMeResponse = {
+  success: true;
+  authenticated: boolean;
+  licenseActivated: boolean;
+  role: string | null;
+  user: IngestAuthUser | null;
 };
 
 const modeCopy: Record<IngestAuthMode, {
@@ -113,12 +124,15 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 5000);
 
     async function checkSession() {
       try {
         const response = await fetch("/api/ingest/auth/me", {
           method: "GET",
-          cache: "no-store"
+          cache: "no-store",
+          signal: controller.signal
         });
 
         if (!active) {
@@ -126,23 +140,54 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         }
 
         if (response.ok) {
-          const payload = await response.json().catch(() => null) as { data?: IngestAuthResponse } | null;
-          const activated = payload?.data?.user.licenseActivated === true || payload?.data?.licenseActivated === true;
+          const payload = await response.json().catch(() => null) as { data?: IngestAuthMeResponse } | null;
+          const authState = payload?.data;
+          const authenticated = authState?.authenticated === true || Boolean(authState?.user);
+          const activated = authState?.user?.licenseActivated === true || authState?.licenseActivated === true;
 
-          if (mode !== "activate" || activated) {
-            goNext(activated);
+          if (!authenticated) {
+            if (mode === "activate") {
+              router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+              return;
+            }
+
+            setChecking(false);
             return;
           }
-        } else if (mode === "activate") {
+
+          if (mode === "activate") {
+            if (activated) {
+              goNext(true);
+              return;
+            }
+
+            setChecking(false);
+            return;
+          }
+
+          goNext(activated);
+          return;
+        }
+
+        if (mode === "activate") {
           router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
           return;
         }
 
         setChecking(false);
       } catch {
-        if (active) {
-          setChecking(false);
+        if (!active) {
+          return;
         }
+
+        if (mode === "activate") {
+          router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+          return;
+        }
+
+        setChecking(false);
+      } finally {
+        window.clearTimeout(timeoutId);
       }
     }
 
@@ -150,6 +195,8 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
     return () => {
       active = false;
+      controller.abort();
+      window.clearTimeout(timeoutId);
     };
   }, [goNext, mode, nextPath, router]);
 
@@ -206,7 +253,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   }
 
   return (
-    <main className="grid min-h-dvh bg-[#f6f7f4] text-[#1f2926] lg:grid-cols-[1.05fr_0.95fr]">
+    <main data-ui-health="ingest-auth-portal" className="grid min-h-dvh bg-[#f6f7f4] text-[#1f2926] lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-[#111816] px-10 py-10 text-white lg:flex lg:flex-col">
         <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,.7)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.7)_1px,transparent_1px)] [background-size:34px_34px]" />
         <div className="relative z-10 flex items-center gap-3">
@@ -230,7 +277,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       </section>
 
       <section className="flex items-center justify-center px-4 py-10 sm:px-6">
-        <div className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,.08)] sm:p-8">
+        <div data-ui-health="ingest-auth-card" className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,.08)] sm:p-8">
           <div className="mb-8 lg:hidden">
             <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#111816] text-white">
               <Sparkles className="h-5 w-5" />

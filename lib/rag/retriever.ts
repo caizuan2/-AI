@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
 import { getEffectiveKnowledgeStatus } from "@/lib/knowledge/status";
@@ -13,6 +12,12 @@ import {
 } from "@/lib/server-config";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { logger } from "@/lib/logger";
+import {
+  buildKnowledgeAccessSql,
+  buildKnowledgeChunkAccessWhere,
+  resolveKnowledgeAccessScope,
+  type ResolvedKnowledgeAccessScope
+} from "@/lib/enterprise/knowledge-access-scope";
 
 const STOP_TERMS = new Set([
   "什么",
@@ -96,6 +101,10 @@ export interface RetrieveKnowledgeOptions {
   query: string;
   userId: string;
   tenantId?: string | null;
+  appType?: string | null;
+  agentId?: string | null;
+  includeShared?: boolean;
+  includePublished?: boolean;
   topK?: number;
   minSimilarity?: number;
   minResults?: number;
@@ -495,20 +504,17 @@ function rerankCandidate(candidate: RawCandidate): RetrievedKnowledgeChunk {
 async function vectorSearch(
   query: string,
   candidateLimit: number,
-  userId: string,
-  tenantId?: string | null,
+  scope: ResolvedKnowledgeAccessScope,
   requestId?: string
 ): Promise<RawCandidate[]> {
   const { createEmbedding } = await import("@/lib/ai/embeddings");
   const { embedding } = await createEmbedding(query, {
     requestId,
     operation: "rag_query_embedding",
-    userId
+    userId: scope.actorUserId
   });
   const vector = toVectorLiteral(embedding);
-  const scopeFilter = tenantId
-    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
-    : Prisma.sql`AND ki."userId" = ${userId}`;
+  const scopeFilter = buildKnowledgeAccessSql(scope);
 
   const rows = await prisma.$queryRaw<VectorSearchRow[]>`
     SELECT
@@ -582,7 +588,7 @@ function buildKeywordFilters(query: string) {
   }));
 }
 
-async function keywordSearch(query: string, candidateLimit: number, userId: string, tenantId?: string | null): Promise<RawCandidate[]> {
+async function keywordSearch(query: string, candidateLimit: number, scope: ResolvedKnowledgeAccessScope): Promise<RawCandidate[]> {
   const textFilters = buildKeywordFilters(query);
 
   if (textFilters.length === 0) {
@@ -591,13 +597,10 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
 
   const chunks = await prisma.knowledgeChunk.findMany({
     where: {
-      knowledgeItem: {
-        is: {
-          ...(tenantId ? { tenantId } : { userId }),
-          deletedAt: null
-        }
-      },
-      OR: textFilters
+      AND: [
+        buildKnowledgeChunkAccessWhere(scope),
+        { OR: textFilters }
+      ]
     },
     orderBy: [
       {
@@ -652,10 +655,8 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
     .filter((candidate) => (candidate.keywordSimilarity ?? 0) > 0);
 }
 
-async function hasIndexedEmbeddings(userId: string, tenantId?: string | null) {
-  const scopeFilter = tenantId
-    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
-    : Prisma.sql`AND ki."userId" = ${userId}`;
+async function hasIndexedEmbeddings(scope: ResolvedKnowledgeAccessScope) {
+  const scopeFilter = buildKnowledgeAccessSql(scope);
   const rows = await prisma.$queryRaw<Array<{ count: number }>>`
     SELECT COUNT(*)::int AS "count"
     FROM "knowledge_chunks" kc
@@ -707,8 +708,7 @@ async function runSearch(
   candidateLimit: number,
   topK: number,
   minSimilarity: number,
-  userId: string,
-  tenantId?: string | null,
+  scope: ResolvedKnowledgeAccessScope,
   requestId?: string,
   options: { vectorEnabled?: boolean } = {}
 ): Promise<SearchRun> {
@@ -720,13 +720,13 @@ async function runSearch(
   for (const query of queries) {
     if (vectorEnabled) {
       try {
-        vectorCandidates.push(...await vectorSearch(query, candidateLimit, userId, tenantId, requestId));
+        vectorCandidates.push(...await vectorSearch(query, candidateLimit, scope, requestId));
       } catch {
         vectorSearchFailed = true;
       }
     }
 
-    keywordCandidates.push(...await keywordSearch(query, candidateLimit, userId, tenantId));
+    keywordCandidates.push(...await keywordSearch(query, candidateLimit, scope));
   }
 
   const mergedCandidates = mergeCandidates(vectorCandidates, keywordCandidates);
@@ -835,9 +835,17 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
   const minResults = typeof options.minResults === "number" && options.minResults > 0
     ? Math.min(Math.round(options.minResults), topK)
     : DEFAULT_MIN_RESULTS;
+  const accessScope = await resolveKnowledgeAccessScope({
+    actorUserId: options.userId,
+    tenantId: options.tenantId,
+    appType: options.appType,
+    agentId: options.agentId,
+    includeShared: options.includeShared === true || Boolean(options.tenantId),
+    includePublished: options.includePublished === true || Boolean(options.tenantId)
+  });
   const intent = inferIntent(query);
   const queries = buildSearchQueries(query, intent);
-  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(options.userId, options.tenantId);
+  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(accessScope);
   const startedAt = Date.now();
 
   let selectedRun = await runSearch(
@@ -845,8 +853,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
     candidateLimit,
     topK,
     minSimilarity,
-    options.userId,
-    options.tenantId,
+    accessScope,
     options.requestId,
     { vectorEnabled }
   );
@@ -860,8 +867,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       candidateLimit * 2,
       topK,
       relaxedThreshold,
-      options.userId,
-      options.tenantId,
+      accessScope,
       options.requestId,
       { vectorEnabled }
     );
@@ -876,8 +882,7 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       candidateLimit * 2,
       topK,
       KEYWORD_FALLBACK_MIN_SIMILARITY,
-      options.userId,
-      options.tenantId,
+      accessScope,
       options.requestId,
       { vectorEnabled: false }
     );

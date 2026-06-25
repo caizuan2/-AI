@@ -73,6 +73,9 @@ export async function POST(request: Request) {
       query: input.query,
       topK: input.topK ?? SEARCH_DEFAULT_TOP_K,
       userId: currentUser.id,
+      appType: "user_app",
+      includeShared: true,
+      includePublished: true,
       requestId
     });
 
