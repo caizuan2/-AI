@@ -50,6 +50,7 @@ export type AuditAction =
   | "promote_to_enterprise_admin"
   | "promote_to_ingest_admin"
   | "promote_to_super_admin"
+  | "product.blocked"
   | "rename_conversation"
   | "route.access.denied"
   | "share_conversation"

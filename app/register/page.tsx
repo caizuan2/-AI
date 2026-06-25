@@ -12,6 +12,7 @@ interface RegisterResponse {
   user: {
     licenseActivated: boolean;
     isSuperAdmin?: boolean;
+    entryPath?: string;
   };
 }
 
@@ -59,7 +60,7 @@ function RegisterForm() {
       });
       const data = await unwrapApiResponse<RegisterResponse>(response, "注册失败，请稍后重试。");
 
-      router.push(data.user.isSuperAdmin ? "/super-admin" : (data.user.licenseActivated ? "/" : "/unlock"));
+      router.push(data.user.entryPath ?? (data.user.isSuperAdmin ? "/super-admin" : (data.user.licenseActivated ? "/app/chat" : "/unlock")));
       router.refresh();
     } catch (caughtError) {
       const debugError = caughtError instanceof Error

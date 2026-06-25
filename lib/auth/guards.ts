@@ -1,54 +1,41 @@
 import "server-only";
 
 import { requireUser } from "@/lib/auth";
-import { authorize } from "@/lib/auth/authorize";
-import { requireKbAdmin } from "@/lib/auth/rbac";
+import { checkUserLicense } from "@/lib/auth/license";
 export { requireAuth, requireKbAdmin, requireRole, requireSuperAdmin } from "@/lib/auth/rbac";
+import { requireKbAdmin, requireRole, requireSuperAdmin } from "@/lib/auth/rbac";
 
 export async function requireLicensedUser() {
-  const authorization = await authorize(undefined, {
-    product: "user_app",
-    requiredRole: "user",
-    requireLicense: true,
-    auditAction: "route.access.denied",
-    targetType: "product_route",
-    metadata: {
-      product: "user_app"
-    }
-  });
+  const user = await requireUser();
 
-  return authorization.user ?? await requireUser();
+  await checkUserLicense(user.id, "user_app");
+
+  return user;
 }
 
-export async function requireUserAppAccess() {
-  const authorization = await authorize(undefined, {
+export function requireUserAppAccess(request?: Request) {
+  return requireRole("user", {
+    request,
     product: "user_app",
-    requiredRole: "user",
     requireLicense: true,
-    auditAction: "route.access.denied",
-    targetType: "product_route",
-    metadata: {
-      product: "user_app"
-    }
+    deniedAction: "RBAC_ACCESS_DENIED",
+    targetType: "user_app"
   });
-
-  return authorization.user ?? await requireUser();
 }
 
-export async function requireIngestAdminAccess(request?: Request) {
-  const authorization = await authorize(request, {
+export function requireIngestAdminAccess(request?: Request) {
+  return requireKbAdmin(request, {
     product: "ingest_admin",
-    requiredRole: ["kb_admin", "ingest_admin"],
     requireLicense: true,
-    auditAction: "route.access.denied",
-    targetType: "product_route",
-    metadata: {
-      product: "ingest_admin"
-    }
+    deniedAction: "RBAC_ACCESS_DENIED",
+    targetType: "ingest_admin"
   });
+}
 
-  return authorization.user ?? await requireKbAdmin(request, {
-    requiredAppType: "ingest_admin",
-    product: "ingest_admin"
+export function requireSuperAdminAccess(request?: Request) {
+  return requireSuperAdmin(request, {
+    product: "super_admin",
+    deniedAction: "RBAC_ACCESS_DENIED",
+    targetType: "super_admin"
   });
 }

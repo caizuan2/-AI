@@ -7,30 +7,54 @@ import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } fro
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import {
+  getEntryPathForRole,
+  getEntryRoleFromRoles,
+  isPathAllowedForEntryRole,
+  type EntryRole
+} from "@/lib/auth/product";
 
 interface LoginResponse {
   success: true;
   licenseActivated: boolean;
   isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+  entryPath?: string;
 }
 
 interface MeResponse {
   user: {
     licenseActivated: boolean;
     isSuperAdmin?: boolean;
+    role?: EntryRole;
+    roles?: string[];
+    entryPath?: string;
   };
 }
 
-function getPostLoginPath(input: { nextPath?: string; licenseActivated?: boolean; isSuperAdmin?: boolean }) {
-  if (input.nextPath) {
+function getPostLoginPath(input: {
+  nextPath?: string;
+  licenseActivated?: boolean;
+  isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+  entryPath?: string;
+}) {
+  const role = input.role ?? getEntryRoleFromRoles({
+    roles: input.roles,
+    isSuperAdmin: input.isSuperAdmin
+  });
+
+  if (input.nextPath && isPathAllowedForEntryRole(input.nextPath, role)) {
     return input.nextPath;
   }
 
-  if (input.isSuperAdmin) {
-    return "/super-admin";
+  if (input.entryPath) {
+    return input.entryPath;
   }
 
-  return input.licenseActivated ? "/ingest" : "/unlock";
+  return getEntryPathForRole(role, Boolean(input.licenseActivated));
 }
 
 function LoginForm() {
@@ -52,6 +76,10 @@ function LoginForm() {
     const pathname = candidate.split("?")[0] || candidate;
 
     if (pathname === "/login" || pathname.startsWith("/login/") || pathname === "/register" || pathname.startsWith("/register/")) {
+      return "";
+    }
+
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
       return "";
     }
 
@@ -81,7 +109,10 @@ function LoginForm() {
           router.replace(getPostLoginPath({
             nextPath,
             licenseActivated: payload?.data?.user.licenseActivated,
-            isSuperAdmin: payload?.data?.user.isSuperAdmin
+            isSuperAdmin: payload?.data?.user.isSuperAdmin,
+            role: payload?.data?.user.role,
+            roles: payload?.data?.user.roles,
+            entryPath: payload?.data?.user.entryPath
           }));
           return;
         }
@@ -129,7 +160,10 @@ function LoginForm() {
       router.replace(getPostLoginPath({
         nextPath,
         licenseActivated: data.licenseActivated,
-        isSuperAdmin: data.isSuperAdmin
+        isSuperAdmin: data.isSuperAdmin,
+        role: data.role,
+        roles: data.roles,
+        entryPath: data.entryPath
       }));
       router.refresh();
     } catch (caughtError) {

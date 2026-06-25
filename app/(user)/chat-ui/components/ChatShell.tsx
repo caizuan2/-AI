@@ -5,8 +5,10 @@ import { Menu, Plus } from "lucide-react";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { USER_APP_KIND } from "@/lib/app-version";
+import { buildBusinessExecutionPlan, buildBusinessExecutionPrompt } from "@/lib/business-execution-engine";
+import { detectUserIntent } from "@/lib/user-intent-detector";
 import {
-  askChat,
+  askChatStream,
   changeCurrentUserPassword,
   fetchConversationHistory,
   fetchConversations,
@@ -16,8 +18,8 @@ import {
   uploadChatAttachments,
   USER_CHAT_LOGIN_URL
 } from "../api";
+import type { AskChatStreamEvent } from "../api";
 import {
-  appendAskResult,
   createNewChatState,
   createUserMessage,
   getChatUserAvatarStorageKey,
@@ -61,6 +63,7 @@ export function ChatShell() {
   const [openCameraSignal, setOpenCameraSignal] = React.useState(0);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
+  const activeAskAbortRef = React.useRef<AbortController | null>(null);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
 
@@ -151,7 +154,26 @@ export function ChatShell() {
     });
   }, [messages, loading]);
 
+  React.useEffect(() => () => {
+    activeAskAbortRef.current?.abort();
+  }, []);
+
+  function abortActiveAsk(message = "已停止生成。") {
+    const activeController = activeAskAbortRef.current;
+
+    if (!activeController) {
+      return;
+    }
+
+    activeController.abort();
+    activeAskAbortRef.current = null;
+    setLoading(false);
+    showNotice(message);
+  }
+
   async function handleSelectConversation(nextConversationId: string) {
+    activeAskAbortRef.current?.abort();
+    activeAskAbortRef.current = null;
     const requestId = historyRequestIdRef.current + 1;
 
     historyRequestIdRef.current = requestId;
@@ -187,6 +209,8 @@ export function ChatShell() {
   }
 
   function handleNewChat() {
+    activeAskAbortRef.current?.abort();
+    activeAskAbortRef.current = null;
     const nextState = createNewChatState();
 
     historyRequestIdRef.current += 1;
@@ -201,6 +225,34 @@ export function ChatShell() {
 
   function showNotice(message: string) {
     setNotice(message);
+  }
+
+  function updateAssistantMessageMetadata(
+    messageId: string,
+    updater: (metadata: Record<string, unknown>) => Record<string, unknown>
+  ) {
+    setMessages((current) => current.map((message) => (
+      message.id === messageId
+        ? {
+            ...message,
+            metadata: updater(message.metadata ?? {})
+          }
+        : message
+    )));
+  }
+
+  function getMetadataRecord(metadata: Record<string, unknown>, key: string) {
+    const value = metadata[key];
+
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  }
+
+  function getMetadataArray(metadata: Record<string, unknown>, key: string) {
+    const value = metadata[key];
+
+    return Array.isArray(value) ? value as Record<string, unknown>[] : [];
   }
 
   function handleEditUserMessage(content: string) {
@@ -304,37 +356,290 @@ export function ChatShell() {
     setNotice(null);
     setLoading(true);
     let localUserMessage: ChatMessageView | null = null;
+    let localAssistantMessageId: string | null = null;
     let inputCleared = false;
+    const hasPreviousAssistantResponse = messages.some((message) => (
+      message.role === "assistant" &&
+      !message.pending &&
+      message.content.trim().length > 0
+    ));
 
     try {
       const uploadedAttachments = await uploadChatAttachments(attachments);
+      const commercialExecution = detectUserIntent(text);
+      const businessExecution = buildBusinessExecutionPlan(commercialExecution);
+      const businessExecutionPrompt = buildBusinessExecutionPrompt(businessExecution);
 
-      const nextUserMessage = createUserMessage(text, uploadedAttachments);
+      const nextUserMessage = {
+        ...createUserMessage(text, uploadedAttachments),
+        metadata: {
+          commercialExecution,
+          businessExecution
+        }
+      };
+      const abortController = new AbortController();
+      const nextAssistantMessage: ChatMessageView = {
+        id: `local-assistant-${Date.now()}`,
+        role: "assistant",
+        content: "",
+        sources: null,
+        confidence: null,
+        customer_answer: null,
+        provider_status: null,
+        metadata: {
+          commercialExecution,
+          businessExecution,
+          businessExecutionPrompt
+        },
+        created_at: "",
+        pending: true
+      };
 
       localUserMessage = nextUserMessage;
+      localAssistantMessageId = nextAssistantMessage.id;
+      activeAskAbortRef.current = abortController;
       setInput("");
       inputCleared = true;
-      setMessages((current) => [...current, nextUserMessage]);
+      setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
 
-      const result = await askChat({
+      const result = await askChatStream({
         text,
         attachments: uploadedAttachments,
         conversation_id: conversationId,
         mode,
         enable_deep_thinking: enableDeepThinking,
-        enable_web_search: enableWebSearch
+        enable_web_search: enableWebSearch,
+        business_execution: businessExecution,
+        business_execution_prompt: businessExecutionPrompt
+      }, {
+        signal: abortController.signal,
+        onThinking: (content) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            streamThinking: content
+          }));
+        },
+        onRagSearch: (query) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            ragVisualization: {
+              ...getMetadataRecord(metadata, "ragVisualization"),
+              query,
+              status: "searching"
+            }
+          }));
+        },
+        onRagChunk: (event) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+            const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
+            const chunks = getMetadataArray(ragVisualization, "chunks");
+
+            return {
+              ...metadata,
+              ragVisualization: {
+                ...ragVisualization,
+                status: "streaming",
+                chunks: [
+                  ...chunks,
+                  {
+                    content: event.content,
+                    chunk_rank: event.chunk_rank ?? null,
+                    chunk_id: event.chunk_id ?? null
+                  }
+                ]
+              }
+            };
+          });
+        },
+        onRagScore: (event) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+            const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
+            const scores = getMetadataArray(ragVisualization, "scores");
+
+            return {
+              ...metadata,
+              ragVisualization: {
+                ...ragVisualization,
+                scores: [
+                  ...scores,
+                  {
+                    score: event.score,
+                    chunk_rank: event.chunk_rank ?? null
+                  }
+                ]
+              }
+            };
+          });
+        },
+        onRagSource: (event) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+            const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
+            const sources = getMetadataArray(ragVisualization, "sources");
+
+            return {
+              ...metadata,
+              ragVisualization: {
+                ...ragVisualization,
+                sources: [
+                  ...sources,
+                  {
+                    source: event.source,
+                    title: event.title ?? null,
+                    file_id: event.file_id ?? null,
+                    chunk_id: event.chunk_id ?? null
+                  }
+                ]
+              }
+            };
+          });
+        },
+        onRagDone: (event) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            ragVisualization: {
+              ...getMetadataRecord(metadata, "ragVisualization"),
+              status: "done",
+              hitCount: event.hitCount ?? null,
+              topK: event.topK ?? null,
+              relevance_score: event.relevance_score ?? null
+            }
+          }));
+        },
+        onModelSelect: (model) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            modelVisualization: {
+              ...getMetadataRecord(metadata, "modelVisualization"),
+              selected_model: model
+            }
+          }));
+        },
+        onModelReason: (reason) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            modelVisualization: {
+              ...getMetadataRecord(metadata, "modelVisualization"),
+              reason
+            }
+          }));
+        },
+        onModelFallback: (chain) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            modelVisualization: {
+              ...getMetadataRecord(metadata, "modelVisualization"),
+              fallback_chain: chain
+            }
+          }));
+        },
+        onModelMetrics: (event: Extract<AskChatStreamEvent, { type: "model_metrics" }>) => {
+          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+            ...metadata,
+            modelVisualization: {
+              ...getMetadataRecord(metadata, "modelVisualization"),
+              metrics: {
+                cost_score: event.cost_score ?? null,
+                latency_score: event.latency_score ?? null,
+                success_rate: event.success_rate ?? null,
+                latency_ms: event.latency_ms ?? null
+              }
+            }
+          }));
+        },
+        onToken: (token) => {
+          setMessages((current) => current.map((message) => (
+            message.id === nextAssistantMessage.id
+              ? {
+                  ...message,
+                  content: `${message.content}${token}`,
+                  pending: true
+                }
+              : message
+          )));
+        },
+        onFinal: (streamResult) => {
+          setConversationId(streamResult.conversation_id);
+          setMode(normalizeChatMode(streamResult.mode));
+          setMessages((current) => current.map((message) => {
+            if (message.id === nextUserMessage.id) {
+              return {
+                ...message,
+                pending: false
+              };
+            }
+
+            if (message.id === nextAssistantMessage.id) {
+              const currentMetadata = message.metadata ?? {};
+
+              return {
+                id: streamResult.message_id,
+                role: "assistant",
+                content: streamResult.answer,
+                customer_answer: streamResult.customer_answer ?? null,
+                provider_status: streamResult.provider_status ?? null,
+                sources: streamResult.sources,
+                confidence: streamResult.confidence,
+                metadata: {
+                  ...currentMetadata,
+                  userQuery: text,
+                  responseId: streamResult.message_id,
+                  behaviorFeedbackSeed: {
+                    followUp: hasPreviousAssistantResponse,
+                    converted: Boolean(streamResult.customer_answer)
+                  }
+                },
+                created_at: new Date().toISOString(),
+                pending: false
+              };
+            }
+
+            return message;
+          }));
+        }
       });
 
       setConversationId(result.conversation_id);
       setMode(normalizeChatMode(result.mode));
-      setMessages((current) => appendAskResult(current, nextUserMessage.id, result));
       void loadConversations();
       return true;
     } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        if (localUserMessage && localAssistantMessageId) {
+          const failedMessageId = localUserMessage.id;
+          const stoppedAssistantId = localAssistantMessageId;
+
+          setMessages((current) => current.map((message) => {
+            if (message.id === failedMessageId) {
+              return {
+                ...message,
+                pending: false
+              };
+            }
+
+            if (message.id === stoppedAssistantId) {
+              return {
+                ...message,
+                content: message.content || "已停止生成。",
+                pending: false
+              };
+            }
+
+            return message;
+          }));
+        }
+
+        showNotice("已停止生成。");
+        return false;
+      }
+
       if (localUserMessage) {
         const failedMessageId = localUserMessage.id;
+        const failedAssistantId = localAssistantMessageId;
 
-        setMessages((current) => current.filter((message) => message.id !== failedMessageId));
+        setMessages((current) => current.filter((message) => (
+          message.id !== failedMessageId &&
+          message.id !== failedAssistantId
+        )));
       }
 
       if (inputCleared) {
@@ -344,6 +649,10 @@ export function ChatShell() {
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
       return false;
     } finally {
+      if (activeAskAbortRef.current?.signal.aborted || activeAskAbortRef.current) {
+        activeAskAbortRef.current = null;
+      }
+
       setLoading(false);
     }
   }
@@ -456,6 +765,7 @@ export function ChatShell() {
             loading={loading}
             onValueChange={setInput}
             onSubmit={handleSubmit}
+            onCancel={abortActiveAsk}
             onStatusMessage={showNotice}
             openAttachmentSignal={openAttachmentSignal}
             openCameraSignal={openCameraSignal}

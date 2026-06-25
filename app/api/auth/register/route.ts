@@ -5,6 +5,7 @@ import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { hashPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
 import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
+import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
 import { ensureRegistrationSchema } from "@/lib/db/registration-schema";
 import { AppError, ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders, logger } from "@/lib/logger";
@@ -21,6 +22,9 @@ interface RegisterResponse {
     name: string;
     licenseActivated: boolean;
     isSuperAdmin: boolean;
+    role: EntryRole;
+    roles: string[];
+    entryPath: string;
   };
 }
 
@@ -106,7 +110,7 @@ function toRegisterError(error: unknown, request: Request) {
   if (details.code === "P1000") {
     return new AppError(
       "DATABASE_ERROR",
-      "数据库认证失败，请检查 Supabase 数据库用户名和密码是否正确。",
+      "数据库认证失败，请检查当前环境的 DATABASE_URL 用户名和密码是否正确。",
       500
     );
   }
@@ -114,7 +118,7 @@ function toRegisterError(error: unknown, request: Request) {
   if (details.code === "P2024") {
     return new AppError(
       "DATABASE_ERROR",
-      "数据库连接池超时，请检查 Supabase Pooler、connection_limit 和 pool_timeout 配置。",
+      "数据库连接池超时，请确认数据库服务正在运行，且 DATABASE_URL 指向当前测试环境。",
       500
     );
   }
@@ -126,7 +130,7 @@ function toRegisterError(error: unknown, request: Request) {
   ) {
     return new AppError(
       "DATABASE_ERROR",
-      "数据库连接失败，请检查 Netlify 的 DATABASE_URL 是否为 Supabase Pooler 完整连接串。",
+      "本地数据库连接失败，请确认 Docker xt-local-pgvector 正在运行、DATABASE_URL 指向 127.0.0.1:54330，并已重启本地 Next 服务。",
       500
     );
   }
@@ -239,6 +243,8 @@ export async function POST(request: Request) {
 
     const isSuperAdmin = isBootstrapSuperAdminUser(user);
     const licenseActivated = user.licenseActivated || isSuperAdmin;
+    const roles = isSuperAdmin ? ["super_admin"] : ["user"];
+    const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
 
     return apiSuccess<RegisterResponse>({
       user: {
@@ -246,7 +252,10 @@ export async function POST(request: Request) {
         phone: user.phone,
         name: user.name ?? user.phone,
         licenseActivated,
-        isSuperAdmin
+        isSuperAdmin,
+        role,
+        roles,
+        entryPath: getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated })
       }
     }, { status: 201 });
   } catch (error) {

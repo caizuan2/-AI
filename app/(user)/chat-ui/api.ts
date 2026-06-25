@@ -1,4 +1,9 @@
 import { createAskRequestPayload } from "./chat-ui-state";
+import {
+  createFeedbackRecord,
+  type KnowledgeFeedbackEventType,
+  type KnowledgeFeedbackInput
+} from "@/lib/enterprise/feedback/feedback-collector";
 import type {
   AvatarUpdateResponse,
   AskChatRequest,
@@ -13,7 +18,7 @@ import type {
   ChatQuickActionItem
 } from "./types";
 
-export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/chat-ui";
+export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app/chat";
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -26,6 +31,93 @@ type ApiEnvelope<T> = {
   code?: string;
   message?: string;
 };
+
+export type AskChatStreamEvent =
+  | {
+      type: "thinking";
+      content: string;
+    }
+  | {
+      type: "rag_search";
+      query: string;
+    }
+  | {
+      type: "rag_chunk";
+      content: string;
+      chunk_rank?: number | null;
+      chunk_id?: string | null;
+    }
+  | {
+      type: "rag_score";
+      score: number;
+      chunk_rank?: number | null;
+    }
+  | {
+      type: "rag_source";
+      source: string;
+      title?: string | null;
+      file_id?: string | null;
+      chunk_id?: string | null;
+    }
+  | {
+      type: "rag_done";
+      hitCount?: number | null;
+      topK?: number | null;
+      relevance_score?: number | null;
+    }
+  | {
+      type: "model_select";
+      model: string;
+    }
+  | {
+      type: "model_reason";
+      reason: string;
+    }
+  | {
+      type: "model_fallback";
+      chain: string[];
+    }
+  | {
+      type: "model_metrics";
+      cost_score?: number | null;
+      latency_score?: number | null;
+      success_rate?: number | null;
+      latency_ms?: number | null;
+    }
+  | {
+      type: "token";
+      content: string;
+    }
+  | {
+      type: "final";
+      content: string;
+      data?: AskChatResponse;
+    }
+  | {
+      type: "error";
+      content: string;
+      code?: string;
+    };
+
+export interface AskChatStreamHandlers {
+  signal?: AbortSignal;
+  onThinking?: (content: string) => void;
+  onRagSearch?: (query: string) => void;
+  onRagChunk?: (event: Extract<AskChatStreamEvent, { type: "rag_chunk" }>) => void;
+  onRagScore?: (event: Extract<AskChatStreamEvent, { type: "rag_score" }>) => void;
+  onRagSource?: (event: Extract<AskChatStreamEvent, { type: "rag_source" }>) => void;
+  onRagDone?: (event: Extract<AskChatStreamEvent, { type: "rag_done" }>) => void;
+  onModelSelect?: (model: string) => void;
+  onModelReason?: (reason: string) => void;
+  onModelFallback?: (chain: string[]) => void;
+  onModelMetrics?: (event: Extract<AskChatStreamEvent, { type: "model_metrics" }>) => void;
+  onToken?: (content: string) => void;
+  onFinal?: (result: AskChatResponse) => void;
+}
+
+export interface ChatBehaviorFeedbackInput extends Omit<KnowledgeFeedbackInput, "eventType"> {
+  eventType: KnowledgeFeedbackEventType;
+}
 
 async function readApiPayload<T>(response: Response) {
   const rawText = await response.text().catch(() => "");
@@ -87,16 +179,227 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 }
 
 export async function askChat(input: AskChatRequest) {
+  return askChatStream(input);
+}
+
+function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse | null {
+  if (event.type !== "final") {
+    return null;
+  }
+
+  if (event.data) {
+    return event.data;
+  }
+
+  return {
+    answer: event.content,
+    conversation_id: "",
+    message_id: `stream-final-${Date.now()}`,
+    mode: "fast",
+    customer_answer: null,
+    sources: [],
+    confidence: "low",
+    provider_status: "ok"
+  };
+}
+
+function parseSseEventBlock(block: string) {
+  return block
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+}
+
+async function consumeAskChatEventStream(
+  response: Response,
+  handlers: AskChatStreamHandlers
+) {
+  const reader = response.body?.getReader();
+
+  if (!reader) {
+    throw new Error("当前浏览器不支持流式读取。");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: AskChatResponse | null = null;
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split(/\r?\n\r?\n/);
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const data = parseSseEventBlock(block);
+
+      if (!data) {
+        continue;
+      }
+
+      if (data === "[DONE]") {
+        return finalResult;
+      }
+
+      let event: AskChatStreamEvent;
+
+      try {
+        event = JSON.parse(data) as AskChatStreamEvent;
+      } catch {
+        continue;
+      }
+
+      if (event.type === "thinking") {
+        handlers.onThinking?.(event.content);
+        continue;
+      }
+
+      if (event.type === "rag_search") {
+        handlers.onRagSearch?.(event.query);
+        continue;
+      }
+
+      if (event.type === "rag_chunk") {
+        handlers.onRagChunk?.(event);
+        continue;
+      }
+
+      if (event.type === "rag_score") {
+        handlers.onRagScore?.(event);
+        continue;
+      }
+
+      if (event.type === "rag_source") {
+        handlers.onRagSource?.(event);
+        continue;
+      }
+
+      if (event.type === "rag_done") {
+        handlers.onRagDone?.(event);
+        continue;
+      }
+
+      if (event.type === "model_select") {
+        handlers.onModelSelect?.(event.model);
+        continue;
+      }
+
+      if (event.type === "model_reason") {
+        handlers.onModelReason?.(event.reason);
+        continue;
+      }
+
+      if (event.type === "model_fallback") {
+        handlers.onModelFallback?.(event.chain);
+        continue;
+      }
+
+      if (event.type === "model_metrics") {
+        handlers.onModelMetrics?.(event);
+        continue;
+      }
+
+      if (event.type === "token") {
+        handlers.onToken?.(event.content);
+        continue;
+      }
+
+      if (event.type === "final") {
+        finalResult = normalizeStreamFinalEvent(event);
+
+        if (finalResult) {
+          handlers.onFinal?.(finalResult);
+        }
+
+        continue;
+      }
+
+      if (event.type === "error") {
+        throw new Error(event.content || "AI 流式响应失败。");
+      }
+    }
+  }
+
+  if (buffer.trim()) {
+    const data = parseSseEventBlock(buffer);
+
+    if (data && data !== "[DONE]") {
+      const event = JSON.parse(data) as AskChatStreamEvent;
+      const normalized = normalizeStreamFinalEvent(event);
+
+      if (normalized) {
+        finalResult = normalized;
+        handlers.onFinal?.(normalized);
+      }
+    }
+  }
+
+  return finalResult;
+}
+
+export async function askChatStream(input: AskChatRequest, handlers: AskChatStreamHandlers = {}) {
   const response = await fetch("/api/ai/chat/ask", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Accept": "text/event-stream",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(createAskRequestPayload(input)),
+    signal: handlers.signal
+  });
+  const contentType = response.headers.get("content-type") ?? "";
+
+  if (!response.ok) {
+    return readApiResponse<AskChatResponse>(response);
+  }
+
+  if (!contentType.includes("text/event-stream")) {
+    const result = await readApiResponse<AskChatResponse>(response);
+
+    handlers.onFinal?.(result);
+
+    return result;
+  }
+
+  const result = await consumeAskChatEventStream(response, handlers);
+
+  if (!result) {
+    throw new Error("AI 流式响应未返回最终结果。");
+  }
+
+  return result;
+}
+
+export async function submitChatBehaviorFeedback(input: ChatBehaviorFeedbackInput) {
+  const feedbackRecord = createFeedbackRecord(input);
+  const response = await fetch("/api/feedback", {
     method: "POST",
     credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(createAskRequestPayload(input))
+    body: JSON.stringify({
+      type: feedbackRecord.converted ? "RAG_HELPFUL" : "SUGGESTION",
+      content: `用户行为反馈：${feedbackRecord.eventType}`,
+      metadata: {
+        feedbackKind: "ai_knowledge_behavior",
+        ...feedbackRecord
+      }
+    })
   });
 
-  return readApiResponse<AskChatResponse>(response);
+  if (!response.ok) {
+    return null;
+  }
+
+  return readApiResponse(response).catch(() => null);
 }
 
 export async function fetchConversations() {

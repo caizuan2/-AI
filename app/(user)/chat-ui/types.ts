@@ -45,6 +45,7 @@ export interface ChatMessageView {
   confidence?: RagConfidence | null;
   customer_answer?: string | null;
   provider_status?: ProviderStatus | null;
+  metadata?: Record<string, unknown> | null;
   created_at: string;
   pending?: boolean;
 }
@@ -110,6 +111,10 @@ export interface AskChatRequest {
   mode: ChatMode;
   enable_deep_thinking: boolean;
   enable_web_search: boolean;
+  business_execution?: unknown;
+  business_execution_prompt?: string | null;
+  auto_sales_agent?: unknown;
+  conversion_feedback?: unknown;
 }
 
 export interface AskChatResponse {

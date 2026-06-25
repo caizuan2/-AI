@@ -404,7 +404,7 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
   const role = user.role;
 
   if (requiredAppType === "ingest_admin") {
-    const roleAllowed = role === "ingest_admin" || role === "kb_admin";
+    const roleAllowed = role === "ingest_admin" || role === "kb_admin" || role === "enterprise_admin";
 
     if (!roleAllowed || licenseAppType !== "ingest_admin") {
       await recordLicenseAuditLog({

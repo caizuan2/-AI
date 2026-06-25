@@ -1,7 +1,8 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
-import { getProductFromPath, PRODUCT_ACCESS_HEADER } from "@/lib/auth/product-access";
+import { getProductFromPath } from "@/lib/auth/product";
+import { PRODUCT_ACCESS_HEADER } from "@/lib/auth/product-access";
 import {
   INGEST_PORTAL_COOKIE_NAME,
   verifyIngestPortalCookieValue
@@ -122,6 +123,7 @@ function rateLimitApiRequest(request: NextRequest, requestId: string) {
 
 const protectedPagePrefixes = [
   "/",
+  "/app",
   "/chat-ui",
   "/dashboard",
   "/ingest",

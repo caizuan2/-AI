@@ -8,6 +8,12 @@ import type {
   ChatMode,
   CurrentChatUser
 } from "./types";
+import type { ConversionFeedbackEvent } from "@/lib/agent/conversion-feedback-loop";
+import {
+  GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY,
+  type SessionOutcome,
+  type UserBehaviorSignal
+} from "@/lib/agent/global-learning-engine";
 
 export interface ChatUiResetState {
   conversationId: string | null;
@@ -31,6 +37,131 @@ export function createNewChatState(): ChatUiResetState {
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function getAutoSalesAgentPayload(value: unknown) {
+  const businessExecution = getRecord(value);
+  const autoSalesAgent = getRecord(businessExecution?.autoSalesAgent);
+  const version = cleanText(autoSalesAgent?.version);
+
+  return version === "ai-knowledge-os-v8" || version === "ai-knowledge-os-v8.1" || version === "ai-knowledge-os-v9"
+    ? autoSalesAgent
+    : null;
+}
+
+const CONVERSION_FEEDBACK_STORAGE_KEY = "chat-ui:conversion-feedback:last";
+const GLOBAL_BEHAVIOR_SIGNAL_LIMIT = 12;
+
+function getConversionFeedbackStoragePayload() {
+  try {
+    const stored = getSessionStorage()?.getItem(CONVERSION_FEEDBACK_STORAGE_KEY);
+
+    return stored ? getRecord(JSON.parse(stored)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function classifySessionOutcome(payload: {
+  action_clicked: string;
+  conversion_signal: number;
+  follow_up_question: boolean;
+  time_on_page: number;
+}): SessionOutcome {
+  if (payload.conversion_signal >= 0.78 && ["close_deal", "handoff_service"].includes(payload.action_clicked)) {
+    return "converted";
+  }
+
+  if (payload.conversion_signal >= 0.65 || payload.follow_up_question) {
+    return "advanced";
+  }
+
+  if (payload.action_clicked || payload.time_on_page >= 8) {
+    return "engaged";
+  }
+
+  if (payload.conversion_signal <= 0.18) {
+    return "lost";
+  }
+
+  if (payload.time_on_page <= 2 && !payload.action_clicked) {
+    return "stalled";
+  }
+
+  return "unknown";
+}
+
+function getStoredGlobalBehaviorSignals(): UserBehaviorSignal[] {
+  try {
+    const rawValue = getSessionStorage()?.getItem(GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) : null;
+
+    return Array.isArray(parsed) ? parsed.slice(-GLOBAL_BEHAVIOR_SIGNAL_LIMIT) as UserBehaviorSignal[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberGlobalBehaviorSignal(signal: UserBehaviorSignal) {
+  try {
+    const signals = [...getStoredGlobalBehaviorSignals(), signal].slice(-GLOBAL_BEHAVIOR_SIGNAL_LIMIT);
+
+    getSessionStorage()?.setItem(GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY, JSON.stringify(signals));
+  } catch {
+    // Global learning is a local UI signal; storage failures must not block chat.
+  }
+}
+
+function getConversionFeedbackPayload(value: unknown) {
+  const autoSalesAgent = getAutoSalesAgentPayload(value);
+  const conversionFeedbackLoop = getRecord(autoSalesAgent?.conversionFeedbackLoop);
+  const existingFeedback = getRecord(conversionFeedbackLoop?.feedback);
+  const storedFeedback = getConversionFeedbackStoragePayload();
+
+  return {
+    ...existingFeedback,
+    ...(storedFeedback ?? {}),
+    intent: cleanText(storedFeedback?.intent) || cleanText(existingFeedback?.intent) || cleanText(autoSalesAgent?.sourceIntent) || "knowledge_user",
+    conversion_signal: Number(storedFeedback?.conversion_signal ?? existingFeedback?.conversion_signal ?? autoSalesAgent?.dealProbability ?? 0.45),
+    global_behavior: getStoredGlobalBehaviorSignals()
+  };
+}
+
+export function rememberConversionFeedbackEvent(event: Partial<ConversionFeedbackEvent>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const payload = {
+    intent: cleanText(event.intent) || "knowledge_user",
+    action_clicked: cleanText(event.action_clicked),
+    time_on_page: Math.max(0, Math.round(typeof event.time_on_page === "number" ? event.time_on_page : performance.now() / 1000)),
+    follow_up_question: event.follow_up_question === true,
+    conversion_signal: Math.max(0, Math.min(1, typeof event.conversion_signal === "number" ? event.conversion_signal : 0.45))
+  };
+  const sessionOutcome = classifySessionOutcome(payload);
+
+  try {
+    getSessionStorage()?.setItem(CONVERSION_FEEDBACK_STORAGE_KEY, JSON.stringify(payload));
+    rememberGlobalBehaviorSignal({
+      intent: payload.intent as UserBehaviorSignal["intent"],
+      action_clicked: payload.action_clicked ? payload.action_clicked as UserBehaviorSignal["action_clicked"] : null,
+      conversion_signal: payload.conversion_signal,
+      session_outcome: sessionOutcome,
+      time_to_action: payload.time_on_page,
+      time_on_page: payload.time_on_page,
+      follow_up_question: payload.follow_up_question,
+      source: "client_session_history"
+    });
+  } catch {
+    // Feedback is optional; failing to store it must not block chat.
+  }
 }
 
 function cleanMetadataUrl(value: unknown) {
@@ -212,6 +343,9 @@ export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
 
 export function createAskRequestPayload(input: AskChatRequest) {
   const text = input.text.trim();
+  const businessExecutionPrompt = cleanText(input.business_execution_prompt);
+  const autoSalesAgent = getAutoSalesAgentPayload(input.business_execution);
+  const conversionFeedback = input.conversion_feedback ?? getConversionFeedbackPayload(input.business_execution);
 
   return {
     question: text,
@@ -220,7 +354,11 @@ export function createAskRequestPayload(input: AskChatRequest) {
     conversation_id: input.conversation_id,
     mode: normalizeChatMode(input.mode),
     enable_deep_thinking: input.enable_deep_thinking,
-    enable_web_search: input.enable_web_search
+    enable_web_search: input.enable_web_search,
+    ...(input.business_execution ? { business_execution: input.business_execution } : {}),
+    ...(businessExecutionPrompt ? { business_execution_prompt: businessExecutionPrompt } : {}),
+    ...(autoSalesAgent ? { auto_sales_agent: autoSalesAgent } : {}),
+    ...(conversionFeedback ? { conversion_feedback: conversionFeedback } : {})
   };
 }
 

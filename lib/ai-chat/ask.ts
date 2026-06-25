@@ -1,6 +1,19 @@
 import { os_core } from "@/gpt-os/core/os_core";
 import type { GptOsCostMode } from "@/gpt-os/core/model_router";
 import { evaluateEvolutionHealth } from "@/gpt-os/core/evolution_engine";
+import {
+  BUSINESS_OUTPUT_ENFORCER_VERSION,
+  buildBusinessOutputEnforcerInstruction
+} from "@/lib/business-output-enforcer";
+import {
+  guardBusinessOutputSchema,
+  type BusinessSchemaGuardResult
+} from "@/lib/business-schema-guard";
+import {
+  buildConversionFeedbackLoop,
+  buildConversionFeedbackPrompt,
+  normalizeConversionFeedbackEvent
+} from "@/lib/agent/conversion-feedback-loop";
 import { suggestKnowledgeImprovements } from "@/gpt-os/knowledge/auto_suggester";
 import { analyzeKnowledgeFeedback } from "@/gpt-os/knowledge/feedback_analyzer";
 import { detectKnowledgeGap } from "@/gpt-os/knowledge/gap_detector";
@@ -16,6 +29,7 @@ import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/erro
 import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { prisma } from "@/lib/prisma";
 import type { AppRole } from "@/lib/rbac/roles";
+import type { UserIntent } from "@/lib/user-intent-detector";
 import {
   buildRagContext,
   calculateConfidence,
@@ -38,12 +52,18 @@ export interface AiChatActor {
 
 export interface AiChatAskInput {
   question?: unknown;
+  message?: unknown;
+  text?: unknown;
   mode?: unknown;
   enable_deep_thinking?: unknown;
   enable_web_search?: unknown;
   conversation_id?: unknown;
   conversationId?: unknown;
   attachments?: unknown;
+  business_execution?: unknown;
+  business_execution_prompt?: unknown;
+  auto_sales_agent?: unknown;
+  conversion_feedback?: unknown;
 }
 
 export interface AiChatAnswerProviderInput {
@@ -58,6 +78,7 @@ export interface AiChatAnswerProviderInput {
   providerFallbackChain: ChatProviderName[];
   fallbackChain: string[];
   traceId: string;
+  businessExecutionContext?: string | null;
 }
 
 export interface AiChatAnswerProviderResult {
@@ -232,6 +253,152 @@ function toJsonObject(value: unknown): JsonObject | undefined {
   }
 
   return JSON.parse(JSON.stringify(value)) as JsonObject;
+}
+
+function readQuestionInput(input: AiChatAskInput) {
+  return input.question ?? input.message ?? input.text;
+}
+
+function readStringArray(value: unknown, limit = 6) {
+  return Array.isArray(value)
+    ? value.map(trimString).filter(Boolean).slice(0, limit)
+    : [];
+}
+
+function readNestedJsonObject(record: JsonObject | undefined, key: string) {
+  return record ? toJsonObject(record[key]) : undefined;
+}
+
+function readBusinessExecutionContext(input: AiChatAskInput) {
+  const plan = toJsonObject(input.business_execution);
+  const standaloneAutoSalesAgent = toJsonObject(input.auto_sales_agent);
+  const rawPrompt = trimString(input.business_execution_prompt).slice(0, 2400);
+
+  if (!plan && !standaloneAutoSalesAgent && !rawPrompt) {
+    return null;
+  }
+
+  const primaryAction = readNestedJsonObject(plan, "primaryAction");
+  const humanHandoff = readNestedJsonObject(plan, "humanHandoff");
+  const autoSalesAgent = readNestedJsonObject(plan, "autoSalesAgent") ?? standaloneAutoSalesAgent;
+  const guardrails = readStringArray(plan?.guardrails, 6);
+  const executionPath = readStringArray(plan?.executionPath, 8);
+  const secondaryActions = Array.isArray(plan?.secondaryActions)
+    ? plan.secondaryActions
+      .map((item) => toJsonObject(item))
+      .filter((item): item is JsonObject => Boolean(item))
+      .slice(0, 4)
+    : [];
+  const secondaryActionLabels = secondaryActions
+    .map((action) => trimString(action.label) || trimString(action.description))
+    .filter(Boolean);
+  const intent = trimString(plan?.intent) || "knowledge_user";
+  const conversionFeedback = normalizeConversionFeedbackEvent(
+    input.conversion_feedback,
+    intent as UserIntent,
+    typeof autoSalesAgent?.dealProbability === "number" ? autoSalesAgent.dealProbability : 0.45
+  );
+  const conversionFeedbackLoop = buildConversionFeedbackLoop({
+    intent: conversionFeedback.intent,
+    feedback: conversionFeedback
+  });
+  const enrichedAutoSalesAgent: JsonObject | undefined = autoSalesAgent
+    ? {
+        ...autoSalesAgent,
+        version: "ai-knowledge-os-v8.1",
+        conversionFeedbackLoop
+      }
+    : undefined;
+  const executionGoal = trimString(plan?.executionGoal);
+  const primaryActionLabel = trimString(primaryAction?.label);
+  const primaryActionDescription = trimString(primaryAction?.description);
+  const primaryActionCopy = trimString(primaryAction?.copySuggestion);
+  const closingScript = trimString(plan?.closingScript);
+  const nextBestQuestion = trimString(plan?.nextBestQuestion);
+  const handoffRequired = humanHandoff?.required === true;
+  const handoffReason = trimString(humanHandoff?.reason);
+  const agentState = trimString(enrichedAutoSalesAgent?.state);
+  const agentLoopStage = trimString(enrichedAutoSalesAgent?.loopStage);
+  const agentPrimaryObjective = trimString(enrichedAutoSalesAgent?.primaryObjective);
+  const agentFollowUpStrategy = trimString(enrichedAutoSalesAgent?.followUpStrategy);
+  const agentNextBestAction = trimString(enrichedAutoSalesAgent?.nextBestAction);
+  const agentFollowUpQuestion = trimString(enrichedAutoSalesAgent?.followUpQuestion);
+  const agentTalkingPoints = readStringArray(enrichedAutoSalesAgent?.optimizedTalkingPoints, 6);
+  const agentLearningSignals = readStringArray(enrichedAutoSalesAgent?.learningSignals, 6);
+  const strategyLines = [
+    primaryActionLabel && primaryActionDescription
+      ? `${primaryActionLabel}：${primaryActionDescription}`
+      : primaryActionLabel || primaryActionDescription,
+    ...executionPath,
+    ...secondaryActionLabels
+  ].filter(Boolean);
+  const prompt = [
+    "[BUSINESS CONTEXT]",
+    `用户意图：${intent}`,
+    executionGoal ? `商业目标：${executionGoal}` : "",
+    "",
+    "商业策略：",
+    ...(strategyLines.length > 0 ? strategyLines.map((line) => `- ${line}`) : ["- 先基于知识库回答，再给出下一步行动建议。"]),
+    "",
+    "输出要求：",
+    "- 必须先基于知识库资料回答用户问题，再结合商业策略给出可执行行动建议。",
+    "- 必须包含明确下一步问题或下一步动作。",
+    "- 对高意向、购买、异议或留存类用户，禁止只给纯知识回答。",
+    "- 禁止编造价格、优惠、订单、支付、合同、退款、资格、收益或交付时间等未确认承诺。",
+    primaryActionCopy ? `建议话术：${primaryActionCopy}` : "",
+    closingScript ? `成交话术原则：${closingScript}` : "",
+    nextBestQuestion ? `下一步问题：${nextBestQuestion}` : "",
+    handoffRequired || handoffReason ? `人工接手：${handoffRequired ? "需要" : "视情况"}${handoffReason ? `，${handoffReason}` : ""}` : "",
+    guardrails.length > 0 ? `安全边界：${guardrails.join("；")}` : "",
+    agentState ? "[AUTO_SALES_AGENT_V8]" : "",
+    agentState ? `Agent状态：${agentState}` : "",
+    agentLoopStage ? `闭环阶段：${agentLoopStage}` : "",
+    agentPrimaryObjective ? `自动成交目标：${agentPrimaryObjective}` : "",
+    agentFollowUpStrategy ? `跟进策略：${agentFollowUpStrategy}` : "",
+    agentTalkingPoints.length > 0 ? `话术优化点：${agentTalkingPoints.join("；")}` : "",
+    agentNextBestAction ? `下一步动作：${agentNextBestAction}` : "",
+    agentFollowUpQuestion ? `必须追问：${agentFollowUpQuestion}` : "",
+    agentLearningSignals.length > 0 ? `闭环学习信号：${agentLearningSignals.join("；")}` : "",
+    buildConversionFeedbackPrompt(conversionFeedbackLoop),
+    rawPrompt ? `前端策略摘要：${rawPrompt}` : "",
+    "",
+    buildBusinessOutputEnforcerInstruction(intent)
+  ]
+    .filter((line) => line !== "")
+    .join("\n")
+    .slice(0, 3000);
+
+  return {
+    prompt,
+    metadata: {
+      ...(plan ?? {}),
+      ...(enrichedAutoSalesAgent ? { autoSalesAgent: enrichedAutoSalesAgent } : {}),
+      outputEnforcerVersion: BUSINESS_OUTPUT_ENFORCER_VERSION,
+      serverPromptApplied: true
+    }
+  };
+}
+
+function toBusinessSchemaGuardMetadata(result: BusinessSchemaGuardResult | null) {
+  if (!result) {
+    return null;
+  }
+
+  return {
+    version: result.validation.version,
+    valid: result.validation.valid,
+    repaired: result.repaired,
+    hardEnforced: result.hardEnforced,
+    rewriteApplied: result.rewriteApplied,
+    enforcementMode: result.enforcementMode,
+    presentSections: result.validation.presentSections,
+    missingSections: result.validation.missingSections,
+    emptySections: result.validation.emptySections,
+    requiredOrderValid: result.validation.requiredOrderValid,
+    initialMissingSections: result.initialValidation.missingSections,
+    initialEmptySections: result.initialValidation.emptySections,
+    initialRequiredOrderValid: result.initialValidation.requiredOrderValid
+  };
 }
 
 function getJsonByteLength(value: unknown) {
@@ -428,12 +595,13 @@ export async function handleAiChatAsk(
   options: AiChatAskOptions = {}
 ) {
   const db = options.db ?? defaultDb();
-  const question = sanitizeRagInput(input.question);
+  const question = sanitizeRagInput(readQuestionInput(input));
   const mode = normalizeAiChatMode(input.mode);
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
   const conversationId = readConversationId(input);
   const attachments = validateAttachments(input.attachments);
+  const businessContext = readBusinessExecutionContext(input);
   let osContext = os_core.process({
     query: question,
     userId: actor.id,
@@ -459,7 +627,13 @@ export async function handleAiChatAsk(
     mode,
     enableDeepThinking,
     enableWebSearch,
-    attachmentCount: attachments.length
+    attachmentCount: attachments.length,
+    ...(businessContext
+      ? {
+          businessExecution: businessContext.metadata,
+          businessExecutionPrompt: businessContext.prompt
+        }
+      : {})
   });
   await writeAuditLog(db, actor, "CHAT_ASK", normalizedConversationId, {
     mode,
@@ -508,6 +682,7 @@ export async function handleAiChatAsk(
   let providerErrorCode: string | undefined;
   let answerGroundingScore: number | undefined;
   let modelFeedbackEvent: ModelFeedbackEvent | undefined;
+  let businessSchemaGuard: BusinessSchemaGuardResult | null = null;
 
   if (contexts.length > 0) {
     customerAnswer = buildCustomerAnswerFromChunks({
@@ -531,6 +706,7 @@ export async function handleAiChatAsk(
           providerFallbackChain: osContext.route.provider_fallback_chain,
           fallbackChain: osContext.route.fallback_chain,
           traceId: osContext.trace_id,
+          businessExecutionContext: businessContext?.prompt ?? null,
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
@@ -565,6 +741,21 @@ export async function handleAiChatAsk(
     }
   }
 
+  const businessMetadata = businessContext?.metadata as JsonObject | undefined;
+  const primaryAction = readNestedJsonObject(businessMetadata, "primaryAction");
+  const autoSalesAgentMetadata = readNestedJsonObject(businessMetadata, "autoSalesAgent") ?? null;
+
+  businessSchemaGuard = guardBusinessOutputSchema({
+    response: answer,
+    intent: trimString(businessMetadata?.intent) || "knowledge_user",
+    businessStrategy: trimString(businessMetadata?.executionGoal),
+    standardReply: trimString(primaryAction?.copySuggestion) || trimString(businessMetadata?.closingScript),
+    nextAction: trimString(businessMetadata?.nextBestQuestion)
+  });
+  answer = businessSchemaGuard.response;
+  customerAnswer = answer;
+
+  const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
@@ -633,6 +824,8 @@ export async function handleAiChatAsk(
       knowledgeGapEvent,
       optimizationSuggestions,
       evolutionReport,
+      businessSchemaGuard: businessSchemaGuardMetadata,
+      autoSalesAgent: autoSalesAgentMetadata,
     },
   });
 
@@ -642,6 +835,13 @@ export async function handleAiChatAsk(
     sourceCount: sources.length,
     enableDeepThinking,
     enableWebSearch,
+    ...(businessContext
+      ? {
+          businessExecution: businessContext.metadata,
+          businessExecutionPrompt: businessContext.prompt
+        }
+      : {}),
+    businessSchemaGuard: businessSchemaGuardMetadata,
     webSearchStatus: enableWebSearch ? "reserved_not_enabled" : "disabled",
     providerStatus,
     providerUsed: providerUsed ?? null,
@@ -731,6 +931,8 @@ export async function handleAiChatAsk(
         knowledgeGapEvent,
         optimizationSuggestions,
         evolutionReport,
+        businessSchemaGuard: businessSchemaGuardMetadata,
+        autoSalesAgent: autoSalesAgentMetadata,
         gptOsModel: osContext.route.model,
         gptOsActualModel: actualModel,
         gptOsProvider: osContext.route.provider,
@@ -861,6 +1063,8 @@ export async function handleAiChatAsk(
     relevance_score: relevanceScore,
     answer_grounding_score: visibleAnswerGroundingScore,
     answer_quality: answerQuality,
+    business_schema_guard: businessSchemaGuardMetadata,
+    auto_sales_agent: autoSalesAgentMetadata,
     auto_improvement: {
       knowledge_gap_event: knowledgeGapEvent,
       optimization_suggestions: optimizationSuggestions,
@@ -925,6 +1129,8 @@ export async function handleAiChatAsk(
       relevance_score: relevanceScore,
       answer_grounding_score: visibleAnswerGroundingScore,
       answer_quality: answerQuality,
+      business_schema_guard: businessSchemaGuardMetadata,
+      auto_sales_agent: autoSalesAgentMetadata,
       knowledge_feedback_event: knowledgeFeedbackEvent,
       knowledge_gap_event: knowledgeGapEvent,
       optimization_suggestions: optimizationSuggestions,
