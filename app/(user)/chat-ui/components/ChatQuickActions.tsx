@@ -47,10 +47,10 @@ const defaultActions: DefaultQuickAction[] = [
   },
   {
     id: "knowledge-rag",
-    label: "知识库检索",
+    label: "小董AI大脑🧠检索",
     iconComponent: BookOpen,
     kind: "tool",
-    prompt: "请基于企业知识库回答这个业务问题，并列出引用来源："
+    prompt: "请基于小董AI大脑🧠回答这个业务问题，并列出引用来源："
   },
   {
     id: "deal-plan",
@@ -108,7 +108,7 @@ function getActionIcon(action: ChatQuickActionItem): LucideIcon {
     return MessageSquareText;
   }
 
-  if (action.label.includes("知识") || action.label.toLowerCase().includes("rag")) {
+  if (action.label.includes("知识") || action.label.includes("大脑") || action.label.toLowerCase().includes("rag")) {
     return BookOpen;
   }
 
@@ -199,6 +199,11 @@ export function ChatQuickActions({
     onQuickAction?.(action);
   }
 
+  function handleStandaloneAction(action: ChatQuickActionItem, callback: () => void) {
+    callback();
+    onQuickAction?.(action);
+  }
+
   return (
     <div className="shrink-0 bg-white px-3 pt-2">
       <div
@@ -229,7 +234,12 @@ export function ChatQuickActions({
 
         <button
           type="button"
-          onClick={() => onModeChange("expert")}
+          onClick={() => handleStandaloneAction({
+            id: "expert-review",
+            label: "专家研判",
+            kind: "mode",
+            mode: "expert"
+          }, () => onModeChange("expert"))}
           className={cn(
             "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
             mode === "expert"
@@ -243,7 +253,11 @@ export function ChatQuickActions({
 
         <button
           type="button"
-          onClick={onToggleDeepThinking}
+          onClick={() => handleStandaloneAction({
+            id: "deep-thinking",
+            label: "深度思考",
+            kind: "tool"
+          }, onToggleDeepThinking)}
           className={cn(
             "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
             enableDeepThinking
@@ -258,7 +272,11 @@ export function ChatQuickActions({
 
         <button
           type="button"
-          onClick={onToggleWebSearch}
+          onClick={() => handleStandaloneAction({
+            id: "brain-search",
+            label: "大脑搜索",
+            kind: "tool"
+          }, onToggleWebSearch)}
           className={cn(
             "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
             enableWebSearch
@@ -268,7 +286,7 @@ export function ChatQuickActions({
           aria-pressed={enableWebSearch}
         >
           <Search className="h-4 w-4" aria-hidden="true" />
-          知识搜索
+          大脑搜索
         </button>
 
       </div>

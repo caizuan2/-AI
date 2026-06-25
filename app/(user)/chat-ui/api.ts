@@ -119,6 +119,24 @@ export interface ChatBehaviorFeedbackInput extends Omit<KnowledgeFeedbackInput, 
   eventType: KnowledgeFeedbackEventType;
 }
 
+export interface ConversationActionResponse {
+  conversationId?: string;
+  conversation?: Record<string, unknown>;
+  shareId?: string;
+  shareUrl?: string;
+  inviteUrl?: string;
+  inviteLink?: string;
+  groupLink?: string;
+  joinUrl?: string;
+  link?: string;
+  url?: string;
+  groupChatId?: string;
+  archived?: boolean;
+  deleted?: boolean;
+  message?: string;
+  [key: string]: unknown;
+}
+
 async function readApiPayload<T>(response: Response) {
   const rawText = await response.text().catch(() => "");
   let payload: ApiEnvelope<T> | null = null;
@@ -161,7 +179,7 @@ async function readApiResponse<T>(response: Response): Promise<T> {
 
   if (!response.ok || !payload?.ok) {
     if (response.status === 401) {
-      throw new Error("请先登录后再继续使用 AI 知识库助手。");
+      throw new Error("请先登录后再继续使用小董AI助手。");
     }
 
     if (response.status === 403) {
@@ -176,6 +194,80 @@ async function readApiResponse<T>(response: Response): Promise<T> {
   }
 
   return payload.data;
+}
+
+function getActionApiFailureMessage<T>(
+  endpoint: string,
+  response: Response,
+  payload: ApiEnvelope<T> | null,
+  rawText: string
+) {
+  const contentType = response.headers.get("content-type") ?? "unknown";
+  const code = payload?.code || (typeof payload?.error === "object" ? payload.error.code : undefined);
+  const apiMessage = getApiErrorMessage(payload, "").trim();
+  const htmlResponse = contentType.toLowerCase().includes("text/html") || /^\s*<!doctype html|^\s*<html/i.test(rawText);
+  const suffix = `（endpoint: ${endpoint}，status: ${response.status}，content-type: ${contentType}）`;
+
+  if (htmlResponse) {
+    return `接口返回 HTML，可能命中了页面路由或服务端崩溃页。${suffix}`;
+  }
+
+  if (response.status === 401) {
+    return `请重新登录后再操作。${suffix}`;
+  }
+
+  if (response.status === 403) {
+    return `${apiMessage || "当前账号无权限，或超级管理员未开启该会话功能。"}${code ? ` code: ${code}` : ""}${suffix}`;
+  }
+
+  if (response.status === 404) {
+    return `后台未开启该接口。${suffix}`;
+  }
+
+  if (response.status >= 500) {
+    return `${apiMessage || "服务器错误，请稍后重试。"}${code ? ` code: ${code}` : ""}${suffix}`;
+  }
+
+  return `${apiMessage || rawText || "请求失败，请稍后重试。"}${code ? ` code: ${code}` : ""}${suffix}`;
+}
+
+async function readConversationActionResponse<T extends Record<string, unknown>>(
+  endpoint: string,
+  response: Response
+): Promise<T> {
+  const { payload, rawText } = await readApiPayload<T>(response).catch(() => ({
+    payload: null,
+    rawText: ""
+  }));
+
+  if (!response.ok || !payload?.ok) {
+    throw new Error(getActionApiFailureMessage(endpoint, response, payload, rawText));
+  }
+
+  const topLevelPayload = payload as ApiEnvelope<T> & Record<string, unknown>;
+  const data = payload.data ?? (topLevelPayload as T | null);
+
+  if (!data) {
+    throw new Error(`接口返回字段缺失：data 为空。（endpoint: ${endpoint}，status: ${response.status}）`);
+  }
+
+  return data;
+}
+
+async function requestConversationAction<T extends Record<string, unknown>>(
+  endpoint: string,
+  init: RequestInit
+) {
+  const response = await fetch(endpoint, {
+    credentials: "include",
+    ...init,
+    headers: {
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(init.headers ?? {})
+    }
+  });
+
+  return readConversationActionResponse<T>(endpoint, response);
 }
 
 export async function askChat(input: AskChatRequest) {
@@ -419,6 +511,76 @@ export async function fetchConversationHistory(conversationId: string) {
   return readApiResponse<HistoryResponse>(response);
 }
 
+function conversationActionEndpoint(conversationId: string, suffix = "") {
+  return `/api/user/conversations/${encodeURIComponent(conversationId)}${suffix}`;
+}
+
+export async function shareConversation(conversationId: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/share"),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function createConversationGroupChat(conversationId: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/group-chat"),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function resetConversationGroupChatLink(conversationId: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/group-chat/reset-link"),
+    {
+      method: "POST"
+    }
+  );
+}
+
+export async function deleteConversationGroupChatLink(conversationId: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/group-chat/delete-link"),
+    {
+      method: "DELETE"
+    }
+  );
+}
+
+export async function renameConversation(conversationId: string, title: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/rename"),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ title })
+    }
+  );
+}
+
+export async function archiveConversation(conversationId: string) {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId, "/archive"),
+    {
+      method: "PATCH",
+      body: JSON.stringify({ archived: true })
+    }
+  );
+}
+
+export async function deleteConversation(conversationId: string, reason = "user_client_menu_delete") {
+  return requestConversationAction<ConversationActionResponse>(
+    conversationActionEndpoint(conversationId),
+    {
+      method: "DELETE",
+      body: JSON.stringify({ reason })
+    }
+  );
+}
+
 function hasPersistentAttachmentUrl(attachment: ChatAttachmentDraft) {
   const candidates = [
     attachment.url,
@@ -625,6 +787,18 @@ export async function fetchQuickActionCategories() {
 export async function fetchCurrentChatUser() {
   const response = await fetch("/api/auth/me", {
     method: "GET"
+  });
+
+  return readApiResponse<CurrentUserResponse>(response);
+}
+
+export async function updateCurrentChatUserName(name: string) {
+  const response = await fetch("/api/auth/me", {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ name })
   });
 
   return readApiResponse<CurrentUserResponse>(response);

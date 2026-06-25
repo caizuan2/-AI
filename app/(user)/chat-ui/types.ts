@@ -83,6 +83,9 @@ export interface CurrentChatUser {
   avatar?: string | null;
   avatarUrl?: string | null;
   avatar_url?: string | null;
+  image?: string | null;
+  profileImage?: string | null;
+  profile_image?: string | null;
   licenseActivated: boolean;
 }
 

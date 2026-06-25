@@ -5,7 +5,7 @@ import { ClientAuthGate } from "./components/ClientAuthGate";
 
 export const metadata: Metadata = {
   title: "小董AI",
-  description: "AI Knowledge OS 用户端业务问题处理助手"
+  description: "小董AI用户端业务问题处理助手"
 };
 
 export default function ChatUiPage() {

@@ -10,12 +10,11 @@ import type { ChatAttachmentDraft, ChatAttachmentSource, AttachmentType } from "
 interface ChatInputProps {
   value: string;
   loading: boolean;
+  placeholder?: string;
   onValueChange: (value: string) => void;
   onSubmit: (attachments?: ChatAttachmentDraft[]) => Promise<boolean> | boolean | void;
   onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
-  openAttachmentSignal?: number;
-  openCameraSignal?: number;
 }
 
 type SpeechRecognitionResultLike = {
@@ -271,12 +270,11 @@ export function SelectedAttachmentList({
 export function ChatInput({
   value,
   loading,
+  placeholder = "发消息或按住说话...",
   onValueChange,
   onSubmit,
   onCancel,
-  onStatusMessage,
-  openAttachmentSignal = 0,
-  openCameraSignal = 0
+  onStatusMessage
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
@@ -436,18 +434,6 @@ export function ChatInput({
     cleanupChatAttachments(attachmentsRef.current);
   }, []);
 
-  React.useEffect(() => {
-    if (openAttachmentSignal > 0) {
-      setAttachmentMenuOpen(true);
-    }
-  }, [openAttachmentSignal]);
-
-  React.useEffect(() => {
-    if (openCameraSignal > 0) {
-      cameraInputRef.current?.click();
-    }
-  }, [openCameraSignal]);
-
   return (
     <form
       onSubmit={handleSubmit}
@@ -496,7 +482,7 @@ export function ChatInput({
               void submitCurrentMessage();
             }
           }}
-          placeholder="发消息或按住说话..."
+          placeholder={placeholder}
           className="max-h-28 min-h-10 flex-1 resize-none border-0 bg-transparent px-1 py-3 text-base font-medium shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
           rows={1}

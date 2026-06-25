@@ -52,7 +52,7 @@ const confidenceLabels: Record<RagConfidence, string> = {
 const providerStatusLabels: Record<ProviderStatus, string> = {
   ok: "模型响应正常",
   provider_not_configured: "模型暂未配置",
-  no_relevant_knowledge: "知识库暂无明确资料",
+  no_relevant_knowledge: "小董AI大脑🧠暂无明确资料",
   error: "模型响应异常"
 };
 
@@ -226,7 +226,7 @@ function StreamingStatus() {
     <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900">
       <div className="flex items-center gap-2 font-semibold">
         <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        正在检索知识库并组织回答
+        正在调用小董AI大脑🧠并组织回答
       </div>
       <div className="mt-3 flex gap-1.5">
         {[0, 1, 2].map((item) => (
@@ -266,7 +266,7 @@ function ThinkingPanel({
       </summary>
       <div className="mt-3 grid gap-2 text-xs leading-6 text-slate-600 sm:grid-cols-3">
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-          <span className="block font-semibold text-slate-900">知识检索</span>
+          <span className="block font-semibold text-slate-900">大脑检索</span>
           {streamThinking || (sourceCount > 0 ? `已命中 ${sourceCount} 条引用` : streaming ? "检索中" : "暂无可展示引用")}
         </div>
         <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
@@ -316,7 +316,7 @@ function RagVisualizationPanel({ message }: { message: ChatMessageView }) {
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
         <span className="inline-flex items-center gap-2">
           <BarChart3 className="h-4 w-4 text-blue-600" aria-hidden="true" />
-          RAG 检索过程
+          RAG / 小董AI大脑🧠调用
         </span>
         <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
       </summary>
@@ -359,7 +359,7 @@ function RagVisualizationPanel({ message }: { message: ChatMessageView }) {
                   className="rounded-xl border border-blue-100 bg-white px-3 py-2 text-xs leading-6 text-slate-600"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-semibold text-slate-950">#{rank} {getString(chunk.content) || "知识片段"}</span>
+                    <span className="font-semibold text-slate-950">#{rank} {getString(chunk.content) || "大脑片段"}</span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600">{formatNullableScore(score)}</span>
                   </div>
                   <ScoreBar value={score} />
@@ -505,7 +505,7 @@ function CommercialExecutionPanel({ message }: { message: ChatMessageView }) {
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2 text-xs leading-6 text-slate-600">
           <span className="block font-semibold text-slate-950">回答策略</span>
-          {responseStrategy || "基于知识库回答，并转成下一步可执行建议。"}
+          {responseStrategy || "基于小董AI大脑🧠回答，并转成下一步可执行建议。"}
         </div>
         <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2 text-xs leading-6 text-slate-600">
           <span className="block font-semibold text-slate-950">建议下一步</span>
@@ -629,7 +629,7 @@ function BusinessExecutionPanel({ message }: { message: ChatMessageView }) {
       <div className="mt-3 grid gap-2 sm:grid-cols-[1.2fr_0.8fr]">
         <div className="rounded-xl border border-teal-100 bg-white px-3 py-2 text-xs leading-6 text-slate-600">
           <span className="block font-semibold text-slate-950">主执行动作</span>
-          <span className="font-semibold text-teal-700">{actionLabel || "知识问答"}</span>
+          <span className="font-semibold text-teal-700">{actionLabel || "大脑问答"}</span>
           {actionDescription ? <span className="ml-1">{actionDescription}</span> : null}
         </div>
         <div className="rounded-xl border border-teal-100 bg-white px-3 py-2 text-xs leading-6 text-slate-600">
@@ -1210,7 +1210,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
             <ClipboardList className="h-3.5 w-3.5 text-blue-600" aria-hidden="true" />
             GPT OS 回答
           </div>
-          <h3 className="mt-2 text-base font-semibold text-slate-950">已按知识库资料整理</h3>
+          <h3 className="mt-2 text-base font-semibold text-slate-950">已按小董AI大脑🧠资料整理</h3>
           {messageTime ? <p className="mt-1 text-xs text-slate-400">{messageTime}</p> : null}
         </div>
         <CopyAnswerButton text={copyText} />

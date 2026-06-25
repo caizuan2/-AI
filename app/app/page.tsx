@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "小董AI",
-  description: "AI Knowledge OS 用户端"
+  description: "小董AI用户端"
 };
 
 export default async function AppEntryPage() {
