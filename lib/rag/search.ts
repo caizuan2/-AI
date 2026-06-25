@@ -1,4 +1,8 @@
 import type { RagContext } from "@/lib/ai/rag-prompt";
+import {
+  buildKnowledgeChunkAccessWhere,
+  resolveKnowledgeAccessScope
+} from "@/lib/enterprise/knowledge-access-scope";
 import { ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 
@@ -25,6 +29,11 @@ export interface RetrievedRagChunk {
 
 export interface RetrieveRelevantChunksOptions {
   userId: string;
+  tenantId?: string | null;
+  appType?: string | null;
+  agentId?: string | null;
+  includeShared?: boolean;
+  includePublished?: boolean;
   mode?: AiChatMode;
   topK?: number;
   category?: string | null;
@@ -231,7 +240,15 @@ function scoreChunk(row: KnowledgeChunkRecord, query: string, terms: string[]) {
   return clamp01(score);
 }
 
-function buildPrismaWhere(userId: string, terms: string[], options: RetrieveRelevantChunksOptions) {
+async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunksOptions) {
+  const accessScope = await resolveKnowledgeAccessScope({
+    actorUserId: options.userId,
+    tenantId: options.tenantId,
+    appType: options.appType,
+    agentId: options.agentId,
+    includeShared: options.includeShared === true || Boolean(options.tenantId),
+    includePublished: options.includePublished === true || Boolean(options.tenantId)
+  });
   const termFilters = terms.map((term) => ({
     OR: [
       { chunkText: { contains: term, mode: "insensitive" as const } },
@@ -255,14 +272,17 @@ function buildPrismaWhere(userId: string, terms: string[], options: RetrieveRele
 
   return {
     ...(options.fileId ? { fileId: options.fileId } : {}),
-    knowledgeItem: {
-      is: {
-        userId,
-        deletedAt: null,
-        ...(options.category ? { category: options.category } : {})
-      }
-    },
     AND: [
+      buildKnowledgeChunkAccessWhere(accessScope),
+      ...(options.category
+        ? [{
+            knowledgeItem: {
+              is: {
+                category: options.category
+              }
+            }
+          }]
+        : []),
       {
         OR: [
           { fileId: null },
@@ -316,8 +336,9 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
 
   const topK = normalizeTopK(options);
   const db = options.db ?? (prisma as unknown as RagSearchDb);
+  const where = await buildPrismaWhere(terms, options);
   const rows = await db.knowledgeChunk.findMany({
-    where: buildPrismaWhere(options.userId, terms, options),
+    where,
     take: Math.min(topK * 4, 80),
     orderBy: [
       {

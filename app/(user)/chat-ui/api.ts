@@ -351,7 +351,10 @@ export async function askChatStream(input: AskChatRequest, handlers: AskChatStre
       "Accept": "text/event-stream",
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(createAskRequestPayload(input)),
+    body: JSON.stringify({
+      ...createAskRequestPayload(input),
+      runtime_entry: "user_chat_ui"
+    }),
     signal: handlers.signal
   });
   const contentType = response.headers.get("content-type") ?? "";

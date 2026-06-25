@@ -1,5 +1,5 @@
-import { NextResponse } from "next/server";
-import { requireUser } from "@/lib/auth";
+import { apiError, apiSuccess } from "@/lib/api-response";
+import { getCurrentUser } from "@/lib/auth";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 import { toAppError } from "@/lib/errors";
 
@@ -24,45 +24,31 @@ function pickPrimaryRole(roles: string[] = []) {
 
 export async function GET(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await getCurrentUser();
     const authUser = await toIngestAuthUser(user);
 
     await setIngestPortalCookie(user, request);
 
-    return NextResponse.json({
+    return apiSuccess({
       success: true,
       authenticated: true,
-      user: authUser,
       licenseActivated: authUser.licenseActivated,
-      role: pickPrimaryRole(authUser.roles)
+      role: pickPrimaryRole(authUser.roles),
+      user: authUser
     });
   } catch (error) {
     const appError = toAppError(error);
 
     if (appError.code === "UNAUTHORIZED") {
-      return NextResponse.json({
+      return apiSuccess({
         success: true,
         authenticated: false,
         licenseActivated: false,
-        role: null
+        role: null,
+        user: null
       });
     }
 
-    console.error("[ingest:auth:me]", {
-      errorCode: appError.code,
-      message: appError.message
-    });
-
-    return NextResponse.json(
-      {
-        success: false,
-        authenticated: false,
-        licenseActivated: false,
-        role: null,
-        errorCode: "AUTH_ME_FAILED",
-        message: "登录状态检查失败"
-      },
-      { status: 500 }
-    );
+    return apiError(error);
   }
 }

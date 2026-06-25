@@ -4,7 +4,8 @@ import { isPlainObject } from "@/lib/api/responses";
 import { generateRagAnswer, type RagContext } from "@/lib/ai/rag-answer";
 import type { ChatProviderName } from "@/lib/ai/types";
 import { requireLicensedUser } from "@/lib/auth/guards";
-import { buildAiCacheKey, getAiCacheValue, getCorpusVersion, setAiCacheValue } from "@/lib/cache/ai-cache";
+import { buildAiCacheKey, getAiCacheValue, setAiCacheValue } from "@/lib/cache/ai-cache";
+import { getKnowledgeAccessCorpusVersion } from "@/lib/enterprise/knowledge-access-scope";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
@@ -190,7 +191,13 @@ export async function POST(request: Request) {
     const requestedModel = userSettings.preferredModel || providerModel(effectiveProvider);
     const effectiveTopK = userSettings.ragTopK ?? input.topK;
     const effectiveMinScore = userSettings.ragMinScore ?? undefined;
-    const corpusVersion = await getCorpusVersion(user.id);
+    const accessScope = {
+      actorUserId: user.id,
+      appType: "user_app",
+      includeShared: true,
+      includePublished: true
+    };
+    const corpusVersion = await getKnowledgeAccessCorpusVersion(accessScope);
     const cacheKey = buildAiCacheKey({
       namespace: "rag-answer",
       userId: user.id,
@@ -218,6 +225,9 @@ export async function POST(request: Request) {
       minSimilarity: effectiveMinScore,
       minResults: 3,
       userId: user.id,
+      appType: "user_app",
+      includeShared: true,
+      includePublished: true,
       requestId
     });
     const sources = toSources(retrieval.results);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquareText, MonitorCog } from "lucide-react";
+import { MessageSquareText } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
@@ -40,7 +40,6 @@ import {
 } from "@/lib/enterprise/admin-ingest-platform";
 import {
   createAgentConversation,
-  createConversationMessages,
   deriveConversationTitle,
   type IngestAgentConversation
 } from "@/lib/enterprise/mock-agent-conversations";
@@ -133,6 +132,64 @@ const initialSettingsState: IngestSettingsState = {
   syncTarget: [...ingestSyncTarget]
 };
 const ADMIN_AVATAR_STORAGE_KEY = "admin-ingest-avatar";
+const INGEST_AGENTS_STORAGE_KEY = "ai-kb-ingest-agents";
+const INGEST_CONVERSATIONS_STORAGE_KEY = "ai-kb-ingest-conversations";
+const INGEST_ACTIVE_AGENT_STORAGE_KEY = "ai-kb-ingest-active-agent";
+const INGEST_ACTIVE_CONVERSATION_STORAGE_KEY = "ai-kb-ingest-active-conversation";
+const INGEST_CONVERSATION_MESSAGES_STORAGE_KEY = "ai-kb-ingest-conversation-messages";
+const INGEST_CONVERSATION_DRAFTS_STORAGE_KEY = "ai-kb-ingest-conversation-drafts";
+const INGEST_PINNED_AGENTS_STORAGE_KEY = "ai-kb-ingest-pinned-agents";
+const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
+const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
+const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
+
+function readLocalArray<T>(key: string): T[] {
+  try {
+    const rawValue = window.localStorage.getItem(key);
+
+    if (!rawValue) {
+      return [];
+    }
+
+    const parsed = JSON.parse(rawValue) as unknown;
+
+    return Array.isArray(parsed) ? parsed as T[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function readLocalRecord<T>(key: string): Record<string, T> {
+  try {
+    const rawValue = window.localStorage.getItem(key);
+
+    if (!rawValue) {
+      return {};
+    }
+
+    const parsed = JSON.parse(rawValue) as unknown;
+
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, T> : {};
+  } catch {
+    return {};
+  }
+}
+
+function readLocalString(key: string) {
+  try {
+    return window.localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLocalJson(key: string, value: unknown) {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage can be unavailable in hardened browsers; UI should keep running.
+  }
+}
 
 function createNotification(input: Pick<IngestNotification, "type" | "title" | "description"> & {
   read?: boolean;
@@ -152,6 +209,79 @@ function createNotification(input: Pick<IngestNotification, "type" | "title" | "
   };
 }
 
+function isEmptyHistoryMessage(message: IngestChatMessage) {
+  return message.id.startsWith(EMPTY_HISTORY_MESSAGE_PREFIX);
+}
+
+function markMessageCompleted(message: IngestChatMessage): IngestChatMessage {
+  return {
+    ...message,
+    isStreaming: false,
+    isGenerating: false,
+    typing: false,
+    status: message.status === "failed" ? "failed" : "completed"
+  };
+}
+
+function normalizeRestoredMessages(messages: IngestChatMessage[]) {
+  return messages.map((message) => ({
+    ...markMessageCompleted(message),
+    isRestored: true,
+    isHistorical: true
+  }));
+}
+
+function getPersistableMessages(messages: IngestChatMessage[]) {
+  return messages
+    .filter((message) => !isEmptyHistoryMessage(message))
+    .map(markMessageCompleted);
+}
+
+function createEmptyHistoryMessages({
+  conversation,
+  agent,
+  context
+}: {
+  conversation: IngestAgentConversation;
+  agent: IngestChatAgent;
+  context: AdminIngestPlatformContext;
+}): IngestChatMessage[] {
+  return [{
+    id: `${EMPTY_HISTORY_MESSAGE_PREFIX}${conversation.id}`,
+    role: "assistant",
+    content: "暂无历史内容",
+    time: "刚刚",
+    source: "admin_ingest",
+    platform: context.platform,
+    syncTarget: [...context.syncTarget],
+    tenantId,
+    userId,
+    agentId: agent.id,
+    expertId: agent.expertId ?? null,
+    conversationId: conversation.id,
+    agentName: agent.name,
+    expertName: agent.expertId ? agent.name : null,
+    provider: "admin_ingest",
+    isRestored: true,
+    isHistorical: true,
+    isStreaming: false,
+    isGenerating: false,
+    typing: false,
+    status: "completed"
+  }];
+}
+
+function hasConversationDraft(draft: IngestKnowledgeDraft) {
+  return Boolean(
+    draft.jobId
+    || draft.title !== ingestChatInitialDraft.title
+    || draft.standardAnswer !== ingestChatInitialDraft.standardAnswer
+    || draft.saveStatus !== ingestChatInitialDraft.saveStatus
+    || draft.replyMarkdown
+    || draft.sourceMaterials?.length
+  );
+}
+
 function mergeTrainingRecords(incoming: IngestTrainingRecord[], current: IngestTrainingRecord[]) {
   const seen = new Set<string>();
 
@@ -164,6 +294,42 @@ function mergeTrainingRecords(incoming: IngestTrainingRecord[], current: IngestT
 
     seen.add(key);
     return true;
+  });
+}
+
+function getDraftRecordIdentifiers(draft: IngestKnowledgeDraft) {
+  return new Set([draft.jobId, draft.id, draft.responseId].filter((value): value is string => Boolean(value)));
+}
+
+function isTrainingRecordLinkedToDraft(record: IngestTrainingRecord, draft: IngestKnowledgeDraft) {
+  const draftIds = getDraftRecordIdentifiers(draft);
+
+  if (draftIds.size === 0) {
+    return false;
+  }
+
+  return [
+    record.jobId,
+    record.id,
+    record.aiOutput?.jobId,
+    record.aiOutput?.id,
+    record.aiOutput?.responseId
+  ].some((value) => Boolean(value && draftIds.has(value)));
+}
+
+function syncSavedRecordState(records: IngestTrainingRecord[], draft: IngestKnowledgeDraft) {
+  return records.map((record) => {
+    if (!isTrainingRecordLinkedToDraft(record, draft)) {
+      return record;
+    }
+
+    return {
+      ...record,
+      saveStatus: "已保存" as const,
+      aiOutput: record.aiOutput
+        ? { ...record.aiOutput, saveStatus: "已保存" as const }
+        : { ...draft, saveStatus: "已保存" as const }
+    };
   });
 }
 
@@ -244,6 +410,7 @@ function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent 
 
 export function IngestModeToggle() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const restoredInitialConversationRef = useRef(false);
   const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
   const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
@@ -285,6 +452,8 @@ export function IngestModeToggle() {
   const [isCreateAgentOpen, setIsCreateAgentOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<IngestChatMessage[]>([]);
+  const [conversationMessagesById, setConversationMessagesById] = useState<Record<string, IngestChatMessage[]>>({});
+  const [conversationDraftsById, setConversationDraftsById] = useState<Record<string, IngestKnowledgeDraft>>({});
   const [draft, setDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const [records, setRecords] = useState<IngestTrainingRecord[]>(ingestTrainingRecords);
   const [lastInput, setLastInput] = useState("");
@@ -299,6 +468,7 @@ export function IngestModeToggle() {
   const [urlError, setUrlError] = useState("");
   const [isUrlIngesting, setIsUrlIngesting] = useState(false);
   const [autonomousEnabled, setAutonomousEnabled] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const uploadState = uploadedFiles[0] ?? null;
   const modelOptions = INGEST_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
@@ -341,13 +511,26 @@ export function IngestModeToggle() {
       search: window.location.search,
       userAgent: navigator.userAgent
     });
+    const storedAgents = readLocalArray<IngestChatAgent>(INGEST_AGENTS_STORAGE_KEY);
+    const storedConversations = readLocalArray<IngestAgentConversation>(INGEST_CONVERSATIONS_STORAGE_KEY);
+    const storedPinnedAgentIds = readLocalArray<string>(INGEST_PINNED_AGENTS_STORAGE_KEY);
+    const storedExpandedAgentIds = readLocalArray<string>(INGEST_EXPANDED_AGENTS_STORAGE_KEY);
+    const storedExpandedConversationAgentIds = readLocalArray<string>(INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY);
+    const storedActiveAgentId = readLocalString(INGEST_ACTIVE_AGENT_STORAGE_KEY);
+    const storedActiveConversationId = readLocalString(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY);
+    const storedConversationMessages = readLocalRecord<IngestChatMessage[]>(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY);
+    const storedConversationDrafts = readLocalRecord<IngestKnowledgeDraft>(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY);
 
     setPlatformContext(nextContext);
-    setAgents((current) => current.map((agent) => ({
-      ...agent,
-      platform: nextContext.platform,
-      syncTarget: [...nextContext.syncTarget]
-    })));
+    setAgents((current) => {
+      const baseAgents = storedAgents.length ? storedAgents : current;
+
+      return baseAgents.map((agent) => ({
+        ...agent,
+        platform: nextContext.platform,
+        syncTarget: [...nextContext.syncTarget]
+      }));
+    });
     setVoiceState((current) => ({
       ...current,
       platform: nextContext.platform,
@@ -363,11 +546,22 @@ export function IngestModeToggle() {
       platform: nextContext.platform,
       syncTarget: [...nextContext.syncTarget]
     })));
-    setAgentConversations((current) => current.map((conversation) => ({
-      ...conversation,
-      platform: nextContext.platform,
-      syncTarget: [...nextContext.syncTarget]
-    })));
+    setAgentConversations((current) => {
+      const baseConversations = storedConversations.length ? storedConversations : current;
+
+      return baseConversations.map((conversation) => ({
+        ...conversation,
+        platform: nextContext.platform,
+        syncTarget: [...nextContext.syncTarget]
+      }));
+    });
+    setPinnedAgentIds(storedPinnedAgentIds);
+    setExpandedAgentIds(storedExpandedAgentIds);
+    setExpandedConversationAgentIds(storedExpandedConversationAgentIds);
+    setActiveAgentId((current) => storedActiveAgentId || current);
+    setConversationMessagesById(storedConversationMessages);
+    setConversationDraftsById(storedConversationDrafts);
+    setActiveConversationId((current) => storedActiveConversationId || current);
 
     setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
     setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
@@ -375,8 +569,144 @@ export function IngestModeToggle() {
 
     setSelectedModel(storedModel.label);
     setResolvedModel(storedModel.label);
+    setHistoryLoaded(true);
   }, []);
 
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(INGEST_AGENTS_STORAGE_KEY, agents);
+  }, [agents, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(INGEST_CONVERSATIONS_STORAGE_KEY, agentConversations);
+  }, [agentConversations, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(INGEST_PINNED_AGENTS_STORAGE_KEY, pinnedAgentIds);
+  }, [historyLoaded, pinnedAgentIds]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(INGEST_EXPANDED_AGENTS_STORAGE_KEY, expandedAgentIds);
+  }, [expandedAgentIds, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY, expandedConversationAgentIds);
+  }, [expandedConversationAgentIds, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    try {
+      if (activeAgentId) {
+        window.localStorage.setItem(INGEST_ACTIVE_AGENT_STORAGE_KEY, activeAgentId);
+      } else {
+        window.localStorage.removeItem(INGEST_ACTIVE_AGENT_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage failures; active Agent still works for the current session.
+    }
+  }, [activeAgentId, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    try {
+      if (activeConversationId) {
+        window.localStorage.setItem(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY, activeConversationId);
+      } else {
+        window.localStorage.removeItem(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY);
+      }
+    } catch {
+      // Ignore storage failures; active conversation still works for the current session.
+    }
+  }, [activeConversationId, historyLoaded]);
+
+
+  useEffect(() => {
+    if (!historyLoaded || !activeConversationId) {
+      return;
+    }
+
+    const persistableMessages = getPersistableMessages(messages);
+
+    setConversationMessagesById((current) => {
+      const previousMessages = current[activeConversationId] ?? [];
+
+      if (persistableMessages.length === 0 && previousMessages.length === 0) {
+        return current;
+      }
+
+      const next = {
+        ...current,
+        [activeConversationId]: persistableMessages
+      };
+
+      writeLocalJson(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY, next);
+      return next;
+    });
+  }, [activeConversationId, historyLoaded, messages]);
+
+  useEffect(() => {
+    if (!historyLoaded || !activeConversationId || !hasConversationDraft(draft)) {
+      return;
+    }
+
+    setConversationDraftsById((current) => {
+      const next = {
+        ...current,
+        [activeConversationId]: draft
+      };
+
+      writeLocalJson(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY, next);
+      return next;
+    });
+  }, [activeConversationId, draft, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded || restoredInitialConversationRef.current || !activeConversationId) {
+      return;
+    }
+
+    const activeConversation = agentConversations.find((conversation) => conversation.id === activeConversationId);
+    const conversationAgent = activeConversation
+      ? visibleAgents.find((agent) => agent.id === activeConversation.agentId)
+      : null;
+
+    if (!activeConversation || !conversationAgent) {
+      return;
+    }
+
+    const restoredMessages = conversationMessagesById[activeConversation.id];
+
+    setMessages(restoredMessages?.length
+      ? normalizeRestoredMessages(restoredMessages)
+      : createEmptyHistoryMessages({ conversation: activeConversation, agent: conversationAgent, context: platformContext }));
+    setDraft(conversationDraftsById[activeConversation.id] ?? ingestChatInitialDraft);
+    restoredInitialConversationRef.current = true;
+  }, [activeConversationId, agentConversations, conversationDraftsById, conversationMessagesById, historyLoaded, platformContext, visibleAgents]);
   useEffect(() => {
     const speechWindow = window as SpeechWindow;
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
@@ -487,6 +817,20 @@ export function IngestModeToggle() {
     setNoticeMessage(railMessages[nextKey]);
   }
 
+
+  function restoreConversationState(conversation: IngestAgentConversation, agent: IngestChatAgent) {
+    const restoredMessages = conversationMessagesById[conversation.id];
+
+    setMessages(restoredMessages?.length
+      ? normalizeRestoredMessages(restoredMessages)
+      : createEmptyHistoryMessages({ conversation, agent, context: platformContext }));
+    setDraft(conversationDraftsById[conversation.id] ?? ingestChatInitialDraft);
+  }
+
+  function clearConversationState() {
+    setMessages([]);
+    setDraft(ingestChatInitialDraft);
+  }
   function handleAgentSelect(agentId: string) {
     const nextAgent = visibleAgents.find((agent) => agent.id === agentId);
 
@@ -501,7 +845,11 @@ export function IngestModeToggle() {
     setActiveRailKey("chat");
     setMode("chat");
     setActiveConversationId(nextConversation?.id ?? "");
-    setMessages(nextConversation ? createConversationMessages({ conversation: nextConversation, agent: nextAgent }) : []);
+    if (nextConversation) {
+      restoreConversationState(nextConversation, nextAgent);
+    } else {
+      clearConversationState();
+    }
     setIsAgentDetailOpen(false);
     setNoticeMessage(nextConversation
       ? `已切换到 ${nextAgent.name} · ${nextConversation.title}。`
@@ -687,7 +1035,7 @@ export function IngestModeToggle() {
 
     setCurrentAgent(targetAgent);
     setActiveConversationId(targetConversation.id);
-    setMessages(createConversationMessages({ conversation: targetConversation, agent: targetAgent }));
+    restoreConversationState(targetConversation, targetAgent);
     setActiveRailKey("chat");
     setMode("chat");
     setNoticeMessage(`已打开 ${targetAgent.name} 下的对话：${targetConversation.title}。`);
@@ -709,6 +1057,7 @@ export function IngestModeToggle() {
     setAgentConversations((current) => [nextConversation, ...current]);
     setCurrentAgent(targetAgent);
     setActiveConversationId(nextConversation.id);
+    setDraft(ingestChatInitialDraft);
     setMessages([]);
     setActiveRailKey("chat");
     setMode("chat");
@@ -756,11 +1105,27 @@ export function IngestModeToggle() {
     const nextConversation = remainingConversations[0];
 
     setAgentConversations((current) => current.filter((conversation) => conversation.id !== conversationId));
+    setConversationMessagesById((current) => {
+      const next = { ...current };
+      delete next[conversationId];
+      writeLocalJson(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY, next);
+      return next;
+    });
+    setConversationDraftsById((current) => {
+      const next = { ...current };
+      delete next[conversationId];
+      writeLocalJson(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY, next);
+      return next;
+    });
 
     if (activeConversationId === conversationId) {
       setCurrentAgent(targetAgent);
       setActiveConversationId(nextConversation?.id ?? "");
-      setMessages(nextConversation ? createConversationMessages({ conversation: nextConversation, agent: targetAgent }) : []);
+      if (nextConversation) {
+        restoreConversationState(nextConversation, targetAgent);
+      } else {
+        clearConversationState();
+      }
       setActiveRailKey("chat");
       setMode("chat");
     }
@@ -824,17 +1189,8 @@ export function IngestModeToggle() {
       return null;
     }
 
-    let preparedUploads = uploadedFiles;
-
-    if (uploadedFiles.length > 0) {
-      setUploadedFiles((current) => current.map((file) => ({ ...file, status: "parsing" as const })));
-      preparedUploads = await Promise.all(uploadedFiles.map((file) => parseUploadedFileForGpt({
-        ...file,
-        status: "parsing"
-      })));
-    }
-
-    const outgoingAttachments = preparedUploads.map((file) => ({
+    const composerUploads = uploadedFiles;
+    const draftAttachments = composerUploads.map((file) => ({
       ...stripUploadRuntimeFields(file),
       status: "attached" as const,
       agentId: activeAgent.id,
@@ -843,8 +1199,8 @@ export function IngestModeToggle() {
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget]
     }));
-    const effectiveInput = value || (outgoingAttachments.length > 0
-      ? `附件投喂：${outgoingAttachments.map((file) => file.fileName).join("、")}`
+    const effectiveInput = value || (draftAttachments.length > 0
+      ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
 
     if (!effectiveInput) {
@@ -854,8 +1210,9 @@ export function IngestModeToggle() {
     }
 
     const conversationId = ensureConversationForSend(activeAgent);
+    const userMessageId = `user-${Date.now()}`;
 
-    markConversationUsed(conversationId, effectiveInput, outgoingAttachments[0]?.fileName);
+    markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
     setErrorMessage("");
@@ -864,11 +1221,11 @@ export function IngestModeToggle() {
     setMessages((current) => [
       ...current,
       {
-        id: `user-${Date.now()}`,
+        id: userMessageId,
         role: "user",
         content: value || "附件投喂",
         time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        attachments: outgoingAttachments,
+        attachments: draftAttachments,
         source: "admin_ingest",
         platform: platformContext.platform,
         syncTarget: [...platformContext.syncTarget],
@@ -887,6 +1244,29 @@ export function IngestModeToggle() {
     setUploadedFiles([]);
 
     try {
+      let outgoingAttachments = draftAttachments;
+
+      if (composerUploads.length > 0) {
+        const preparedUploads = await Promise.all(composerUploads.map((file) => parseUploadedFileForGpt({
+          ...file,
+          status: "parsing"
+        })));
+
+        outgoingAttachments = preparedUploads.map((file) => ({
+          ...stripUploadRuntimeFields(file),
+          status: "attached" as const,
+          agentId: activeAgent.id,
+          tenantId,
+          userId,
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget]
+        }));
+
+        setMessages((current) => current.map((message) => message.id === userMessageId
+          ? { ...message, attachments: outgoingAttachments }
+          : message));
+      }
+
       const result = await sendCoreIngest({
         text: effectiveInput,
         agent: activeAgent,
@@ -951,7 +1331,13 @@ export function IngestModeToggle() {
           provider: result.provider,
           saveSuggestion: result.saveSuggestion,
           gptProof: result.gptProof,
-          gptOS: result.draft.gptOS
+          gptOS: result.draft.gptOS,
+          isRestored: false,
+          isHistorical: false,
+          isStreaming: true,
+          isGenerating: true,
+          typing: true,
+          status: "streaming"
         }
       ]);
       pushNotification({
@@ -980,8 +1366,17 @@ export function IngestModeToggle() {
   }
 
   async function handleSave(): Promise<Awaited<ReturnType<typeof saveKnowledgeDraft>> | null> {
-    if (!draft.jobId) {
-      setNoticeMessage("请先生成结构化结果，再保存知识入库。");
+    const hasSaveableContent = Boolean(
+      draft.id
+      || draft.title
+      || draft.summary
+      || draft.standardAnswer
+      || draft.replyMarkdown
+      || draft.knowledgeLoop?.candidates?.length
+    );
+
+    if (!hasSaveableContent) {
+      setNoticeMessage("没有可保存的知识内容。");
       setErrorMessage("");
       return null;
     }
@@ -1005,11 +1400,15 @@ export function IngestModeToggle() {
         userId,
         platform: platformContext.platform
       });
-      const nextRecords = mergeTrainingRecords(result.records, records);
+      const mergedRecords = mergeTrainingRecords(result.records, records);
+      const nextRecords = syncSavedRecordState(mergedRecords, result.draft);
+      const matchedRecord = nextRecords.some((record) => isTrainingRecordLinkedToDraft(record, result.draft));
 
       setDraft(result.draft);
       setRecords(nextRecords);
-      setNoticeMessage(result.preview
+      setNoticeMessage(!matchedRecord
+        ? `${result.message}，但未找到对应训练记录，请刷新训练记录。`
+        : result.preview
         ? `${result.message}（本地预览状态）`
         : `${result.message} · 已携带 Web / EXE / APK 同步字段`);
       pushNotification({
@@ -1027,6 +1426,23 @@ export function IngestModeToggle() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "保存知识入库失败，请稍后重试。";
 
+      setDraft((current) => ({
+        ...current,
+        saveStatus: "保存失败"
+      }));
+      setRecords((current) => current.map((record) => {
+        if (!isTrainingRecordLinkedToDraft(record, draft)) {
+          return record;
+        }
+
+        return {
+          ...record,
+          saveStatus: "失败",
+          aiOutput: record.aiOutput
+            ? { ...record.aiOutput, saveStatus: "保存失败" }
+            : { ...draft, saveStatus: "保存失败" }
+        };
+      }));
       setErrorMessage(message);
       return null;
     } finally {
@@ -1497,7 +1913,13 @@ export function IngestModeToggle() {
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: selectedModelLabel,
           provider: result.provider,
-          saveSuggestion: result.saveSuggestion
+          saveSuggestion: result.saveSuggestion,
+          isRestored: false,
+          isHistorical: false,
+          isStreaming: true,
+          isGenerating: true,
+          typing: true,
+          status: "streaming"
         }
       ]);
       setNoticeMessage(result.message);
@@ -1673,17 +2095,6 @@ export function IngestModeToggle() {
           >
             <MessageSquareText className="h-4 w-4" aria-hidden="true" />
             对话
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("workbench")}
-            className={[
-              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-              mode === "workbench" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
-            ].join(" ")}
-          >
-            <MonitorCog className="h-4 w-4" aria-hidden="true" />
-            工作室
           </button>
         </div>
       ) : null}

@@ -1,5 +1,6 @@
 import { chatWithFallback } from "@/lib/ai/providers";
 import { recordAiUsage } from "@/lib/analytics";
+import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import type { KnowledgeQualityScores } from "@/lib/knowledge/quality";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
@@ -91,6 +92,25 @@ export async function suggestKnowledgeCompletions(
   const estimatedInputTokens = estimateTokenCount(input) + 350;
 
   try {
+    const runtimeOrchestrator = new AIRuntimeOrchestrator();
+    const runtimeResult = runtimeOrchestrator.handleRequest(
+      [input.title, input.summary, input.content].filter(Boolean).join("\n\n"),
+      {
+        source: "admin_ingest",
+        runtimeEntry: "server_route",
+        userId: options.userId ?? null,
+        category: input.category,
+        previousKnowledgeDrafts: [
+          {
+            title: input.title,
+            summary: input.summary,
+            category: input.category,
+            tags: input.tags
+          }
+        ]
+      }
+    );
+
     const response = await chatWithFallback({
       temperature: 0.2,
       messages: [
@@ -157,7 +177,8 @@ export async function suggestKnowledgeCompletions(
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
         originalProviderErrorCode: response.originalProviderErrorCode,
-        suggestionCount: suggestions.length
+        suggestionCount: suggestions.length,
+        aiRuntime: runtimeResult
       }
     });
 

@@ -6,7 +6,8 @@ import { requireLicensedUser } from "@/lib/auth/guards";
 import type { RagContext } from "@/lib/ai/rag-answer";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
-import { buildAiCacheKey, getAiCacheValue, getCorpusVersion, setAiCacheValue } from "@/lib/cache/ai-cache";
+import { buildAiCacheKey, getAiCacheValue, setAiCacheValue } from "@/lib/cache/ai-cache";
+import { getKnowledgeAccessCorpusVersion } from "@/lib/enterprise/knowledge-access-scope";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { retrieveKnowledge, type RetrievedKnowledgeChunk } from "@/lib/rag/retriever";
@@ -274,7 +275,13 @@ export async function POST(request: Request) {
     const effectiveMinScore = userSettings.ragMinScore ?? CHAT_MIN_RELEVANT_SIMILARITY;
     const providerForCache = toProviderName(userSettings.preferredProvider);
     const modelForCache = getEffectiveModel(providerForCache, userSettings.preferredModel);
-    const corpusVersion = await getCorpusVersion(currentUser.id);
+    const accessScope = {
+      actorUserId: currentUser.id,
+      appType: "user_app",
+      includeShared: true,
+      includePublished: true
+    };
+    const corpusVersion = await getKnowledgeAccessCorpusVersion(accessScope);
     const cacheKey = buildAiCacheKey({
       namespace: "rag-answer",
       userId: currentUser.id,
@@ -321,6 +328,9 @@ export async function POST(request: Request) {
       query: input.question,
       topK: effectiveTopK,
       userId: currentUser.id,
+      appType: "user_app",
+      includeShared: true,
+      includePublished: true,
       minSimilarity: effectiveMinScore,
       minResults: 3,
       requestId

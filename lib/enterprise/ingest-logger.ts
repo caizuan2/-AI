@@ -12,6 +12,7 @@ import {
   type EnterpriseQAPair,
   type EnterpriseStructuredKnowledge
 } from "@/lib/enterprise/ai-ingest-service";
+import { buildIngestSharedChunkMetadata } from "@/lib/enterprise/knowledge-access-scope";
 
 export interface EnterpriseIngestActor {
   id: string;
@@ -436,7 +437,11 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
             chunkText: chunk.chunkText,
             chunkIndex: chunk.chunkIndex,
             summary: chunk.summary,
-            metadata: chunk.metadata,
+            metadata: buildIngestSharedChunkMetadata(chunk.metadata, {
+              tenantId: actor.tenantId ?? null,
+              createdByUserId: actor.id,
+              agentId: readString(storedMetadata.agentId)
+            }),
             charCount: chunk.charCount,
             tokenCount: chunk.tokenCount,
             contentHash: chunk.contentHash
@@ -453,6 +458,16 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
       ...storedMetadata,
       stage: "saved",
       status: "saved",
+      source: "admin_ingest",
+      sourceApp: "ingest_admin",
+      appType: "knowledge_base",
+      visibility: "published",
+      published: true,
+      enabled: true,
+      shared: true,
+      sharedToUserApp: true,
+      tenantId: actor.tenantId ?? null,
+      createdByUserId: actor.id,
       savedAt: new Date().toISOString(),
       knowledgeItemId: knowledgeItem.id,
       training_record: {

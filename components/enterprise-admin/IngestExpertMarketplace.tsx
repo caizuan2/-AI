@@ -14,6 +14,9 @@ import {
   type IngestExpertZoneId
 } from "@/lib/enterprise/mock-experts";
 
+const showCategoryFilters = false;
+const showExpertGrid = false;
+
 export function IngestExpertMarketplace({
   addedExpertIds = [],
   onAddExpert
@@ -28,6 +31,29 @@ export function IngestExpertMarketplace({
   const [activeSecondary, setActiveSecondary] = useState("全部");
   const addedSet = useMemo(() => new Set(addedExpertIds), [addedExpertIds]);
   const normalizedQuery = query.trim().toLowerCase();
+  const recommendationExperts = useMemo(() => ingestExperts.filter((expert) => {
+    if (activePrimary !== "全部" && expert.category !== activePrimary) {
+      return false;
+    }
+
+    if (activeSecondary !== "全部" && expert.subcategory !== activeSecondary) {
+      return false;
+    }
+
+    if (!normalizedQuery) {
+      return true;
+    }
+
+    return [
+      expert.name,
+      expert.description,
+      expert.category,
+      expert.subcategory,
+      expert.zoneTitle,
+      expert.author,
+      expert.tags.join(" ")
+    ].join(" ").toLowerCase().includes(normalizedQuery);
+  }), [activePrimary, activeSecondary, normalizedQuery]);
   const filteredExperts = useMemo(() => ingestExperts.filter((expert) => {
     if (activeZone !== "all" && expert.zoneId !== activeZone) {
       return false;
@@ -76,7 +102,7 @@ export function IngestExpertMarketplace({
   return (
     <section className="w-full space-y-5 pb-8">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h1 className="text-3xl font-semibold tracking-tight text-[#202020]">专家广场</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-[#202020]">专家广场</h1>
         <div className="flex h-11 min-w-[min(360px,100%)] items-center gap-2 rounded-2xl bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
           <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
           <input
@@ -99,18 +125,27 @@ export function IngestExpertMarketplace({
         </div>
       </div>
 
-      <IngestExpertTabs zones={ingestExpertZones} activeZone={activeZone} onZoneChange={setActiveZone} />
-
-      <IngestExpertCategoryBar
-        primaryCategories={ingestExpertPrimaryCategories}
-        secondaryCategories={ingestExpertSecondaryCategories}
-        activePrimary={activePrimary}
-        activeSecondary={activeSecondary}
-        onPrimaryChange={setActivePrimary}
-        onSecondaryChange={setActiveSecondary}
+      <IngestExpertTabs
+        zones={ingestExpertZones}
+        experts={recommendationExperts}
+        addedExpertIds={addedExpertIds}
+        activeZone={activeZone}
+        onZoneChange={setActiveZone}
+        onAddExpert={onAddExpert}
       />
 
-      {filteredExperts.length > 0 ? (
+      {showCategoryFilters ? (
+        <IngestExpertCategoryBar
+          primaryCategories={ingestExpertPrimaryCategories}
+          secondaryCategories={ingestExpertSecondaryCategories}
+          activePrimary={activePrimary}
+          activeSecondary={activeSecondary}
+          onPrimaryChange={setActivePrimary}
+          onSecondaryChange={setActiveSecondary}
+        />
+      ) : null}
+
+      {showExpertGrid && filteredExperts.length > 0 ? (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
           {filteredExperts.map((expert) => (
             <IngestExpertCard
@@ -121,12 +156,12 @@ export function IngestExpertMarketplace({
             />
           ))}
         </div>
-      ) : (
+      ) : showExpertGrid ? (
         <div className="rounded-[24px] border border-dashed border-[#d9d9d5] bg-white p-8 text-center">
           <p className="text-base font-semibold text-[#202020]">没有找到相关专家</p>
           <p className="mt-2 text-sm text-[#858580]">可以清空搜索词，或切换专区与分类标签。</p>
         </div>
-      )}
+      ) : null}
     </section>
   );
 }
