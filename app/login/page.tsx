@@ -3,7 +3,7 @@
 import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
@@ -243,24 +243,24 @@ export default function LoginPage() {
         <div className="login-grid absolute inset-0 opacity-[0.08]" />
         <div className="relative z-10 flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-white text-ink">
-            <Database className="h-5 w-5" />
+            <Sparkles className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-base font-semibold">AI 知识库</p>
-            <p className="text-xs text-slate-300">Knowledge Ops Console</p>
+            <p className="text-base font-semibold">小董AI</p>
+            <p className="text-xs text-slate-300">AI Knowledge OS 用户端</p>
           </div>
         </div>
 
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            License Gate
+            GPT OS 用户端
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            用手机号和密码进入你的 AI 知识库。
+            小董AI，帮你处理客户问题
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            登录后输入卡密激活，即可使用投喂、检索和问答功能。
+            基于投喂知识库 + AI 思考，输出回复话术、解决步骤和下一步建议。
           </p>
         </div>
       </section>
@@ -269,15 +269,17 @@ export default function LoginPage() {
         <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-soft sm:p-8">
           <div className="mb-8 lg:hidden">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-ink text-white">
-              <Database className="h-5 w-5" />
+              <Sparkles className="h-5 w-5" />
             </span>
-            <h1 className="mt-4 text-2xl font-semibold text-ink">AI 知识库</h1>
+            <h1 className="mt-4 text-2xl font-semibold text-ink">小董AI</h1>
           </div>
 
           <div>
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号登录</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码继续。</p>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">登录小董AI</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              用手机号登录，进入你的 AI 业务助手。上传客户对话、输入业务问题，系统将调用企业知识库并生成可执行回复方案。
+            </p>
           </div>
 
           <Suspense fallback={<div className="mt-8 text-sm text-muted">正在加载登录表单...</div>}>
