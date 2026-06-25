@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
+import { ArrowRight, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
@@ -165,24 +165,24 @@ export default function RegisterPage() {
         <div className="login-grid absolute inset-0 opacity-[0.08]" />
         <div className="relative z-10 flex items-center gap-3">
           <span className="grid h-11 w-11 place-items-center rounded-xl bg-white text-ink">
-            <Database className="h-5 w-5" />
+            <Sparkles className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-base font-semibold">AI 知识库</p>
-            <p className="text-xs text-slate-300">Knowledge Ops Console</p>
+            <p className="text-base font-semibold">小董AI</p>
+            <p className="text-xs text-slate-300">AI Knowledge OS 用户端</p>
           </div>
         </div>
 
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            Phone Password
+            用户端账号
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            注册后输入卡密，开启知识库工作台。
+            创建小董AI用户账号
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            密码会哈希保存，卡密也只保存 hash，不保存明文。
+            注册后使用超级管理员发放的卡密激活，即可使用用户端 GPT OS。
           </p>
         </div>
       </section>
@@ -191,15 +191,17 @@ export default function RegisterPage() {
         <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-soft sm:p-8">
           <div className="mb-8 lg:hidden">
             <span className="grid h-11 w-11 place-items-center rounded-xl bg-ink text-white">
-              <Database className="h-5 w-5" />
+              <Sparkles className="h-5 w-5" />
             </span>
-            <h1 className="mt-4 text-2xl font-semibold text-ink">AI 知识库</h1>
+            <h1 className="mt-4 text-2xl font-semibold text-ink">小董AI</h1>
           </div>
 
           <div>
             <p className="text-sm font-medium text-teal-700">创建账号</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号注册</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码创建账号。</p>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">创建小董AI用户账号</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              注册后使用超级管理员发放的卡密激活，即可使用用户端 GPT OS。
+            </p>
           </div>
 
           <RegisterForm />

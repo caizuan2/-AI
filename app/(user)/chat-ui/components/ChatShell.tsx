@@ -689,7 +689,7 @@ export function ChatShell() {
           />
 
           <header className="z-20 shrink-0 bg-white px-5">
-            <span className="sr-only">AI 知识库助手</span>
+            <span className="sr-only">小董AI 用户端</span>
             <div className="grid h-16 grid-cols-[52px_1fr_52px] items-center">
               <button
                 type="button"
@@ -701,8 +701,8 @@ export function ChatShell() {
               </button>
 
               <div className="min-w-0 text-center">
-                <h1 className="truncate text-lg font-bold text-slate-950">新对话</h1>
-                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">内容由 AI 生成</p>
+                <h1 className="truncate text-lg font-bold text-slate-950">小董AI</h1>
+                <p className="mt-0.5 truncate text-xs font-medium text-slate-400">企业知识库 + AI 思考</p>
               </div>
 
               <button

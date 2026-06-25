@@ -214,8 +214,8 @@ export function ChatSidebarDrawer({
               AI
             </span>
             <div>
-              <p className="text-lg font-bold text-slate-950">AI 知识库</p>
-              <p className="text-xs text-slate-400">用户端问答助手</p>
+              <p className="text-lg font-bold text-slate-950">小董AI</p>
+              <p className="text-xs text-slate-400">AI Knowledge OS 用户端</p>
             </div>
           </div>
 
