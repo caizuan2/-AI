@@ -1,6 +1,6 @@
 import { apiError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
-import { requireKbAdmin } from "@/lib/auth/guards";
+import type { RbacUser } from "@/lib/auth/rbac";
 import { ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import {
@@ -21,6 +21,7 @@ import type {
 import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
+import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -240,6 +241,36 @@ function buildModelDiagnostics(input: {
   };
 }
 
+function logGptRoute(event: {
+  requestId: string;
+  selectedModelLabel?: string | null;
+  preferredModel?: string | null;
+  provider?: string | null;
+  actualModel?: string | null;
+  routeDecision?: string | null;
+  hasMessage?: boolean;
+  attachmentCount?: number;
+  fallbackUsed?: boolean;
+  ok?: boolean;
+  contentLength?: number;
+  errorCode?: string | null;
+}) {
+  console.info("[admin-ingest:gpt-route]", {
+    requestId: event.requestId,
+    selectedModelLabel: event.selectedModelLabel ?? null,
+    preferredModel: event.preferredModel ?? null,
+    provider: event.provider ?? null,
+    actualModel: event.actualModel ?? null,
+    routeDecision: event.routeDecision ?? null,
+    hasMessage: Boolean(event.hasMessage),
+    attachmentCount: event.attachmentCount ?? 0,
+    fallbackUsed: Boolean(event.fallbackUsed),
+    ok: Boolean(event.ok),
+    contentLength: event.contentLength ?? 0,
+    errorCode: event.errorCode ?? null
+  });
+}
+
 function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
   if (!Array.isArray(value)) {
     return [];
@@ -441,10 +472,10 @@ function readRequest(body: unknown) {
 
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
-  let actor: Awaited<ReturnType<typeof requireKbAdmin>> | null = null;
+  let actor: RbacUser | null = null;
 
   try {
-    actor = await requireKbAdmin(request, {
+    actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_kb_ingest_gpt"
     });
@@ -509,14 +540,15 @@ export async function POST(request: Request) {
       requestId
     });
 
-    const rawReply = result.replyMarkdown;
+    const rawReply = result.replyMarkdown || "";
     const stylePassThrough = enhanceGPTStyle(rawReply);
     const fallbackChainText = readDiagnosticValue(result.diagnostics, "modelRouter:fallbackChain:");
+    const routeDecision = readDiagnosticValue(result.diagnostics, "modelRouter:routeDecision:");
     const modelDiagnostics = buildModelDiagnostics({
       provider: result.provider,
       displayModelLabel: result.selectedModelLabel || modelRuntime.displayModelLabel,
       actualModel: result.actualModel || modelRuntime.actualModel,
-      routeDecision: readDiagnosticValue(result.diagnostics, "modelRouter:routeDecision:"),
+      routeDecision,
       fallbackUsed: result.fallbackUsed,
       fallbackChain: fallbackChainText ? fallbackChainText.split(">").filter(Boolean) : []
     });
@@ -529,6 +561,21 @@ export async function POST(request: Request) {
         "gptStyle:changed:false"
       ]
     };
+
+    logGptRoute({
+      requestId,
+      selectedModelLabel: modelRuntime.displayModelLabel,
+      preferredModel: input.preferredModel,
+      provider: rawResult.provider,
+      actualModel: rawResult.actualModel || modelRuntime.actualModel,
+      routeDecision,
+      hasMessage: Boolean(input.input),
+      attachmentCount: input.attachments.length,
+      fallbackUsed: rawResult.fallbackUsed,
+      ok: true,
+      contentLength: rawReply.length,
+      errorCode: null
+    });
 
     return jsonUtf8({
       ok: true,
@@ -599,6 +646,21 @@ export async function POST(request: Request) {
       routeDecision: modelOption.provider,
       fallbackUsed: true,
       fallbackChain: []
+    });
+
+    logGptRoute({
+      requestId,
+      selectedModelLabel: modelRuntime.displayModelLabel,
+      preferredModel: input.preferredModel,
+      provider: modelDiagnostics.provider,
+      actualModel: modelRuntime.actualModel,
+      routeDecision: modelOption.provider,
+      hasMessage: Boolean(input.input),
+      attachmentCount: input.attachments.length,
+      fallbackUsed: true,
+      ok: false,
+      contentLength: 0,
+      errorCode
     });
 
     if (errorCode === "OPENAI_FULL_REQUEST_FAILED") {

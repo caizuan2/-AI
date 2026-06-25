@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { apiError, databaseConfigError } from "@/lib/api-response";
-import { requireUser } from "@/lib/auth";
+import { requireUserAppAccess } from "@/lib/auth/guards";
 import {
   buildConversationFeatureFlagResponse,
   getConversationFeatureFlags
@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    await requireUser();
+    await requireUserAppAccess();
 
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取会话功能开关"));

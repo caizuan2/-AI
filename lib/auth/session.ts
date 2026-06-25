@@ -5,6 +5,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { SESSION_COOKIE_NAME, SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
+import { resolveSessionCookieSecure } from "@/lib/auth/session-cookie";
 import { ConfigError, ForbiddenError, UnauthorizedError } from "@/lib/errors";
 import { hasSessionSecret } from "@/lib/server-config-core";
 
@@ -30,29 +31,11 @@ export function hashSessionToken(token: string) {
   return createHash("sha256").update(`${secret}:${token}`).digest("hex");
 }
 
-function isHttpsRequest(request?: Request) {
-  if (!request) {
-    return process.env.NODE_ENV === "production";
-  }
-
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-
-  if (forwardedProto) {
-    return forwardedProto === "https";
-  }
-
-  try {
-    return new URL(request.url).protocol === "https:";
-  } catch {
-    return process.env.NODE_ENV === "production";
-  }
-}
-
 function getSessionCookieOptions(expiresAt: Date, request?: Request) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: isHttpsRequest(request),
+    secure: resolveSessionCookieSecure(request),
     path: "/",
     expires: expiresAt,
     maxAge: SESSION_MAX_AGE_SECONDS
@@ -152,7 +135,7 @@ export async function destroySession(request?: Request) {
   cookies().set(SESSION_COOKIE_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
-    secure: isHttpsRequest(request),
+    secure: resolveSessionCookieSecure(request),
     path: "/",
     maxAge: 0
   });

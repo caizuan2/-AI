@@ -1,8 +1,8 @@
 import { apiError } from "@/lib/api-response";
-import { requireKbAdmin } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import { parseAdminIngestFile } from "@/lib/enterprise/ingest-file-parser";
+import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,7 +33,7 @@ function readString(value: FormDataEntryValue | null) {
 
 export async function POST(request: Request) {
   try {
-    await requireKbAdmin(request, {
+    await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_kb_ingest_file_parse"
     });

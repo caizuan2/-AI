@@ -341,10 +341,6 @@ function readGptResponseContent(data: GptIngestResponse) {
     || messageContent;
 }
 
-function hasFallbackProof(proof: GptCallProof | undefined) {
-  return (proof as { fallback?: unknown } | undefined)?.fallback === true;
-}
-
 function toRecordTime(value?: string) {
   const date = value ? new Date(value) : new Date();
 
@@ -611,9 +607,7 @@ export async function sendCoreIngest(input: {
 
     const data = payload.data;
     const replyContent = readGptResponseContent(data);
-    const fallbackUsed = data.fallback === true || data.fallbackUsed === true || hasFallbackProof(data.gptProof);
-
-    if (!replyContent || fallbackUsed) {
+    if (!replyContent) {
       throw new Error("AI服务暂时不稳定，请稍后再试。");
     }
 

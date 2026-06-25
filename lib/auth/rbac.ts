@@ -2,7 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { requireUser, type AppUser } from "@/lib/auth";
-import { checkUserLicense } from "@/lib/auth/license";
+import { checkUserLicense, type LicenseAppType } from "@/lib/auth/license";
 import { isAdminUser } from "@/lib/auth/admin-config";
 import { getLicenseAppTypeForProduct, getProductFromPath, type AppProduct } from "@/lib/auth/product";
 import { writeAuditLog, type AuditAction } from "@/lib/audit-log";
@@ -23,6 +23,7 @@ interface RoleGuardOptions {
   request?: Request;
   product?: AppProduct;
   requireLicense?: boolean;
+  requiredAppType?: LicenseAppType;
   deniedAction?: AuditAction;
   targetType?: string;
   targetId?: string | null;
@@ -197,7 +198,7 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
   }
 
   if (options.requireLicense) {
-    const expectedAppType = getLicenseAppTypeForProduct(product) ?? "user_app";
+    const expectedAppType = options.requiredAppType ?? getLicenseAppTypeForProduct(product) ?? "user_app";
 
     await checkUserLicense(user.id, expectedAppType);
   }

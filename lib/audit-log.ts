@@ -45,6 +45,8 @@ export type AuditAction =
   | "demote_user_role"
   | "enable_user"
   | "last_super_admin_protected"
+  | "license.mismatch"
+  | "product.blocked"
   | "promote_to_enterprise_admin"
   | "promote_to_ingest_admin"
   | "promote_to_super_admin"

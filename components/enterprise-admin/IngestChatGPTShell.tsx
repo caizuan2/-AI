@@ -346,10 +346,6 @@ function readGptResponseContent(data: AdminGptIngestResponse) {
     || messageContent;
 }
 
-function hasFallbackProof(proof: GptCallProof | undefined) {
-  return (proof as { fallback?: unknown } | undefined)?.fallback === true;
-}
-
 function getTimeLabel(value?: string) {
   const date = value ? new Date(value) : new Date();
 
@@ -983,9 +979,7 @@ export function IngestChatGPTShell({
       }).finally(() => window.clearTimeout(timeout));
       const data = await readApiData<AdminGptIngestResponse>(response);
       const replyContent = readGptResponseContent(data);
-      const fallbackUsed = data.fallback === true || data.fallbackUsed === true || hasFallbackProof(data.gptProof);
-
-      if (!replyContent || fallbackUsed) {
+      if (!replyContent) {
         throw new Error("AI服务暂时不稳定，请稍后再试。");
       }
 

@@ -1,8 +1,8 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireUser } from "@/lib/auth";
-import { normalizeLicenseAppType, redeemLicenseKey } from "@/lib/auth/license";
-import { ValidationError } from "@/lib/errors";
+import { getLicenseAppTypeFromKey, normalizeLicenseAppType, redeemLicenseKey } from "@/lib/auth/license";
+import { LicenseAppTypeMismatchError, ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +20,18 @@ function parseRedeemRequest(body: unknown, request: Request) {
     (typeof body.licenseKey === "string" ? body.licenseKey.trim() : "") ||
     (typeof body.key === "string" ? body.key.trim() : "") ||
     (typeof body.code === "string" ? body.code.trim() : "");
+  if (!licenseKey) {
+    throw new ValidationError("请输入卡密。");
+  }
+
   const url = new URL(request.url);
   const appType = normalizeLicenseAppType(
     body.appType ?? body.app ?? url.searchParams.get("appType") ?? url.searchParams.get("app"),
-    "user_app"
+    getLicenseAppTypeFromKey(licenseKey) ?? "user_app"
   );
 
-  if (!licenseKey) {
-    throw new ValidationError("请输入卡密。");
+  if (appType !== "user_app") {
+    throw new LicenseAppTypeMismatchError("用户端激活接口只能使用 XT-USER 卡密。");
   }
 
   return { licenseKey, appType };
