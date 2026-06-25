@@ -310,7 +310,15 @@ export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undef
 }
 
 export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {
-  return cleanText(user?.avatar_url) || cleanText(user?.avatarUrl) || cleanText(user?.avatar) || null;
+  return (
+    cleanText(user?.avatar_url) ||
+    cleanText(user?.avatarUrl) ||
+    cleanText(user?.avatar) ||
+    cleanText(user?.profile_image) ||
+    cleanText(user?.profileImage) ||
+    cleanText(user?.image) ||
+    null
+  );
 }
 
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {

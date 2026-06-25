@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { BookOpen, ClipboardList, GitBranch, Sparkles, Target } from "lucide-react";
+import { BotMessageSquare, Brain, ClipboardList, GitBranch, Target } from "lucide-react";
 import type { ChatMode } from "../types";
 
 interface EmptyStateProps {
@@ -15,9 +15,9 @@ export function EmptyState({ mode, onModeChange }: EmptyStateProps) {
 
   const capabilities = [
     {
-      title: "RAG / 知识库调用",
-      description: "优先检索企业投喂资料，再组织可落地回答。",
-      icon: BookOpen
+      title: "RAG / 小董AI大脑🧠调用",
+      description: "优先检索小董AI大脑🧠，再组织可落地回答。",
+      icon: Brain
     },
     {
       title: "商业 6 段结构",
@@ -34,9 +34,8 @@ export function EmptyState({ mode, onModeChange }: EmptyStateProps) {
   return (
     <div className="flex min-h-[520px] flex-1 items-center justify-center px-4 py-8 text-center md:px-8">
       <div className="w-full max-w-5xl">
-        <div className="mx-auto inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700">
-          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
-          小董AI / AI Knowledge OS 用户端
+        <div className="mx-auto inline-flex h-20 w-20 items-center justify-center rounded-3xl bg-gradient-to-br from-sky-50 via-white to-violet-50 text-sky-600 shadow-sm ring-1 ring-sky-100">
+          <BotMessageSquare className="h-11 w-11" aria-hidden="true" />
         </div>
 
         <h1 className="mx-auto mt-5 max-w-3xl text-3xl font-bold tracking-normal text-slate-950">
@@ -44,7 +43,7 @@ export function EmptyState({ mode, onModeChange }: EmptyStateProps) {
         </h1>
 
         <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600">
-          把客户对话、微信截图或业务问题发给我，我会调用企业知识库并结合 AI 思考，生成解决方案、回复话术和下一步建议。
+          把客户对话、微信截图或业务问题发给我，我会调用小董AI大脑🧠并结合 AI 思考，生成解决方案、回复话术和下一步建议。
         </p>
 
         <div className="mx-auto mt-6 flex max-w-3xl flex-wrap justify-center gap-2 text-sm font-semibold">
@@ -76,7 +75,7 @@ export function EmptyState({ mode, onModeChange }: EmptyStateProps) {
             <Target className="h-4 w-4" aria-hidden="true" />
             试试这样问
           </div>
-          <p>客户说太贵了怎么回复？请基于知识库给我一套能直接复制的回复话术，并给出下一步跟进动作。</p>
+          <p>客户说考虑考虑怎么回复？请基于小董AI大脑🧠给我一套能直接复制的回复话术，并给出下一步跟进动作。</p>
         </div>
       </div>
     </div>

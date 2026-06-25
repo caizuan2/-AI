@@ -2,6 +2,8 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { requireUser } from "@/lib/auth";
 import { getUserRoles } from "@/lib/auth/rbac";
 import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
+import { prisma } from "@/lib/prisma";
+import { ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
@@ -20,28 +22,75 @@ interface MeResponse {
   };
 }
 
+async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>): Promise<MeResponse> {
+  const roles = await getUserRoles(user);
+  const isSuperAdmin = roles.includes("super_admin");
+  const licenseActivated = user.licenseActivated || isSuperAdmin;
+  const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
+
+  return {
+    user: {
+      id: user.id,
+      phone: user.phone,
+      email: user.email,
+      name: user.name,
+      avatar_url: null,
+      licenseActivated,
+      isSuperAdmin,
+      role,
+      roles,
+      entryPath: getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated })
+    }
+  };
+}
+
 export async function GET() {
   try {
     const user = await requireUser();
-    const roles = await getUserRoles(user);
-    const isSuperAdmin = roles.includes("super_admin");
-    const licenseActivated = user.licenseActivated || isSuperAdmin;
-    const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
+    return apiSuccess<MeResponse>(await toMeResponse(user));
+  } catch (error) {
+    return apiError(error);
+  }
+}
 
-    return apiSuccess<MeResponse>({
-      user: {
-        id: user.id,
-        phone: user.phone,
-        email: user.email,
-        name: user.name,
-        avatar_url: null,
-        licenseActivated,
-        isSuperAdmin,
-        role,
-        roles,
-        entryPath: getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated })
+export async function PATCH(request: Request) {
+  try {
+    const user = await requireUser();
+    const payload = await request.json().catch(() => {
+      throw new ValidationError("请求体必须是合法 JSON。");
+    });
+    const nextName = typeof payload?.name === "string" ? payload.name.trim() : "";
+    const nameLength = Array.from(nextName).length;
+
+    if (!nextName) {
+      throw new ValidationError("名称不能为空。");
+    }
+
+    if (nameLength < 2 || nameLength > 20) {
+      throw new ValidationError("名称长度需要在 2 到 20 个字符之间。");
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: user.id },
+      data: { name: nextName },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        name: true,
+        isActive: true,
+        licenseActivated: true
       }
     });
+
+    return apiSuccess<MeResponse>(await toMeResponse({
+      id: updatedUser.id,
+      email: updatedUser.email,
+      phone: updatedUser.phone,
+      name: updatedUser.name?.trim() || updatedUser.phone || updatedUser.email || updatedUser.id,
+      isActive: updatedUser.isActive,
+      licenseActivated: updatedUser.licenseActivated
+    }));
   } catch (error) {
     return apiError(error);
   }
