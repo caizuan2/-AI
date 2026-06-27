@@ -149,6 +149,7 @@ const publicExactPaths = [
   "/ingest/register",
   "/ingest/activate",
   "/api/health",
+  "/api/user/expert-market",
   "/favicon.ico",
   "/robots.txt",
   "/sitemap.xml"

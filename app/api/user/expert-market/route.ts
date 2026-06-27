@@ -1,6 +1,4 @@
 import { NextResponse } from "next/server";
-import { apiError } from "@/lib/api-response";
-import { requireRole } from "@/lib/auth/guards";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,17 +25,6 @@ type ExpertMarketSection = {
   title: string;
   items: ExpertMarketItem[];
 };
-
-const EXPERT_MARKET_BASE_URLS = Array.from(new Set([
-  process.env.USER_EXPERT_MARKET_BASE_URL,
-  process.env.INGEST_PUBLIC_BASE_URL,
-  process.env.NEXT_PUBLIC_INGEST_PUBLIC_BASE_URL,
-  process.env.NODE_ENV === "development" ? "http://localhost:3056" : null,
-  process.env.NODE_ENV === "development" ? "http://127.0.0.1:3056" : null,
-  process.env.NODE_ENV === "development" ? "http://127.0.0.1:3052" : null,
-  process.env.NODE_ENV === "development" ? "http://127.0.0.1:3053" : null,
-  process.env.NODE_ENV === "development" ? "http://localhost:3021" : null
-].filter((value): value is string => Boolean(value))));
 
 const EXPERT_MARKET_PATHS = [
   "/api/public/expert-market",
@@ -182,6 +169,40 @@ function normalizeSections(payload: unknown): ExpertMarketSection[] {
     .filter((section) => section.items.length > 0);
 }
 
+function getExpertMarketBaseUrls(request: Request) {
+  let requestOrigin = "";
+
+  try {
+    requestOrigin = new URL(request.url).origin;
+  } catch {
+    requestOrigin = "";
+  }
+
+  const runtimePort = process.env.PORT || "3021";
+  const developmentOnlyUrls = process.env.NODE_ENV === "development"
+    ? [
+        "http://localhost:3056",
+        "http://127.0.0.1:3056"
+      ]
+    : [];
+
+  return Array.from(new Set([
+    requestOrigin,
+    process.env.USER_EXPERT_MARKET_BASE_URL,
+    process.env.INGEST_PUBLIC_BASE_URL,
+    process.env.NEXT_PUBLIC_INGEST_PUBLIC_BASE_URL,
+    `http://127.0.0.1:${runtimePort}`,
+    `http://localhost:${runtimePort}`,
+    "http://127.0.0.1:3021",
+    "http://localhost:3021",
+    "http://127.0.0.1:3052",
+    "http://localhost:3052",
+    "http://127.0.0.1:3053",
+    "http://localhost:3053",
+    ...developmentOnlyUrls
+  ].filter((value): value is string => Boolean(value))));
+}
+
 async function fetchJsonWithTimeout(url: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2500);
@@ -211,20 +232,7 @@ async function fetchJsonWithTimeout(url: string) {
 }
 
 export async function GET(request: Request) {
-  try {
-    await requireRole("user", {
-      request,
-      requireLicense: true,
-      requiredAppType: "user_app",
-      product: "user_app",
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "expert_market"
-    });
-  } catch (error) {
-    return apiError(error);
-  }
-
-  for (const baseUrl of EXPERT_MARKET_BASE_URLS) {
+  for (const baseUrl of getExpertMarketBaseUrls(request)) {
     for (const path of EXPERT_MARKET_PATHS) {
       const url = `${baseUrl}${path}`;
       const result = await fetchJsonWithTimeout(url).catch(() => null);
