@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowRight, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
@@ -242,12 +243,19 @@ export default function LoginPage() {
       <section className="relative hidden overflow-hidden bg-ink px-10 py-10 text-white lg:flex lg:flex-col">
         <div className="login-grid absolute inset-0 opacity-[0.08]" />
         <div className="relative z-10 flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-white text-ink">
-            <Sparkles className="h-5 w-5" />
+          <span className="relative block h-11 w-11 overflow-hidden rounded-xl bg-white ring-1 ring-white/30">
+            <Image
+              src="/brand/xiaodong-ai-logo.png"
+              alt="小董AI Logo"
+              fill
+              sizes="44px"
+              className="object-cover"
+              priority
+            />
           </span>
           <div>
             <p className="text-base font-semibold">小董AI</p>
-            <p className="text-xs text-slate-300">AI Knowledge OS 用户端</p>
+            <p className="text-xs text-slate-300">小董AI大脑🧠 + AI思考</p>
           </div>
         </div>
 
@@ -268,8 +276,15 @@ export default function LoginPage() {
       <section className="flex items-center justify-center px-4 py-10 sm:px-6">
         <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-soft sm:p-8">
           <div className="mb-8 lg:hidden">
-            <span className="grid h-11 w-11 place-items-center rounded-xl bg-ink text-white">
-              <Sparkles className="h-5 w-5" />
+            <span className="relative block h-11 w-11 overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
+              <Image
+                src="/brand/xiaodong-ai-logo.png"
+                alt="小董AI Logo"
+                fill
+                sizes="44px"
+                className="object-cover"
+                priority
+              />
             </span>
             <h1 className="mt-4 text-2xl font-semibold text-ink">小董AI</h1>
           </div>

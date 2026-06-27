@@ -46,6 +46,7 @@ function splitFacts(content: string) {
     .split(/(?<=[。！？；;])|\n+/)
     .map((item) => item.replace(/^[-*•\d.、\s]+/, "").trim())
     .filter((item) => item.length >= 8)
+    .filter((item) => !/^标准回答必须包含[:：]?$/.test(item))
     .filter((item) => !/provider|storage_path|系统提示|开发者指令|chunk_id/i.test(item));
 }
 

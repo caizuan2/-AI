@@ -1,4 +1,9 @@
 import { toAppError } from "@/lib/errors";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay,
+  type FinalizedAnswer
+} from "@/lib/ai-chat/response-finalizer";
 
 export type AiChatStreamEvent =
   | {
@@ -26,6 +31,14 @@ export type AiChatStreamEvent =
       title?: string | null;
       file_id?: string | null;
       chunk_id?: string | null;
+      item_id?: string | null;
+      knowledgeBaseId?: string | null;
+      agentId?: string | null;
+      tenantId?: string | null;
+      namespace?: string | null;
+      sourceApp?: string | null;
+      includeShared?: boolean | null;
+      includePublished?: boolean | null;
     }
   | {
       type: "rag_done";
@@ -73,6 +86,7 @@ export interface StreamableAiChatResult {
   message_id: string;
   mode: string;
   customer_answer?: string | null;
+  finalized_answer?: unknown;
   sources?: unknown[] | null;
   confidence?: string | null;
   provider_status?: string | null;
@@ -144,17 +158,19 @@ export async function streamAiChatResult(
   emit: (event: AiChatStreamEvent) => Promise<void>,
   signal?: AbortSignal
 ) {
+  const finalResult = ensureFinalizedStreamResult(result);
+
   await emit({
     type: "thinking",
     content: "知识库检索完成，正在生成最终答案..."
   });
-  await emitRagVisualization(result, emit);
-  await emitModelVisualization(result, emit);
-  await streamTextTokens(result.answer ?? "", emit, signal);
+  await emitRagVisualization(finalResult, emit);
+  await emitModelVisualization(finalResult, emit);
+  await streamTextTokens(finalResult.answer ?? "", emit, signal);
   await emit({
     type: "final",
-    content: result.answer ?? "",
-    data: result
+    content: finalResult.answer ?? "",
+    data: finalResult
   });
 }
 
@@ -198,6 +214,49 @@ function getSourceRecords(result: StreamableAiChatResult) {
     : [];
 }
 
+function getFinalizerSources(result: StreamableAiChatResult) {
+  return getSourceRecords(result).map((source) => ({
+    title: readString(source.title) || readString(source.file_name) || readString(source.source) || null,
+    score: readNumber(source.relevance_score) ?? readNumber(source.score)
+  }));
+}
+
+function getFinalizedAnswer(value: unknown): FinalizedAnswer | null {
+  return isRecord(value) &&
+    typeof value.problemUnderstanding === "string" &&
+    typeof value.keyConclusion === "string" &&
+    Array.isArray(value.suggestedSteps) &&
+    typeof value.customerReply === "string" &&
+    typeof value.nextAction === "string"
+    ? value as FinalizedAnswer
+    : null;
+}
+
+function ensureFinalizedStreamResult(result: StreamableAiChatResult): StreamableAiChatResult {
+  const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
+    rawAnswer: result.answer,
+    customerAnswer: result.customer_answer ?? undefined,
+    sources: getFinalizerSources(result)
+  });
+  const metadata = isRecord(result.metadata) ? result.metadata : {};
+  const debug = isRecord(metadata.debug) ? metadata.debug : {};
+
+  return {
+    ...result,
+    answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+    customer_answer: finalizedAnswer.customerReply,
+    finalized_answer: finalizedAnswer,
+    metadata: {
+      ...metadata,
+      debug: {
+        ...debug,
+        rawInternalAnswerHidden: true,
+        internalPanelsAvailable: true
+      }
+    }
+  };
+}
+
 async function emitRagVisualization(
   result: StreamableAiChatResult,
   emit: (event: AiChatStreamEvent) => Promise<void>
@@ -210,7 +269,13 @@ async function emitRagVisualization(
     const source = sources[index];
     const title = readString(source.title) || "知识片段";
     const chunkId = readString(source.chunk_id);
+    const itemId = readString(source.item_id);
     const fileId = readString(source.file_id);
+    const knowledgeBaseId = readString(source.knowledgeBaseId);
+    const agentId = readString(source.agentId);
+    const tenantId = readString(source.tenantId);
+    const namespace = readString(source.namespace);
+    const sourceApp = readString(source.sourceApp);
     const chunkRank = readNumber(source.chunk_rank) ?? index + 1;
     const score = clamp01(readNumber(source.relevance_score) ?? readNumber(source.score));
 
@@ -234,7 +299,15 @@ async function emitRagVisualization(
       source: fileId || chunkId || title,
       title,
       file_id: fileId || null,
-      chunk_id: chunkId || null
+      chunk_id: chunkId || null,
+      item_id: itemId || null,
+      knowledgeBaseId: knowledgeBaseId || null,
+      agentId: agentId || null,
+      tenantId: tenantId || null,
+      namespace: namespace || null,
+      sourceApp: sourceApp || null,
+      includeShared: typeof source.includeShared === "boolean" ? source.includeShared : null,
+      includePublished: typeof source.includePublished === "boolean" ? source.includePublished : null
     });
   }
 

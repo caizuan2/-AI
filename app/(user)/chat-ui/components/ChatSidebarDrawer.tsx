@@ -1,10 +1,10 @@
 "use client";
 
 import * as React from "react";
+import Image from "next/image";
 import {
   Archive,
   Bell,
-  BotMessageSquare,
   Camera,
   Check,
   MoreHorizontal,
@@ -26,6 +26,7 @@ import {
   formatConversationTime,
   getCurrentChatUserInitial
 } from "../chat-ui-state";
+import { sanitizeVisibleText } from "@/lib/ai-chat/visible-output-sanitizer";
 import type { ChangePasswordInput, ChatConversation, CurrentChatUser } from "../types";
 import { AvatarSettingsDialog } from "./AvatarSettingsDialog";
 import { ChatSettingsMenu } from "./ChatSettingsMenu";
@@ -103,12 +104,16 @@ type SidebarItem = {
 
 function buildSidebarItems(conversations: ChatConversation[]): SidebarItem[] {
   if (conversations.length > 0) {
-    return conversations.map((conversation) => ({
-      id: conversation.id,
-      title: conversation.title || "新会话",
-      updatedAt: conversation.updated_at,
-      mode: conversation.mode
-    }));
+    return conversations.map((conversation, index) => {
+      const title = sanitizeVisibleText(conversation.title || "") || `小董AI对话 ${index + 1}`;
+
+      return {
+        id: conversation.id,
+        title,
+        updatedAt: conversation.updated_at,
+        mode: conversation.mode
+      };
+    });
   }
 
   return mockConversationTitles.map((title, index) => ({
@@ -122,8 +127,14 @@ function buildSidebarItems(conversations: ChatConversation[]): SidebarItem[] {
 
 function BrandMark() {
   return (
-    <span className="inline-flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-sky-50 via-white to-violet-50 text-sky-600 ring-1 ring-sky-100">
-      <BotMessageSquare className="h-7 w-7" aria-hidden="true" />
+    <span className="relative inline-flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200">
+      <Image
+        src="/brand/xiaodong-ai-logo.png"
+        alt="小董AI Logo"
+        fill
+        sizes="48px"
+        className="object-cover"
+      />
     </span>
   );
 }

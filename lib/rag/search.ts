@@ -9,6 +9,13 @@ export interface RetrievedRagChunk {
   chunkId: string;
   fileId: string | null;
   knowledgeItemId: string;
+  knowledgeBaseId: string | null;
+  agentId: string | null;
+  tenantId: string | null;
+  namespace: string | null;
+  sourceApp: string | null;
+  includeShared: boolean;
+  includePublished: boolean;
   title: string;
   content: string;
   summary: string | null;
@@ -29,6 +36,12 @@ export interface RetrieveRelevantChunksOptions {
   topK?: number;
   category?: string | null;
   fileId?: string | null;
+  knowledgeScope?: {
+    knowledgeBaseId?: string | null;
+    agentId?: string | null;
+    tenantId?: string | null;
+    namespace?: string | null;
+  } | null;
   db?: RagSearchDb;
 }
 
@@ -38,6 +51,7 @@ type KnowledgeChunkRecord = Record<string, unknown> & {
   knowledgeItemId?: string;
   chunkText?: string;
   summary?: string | null;
+  metadata?: Record<string, unknown> | null;
   createdAt?: Date | string;
   knowledgeItem?: Record<string, unknown>;
   file?: Record<string, unknown> | null;
@@ -54,6 +68,8 @@ const FAST_TOP_K = 5;
 const EXPERT_TOP_K = 10;
 const MAX_TOP_K = 20;
 const MIN_RELEVANT_SCORE = 0.08;
+const SHARED_INGEST_SOURCE_APPS = ["ingest_admin", "admin_ingest", "admin_feed"];
+const SHARED_INGEST_VISIBILITIES = ["published", "shared"];
 
 const STOP_TERMS = new Set([
   "什么",
@@ -212,11 +228,43 @@ function fieldScore(value: unknown, query: string, terms: string[], exactWeight:
   return score;
 }
 
+function extractExplicitIdentifiers(query: string) {
+  return Array.from(query.matchAll(/[a-zA-Z0-9]+(?:-[a-zA-Z0-9]+){2,}/g))
+    .map((match) => match[0].toLowerCase())
+    .filter((value, index, values) => value.length >= 8 && values.indexOf(value) === index);
+}
+
+function hasExplicitIdentifierMatch(row: KnowledgeChunkRecord, query: string) {
+  const item = row.knowledgeItem ?? {};
+  const identifiers = extractExplicitIdentifiers(query);
+
+  if (identifiers.length === 0) {
+    return false;
+  }
+
+  const haystack = [
+    row.chunkText,
+    row.summary,
+    item.title,
+    item.summary,
+    item.sourceTitle
+  ]
+    .map((value) => typeof value === "string" ? value.toLowerCase() : "")
+    .join(" ");
+
+  return identifiers.some((identifier) => haystack.includes(identifier));
+}
+
+function identifierScore(row: KnowledgeChunkRecord, query: string) {
+  return hasExplicitIdentifierMatch(row, query) ? 0.36 : 0;
+}
+
 function scoreChunk(row: KnowledgeChunkRecord, query: string, terms: string[]) {
   const item = row.knowledgeItem ?? {};
   const tags = toStringArray(item.tags);
   let score = 0;
 
+  score += identifierScore(row, query);
   score += fieldScore(row.chunkText, query, terms, 0.44, 0.08);
   score += fieldScore(row.summary, query, terms, 0.2, 0.04);
   score += fieldScore(item.title, query, terms, 0.28, 0.06);
@@ -229,6 +277,119 @@ function scoreChunk(row: KnowledgeChunkRecord, query: string, terms: string[]) {
   }
 
   return clamp01(score);
+}
+
+function metadataEqualsAny(path: string, values: string[]) {
+  return values.map((value) => ({
+    metadata: {
+      path: [path],
+      equals: value
+    }
+  }));
+}
+
+function cleanScopeValue(value: unknown) {
+  return typeof value === "string" ? value.trim().slice(0, 120) : "";
+}
+
+function hasKnowledgeScope(options: RetrieveRelevantChunksOptions) {
+  const scope = options.knowledgeScope;
+
+  return Boolean(
+    cleanScopeValue(scope?.knowledgeBaseId)
+    || cleanScopeValue(scope?.agentId)
+    || cleanScopeValue(scope?.tenantId)
+    || cleanScopeValue(scope?.namespace)
+  );
+}
+
+function metadataEqualsAnyPath(paths: string[], value: string) {
+  return {
+    OR: paths.map((path) => ({
+      metadata: {
+        path: [path],
+        equals: value
+      }
+    }))
+  };
+}
+
+function buildKnowledgeScopeWhere(options: RetrieveRelevantChunksOptions) {
+  const scope = options.knowledgeScope;
+
+  if (!scope) {
+    return [];
+  }
+
+  const knowledgeBaseId = cleanScopeValue(scope.knowledgeBaseId);
+  const agentId = cleanScopeValue(scope.agentId);
+  const tenantId = cleanScopeValue(scope.tenantId);
+  const namespace = cleanScopeValue(scope.namespace);
+  const filters = [];
+
+  if (knowledgeBaseId) {
+    filters.push(metadataEqualsAnyPath(["knowledgeBaseId", "kb_id", "kbId"], knowledgeBaseId));
+  }
+
+  if (agentId) {
+    filters.push(metadataEqualsAnyPath(["agentId", "expert_id", "expertId"], agentId));
+  }
+
+  if (tenantId) {
+    filters.push(metadataEqualsAnyPath(["tenantId", "tenant_id"], tenantId));
+  }
+
+  if (namespace && namespace !== tenantId) {
+    filters.push(metadataEqualsAnyPath(["namespace"], namespace));
+  }
+
+  return filters;
+}
+
+function buildSharedIngestKnowledgeWhere(options: RetrieveRelevantChunksOptions) {
+  return {
+    AND: [
+      ...buildKnowledgeScopeWhere(options),
+      {
+        OR: [
+          ...metadataEqualsAny("sourceApp", SHARED_INGEST_SOURCE_APPS),
+          ...metadataEqualsAny("source", SHARED_INGEST_SOURCE_APPS)
+        ]
+      },
+      {
+        OR: [
+          {
+            metadata: {
+              path: ["sharedToUserApp"],
+              equals: true
+            }
+          },
+          {
+            metadata: {
+              path: ["published"],
+              equals: true
+            }
+          },
+          ...metadataEqualsAny("visibility", SHARED_INGEST_VISIBILITIES)
+        ]
+      },
+      {
+        knowledgeItem: {
+          is: {
+            deletedAt: null,
+            status: {
+              in: ["active", "published"]
+            },
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: new Date() } }
+            ],
+            ...(options.category ? { category: options.category } : {})
+          }
+        }
+      }
+    ]
+  };
 }
 
 function buildPrismaWhere(userId: string, terms: string[], options: RetrieveRelevantChunksOptions) {
@@ -253,16 +414,27 @@ function buildPrismaWhere(userId: string, terms: string[], options: RetrieveRele
     ]
   }));
 
+  const accessWhere = hasKnowledgeScope(options)
+    ? buildSharedIngestKnowledgeWhere(options)
+    : {
+        OR: [
+          {
+            knowledgeItem: {
+              is: {
+                userId,
+                deletedAt: null,
+                ...(options.category ? { category: options.category } : {})
+              }
+            }
+          },
+          buildSharedIngestKnowledgeWhere(options)
+        ]
+      };
+
   return {
     ...(options.fileId ? { fileId: options.fileId } : {}),
-    knowledgeItem: {
-      is: {
-        userId,
-        deletedAt: null,
-        ...(options.category ? { category: options.category } : {})
-      }
-    },
     AND: [
+      accessWhere,
       {
         OR: [
           { fileId: null },
@@ -280,13 +452,50 @@ function buildPrismaWhere(userId: string, terms: string[], options: RetrieveRele
   };
 }
 
+function metadataString(metadata: unknown, keys: string[]) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function metadataBoolean(metadata: unknown, keys: string[]) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return false;
+  }
+
+  const record = metadata as Record<string, unknown>;
+
+  return keys.some((key) => record[key] === true);
+}
+
 function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRagChunk {
   const item = row.knowledgeItem ?? {};
+  const metadata = row.metadata ?? null;
+  const tenantId = metadataString(metadata, ["tenantId", "tenant_id"]);
 
   return {
     chunkId: String(row.id ?? ""),
     fileId: typeof row.fileId === "string" ? row.fileId : null,
     knowledgeItemId: String(row.knowledgeItemId ?? item.id ?? ""),
+    knowledgeBaseId: metadataString(metadata, ["knowledgeBaseId", "kb_id", "kbId"]),
+    agentId: metadataString(metadata, ["agentId", "expert_id", "expertId"]),
+    tenantId,
+    namespace: metadataString(metadata, ["namespace"]) ?? tenantId,
+    sourceApp: metadataString(metadata, ["sourceApp", "source"]),
+    includeShared: metadataBoolean(metadata, ["sharedToUserApp", "shared"]),
+    includePublished: metadataBoolean(metadata, ["published"]),
     title: String(item.title ?? row.file?.originalName ?? "知识库资料"),
     content: String(row.chunkText ?? ""),
     summary: typeof row.summary === "string"
@@ -346,10 +555,14 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
   return rows
     .map((row) => ({
       chunk: toRetrievedChunk(row, scoreChunk(row, safeQuery, terms)),
-      score: scoreChunk(row, safeQuery, terms)
+      score: scoreChunk(row, safeQuery, terms),
+      identifierMatch: hasExplicitIdentifierMatch(row, safeQuery)
     }))
     .filter((item) => item.chunk.chunkId && item.chunk.content && item.score >= MIN_RELEVANT_SCORE)
-    .sort((left, right) => right.score - left.score)
+    .sort((left, right) => (
+      Number(right.identifierMatch) - Number(left.identifierMatch)
+      || right.score - left.score
+    ))
     .slice(0, topK)
     .map((item, index) => ({
       ...item.chunk,

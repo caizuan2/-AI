@@ -12,13 +12,13 @@ import {
   archiveConversation,
   askChatStream,
   changeCurrentUserPassword,
+  classifyChatMode,
   createConversationGroupChat,
   deleteConversation,
   deleteConversationGroupChatLink,
   fetchConversationHistory,
   fetchConversations,
   fetchCurrentChatUser,
-  fetchQuickActionCategories,
   logoutCurrentChatUser,
   renameConversation,
   resetConversationGroupChatLink,
@@ -37,26 +37,45 @@ import {
   getCurrentChatUserDisplayName,
   normalizeChatMode
 } from "../chat-ui-state";
+import {
+  detectChatMode,
+  resolveFinalChatMode,
+  type ChatModeDecision,
+  type ChatModeKey
+} from "../lib/intent-mode-router";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { ChatQuickActions } from "./ChatQuickActions";
 import { ChatSidebarDrawer, type SidebarConversationAction } from "./ChatSidebarDrawer";
+import { ExpertMarketDrawer } from "./ExpertMarketDrawer";
+import { KnowledgeBaseSelector } from "./KnowledgeBaseSelector";
+import { PromptKnowledgeBar } from "./PromptKnowledgeBar";
 import {
   ConfirmActionDialog,
   LinkActionDialog,
   RenameConversationDialog
 } from "./ConversationActionDialog";
+import {
+  addKnowledgeBaseSelection,
+  getActiveKnowledgeBase,
+  readStoredKnowledgeBases,
+  removeKnowledgeBaseSelection,
+  setActiveKnowledgeBaseSelection,
+  writeStoredKnowledgeBases
+} from "../lib/knowledge-base-selection";
 import type {
   ChatConversation,
   ChatAttachmentDraft,
   ChatMessageView,
   ChatMode,
   ChangePasswordInput,
-  ChatQuickActionItem,
-  CurrentChatUser
+  CurrentChatUser,
+  ExpertMarketItem,
+  SelectedKnowledgeBase
 } from "../types";
 
-const PINNED_CONVERSATION_STORAGE_KEY = "chat-ui:pinned-conversation-ids";
+const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
+const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
 
 type LinkDialogState = {
   kind: "share" | "group-chat";
@@ -81,13 +100,27 @@ type ConfirmDialogState = {
   onConfirm: () => void;
 } | null;
 
-function readPinnedConversationIds() {
-  if (typeof window === "undefined") {
+function getChatUserStorageIdentity(user: CurrentChatUser | null | undefined) {
+  const identity =
+    (typeof user?.id === "string" ? user.id.trim() : "") ||
+    getCurrentChatUserDisplayAccount(user).trim();
+
+  return identity || null;
+}
+
+function getPinnedConversationStorageKey(user: CurrentChatUser | null | undefined) {
+  const identity = getChatUserStorageIdentity(user);
+
+  return identity ? `${PINNED_CONVERSATION_STORAGE_KEY_PREFIX}:${encodeURIComponent(identity)}` : null;
+}
+
+function readPinnedConversationIds(storageKey: string | null) {
+  if (typeof window === "undefined" || !storageKey) {
     return new Set<string>();
   }
 
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(PINNED_CONVERSATION_STORAGE_KEY) ?? "[]");
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
 
     return new Set(Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : []);
   } catch {
@@ -95,9 +128,13 @@ function readPinnedConversationIds() {
   }
 }
 
-function writePinnedConversationIds(ids: Set<string>) {
+function writePinnedConversationIds(ids: Set<string>, storageKey: string | null) {
+  if (!storageKey) {
+    return;
+  }
+
   try {
-    window.localStorage.setItem(PINNED_CONVERSATION_STORAGE_KEY, JSON.stringify(Array.from(ids)));
+    window.localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)));
   } catch {
     // Local pinning is a UI convenience; storage failures must not block menu actions.
   }
@@ -149,44 +186,75 @@ function shouldDefaultOpenSidebar() {
   return window.innerWidth >= 1024;
 }
 
-const QUICK_ACTION_PLACEHOLDER_HINTS: Record<string, string> = {
-  "业务问题": "请根据客户对话生成可直接复制的回复话术，并给出下一步引导。",
-  "回复话术": "请帮我整理一段可以直接发给客户的专业回复话术。",
-  "客户截图分析": "请上传客户截图或粘贴客户对话，我会调用小董AI大脑🧠分析客户意图并给出回复方案。",
-  "成交路径": "请根据当前客户情况，生成成交推进路径和下一步动作。",
-  "专家研判": "请从专业角度判断客户问题、风险点和推荐处理方式。",
-  "深度思考": "请进行深度分析，给出问题原因、解决策略和可执行步骤。",
-  "大脑搜索": "请优先检索小董AI大脑🧠中的相关资料，再给出可靠回复。",
-  "客户对话": "请粘贴客户对话，我会判断客户意图并生成可直接复制的回复话术。",
-  "小董AI大脑🧠检索": "请优先检索小董AI大脑🧠中的相关资料，再给出可靠回复。",
-  "成交建议": "请根据当前客户情况，生成成交推进路径和下一步动作。"
-};
+function isImageLikeAttachment(attachment: ChatAttachmentDraft) {
+  return (
+    attachment.type === "image" ||
+    attachment.type === "camera_photo" ||
+    attachment.type === "gallery_photo" ||
+    Boolean(attachment.mime_type?.startsWith("image/") || attachment.mimeType?.startsWith("image/"))
+  );
+}
 
-function getQuickActionPlaceholder(action: ChatQuickActionItem) {
-  const label = action.label.trim();
+function getChatModeClassifyCacheKey(input: {
+  text: string;
+  hasImage: boolean;
+  hasAttachment: boolean;
+}) {
+  return `${CHAT_MODE_CLASSIFY_CACHE_PREFIX}${JSON.stringify({
+    text: input.text.trim(),
+    hasImage: input.hasImage,
+    hasAttachment: input.hasAttachment
+  })}`;
+}
 
-  return QUICK_ACTION_PLACEHOLDER_HINTS[label] ?? action.prompt?.trim() ?? label;
+function readCachedChatModeDecision(cacheKey: string): ChatModeDecision | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(cacheKey) ?? "null") as ChatModeDecision | null;
+
+    return parsed?.mode?.key ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedChatModeDecision(cacheKey: string, decision: ChatModeDecision) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(cacheKey, JSON.stringify(decision));
+  } catch {
+    // Classification cache is optional and must not affect chat input.
+  }
 }
 
 export function ChatShell() {
   const [mode, setMode] = React.useState<ChatMode>("fast");
-  const [enableDeepThinking, setEnableDeepThinking] = React.useState(false);
-  const [enableWebSearch, setEnableWebSearch] = React.useState(false);
+  const [enableDeepThinking] = React.useState(false);
+  const [enableWebSearch] = React.useState(false);
   const [conversationId, setConversationId] = React.useState<string | null>(null);
   const [conversations, setConversations] = React.useState<ChatConversation[]>([]);
   const [pinnedConversationIds, setPinnedConversationIds] = React.useState<Set<string>>(() => new Set());
   const [messages, setMessages] = React.useState<ChatMessageView[]>([]);
   const [input, setInput] = React.useState("");
+  const [inputAttachments, setInputAttachments] = React.useState<ChatAttachmentDraft[]>([]);
+  const [manualChatMode, setManualChatMode] = React.useState<ChatModeKey | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [notice, setNotice] = React.useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  const [quickActionPlaceholder, setQuickActionPlaceholder] = React.useState<string | null>(null);
-  const [quickActions, setQuickActions] = React.useState<ChatQuickActionItem[]>([]);
   const [currentUser, setCurrentUser] = React.useState<CurrentChatUser | null>(null);
+  const [currentUserLoaded, setCurrentUserLoaded] = React.useState(false);
   const [currentAvatarUrl, setCurrentAvatarUrl] = React.useState<string | null>(null);
+  const [expertMarketOpen, setExpertMarketOpen] = React.useState(false);
+  const [selectedKnowledgeBases, setSelectedKnowledgeBases] = React.useState<SelectedKnowledgeBase[]>([]);
   const [linkDialog, setLinkDialog] = React.useState<LinkDialogState>(null);
   const [linkActionBusy, setLinkActionBusy] = React.useState(false);
   const [linkDialogError, setLinkDialogError] = React.useState<string | null>(null);
@@ -198,8 +266,12 @@ export function ChatShell() {
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
   const activeAskAbortRef = React.useRef<AbortController | null>(null);
+  const chatModeClassifyAbortRef = React.useRef<AbortController | null>(null);
+  const activeUserIdentityRef = React.useRef<string | null>(null);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
+  const currentUserIdentity = getChatUserStorageIdentity(currentUser);
+  const pinnedConversationStorageKey = getPinnedConversationStorageKey(currentUser);
   const visibleConversations = React.useMemo(() => {
     const originalIndex = new Map(conversations.map((conversation, index) => [conversation.id, index]));
 
@@ -218,6 +290,32 @@ export function ChatShell() {
       return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
     });
   }, [conversations, pinnedConversationIds]);
+  const inputHasImage = inputAttachments.some(isImageLikeAttachment);
+  const inputHasAttachment = inputAttachments.length > 0;
+  const activeKnowledgeBase = React.useMemo(() => getActiveKnowledgeBase(selectedKnowledgeBases), [selectedKnowledgeBases]);
+  const ruleChatModeDecision = React.useMemo(() => detectChatMode({
+    text: input,
+    hasImage: inputHasImage,
+    hasAttachment: inputHasAttachment
+  }), [input, inputHasImage, inputHasAttachment]);
+  const chatModeClassifyCacheKey = React.useMemo(() => getChatModeClassifyCacheKey({
+    text: input,
+    hasImage: inputHasImage,
+    hasAttachment: inputHasAttachment
+  }), [input, inputHasImage, inputHasAttachment]);
+  const [classifiedChatModeDecision, setClassifiedChatModeDecision] = React.useState<{
+    cacheKey: string;
+    decision: ChatModeDecision;
+  } | null>(null);
+  const remoteChatModeDecision = classifiedChatModeDecision?.cacheKey === chatModeClassifyCacheKey
+    ? classifiedChatModeDecision.decision
+    : null;
+  const finalChatModeDecision = React.useMemo(() => resolveFinalChatMode({
+    aiDecision: remoteChatModeDecision,
+    ruleDecision: ruleChatModeDecision,
+    manualMode: manualChatMode
+  }), [manualChatMode, remoteChatModeDecision, ruleChatModeDecision]);
+  const inputPlaceholder = "发送消息给小董AI...";
 
   const loadConversations = React.useCallback(async () => {
     setConversationLoading(true);
@@ -231,14 +329,6 @@ export function ChatShell() {
     } finally {
       setConversationLoading(false);
     }
-  }, []);
-
-  React.useEffect(() => {
-    void loadConversations();
-  }, [loadConversations]);
-
-  React.useEffect(() => {
-    setPinnedConversationIds(readPinnedConversationIds());
   }, []);
 
   React.useEffect(() => {
@@ -261,24 +351,6 @@ export function ChatShell() {
   React.useEffect(() => {
     let mounted = true;
 
-    async function loadQuickActions() {
-      const categories = await fetchQuickActionCategories();
-
-      if (mounted) {
-        setQuickActions(categories);
-      }
-    }
-
-    void loadQuickActions();
-
-    return () => {
-      mounted = false;
-    };
-  }, []);
-
-  React.useEffect(() => {
-    let mounted = true;
-
     async function loadCurrentUser() {
       try {
         const result = await fetchCurrentChatUser();
@@ -290,6 +362,10 @@ export function ChatShell() {
         if (mounted) {
           setCurrentUser(null);
         }
+      } finally {
+        if (mounted) {
+          setCurrentUserLoaded(true);
+        }
       }
     }
 
@@ -299,6 +375,39 @@ export function ChatShell() {
       mounted = false;
     };
   }, []);
+
+  React.useEffect(() => {
+    if (!currentUserLoaded) {
+      return;
+    }
+
+    const nextUserIdentity = currentUserIdentity;
+    const previousUserIdentity = activeUserIdentityRef.current;
+
+    if (!nextUserIdentity) {
+      activeUserIdentityRef.current = null;
+      clearChatSessionState({ clearPinned: true });
+      setConversationLoading(false);
+      return;
+    }
+
+    if (previousUserIdentity !== nextUserIdentity) {
+      activeUserIdentityRef.current = nextUserIdentity;
+      clearChatSessionState();
+      setPinnedConversationIds(readPinnedConversationIds(pinnedConversationStorageKey));
+    }
+
+    void loadConversations();
+  }, [currentUserLoaded, currentUserIdentity, pinnedConversationStorageKey, loadConversations]);
+
+  React.useEffect(() => {
+    if (!currentUserLoaded || !currentUserIdentity) {
+      setSelectedKnowledgeBases([]);
+      return;
+    }
+
+    setSelectedKnowledgeBases(readStoredKnowledgeBases(currentUser));
+  }, [currentUser, currentUserIdentity, currentUserLoaded]);
 
   React.useEffect(() => {
     if (!currentUser) {
@@ -329,7 +438,68 @@ export function ChatShell() {
 
   React.useEffect(() => () => {
     activeAskAbortRef.current?.abort();
+    chatModeClassifyAbortRef.current?.abort();
   }, []);
+
+  React.useEffect(() => {
+    chatModeClassifyAbortRef.current?.abort();
+
+    if (manualChatMode) {
+      return undefined;
+    }
+
+    const message = input.trim();
+
+    if (!message || message.length < 4) {
+      setClassifiedChatModeDecision(null);
+      return undefined;
+    }
+
+    const cachedDecision = readCachedChatModeDecision(chatModeClassifyCacheKey);
+
+    if (cachedDecision) {
+      setClassifiedChatModeDecision({
+        cacheKey: chatModeClassifyCacheKey,
+        decision: cachedDecision
+      });
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      chatModeClassifyAbortRef.current = controller;
+      void classifyChatMode({
+        message,
+        hasImage: inputHasImage,
+        hasAttachment: inputHasAttachment,
+        manualMode: null,
+        signal: controller.signal
+      })
+        .then((decision) => {
+          if (controller.signal.aborted) {
+            return;
+          }
+
+          writeCachedChatModeDecision(chatModeClassifyCacheKey, decision);
+          setClassifiedChatModeDecision({
+            cacheKey: chatModeClassifyCacheKey,
+            decision
+          });
+        })
+        .catch((classifyError) => {
+          if (classifyError instanceof DOMException && classifyError.name === "AbortError") {
+            return;
+          }
+
+          setClassifiedChatModeDecision(null);
+        });
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [chatModeClassifyCacheKey, input, inputHasAttachment, inputHasImage, manualChatMode]);
 
   function closeSidebarManually() {
     setSidebarUserToggled(true);
@@ -358,6 +528,35 @@ export function ChatShell() {
     activeAskAbortRef.current = null;
     setLoading(false);
     showNotice(message);
+  }
+
+  function clearChatSessionState(options: { clearPinned?: boolean } = {}) {
+    activeAskAbortRef.current?.abort();
+    activeAskAbortRef.current = null;
+    historyRequestIdRef.current += 1;
+    setConversationId(null);
+    setConversations([]);
+    setMessages([]);
+    setInput("");
+    setInputAttachments([]);
+    setManualChatMode(null);
+    setClassifiedChatModeDecision(null);
+    setLoading(false);
+    setHistoryLoading(false);
+    setConversationLoading(false);
+    setError(null);
+    setNotice(null);
+    setLinkDialog(null);
+    setLinkActionBusy(false);
+    setLinkDialogError(null);
+    setRenameDialog(null);
+    setRenameSubmitting(false);
+    setRenameError(null);
+    setConfirmDialog(null);
+
+    if (options.clearPinned) {
+      setPinnedConversationIds(new Set());
+    }
   }
 
   async function handleSelectConversation(nextConversationId: string) {
@@ -407,9 +606,10 @@ export function ChatShell() {
     setConversationId(nextState.conversationId);
     setMessages(nextState.messages);
     setInput(nextState.input);
+    setInputAttachments([]);
+    setManualChatMode(null);
     setError(nextState.error);
     setNotice(null);
-    setQuickActionPlaceholder(null);
     closeSidebarAfterNavigation();
   }
 
@@ -447,19 +647,61 @@ export function ChatShell() {
 
   function handleEditUserMessage(content: string) {
     setInput(content);
+    setManualChatMode(null);
     showNotice(content.trim() ? "已填回输入框，可修改后重新发送。" : "该消息暂无文字可编辑。");
   }
 
-  function handleQuickAction(action: ChatQuickActionItem) {
-    if (action.kind === "mode" && action.mode) {
-      setMode(action.mode);
+  function handleInputChange(nextValue: string) {
+    setInput(nextValue);
+
+    if (!nextValue.trim()) {
+      setManualChatMode(null);
+      setClassifiedChatModeDecision(null);
+    }
+  }
+
+  function handleToggleManualChatMode(nextMode: ChatModeKey) {
+    setNotice(null);
+    setManualChatMode((current) => current === nextMode ? null : nextMode);
+  }
+
+  function commitSelectedKnowledgeBases(nextItems: SelectedKnowledgeBase[], message?: string) {
+    setSelectedKnowledgeBases(nextItems);
+    writeStoredKnowledgeBases(currentUser, nextItems);
+
+    if (message) {
+      showNotice(message);
+    }
+  }
+
+  function handleAddKnowledgeBase(item: ExpertMarketItem) {
+    if (selectedKnowledgeBases.some((selected) => selected.kb_id === item.kb_id)) {
+      return;
     }
 
-    setNotice(null);
-    setQuickActionPlaceholder(getQuickActionPlaceholder(action));
+    const nextItems = addKnowledgeBaseSelection(selectedKnowledgeBases, item);
+
+    commitSelectedKnowledgeBases(nextItems);
+  }
+
+  function handleRemoveKnowledgeBase(kbId: string) {
+    const nextItems = removeKnowledgeBaseSelection(selectedKnowledgeBases, kbId);
+
+    commitSelectedKnowledgeBases(nextItems);
+  }
+
+  function handleActivateKnowledgeBase(kbId: string) {
+    const nextItems = setActiveKnowledgeBaseSelection(selectedKnowledgeBases, kbId);
+
+    commitSelectedKnowledgeBases(nextItems);
   }
 
   async function handleLogout() {
+    clearChatSessionState({ clearPinned: true });
+    activeUserIdentityRef.current = null;
+    setSelectedKnowledgeBases([]);
+    setCurrentUser(null);
+
     try {
       await logoutCurrentChatUser();
     } finally {
@@ -719,7 +961,7 @@ export function ChatShell() {
         next.add(item.id);
       }
 
-      writePinnedConversationIds(next);
+      writePinnedConversationIds(next, pinnedConversationStorageKey);
       showNotice(next.has(item.id) ? "已置顶聊天（本地排序生效）。" : "已取消置顶聊天。");
       return next;
     });
@@ -873,6 +1115,8 @@ export function ChatShell() {
     let localUserMessage: ChatMessageView | null = null;
     let localAssistantMessageId: string | null = null;
     let inputCleared = false;
+    const submittedManualChatMode = manualChatMode;
+    const submittedFinalChatModeDecision = finalChatModeDecision;
     const hasPreviousAssistantResponse = messages.some((message) => (
       message.role === "assistant" &&
       !message.pending &&
@@ -881,15 +1125,56 @@ export function ChatShell() {
 
     try {
       const uploadedAttachments = await uploadChatAttachments(attachments);
+      const submitModeDecision = submittedManualChatMode
+        ? resolveFinalChatMode({
+          ruleDecision: detectChatMode({
+            text,
+            hasImage: uploadedAttachments.some(isImageLikeAttachment),
+            hasAttachment: uploadedAttachments.length > 0
+          }),
+          manualMode: submittedManualChatMode
+        })
+        : submittedFinalChatModeDecision;
       const commercialExecution = detectUserIntent(text);
       const businessExecution = buildBusinessExecutionPlan(commercialExecution);
-      const businessExecutionPrompt = buildBusinessExecutionPrompt(businessExecution);
+      const modeAlternativesText = submitModeDecision.alternatives
+        .map((candidate) => `${candidate.label}(${Math.round(candidate.confidence * 100)}%)`)
+        .join("、");
+      const modePromptContext = [
+        "[USER MODE ROUTING]",
+        `最终模式：${submitModeDecision.mode.label}`,
+        `来源：${submitModeDecision.source}`,
+        `置信度：${Math.round(submitModeDecision.confidence * 100)}%`,
+        `原因：${submitModeDecision.reason}`,
+        modeAlternativesText ? `备选模式：${modeAlternativesText}` : "",
+        "",
+        "模式要求：",
+        submitModeDecision.mode.prompt
+      ].join("\n");
+      const businessExecutionPrompt = [
+        buildBusinessExecutionPrompt(businessExecution),
+        modePromptContext
+      ].filter(Boolean).join("\n\n");
+      const activeKnowledgeBaseForSubmit = activeKnowledgeBase;
+      const selectedKnowledgeBasesForSubmit = selectedKnowledgeBases;
+      const knowledgeSelectionMetadata = {
+        selectedKnowledgeBases: selectedKnowledgeBasesForSubmit,
+        activeKnowledgeBase: activeKnowledgeBaseForSubmit,
+        kb_id: activeKnowledgeBaseForSubmit?.kb_id ?? null,
+        knowledgeBaseId: activeKnowledgeBaseForSubmit?.knowledgeBaseId ?? activeKnowledgeBaseForSubmit?.kbId ?? activeKnowledgeBaseForSubmit?.kb_id ?? null,
+        expert_id: activeKnowledgeBaseForSubmit?.expert_id ?? null,
+        agentId: activeKnowledgeBaseForSubmit?.agentId ?? activeKnowledgeBaseForSubmit?.expertId ?? activeKnowledgeBaseForSubmit?.expert_id ?? null,
+        tenant_id: activeKnowledgeBaseForSubmit?.tenant_id ?? null,
+        namespace: activeKnowledgeBaseForSubmit?.namespace ?? activeKnowledgeBaseForSubmit?.tenant_id ?? null
+      };
 
       const nextUserMessage = {
         ...createUserMessage(text, uploadedAttachments),
         metadata: {
           commercialExecution,
-          businessExecution
+          businessExecution,
+          finalChatModeDecision: submitModeDecision,
+          knowledgeSelection: knowledgeSelectionMetadata
         }
       };
       const abortController = new AbortController();
@@ -904,7 +1189,9 @@ export function ChatShell() {
         metadata: {
           commercialExecution,
           businessExecution,
-          businessExecutionPrompt
+          businessExecutionPrompt,
+          finalChatModeDecision: submitModeDecision,
+          knowledgeSelection: knowledgeSelectionMetadata
         },
         created_at: "",
         pending: true
@@ -914,6 +1201,8 @@ export function ChatShell() {
       localAssistantMessageId = nextAssistantMessage.id;
       activeAskAbortRef.current = abortController;
       setInput("");
+      setInputAttachments([]);
+      setManualChatMode(null);
       inputCleared = true;
       setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
 
@@ -922,10 +1211,26 @@ export function ChatShell() {
         attachments: uploadedAttachments,
         conversation_id: conversationId,
         mode,
+        userMode: submitModeDecision.mode.key,
+        modeSource: submitModeDecision.source,
+        modeLabel: submitModeDecision.mode.label,
+        modePrompt: submitModeDecision.mode.prompt,
+        modeConfidence: submitModeDecision.confidence,
+        modeReason: submitModeDecision.reason,
+        modeAlternatives: submitModeDecision.alternatives,
+        classifierVersion: submitModeDecision.classifierVersion,
         enable_deep_thinking: enableDeepThinking,
         enable_web_search: enableWebSearch,
         business_execution: businessExecution,
-        business_execution_prompt: businessExecutionPrompt
+        business_execution_prompt: businessExecutionPrompt,
+        selectedKnowledgeBases: selectedKnowledgeBasesForSubmit,
+        activeKnowledgeBase: activeKnowledgeBaseForSubmit,
+        kb_id: activeKnowledgeBaseForSubmit?.kb_id ?? null,
+        knowledgeBaseId: activeKnowledgeBaseForSubmit?.knowledgeBaseId ?? activeKnowledgeBaseForSubmit?.kbId ?? activeKnowledgeBaseForSubmit?.kb_id ?? null,
+        expert_id: activeKnowledgeBaseForSubmit?.expert_id ?? null,
+        agentId: activeKnowledgeBaseForSubmit?.agentId ?? activeKnowledgeBaseForSubmit?.expertId ?? activeKnowledgeBaseForSubmit?.expert_id ?? null,
+        tenant_id: activeKnowledgeBaseForSubmit?.tenant_id ?? null,
+        namespace: activeKnowledgeBaseForSubmit?.namespace ?? activeKnowledgeBaseForSubmit?.tenant_id ?? null
       }, {
         signal: abortController.signal,
         onThinking: (content) => {
@@ -1091,11 +1396,13 @@ export function ChatShell() {
                 role: "assistant",
                 content: streamResult.answer,
                 customer_answer: streamResult.customer_answer ?? null,
+                finalized_answer: streamResult.finalized_answer ?? null,
                 provider_status: streamResult.provider_status ?? null,
                 sources: streamResult.sources,
                 confidence: streamResult.confidence,
                 metadata: {
                   ...currentMetadata,
+                  finalizedAnswer: streamResult.finalized_answer ?? currentMetadata.finalizedAnswer,
                   userQuery: text,
                   responseId: streamResult.message_id,
                   behaviorFeedbackSeed: {
@@ -1159,6 +1466,7 @@ export function ChatShell() {
 
       if (inputCleared) {
         setInput(text);
+        setManualChatMode(submittedManualChatMode);
       }
 
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
@@ -1241,11 +1549,6 @@ export function ChatShell() {
                 <Menu className="h-8 w-8" strokeWidth={2.4} aria-hidden="true" />
               </button>
 
-              <div className="pointer-events-none absolute inset-x-16 top-1/2 -translate-y-1/2 text-center">
-                <h1 className="whitespace-nowrap text-lg font-bold text-slate-950">小董AI</h1>
-                <p className="mt-0.5 hidden whitespace-nowrap text-xs font-medium text-slate-400 sm:block">小董AI大脑🧠 + AI思考</p>
-              </div>
-
               <button
                 type="button"
                 onClick={handleNewChat}
@@ -1285,30 +1588,46 @@ export function ChatShell() {
                 onModeChange={setMode}
                 onEditUserMessage={handleEditUserMessage}
                 currentUser={currentUser}
+                userName={currentUserName}
                 userAvatarUrl={currentAvatarUrl}
               />
             )}
           </div>
 
           <ChatQuickActions
-            mode={mode}
-            enableDeepThinking={enableDeepThinking}
-            enableWebSearch={enableWebSearch}
-            quickActions={quickActions}
-            onModeChange={setMode}
-            onToggleDeepThinking={() => setEnableDeepThinking((enabled) => !enabled)}
-            onToggleWebSearch={() => setEnableWebSearch((enabled) => !enabled)}
-            onQuickAction={handleQuickAction}
+            decision={finalChatModeDecision}
+            manualMode={manualChatMode}
+            onToggleManualMode={handleToggleManualChatMode}
+          />
+
+          <PromptKnowledgeBar
+            items={selectedKnowledgeBases}
+            onActivate={handleActivateKnowledgeBase}
           />
 
           <ChatInput
             value={input}
             loading={loading}
-            onValueChange={setInput}
+            onValueChange={handleInputChange}
             onSubmit={handleSubmit}
             onCancel={abortActiveAsk}
             onStatusMessage={showNotice}
-            placeholder={quickActionPlaceholder ?? undefined}
+            onAttachmentsChange={setInputAttachments}
+            placeholder={inputPlaceholder}
+            knowledgeBaseSelector={(
+              <KnowledgeBaseSelector
+                selectedCount={selectedKnowledgeBases.length}
+                activeTitle={activeKnowledgeBase?.title ?? null}
+                onOpen={() => setExpertMarketOpen(true)}
+              />
+            )}
+          />
+          <ExpertMarketDrawer
+            open={expertMarketOpen}
+            selected={selectedKnowledgeBases}
+            onAdd={handleAddKnowledgeBase}
+            onRemove={handleRemoveKnowledgeBase}
+            onClose={() => setExpertMarketOpen(false)}
           />
           <LinkActionDialog
             open={Boolean(linkDialog)}

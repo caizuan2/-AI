@@ -15,6 +15,8 @@ interface ChatInputProps {
   onSubmit: (attachments?: ChatAttachmentDraft[]) => Promise<boolean> | boolean | void;
   onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
+  onAttachmentsChange?: (attachments: ChatAttachmentDraft[]) => void;
+  knowledgeBaseSelector?: React.ReactNode;
 }
 
 type SpeechRecognitionResultLike = {
@@ -270,11 +272,13 @@ export function SelectedAttachmentList({
 export function ChatInput({
   value,
   loading,
-  placeholder = "发消息或按住说话...",
+  placeholder = "发送消息给小董AI...",
   onValueChange,
   onSubmit,
   onCancel,
-  onStatusMessage
+  onStatusMessage,
+  onAttachmentsChange,
+  knowledgeBaseSelector
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
@@ -291,7 +295,8 @@ export function ChatInput({
 
   React.useEffect(() => {
     attachmentsRef.current = attachments;
-  }, [attachments]);
+    onAttachmentsChange?.(attachments);
+  }, [attachments, onAttachmentsChange]);
 
   React.useEffect(() => {
     valueRef.current = value;
@@ -487,6 +492,8 @@ export function ChatInput({
           disabled={loading}
           rows={1}
         />
+
+        {knowledgeBaseSelector}
 
         <button
           type="button"
