@@ -8,14 +8,12 @@ import {
   type GptStructuredKnowledge
 } from "@/lib/enterprise/gpt-knowledge-draft";
 import {
-  buildChatGptStyleReply,
-  ensureChatGptStyleReply
-} from "@/lib/enterprise/gpt-chatgpt-style-validator";
-import {
   buildFallbackUserClientCallPlan,
   normalizeUserClientCallPlan,
   type GptUserClientCallPlan
 } from "@/lib/enterprise/gpt-user-client-call-plan";
+import { enrichDraftWithKnowledgeFactoryV5 } from "@/lib/enterprise/knowledge-factory-v5";
+import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 
 export type { GptStructuredKnowledge } from "@/lib/enterprise/gpt-knowledge-draft";
 
@@ -31,6 +29,37 @@ export interface NormalizedGptOutput {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function limitNaturalText(value: string, maxLength = 260) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxLength).replace(/[，,。；;、\s]+$/, "")}...`;
+}
+
+function buildNaturalFallbackReply(input: {
+  originalInput: string;
+  draft: GptKnowledgeDraft;
+  suggestedQuestions: string[];
+}) {
+  const summary = limitNaturalText(input.draft.summary || input.originalInput, 260);
+  const standardAnswer = limitNaturalText(input.draft.standardAnswer || summary, 420);
+  const questions = input.suggestedQuestions.slice(0, 3);
+
+  return [
+    `可以，我先按自然对话的方式帮你整理。核心意思是：${summary}`,
+    "",
+    "如果要直接对外说明，可以这样表达：",
+    "",
+    `> ${standardAnswer}`,
+    "",
+    questions.length > 0 ? "后续如果要继续完善，可以再补充这几个点：" : "",
+    ...questions.map((question) => `- ${question}`)
+  ].filter(Boolean).join("\n");
 }
 
 export function extractResponsesText(payload: unknown) {
@@ -196,10 +225,13 @@ export function normalizeGptOutput(input: {
   strictReply?: boolean;
 }): NormalizedGptOutput {
   const parsed = parseMaybeJson(input.rawText);
-  const knowledgeDraft = normalizeGptKnowledgeDraft({
+  const knowledgeDraft = enrichDraftWithKnowledgeFactoryV5(normalizeGptKnowledgeDraft({
     parsed,
     originalInput: input.originalInput,
     fallbackCategory: input.fallbackCategory
+  }), {
+    text: input.originalInput,
+    category: input.fallbackCategory
   });
   const parsedQuestions = readStringArray(parsed?.suggestedQuestions ?? parsed?.followUpQuestions);
   const suggestedQuestions = parsedQuestions.length > 0
@@ -233,18 +265,15 @@ export function normalizeGptOutput(input: {
     throw new Error("OpenAI Responses API 未返回 replyMarkdown。");
   }
 
-  const nonStrictReplyMarkdownCandidate = replyMarkdownCandidate
-    || buildChatGptStyleReply({
-      originalInput: input.originalInput,
-      draft: knowledgeDraft,
-      suggestedQuestions
-    });
-  const replyMarkdown = ensureChatGptStyleReply({
-    replyMarkdown: nonStrictReplyMarkdownCandidate,
+  const visibleReplyMarkdown = replyMarkdownCandidate || buildNaturalFallbackReply({
     originalInput: input.originalInput,
     draft: knowledgeDraft,
     suggestedQuestions
   });
+  const replyMarkdown = processAIOutput(visibleReplyMarkdown, {
+    source: "gpt_output_normalizer",
+    mode: input.strictReply ? "strict_reply" : "standard_reply"
+  }).output;
 
   return {
     replyMarkdown,

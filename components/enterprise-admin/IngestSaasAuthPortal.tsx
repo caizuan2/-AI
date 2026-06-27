@@ -43,7 +43,7 @@ type IngestAuthMeState = {
   authenticated: boolean;
   licenseActivated: boolean;
   role: string | null;
-  user?: IngestAuthUser;
+  user: IngestAuthUser | null;
   errorCode?: string;
   message?: string;
 };
@@ -117,7 +117,7 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
   }
 
   const source = isRecord(payload.data) ? payload.data : payload;
-  const user = isRecord(source.user) ? source.user as IngestAuthUser : undefined;
+  const user = isRecord(source.user) ? source.user as IngestAuthUser : null;
   const authenticated = typeof source.authenticated === "boolean" ? source.authenticated : Boolean(user);
   const licenseActivated = source.licenseActivated === true || user?.licenseActivated === true;
   const role = typeof source.role === "string" ? source.role : null;
@@ -135,7 +135,7 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
   };
 }
 
-async function fetchAuthMeWithTimeout(timeoutMs = 8000) {
+async function fetchAuthMeWithTimeout(timeoutMs = 5000) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
@@ -176,8 +176,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
     async function checkSession() {
       try {
         setCheckError("");
-
-        const response = await fetchAuthMeWithTimeout();
+        const response = await fetchAuthMeWithTimeout(5000);
 
         if (!active) {
           return;
@@ -186,13 +185,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         const payload = await response.json().catch(() => null);
         const authState = normalizeAuthMePayload(payload);
 
-        if (!authState || !authState.success) {
+        if (!response.ok || !authState || !authState.success) {
           throw new Error(authState?.message || "登录状态检查失败，请重新登录。");
         }
 
         if (!authState.authenticated) {
           if (mode === "activate") {
-            router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`);
+            router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
             return;
           }
 
@@ -200,17 +199,30 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           return;
         }
 
-        if (mode !== "activate" || authState.licenseActivated) {
-          goNext(authState.licenseActivated);
+        if (mode === "activate") {
+          if (authState.licenseActivated) {
+            goNext(true);
+            return;
+          }
+
+          setChecking(false);
           return;
         }
 
-        setChecking(false);
+        goNext(authState.licenseActivated);
+        return;
       } catch {
-        if (active) {
-          setCheckError("登录状态检查失败，请重新登录。");
-          setChecking(false);
+        if (!active) {
+          return;
         }
+
+        if (mode === "activate") {
+          router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+          return;
+        }
+
+        setCheckError("登录状态检查失败，请重新登录。");
+        setChecking(false);
       }
     }
 
@@ -274,7 +286,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   }
 
   return (
-    <main className="grid min-h-dvh bg-[#f6f7f4] text-[#1f2926] lg:grid-cols-[1.05fr_0.95fr]">
+    <main data-ui-health="ingest-auth-portal" className="grid min-h-dvh bg-[#f6f7f4] text-[#1f2926] lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-[#111816] px-10 py-10 text-white lg:flex lg:flex-col">
         <div className="absolute inset-0 opacity-[0.08] [background-image:linear-gradient(rgba(255,255,255,.7)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.7)_1px,transparent_1px)] [background-size:34px_34px]" />
         <div className="relative z-10 flex items-center gap-3">
@@ -298,7 +310,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       </section>
 
       <section className="flex items-center justify-center px-4 py-10 sm:px-6">
-        <div className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,.08)] sm:p-8">
+        <div data-ui-health="ingest-auth-card" className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,.08)] sm:p-8">
           <div className="mb-8 lg:hidden">
             <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#111816] text-white">
               <Sparkles className="h-5 w-5" />

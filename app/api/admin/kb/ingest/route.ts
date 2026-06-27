@@ -49,6 +49,9 @@ function readIngestRequest(body: unknown) {
     sourceType,
     sourceUrl,
     agentId: typeof body.agentId === "string" && body.agentId.trim() ? body.agentId.trim() : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" && body.knowledgeBaseId.trim() ? body.knowledgeBaseId.trim() : null,
+    namespace: typeof body.namespace === "string" && body.namespace.trim() ? body.namespace.trim() : null,
+    knowledgeVersion: typeof body.knowledgeVersion === "string" && body.knowledgeVersion.trim() ? body.knowledgeVersion.trim() : "v1",
     agentName: typeof body.agentName === "string" && body.agentName.trim() ? body.agentName.trim() : null
   };
 }

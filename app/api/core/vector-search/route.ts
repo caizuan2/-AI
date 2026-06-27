@@ -28,7 +28,10 @@ function readRequest(body: unknown) {
 
   return {
     query,
-    topK: typeof body.topK === "number" ? body.topK : undefined
+    topK: typeof body.topK === "number" ? body.topK : undefined,
+    agentId: typeof body.agentId === "string" ? body.agentId.trim() || null : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId.trim() || null : null,
+    namespace: typeof body.namespace === "string" ? body.namespace.trim() || null : null
   };
 }
 
@@ -65,6 +68,9 @@ export async function POST(request: Request) {
       userId: actor.id,
       query: input.query,
       topK: input.topK,
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace,
       requestId: getCoreRequestId(request)
     });
 

@@ -5,6 +5,21 @@ import type {
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import type { GptOSRouteResult } from "@/lib/enterprise/gpt-os-agent-router";
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+import type { KnowledgeFactoryV2Result } from "@/lib/enterprise/knowledge-factory-v2";
+import type { KnowledgeFactoryV3Result } from "@/lib/enterprise/knowledge-factory-v3";
+import type { KnowledgeFactoryV4Result } from "@/lib/enterprise/knowledge-factory-v4";
+import type { KnowledgeFactoryV5Result } from "@/lib/enterprise/knowledge-factory-v5";
+import type { KnowledgeEvolutionResult } from "@/lib/enterprise/knowledge-evolution-engine";
+import type {
+  KnowledgeLoopCandidate,
+  KnowledgeLoopResult,
+  KnowledgeStoreDecision
+} from "@/lib/enterprise/knowledge-loop-engine";
+import type {
+  KnowledgeMemoryPlan,
+  KnowledgeMemoryReport
+} from "@/lib/enterprise/knowledge-memory-adapter";
+import type { AIRuntimeResult } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 
 export type IngestChatAgentTone = "green" | "blue" | "amber" | "rose" | "slate";
 export type IngestChatAgentStatus = "active" | "archived" | "deleted_local";
@@ -21,6 +36,8 @@ export interface IngestChatAgent {
   category?: string;
   tenantId?: string | null;
   userId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   platform?: AdminIngestPlatform;
   syncTarget?: AdminIngestSyncTarget[];
   createdAt?: string;
@@ -40,6 +57,12 @@ export interface IngestChatMessage {
   role: "user" | "assistant";
   content: string;
   time: string;
+  isRestored?: boolean;
+  isHistorical?: boolean;
+  isStreaming?: boolean;
+  isGenerating?: boolean;
+  typing?: boolean;
+  status?: "pending" | "streaming" | "completed" | "failed";
   attachments?: Array<{
     id: string;
     fileName: string;
@@ -78,6 +101,7 @@ export interface IngestChatMessage {
   saveSuggestion?: boolean;
   gptProof?: GptCallProof;
   gptOS?: GptOSRouteResult;
+  runtimeOrchestrator?: AIRuntimeResult;
 }
 
 export interface IngestKnowledgeDraft {
@@ -95,7 +119,7 @@ export interface IngestKnowledgeDraft {
   standardAnswers?: string[];
   trainingScore: number;
   recommendation: "建议入库" | "需要复核" | "暂不入库";
-  saveStatus: "待确认" | "已保存" | "已拒绝";
+  saveStatus: "待确认" | "已保存" | "已拒绝" | "保存失败";
   sourceType?: "chat" | "text" | "file" | "image" | "url";
   scenarios?: string[];
   sourceMaterials?: string[];
@@ -116,6 +140,34 @@ export interface IngestKnowledgeDraft {
   actualModel?: string;
   responseId?: string;
   usage?: OpenAIGptUsage;
+  knowledgeFactory?: KnowledgeFactoryV2Result;
+  knowledgeFactoryV3?: KnowledgeFactoryV3Result;
+  knowledgeFactoryV4?: KnowledgeFactoryV4Result;
+  knowledgeFactoryV5?: KnowledgeFactoryV5Result;
+  knowledgeLoop?: KnowledgeLoopResult;
+  evolution?: KnowledgeEvolutionResult;
+  storeDecision?: KnowledgeStoreDecision;
+  reusableKnowledgeUnits?: KnowledgeLoopCandidate[];
+  reviewRequiredUnits?: KnowledgeLoopCandidate[];
+  autoStoreCandidates?: KnowledgeLoopCandidate[];
+  memory?: KnowledgeMemoryReport;
+  memoryPlan?: KnowledgeMemoryPlan;
+  knowledgeIntelligence?: {
+    overallScore?: number;
+    qualityLevel?: "high" | "medium" | "low";
+    highValueCount?: number;
+    reviewRequiredCount?: number;
+    lowQualityCount?: number;
+    improvementSuggestions?: string[];
+  };
+  ragOptimization?: {
+    ragFitScore?: number;
+    suggestedQueries?: string[];
+    retrievalHints?: string[];
+    rerankHints?: string[];
+    warnings?: string[];
+  };
+  runtimeOrchestrator?: AIRuntimeResult;
 }
 
 export interface IngestTrainingRecord {

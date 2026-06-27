@@ -30,6 +30,26 @@ import type {
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import { GPTOSRendererV3, processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
+import { enrichDraftWithKnowledgeFactoryV5 } from "@/lib/enterprise/knowledge-factory-v5";
+import {
+  KnowledgeEvolutionEngine,
+  type KnowledgeEvolutionResult
+} from "@/lib/enterprise/knowledge-evolution-engine";
+import {
+  KnowledgeLoopEngine,
+  type KnowledgeCandidateSource,
+  type KnowledgeLoopCandidate,
+  type KnowledgeLoopResult,
+  type KnowledgeStoreDecision
+} from "@/lib/enterprise/knowledge-loop-engine";
+import {
+  KnowledgeMemoryAdapter,
+  type KnowledgeMemoryPlan,
+  type KnowledgeMemoryReport,
+  type SavedKnowledgeLike
+} from "@/lib/enterprise/knowledge-memory-adapter";
+import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -122,6 +142,9 @@ interface ApiEnvelope<T> {
 }
 
 interface GptIngestResponse {
+  jobId?: string | null;
+  trainingRecord?: AdminTrainingRecordResponse | null;
+  records?: AdminTrainingRecordResponse[];
   provider: IngestModelProvider;
   model: string;
   requestedModel?: string;
@@ -138,11 +161,28 @@ interface GptIngestResponse {
   content?: string;
   answer?: string;
   reply?: string;
+  visibleReply?: string;
   message?: string | {
     content?: string;
   };
   replyMarkdown: string;
   knowledgeDraft?: GptKnowledgeDraft;
+  knowledgeLoop?: KnowledgeLoopResult;
+  evolution?: KnowledgeEvolutionResult;
+  storeDecision?: KnowledgeStoreDecision;
+  reusableKnowledgeUnits?: KnowledgeLoopCandidate[];
+  reviewRequiredUnits?: KnowledgeLoopCandidate[];
+  autoStoreCandidates?: KnowledgeLoopCandidate[];
+  memory?: KnowledgeMemoryReport;
+  memoryPlan?: KnowledgeMemoryPlan;
+  knowledgeIntelligence?: IngestKnowledgeDraft["knowledgeIntelligence"];
+  ragOptimization?: IngestKnowledgeDraft["ragOptimization"];
+  metadata?: {
+    knowledgeLoopVersion?: "v1";
+    autoStoreEnabled?: boolean;
+    requiresReview?: boolean;
+    [key: string]: unknown;
+  };
   userClientCallPlan?: GptUserClientCallPlan;
   sourceFiles?: Array<{
     fileName: string;
@@ -188,6 +228,20 @@ interface GptFailureResponse {
   diagnostics?: unknown;
 }
 
+export interface IngestStreamingState {
+  thinking: boolean;
+  message: string;
+}
+
+export interface IngestStreamingOptions {
+  onToken?: (chunk: string, fullText: string) => void;
+  onThinking?: (state: IngestStreamingState) => void;
+  signal?: AbortSignal;
+  chunkIntervalMs?: number;
+  thinkingDelayMs?: number;
+  mergeWindowMs?: number;
+}
+
 interface UrlIngestPreviewResponse {
   stage: "preview";
   job: {
@@ -221,10 +275,17 @@ interface AdminTrainingRecordResponse {
   ai_output?: unknown;
   resultTitle?: string;
   category?: string;
-  status?: "pending" | "saved" | "rejected";
+  status?: "pending" | "saved" | "rejected" | "completed" | "failed" | "stored" | "indexed" | "knowledge_saved";
   sourceType?: string;
   timestamp?: string;
   hits?: number;
+}
+
+interface AdminSavedKnowledgeResponse extends SavedKnowledgeLike {
+  id: string;
+  title: string;
+  category: string;
+  chunkCount: number;
 }
 
 export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<unknown> | null) {
@@ -285,6 +346,28 @@ function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeClientScopeId(value: string | null | undefined, fallback: string) {
+  return (value ?? "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^0-9A-Za-z_\-:.]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120) || fallback;
+}
+
+function buildClientAgentKnowledgeScope(agent: IngestChatAgent) {
+  const agentId = normalizeClientScopeId(agent.id, "chief");
+  const knowledgeBaseId = normalizeClientScopeId(agent.knowledgeBaseId, `kb:${agentId}`);
+  const namespace = normalizeClientScopeId(agent.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+
+  return {
+    agentId,
+    knowledgeBaseId,
+    namespace
+  };
+}
+
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -341,6 +424,208 @@ function readGptResponseContent(data: GptIngestResponse) {
     || messageContent;
 }
 
+function applyExpressionLayer(output: string, model?: string, source = "admin_ingest_client") {
+  return processAIOutput(output, {
+    model,
+    source,
+    mode: "visible_output"
+  }).output;
+}
+
+function inferKnowledgeCandidateSource(attachments?: IngestUploadState[]): KnowledgeCandidateSource {
+  const first = attachments?.[0];
+  const fileName = first?.fileName.toLowerCase() ?? "";
+  const mimeType = first?.mimeType?.toLowerCase() || first?.fileType.toLowerCase() || "";
+
+  if (/\.pptx?$/.test(fileName) || mimeType.includes("presentation")) {
+    return "ppt";
+  }
+
+  if (/\.docx?$/.test(fileName) || mimeType.includes("word")) {
+    return "word";
+  }
+
+  if (first) {
+    return "document";
+  }
+
+  return "conversation";
+}
+
+function buildKnowledgeLoopBundle(input: {
+  text: string;
+  replyMarkdown: string;
+  draft: IngestKnowledgeDraft;
+  attachments?: IngestUploadState[];
+}): {
+  knowledgeLoop?: KnowledgeLoopResult;
+  evolution?: KnowledgeEvolutionResult;
+  storeDecision?: KnowledgeStoreDecision;
+  reusableKnowledgeUnits?: KnowledgeLoopCandidate[];
+  reviewRequiredUnits?: KnowledgeLoopCandidate[];
+  autoStoreCandidates?: KnowledgeLoopCandidate[];
+  metadata: {
+    knowledgeLoopVersion: "v1";
+    autoStoreEnabled: false;
+    requiresReview: boolean;
+    errorHandled?: boolean;
+  };
+} {
+  try {
+    const loopEngine = new KnowledgeLoopEngine({
+      autoStoreAvailable: false
+    });
+    const knowledgeLoop = loopEngine.processConversation({
+      text: input.text,
+      replyMarkdown: input.replyMarkdown,
+      draft: {
+        title: input.draft.title,
+        summary: input.draft.summary,
+        category: input.draft.category,
+        tags: input.draft.tags,
+        standardQuestion: input.draft.standardQuestion,
+        standardAnswer: input.draft.standardAnswer,
+        scenarios: input.draft.scenarios
+      },
+      source: inferKnowledgeCandidateSource(input.attachments),
+      autoStoreAvailable: false
+    });
+    const evolution = new KnowledgeEvolutionEngine().normalizeDraft(knowledgeLoop.draft);
+    const reusableKnowledgeUnits = knowledgeLoop.candidates.filter((candidate) => candidate.reusable);
+    const reviewRequiredUnits = knowledgeLoop.candidates.filter((candidate) => candidate.storeAction === "review_required");
+    const autoStoreCandidates = knowledgeLoop.candidates.filter((candidate) => candidate.storeAction === "auto_store");
+
+    return {
+      knowledgeLoop,
+      evolution,
+      storeDecision: knowledgeLoop.storeDecision,
+      reusableKnowledgeUnits,
+      reviewRequiredUnits,
+      autoStoreCandidates,
+      metadata: {
+        knowledgeLoopVersion: "v1",
+        autoStoreEnabled: false,
+        requiresReview: knowledgeLoop.storeDecision.requiresReview || reviewRequiredUnits.length > 0
+      }
+    };
+  } catch {
+    return {
+      metadata: {
+        knowledgeLoopVersion: "v1",
+        autoStoreEnabled: false,
+        requiresReview: true,
+        errorHandled: true
+      }
+    };
+  }
+}
+
+function buildDraftMemoryPlan(draft: IngestKnowledgeDraft) {
+  return new KnowledgeMemoryAdapter().buildMemoryPlan(draft);
+}
+
+function buildDraftMemoryReport(plan: KnowledgeMemoryPlan): KnowledgeMemoryReport {
+  return {
+    enabled: true,
+    mode: plan.mode,
+    storedCount: 0,
+    draftCount: plan.candidates.length,
+    indexedCount: 0,
+    failedCount: 0,
+    retrievalCheck: plan.retrievalCheck,
+    warnings: plan.warnings,
+    recommendedAction: plan.recommendedAction,
+    intelligence: plan.intelligence,
+    ragOptimization: plan.ragOptimization
+  };
+}
+
+function attachMemoryPlan(draft: IngestKnowledgeDraft): IngestKnowledgeDraft {
+  const memoryPlan = draft.memoryPlan ?? buildDraftMemoryPlan(draft);
+
+  return {
+    ...draft,
+    memoryPlan,
+    memory: draft.memory ?? buildDraftMemoryReport(memoryPlan),
+    knowledgeIntelligence: draft.knowledgeIntelligence ?? memoryPlan.intelligence,
+    ragOptimization: draft.ragOptimization ?? memoryPlan.ragOptimization
+  };
+}
+
+function waitForStream(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("生成已停止"));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new Error("生成已停止"));
+    }
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+async function streamStyledOutput(output: string, options?: IngestStreamingOptions) {
+  if (!options?.onToken && !options?.onThinking) {
+    return;
+  }
+
+  const renderer = new GPTOSRendererV3();
+  const interval = Math.min(50, Math.max(20, options.chunkIntervalMs ?? 30));
+  const mergeWindow = Math.min(60, Math.max(20, options.mergeWindowMs ?? 30));
+  const thinkingDelay = Math.max(0, options.thinkingDelayMs ?? 3000);
+  const chunkSize = output.length > 3000 ? 14 : output.length > 1200 ? 7 : 2;
+  const chunks = createSmoothedStreamChunks(renderer.formatStream(output), chunkSize);
+  let visibleText = "";
+
+  options.onThinking?.({ thinking: true, message: "AI正在思考..." });
+
+  if (thinkingDelay > 0) {
+    await waitForStream(thinkingDelay, options.signal);
+  }
+
+  options.onThinking?.({ thinking: false, message: "正在生成回答..." });
+
+  for (const chunk of chunks) {
+    if (options.signal?.aborted) {
+      throw new Error("生成已停止");
+    }
+
+    const formattedChunk = renderer.formatStream(chunk);
+    visibleText = `${visibleText}${formattedChunk}`;
+    options.onToken?.(formattedChunk, visibleText);
+    await waitForStream(Math.max(interval, mergeWindow), options.signal);
+  }
+}
+
+function createSmoothedStreamChunks(output: string, targetSize: number) {
+  const chunks: string[] = [];
+  let buffer = "";
+
+  for (const char of output) {
+    buffer = `${buffer}${char}`;
+
+    if (/[。！？!?；;：:\n]/.test(char) || buffer.length >= targetSize) {
+      chunks.push(buffer);
+      buffer = "";
+    }
+  }
+
+  if (buffer) {
+    chunks.push(buffer);
+  }
+
+  return chunks;
+}
+
 function toRecordTime(value?: string) {
   const date = value ? new Date(value) : new Date();
 
@@ -386,7 +671,7 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
         ? "建议入库"
         : "需要复核";
 
-  return {
+  const draft: IngestKnowledgeDraft = {
     id: readString(record.id) || `draft-${Date.now()}`,
     jobId: readString(record.jobId) || null,
     title,
@@ -421,8 +706,34 @@ function normalizeDraftFromUnknown(data: unknown, input: string, agent: IngestCh
     gptOS: isPlainRecord(record.gptOS) ? record.gptOS as unknown as GptOSRouteResult : undefined,
     actualModel: readString(record.actualModel) || undefined,
     responseId: readString(record.responseId) || undefined,
-    usage: isPlainRecord(record.usage) ? record.usage as unknown as OpenAIGptUsage : undefined
+    usage: isPlainRecord(record.usage) ? record.usage as unknown as OpenAIGptUsage : undefined,
+    knowledgeLoop: isPlainRecord(record.knowledgeLoop) ? record.knowledgeLoop as unknown as KnowledgeLoopResult : undefined,
+    evolution: isPlainRecord(record.evolution) ? record.evolution as unknown as KnowledgeEvolutionResult : undefined,
+    storeDecision: isPlainRecord(record.storeDecision) ? record.storeDecision as unknown as KnowledgeStoreDecision : undefined,
+    reusableKnowledgeUnits: Array.isArray(record.reusableKnowledgeUnits) ? record.reusableKnowledgeUnits as KnowledgeLoopCandidate[] : undefined,
+    reviewRequiredUnits: Array.isArray(record.reviewRequiredUnits) ? record.reviewRequiredUnits as KnowledgeLoopCandidate[] : undefined,
+    autoStoreCandidates: Array.isArray(record.autoStoreCandidates) ? record.autoStoreCandidates as KnowledgeLoopCandidate[] : undefined,
+    memory: isPlainRecord(record.memory) ? record.memory as unknown as KnowledgeMemoryReport : undefined,
+    memoryPlan: isPlainRecord(record.memoryPlan) ? record.memoryPlan as unknown as KnowledgeMemoryPlan : undefined,
+    knowledgeIntelligence: isPlainRecord(record.knowledgeIntelligence) ? record.knowledgeIntelligence as IngestKnowledgeDraft["knowledgeIntelligence"] : undefined,
+    ragOptimization: isPlainRecord(record.ragOptimization) ? record.ragOptimization as IngestKnowledgeDraft["ragOptimization"] : undefined
   };
+
+  const enrichedDraft = enrichDraftWithKnowledgeFactoryV5(draft, {
+    text: [
+      input,
+      summary,
+      firstPair.q,
+      firstPair.a,
+      readString(record.replyMarkdown)
+    ].filter(Boolean).join("\n\n"),
+    title,
+    category,
+    tags: draft.tags,
+    sourceType: draft.sourceType
+  });
+
+  return attachMemoryPlan(enrichedDraft);
 }
 
 export function createTrainingRecord(input: {
@@ -436,6 +747,7 @@ export function createTrainingRecord(input: {
   platform?: IngestPlatform;
 }): IngestTrainingRecord {
   const now = new Date().toISOString();
+  const saveStatus = input.status ?? (input.draft.saveStatus === "保存失败" ? "失败" : input.draft.saveStatus);
 
   return {
     id: `record-${input.draft.jobId ?? input.draft.id ?? Date.now()}`,
@@ -448,7 +760,7 @@ export function createTrainingRecord(input: {
     expertName: input.agent.expertId ? input.agent.name : null,
     input: input.originalInput,
     resultTitle: input.draft.title,
-    saveStatus: input.status ?? input.draft.saveStatus,
+    saveStatus,
     category: input.draft.category,
     time: toRecordTime(now),
     hits: 0,
@@ -462,9 +774,84 @@ export function createTrainingRecord(input: {
   };
 }
 
+function getDraftRecordIdentifiers(draft: IngestKnowledgeDraft) {
+  return new Set([draft.jobId, draft.id, draft.responseId].filter((value): value is string => Boolean(value)));
+}
+
+function isTrainingRecordLinkedToDraft(record: IngestTrainingRecord, draft: IngestKnowledgeDraft) {
+  const draftIds = getDraftRecordIdentifiers(draft);
+
+  if (draftIds.size === 0) {
+    return false;
+  }
+
+  return [
+    record.jobId,
+    record.id,
+    record.aiOutput?.jobId,
+    record.aiOutput?.id,
+    record.aiOutput?.responseId
+  ].some((value) => Boolean(value && draftIds.has(value)));
+}
+
+function markTrainingRecordSaved(record: IngestTrainingRecord, draft: IngestKnowledgeDraft): IngestTrainingRecord {
+  return {
+    ...record,
+    saveStatus: "已保存",
+    aiOutput: record.aiOutput
+      ? { ...record.aiOutput, saveStatus: "已保存" }
+      : { ...draft, saveStatus: "已保存" }
+  };
+}
+
+function ensureSavedTrainingRecord(input: {
+  records: IngestTrainingRecord[];
+  originalInput: string;
+  draft: IngestKnowledgeDraft;
+  agent: IngestChatAgent;
+  tenantId?: string | null;
+  userId?: string | null;
+  platform: IngestPlatform;
+}) {
+  const hasLinkedRecord = input.records.some((record) => isTrainingRecordLinkedToDraft(record, input.draft));
+  const syncedRecords = input.records.map((record) => isTrainingRecordLinkedToDraft(record, input.draft)
+    ? markTrainingRecordSaved(record, input.draft)
+    : record);
+
+  if (hasLinkedRecord) {
+    return syncedRecords;
+  }
+
+  return [
+    createTrainingRecord({
+      originalInput: input.originalInput,
+      draft: input.draft,
+      agent: input.agent,
+      status: "已保存",
+      tenantId: input.tenantId ?? null,
+      userId: input.userId ?? null,
+      platform: input.platform
+    }),
+    ...syncedRecords
+  ];
+}
+
+function normalizeTrainingRecordStatus(status: AdminTrainingRecordResponse["status"]): IngestKnowledgeDraft["saveStatus"] {
+  if (["saved", "completed", "stored", "indexed", "knowledge_saved"].includes(status ?? "")) {
+    return "已保存";
+  }
+
+  if (["rejected", "failed"].includes(status ?? "")) {
+    return "已拒绝";
+  }
+
+  return "待确认";
+}
+
 export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, agent: IngestChatAgent, platform: IngestPlatform = "web"): IngestTrainingRecord {
-  const status = record.status === "saved" ? "已保存" : record.status === "rejected" ? "已拒绝" : "待确认";
-  const fallbackDraft = normalizeDraftFromUnknown(record.ai_output, record.input ?? record.resultTitle ?? "", agent, status);
+  const draftStatus = normalizeTrainingRecordStatus(record.status);
+  const recordStatus: IngestTrainingRecord["saveStatus"] = draftStatus === "保存失败" ? "失败" : draftStatus;
+  const fallbackDraft = normalizeDraftFromUnknown(record.ai_output, record.input ?? record.resultTitle ?? "", agent, draftStatus);
 
   return {
     id: record.id ?? `record-${Date.now()}`,
@@ -475,7 +862,7 @@ export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, age
     agentName: agent.name,
     input: record.input ?? "",
     resultTitle: record.resultTitle ?? fallbackDraft.title,
-    saveStatus: status,
+    saveStatus: recordStatus,
     category: record.category ?? fallbackDraft.category,
     time: toRecordTime(record.timestamp),
     hits: record.hits ?? 0,
@@ -490,13 +877,15 @@ export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, age
 }
 
 function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agent: IngestChatAgent): IngestKnowledgeDraft {
+  const generatedId = data.jobId || data.trainingRecord?.jobId || `gpt-${Date.now()}`;
+
   return normalizeDraftFromUnknown({
     ...(data.knowledgeDraft ?? data.structured),
     userClientCallPlan: data.userClientCallPlan ?? data.knowledgeDraft?.userClientCallPlan,
     suggestedQuestions: data.suggestedQuestions ?? data.structured.followUpQuestions,
     saveRecommendation: data.saveRecommendation ?? data.knowledgeDraft?.saveRecommendation,
-    id: `gpt-${Date.now()}`,
-    jobId: `gpt-${Date.now()}`,
+    id: generatedId,
+    jobId: data.jobId || data.trainingRecord?.jobId || null,
     providerUsed: data.provider,
     model: data.modelDisplayName || data.model,
     sourceModel: data.model,
@@ -505,6 +894,16 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     usage: data.usage,
     gptProof: data.gptProof,
     gptOS: data.gptOS,
+    knowledgeLoop: data.knowledgeLoop,
+    evolution: data.evolution,
+    storeDecision: data.storeDecision,
+    reusableKnowledgeUnits: data.reusableKnowledgeUnits,
+    reviewRequiredUnits: data.reviewRequiredUnits,
+    autoStoreCandidates: data.autoStoreCandidates,
+    memory: data.memory,
+    memoryPlan: data.memoryPlan,
+    knowledgeIntelligence: data.knowledgeIntelligence ?? data.knowledgeDraft?.knowledgeIntelligence,
+    ragOptimization: data.ragOptimization ?? data.knowledgeDraft?.ragOptimization,
     generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
@@ -540,6 +939,7 @@ export async function sendCoreIngest(input: {
   }>;
   autonomous?: AutonomousTaskRequest;
   platform?: IngestPlatform;
+  streaming?: IngestStreamingOptions;
 }) {
   const platform = input.platform ?? "web";
   const selectedModelOption = getIngestModelOptionByLabel(input.selectedModelLabel ?? input.model);
@@ -547,6 +947,23 @@ export async function sendCoreIngest(input: {
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
   const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
   const preferredModel = modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel;
+  const runtimeOrchestrator = new AIRuntimeOrchestrator();
+  const runtimeResult = runtimeOrchestrator.handleRequest(input.text, {
+    source: "admin_ingest",
+    runtimeEntry: "admin_ingest_client",
+    userId: input.userId ?? null,
+    tenantId: input.tenantId ?? null,
+    platform,
+    category: input.category,
+    agentName: input.agent.name,
+    agentRole: input.agent.role,
+    model: selectedModelLabel,
+    provider: modelProvider,
+    recentMessages: input.recentMessages ?? [],
+    previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
+    recentTrainingRecords: input.recentTrainingRecords ?? []
+  });
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const health = await checkGptHealthStatus({
     provider: modelProvider,
     selectedModelLabel,
@@ -562,12 +979,14 @@ export async function sendCoreIngest(input: {
   try {
     const response = await fetch("/api/admin/kb/ingest/gpt", {
       method: "POST",
+      signal: input.streaming?.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         input: input.text,
         source: "admin_ingest",
         sourceApp: "admin_ingest",
-        agentId: input.agent.id,
+        ...agentKnowledgeScope,
+        knowledgeVersion: "v1",
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
         expertName: input.agent.expertId ? input.agent.name : null,
@@ -591,6 +1010,14 @@ export async function sendCoreIngest(input: {
         recentMessages: input.recentMessages ?? [],
         previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
         recentTrainingRecords: input.recentTrainingRecords ?? [],
+        runtimeContext: {
+          requestId: runtimeResult.requestId,
+          retrievalMode: runtimeResult.diagnostics.retrievalMode,
+          retrieval: runtimeResult.retrieval,
+          commercialDecision: runtimeResult.decision,
+          outputStrategy: runtimeResult.strategy,
+          validation: runtimeResult.validation
+        },
         autonomous: input.autonomous,
         autoSave: false
       })
@@ -611,23 +1038,61 @@ export async function sendCoreIngest(input: {
       throw new Error("AI服务暂时不稳定，请稍后再试。");
     }
 
+    const styledReply = applyExpressionLayer(replyContent, selectedModelLabel, "admin_ingest_model_reply");
+    const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
+      query: input.text,
+      baseResponse: styledReply,
+      retrieval: runtimeResult.retrieval,
+      decision: runtimeResult.decision,
+      strategy: runtimeResult.strategy
+    });
+    const runtimeFeedback = runtimeOrchestrator.collectFeedbackLoop({
+      query: input.text,
+      responseText: styledReply,
+      retrieval: runtimeResult.retrieval,
+      decision: runtimeResult.decision
+    });
+    await streamStyledOutput(styledReply, input.streaming);
     const normalizedData = {
       ...data,
-      replyMarkdown: data.replyMarkdown || replyContent
+      replyMarkdown: styledReply,
+      runtimeOrchestrator: {
+        ...runtimeResult,
+        finalOutput: runtimeFinalOutput,
+        feedback: runtimeFeedback
+      }
     };
     const draft = gptResponseToDraft(normalizedData, input.text, input.agent);
-
-    draft.jobId = draft.jobId ?? `gpt-${Date.now()}`;
-    draft.fallbackUsed = draft.fallbackUsed ?? false;
-
-    const records = [createTrainingRecord({
-      originalInput: input.text,
+    const knowledgeLoopBundle = buildKnowledgeLoopBundle({
+      text: input.text,
+      replyMarkdown: styledReply,
       draft,
-      agent: input.agent,
-      tenantId: input.tenantId ?? null,
-      userId: input.userId ?? null,
-      platform
-    })];
+      attachments: input.attachments
+    });
+
+    draft.fallbackUsed = draft.fallbackUsed ?? false;
+    draft.knowledgeLoop = knowledgeLoopBundle.knowledgeLoop;
+    draft.evolution = knowledgeLoopBundle.evolution;
+    draft.storeDecision = knowledgeLoopBundle.storeDecision;
+    draft.reusableKnowledgeUnits = knowledgeLoopBundle.reusableKnowledgeUnits;
+    draft.reviewRequiredUnits = knowledgeLoopBundle.reviewRequiredUnits;
+    draft.autoStoreCandidates = knowledgeLoopBundle.autoStoreCandidates;
+    const memoryPlan = buildDraftMemoryPlan(draft);
+    draft.memoryPlan = memoryPlan;
+    draft.memory = buildDraftMemoryReport(memoryPlan);
+    draft.knowledgeIntelligence = draft.knowledgeIntelligence ?? memoryPlan.intelligence;
+    draft.ragOptimization = draft.ragOptimization ?? memoryPlan.ragOptimization;
+
+    const records = data.records?.length
+      ? data.records.map((record) => normalizeTrainingRecord(record, input.agent, platform))
+      : [createTrainingRecord({
+        originalInput: input.text,
+        draft,
+        agent: input.agent,
+        tenantId: input.tenantId ?? null,
+        userId: input.userId ?? null,
+        platform
+      })];
 
     return {
       draft,
@@ -641,7 +1106,17 @@ export async function sendCoreIngest(input: {
       gptProof: normalizedData.gptProof,
       autonomousResult: normalizedData.autonomousResult ?? normalizedData.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
+      visibleReply: styledReply,
       replyMarkdown: draft.replyMarkdown,
+      runtimeOrchestrator: normalizedData.runtimeOrchestrator,
+      knowledgeLoop: draft.knowledgeLoop,
+      evolution: draft.evolution,
+      storeDecision: draft.storeDecision,
+      memory: draft.memory,
+      memoryPlan: draft.memoryPlan,
+      knowledgeIntelligence: draft.knowledgeIntelligence,
+      ragOptimization: draft.ragOptimization,
+      metadata: knowledgeLoopBundle.metadata,
       saveSuggestion: draft.recommendation === "建议入库",
       message: `${selectedModelLabel} 已生成结构化知识：${draft.title}`
     };
@@ -661,14 +1136,27 @@ export async function saveKnowledgeDraft(input: {
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
+  const draftWithMetadata = input.draft as unknown as { metadata?: unknown };
+  const draftMetadata = typeof draftWithMetadata.metadata === "object" && draftWithMetadata.metadata !== null
+    ? draftWithMetadata.metadata as Record<string, unknown>
+    : {};
+  const knowledgeVersion = typeof draftMetadata.knowledgeGovernanceVersion === "string" && draftMetadata.knowledgeGovernanceVersion.trim()
+    ? draftMetadata.knowledgeGovernanceVersion.trim()
+    : "v1";
+  const memoryAdapter = new KnowledgeMemoryAdapter();
+  const memoryPlan = input.draft.memoryPlan ?? memoryAdapter.buildMemoryPlan(input.draft);
+  const qaPairs = memoryPlan.qaPairs.length > 0
+    ? memoryPlan.qaPairs
+    : input.draft.qaPairs?.length
+      ? input.draft.qaPairs
+      : [{ q: input.draft.standardQuestion, a: input.draft.standardAnswer }];
   const structured = {
     title: input.draft.title,
     category: input.draft.category,
     tags: input.draft.tags,
-    summary: input.draft.summary ?? input.draft.standardAnswer,
-    qa_pairs: input.draft.qaPairs?.length
-      ? input.draft.qaPairs
-      : [{ q: input.draft.standardQuestion, a: input.draft.standardAnswer }],
+    summary: memoryPlan.structuredSummary || input.draft.summary || input.draft.standardAnswer,
+    qa_pairs: qaPairs,
     confidence: input.draft.trainingScore,
     should_save: input.draft.recommendation !== "暂不入库",
     scenarios: input.draft.scenarios ?? [],
@@ -682,38 +1170,54 @@ export async function saveKnowledgeDraft(input: {
     generatedBy: input.draft.generatedBy ?? input.draft.providerUsed ?? "unknown",
     providerUsed: input.draft.providerUsed ?? "unknown",
     model: input.draft.model ?? "unknown",
-    fallbackUsed: input.draft.fallbackUsed ?? false
+    fallbackUsed: input.draft.fallbackUsed ?? false,
+    knowledgeFactory: input.draft.knowledgeFactory,
+    knowledgeFactoryV3: input.draft.knowledgeFactoryV3,
+    knowledgeUnits: input.draft.knowledgeFactory?.units ?? [],
+    evolvingKnowledgeUnits: input.draft.knowledgeFactoryV3?.evolvedUnits ?? [],
+    promotedKnowledgeUnits: input.draft.knowledgeFactoryV3?.promotedUnits ?? [],
+    retrievalHints: input.draft.knowledgeFactory?.retrievalHints ?? [],
+    retrievalEnhancement: input.draft.knowledgeFactoryV3?.retrievalEnhancement,
+    generationPlan: input.draft.knowledgeFactory?.generationPlan ?? [],
+    knowledgeLoop: input.draft.knowledgeLoop,
+    evolution: input.draft.evolution,
+    storeDecision: input.draft.storeDecision,
+    reusableKnowledgeUnits: input.draft.reusableKnowledgeUnits ?? [],
+    reviewRequiredUnits: input.draft.reviewRequiredUnits ?? [],
+    autoStoreCandidates: input.draft.autoStoreCandidates ?? [],
+    memory: input.draft.memory ?? buildDraftMemoryReport(memoryPlan),
+    memoryPlan,
+    knowledgeIntelligence: input.draft.knowledgeIntelligence ?? memoryPlan.intelligence,
+    ragOptimization: input.draft.ragOptimization ?? memoryPlan.ragOptimization,
+    knowledgeLoopMetadata: {
+      knowledgeLoopVersion: "v1",
+      autoStoreEnabled: false,
+      requiresReview: input.draft.storeDecision?.requiresReview ?? true
+    }
   };
-
-  if (!input.draft.jobId) {
-    const savedDraft = { ...input.draft, saveStatus: "已保存" as const };
-
-    return {
-      draft: savedDraft,
-      records: [createTrainingRecord({
-        originalInput: input.originalInput,
-        draft: savedDraft,
-        agent: input.agent,
-        status: "已保存",
-        tenantId: input.tenantId ?? null,
-        userId: input.userId ?? null,
-        platform
-      })],
-      preview: true,
-      message: "当前为本地预览结果，已在前端标记为已保存。"
-    };
-  }
 
   try {
     const response = await fetch("/api/admin/kb/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        jobId: input.draft.jobId,
+        jobId: input.draft.jobId ?? null,
+        draftId: input.draft.id,
+        messageId: input.draft.responseId ?? input.draft.id,
+        title: input.draft.title,
+        content: input.draft.standardAnswer || input.draft.summary || input.draft.replyMarkdown || null,
+        replyMarkdown: input.draft.replyMarkdown ?? null,
+        knowledgeDraft: input.draft,
+        knowledgeLoop: input.draft.knowledgeLoop ?? null,
+        memory: input.draft.memory ?? null,
+        sourceFiles: input.draft.sourceMaterials ?? [],
+        tags: input.draft.tags,
+        scenario: input.draft.scenarios?.[0] ?? null,
         originalInput: input.originalInput,
         structured,
         knowledge: structured,
-        agentId: input.agent.id,
+        ...agentKnowledgeScope,
+        knowledgeVersion,
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
         expertName: input.agent.expertId ? input.agent.name : null,
@@ -725,40 +1229,53 @@ export async function saveKnowledgeDraft(input: {
         syncTarget: [...ingestSyncTarget]
       })
     });
-    const data = await readApiData<{ records?: AdminTrainingRecordResponse[] }>(response);
-    const savedDraft = { ...input.draft, saveStatus: "已保存" as const };
+    const data = await readApiData<{
+      records?: AdminTrainingRecordResponse[];
+      record?: AdminTrainingRecordResponse;
+      knowledgeItem?: AdminSavedKnowledgeResponse;
+      status?: "saved";
+      knowledgeItemId?: string | null;
+      storedCount?: number;
+      chunkCount?: number;
+      indexedCount?: number;
+      message?: string;
+    }>(response);
+    const responseRecords = data.records?.length ? data.records : data.record ? [data.record] : [];
+    const retrievalCandidate = memoryPlan.candidates[0] ?? input.draft.knowledgeLoop?.candidates[0] ?? null;
+    const retrievalCheck = await memoryAdapter.runRetrievalCheck(retrievalCandidate, {
+      expectedTitle: data.knowledgeItem?.title ?? input.draft.title
+    });
+    const memory = memoryAdapter.buildStoredKnowledgeReport({
+      draft: input.draft,
+      savedKnowledge: data.knowledgeItem ?? null,
+      retrievalCheck
+    });
+    const savedDraft = {
+      ...input.draft,
+      saveStatus: "已保存" as const,
+      memoryPlan,
+      memory,
+      knowledgeIntelligence: input.draft.knowledgeIntelligence ?? memoryPlan.intelligence,
+      ragOptimization: input.draft.ragOptimization ?? memoryPlan.ragOptimization
+    };
+    const normalizedResponseRecords = responseRecords.map((record) => normalizeTrainingRecord(record, input.agent, platform));
 
     return {
       draft: savedDraft,
-      records: data.records?.map((record) => normalizeTrainingRecord(record, input.agent, platform)) ?? [createTrainingRecord({
+      records: ensureSavedTrainingRecord({
+        records: normalizedResponseRecords,
         originalInput: input.originalInput,
         draft: savedDraft,
         agent: input.agent,
-        status: "已保存",
         tenantId: input.tenantId ?? null,
         userId: input.userId ?? null,
         platform
-      })],
+      }),
       preview: false,
-      message: "已保存知识入库，训练记录已更新。"
+      message: data.message ?? "已保存知识入库，训练记录已更新。"
     };
   } catch (error) {
-    const savedDraft = { ...input.draft, saveStatus: "已保存" as const, fallbackUsed: true };
-
-    return {
-      draft: savedDraft,
-      records: [createTrainingRecord({
-        originalInput: input.originalInput,
-        draft: savedDraft,
-        agent: input.agent,
-        status: "已保存",
-        tenantId: input.tenantId ?? null,
-        userId: input.userId ?? null,
-        platform
-      })],
-      preview: true,
-      message: error instanceof Error ? error.message : "保存接口暂不可用，已在本地预览中标记为已保存。"
-    };
+    throw new Error(error instanceof Error ? error.message : "保存接口暂不可用，未写入长期知识库。");
   }
 }
 
@@ -885,6 +1402,7 @@ export async function sendUrlIngestPreview(input: {
   const modelProvider = input.modelProvider ?? selectedModelOption.provider;
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
   const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const response = await fetch("/api/admin/kb/ingest/url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -894,7 +1412,8 @@ export async function sendUrlIngestPreview(input: {
       source: "admin_ingest",
       sourceApp: "admin_ingest",
       sourceType: "url",
-      agentId: input.agent.id,
+      ...agentKnowledgeScope,
+      knowledgeVersion: "v1",
       expertId: input.agent.expertId ?? null,
       agentName: input.agent.name,
       expertName: input.agent.expertId ? input.agent.name : null,
@@ -916,13 +1435,16 @@ export async function sendUrlIngestPreview(input: {
     })
   });
   const data = await readApiData<UrlIngestPreviewResponse>(response);
+  const styledReplyMarkdown = data.replyMarkdown
+    ? applyExpressionLayer(data.replyMarkdown, selectedModelLabel, "admin_ingest_url_preview")
+    : undefined;
   const draft = normalizeDraftFromUnknown({
     ...data.draft,
     jobId: data.job.id,
     providerUsed: data.draft.providerUsed,
     model: data.draft.model || selectedModelLabel,
     fallbackUsed: data.draft.fallbackUsed,
-    replyMarkdown: data.replyMarkdown
+    replyMarkdown: styledReplyMarkdown
   }, input.url, input.agent, data.draft.saveStatus === "saved" ? "已保存" : "待确认");
 
   draft.jobId = data.job.id;
@@ -947,7 +1469,7 @@ export async function sendUrlIngestPreview(input: {
     provider: draft.providerUsed ?? "url-preview",
     model: draft.model ?? selectedModelLabel,
     modelMode: "highest" as const,
-    replyMarkdown: data.replyMarkdown,
+    replyMarkdown: styledReplyMarkdown,
     saveSuggestion: draft.recommendation === "建议入库",
     message: data.message
   };

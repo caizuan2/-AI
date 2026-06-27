@@ -29,6 +29,9 @@ import {
   formatFinalizedAnswerForDisplay
 } from "@/lib/ai-chat/response-finalizer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
+import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
+import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
+import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
 import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { prisma } from "@/lib/prisma";
@@ -52,6 +55,7 @@ export const RAG_CUSTOMER_DRAFT_ANSWER = "已根据知识库资料整理如下�
 export interface AiChatActor {
   id: string;
   role: AppRole;
+  tenantId?: string | null;
 }
 
 export interface AiChatAskInput {
@@ -99,6 +103,9 @@ export interface AiChatAnswerProviderInput {
   fallbackChain: string[];
   traceId: string;
   businessExecutionContext?: string | null;
+  agentId: string;
+  knowledgeBaseId: string;
+  namespace: string;
 }
 
 export interface AiChatAnswerProviderResult {
@@ -660,6 +667,7 @@ function toSource(chunk: RetrievedRagChunk) {
     includeShared: chunk.includeShared,
     includePublished: chunk.includePublished,
     title: chunk.title,
+    content_preview: chunk.content.length > 240 ? `${chunk.content.slice(0, 240)}...` : chunk.content,
     score: chunk.score,
     relevance_score: chunk.relevance_score,
     chunk_rank: chunk.chunk_rank
@@ -775,10 +783,24 @@ export async function handleAiChatAsk(
   const mode = normalizeAiChatMode(input.mode);
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
-  const conversationId = readConversationId(input);
   const attachments = validateAttachments(input.attachments);
   const businessContext = readBusinessExecutionContext(input);
   const knowledgeSelectionContext = readKnowledgeBaseSelectionContext(input);
+  const selectedKnowledgeScope = knowledgeSelectionContext?.scope ?? null;
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: selectedKnowledgeScope?.agentId ?? trimString(input.agentId ?? input.expert_id),
+    knowledgeBaseId: selectedKnowledgeScope?.knowledgeBaseId ?? trimString(input.knowledgeBaseId ?? input.kb_id),
+    namespace: selectedKnowledgeScope?.namespace ?? trimString(input.namespace)
+  });
+  const directTenantId = trimString(input.tenant_id);
+  const scopedTenantId = selectedKnowledgeScope?.tenantId ?? (directTenantId || actor.tenantId || null);
+  const hasExplicitAgentScope = Boolean(
+    selectedKnowledgeScope
+    || trimString(input.agentId ?? input.expert_id)
+    || trimString(input.knowledgeBaseId ?? input.kb_id)
+    || trimString(input.namespace)
+  );
+  const conversationId = readConversationId(input);
   const businessExecutionContext = [
     knowledgeSelectionContext?.prompt,
     businessContext?.prompt
@@ -808,6 +830,7 @@ export async function handleAiChatAsk(
     mode,
     enableDeepThinking,
     enableWebSearch,
+    ...agentScope,
     attachmentCount: attachments.length,
     ...(knowledgeSelectionContext
       ? {
@@ -826,6 +849,7 @@ export async function handleAiChatAsk(
     questionLength: question.length,
     enableDeepThinking,
     enableWebSearch,
+    ...agentScope,
     attachmentCount: attachments.length,
     ...(knowledgeSelectionContext ? { knowledgeSelection: knowledgeSelectionContext.metadata } : {})
   });
@@ -833,9 +857,14 @@ export async function handleAiChatAsk(
   const topK = osContext.rag.topK;
   const chunks = await retrieveRelevantChunks(question, {
     userId: actor.id,
+    tenantId: scopedTenantId,
+    appType: "user_app",
+    ...(hasExplicitAgentScope ? agentScope : {}),
+    includeShared: true,
+    includePublished: true,
     mode,
     topK,
-    knowledgeScope: knowledgeSelectionContext?.scope ?? null,
+    knowledgeScope: selectedKnowledgeScope,
     db
   });
   const contexts = buildRagContext(chunks);
@@ -853,6 +882,26 @@ export async function handleAiChatAsk(
     relevance_score: relevanceScore,
     contextChars: ragDiagnostics.contextChars,
     cost_mode: resolveCostMode(mode, enableDeepThinking, confidence),
+  });
+  const runtimeOrchestrator = new AIRuntimeOrchestrator();
+  const runtimeResult = runtimeOrchestrator.handleRequest(question, {
+    source: "user_chat",
+    runtimeEntry: "user_chat_service",
+    userId: actor.id,
+    platform: "web",
+    category: mode,
+    agentRole: actor.role,
+    previousKnowledgeDrafts: chunks.map((chunk) => ({
+      id: chunk.knowledgeItemId || chunk.chunkId,
+      title: chunk.title,
+      summary: chunk.summary ?? chunk.content,
+      category: chunk.category ?? undefined,
+      tags: chunk.tags,
+      standardQuestion: question,
+      standardAnswer: chunk.content,
+      scenarios: chunk.category ? [chunk.category] : [],
+      sourceMaterials: [chunk.sourceTitle, chunk.sourceUrl, "retrieval-only:user-chat"].filter(Boolean) as string[]
+    }))
   });
   await writeAuditLog(db, actor, "CHAT_RETRIEVE", normalizedConversationId, {
     mode,
@@ -895,6 +944,7 @@ export async function handleAiChatAsk(
           fallbackChain: osContext.route.fallback_chain,
           traceId: osContext.trace_id,
           businessExecutionContext,
+          ...agentScope
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
@@ -960,6 +1010,19 @@ export async function handleAiChatAsk(
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
+  const outputControlledAnswer = processAIOutput(answer, {
+    model: actualModel,
+    source: "ai_chat_ask",
+    mode
+  }).output;
+
+  if (outputControlledAnswer !== answer) {
+    answer = outputControlledAnswer;
+
+    if (providerStatus === "ok") {
+      customerAnswer = buildCustomerAnswerFromText(question, answer);
+    }
+  }
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
   const visibleModelFeedbackEvent: ModelFeedbackEvent = {
     model_used: modelFeedbackEvent?.model_used ?? actualModel,
@@ -1007,6 +1070,30 @@ export async function handleAiChatAsk(
     fallbackUsed: visibleFallbackUsed,
     answerQuality,
   });
+  const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
+    query: question,
+    baseResponse: answer,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision,
+    strategy: runtimeResult.strategy
+  });
+  const runtimeFeedback = runtimeOrchestrator.collectFeedbackLoop({
+    query: question,
+    responseText: runtimeFinalOutput.replyMarkdown,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision
+  });
+  const aiRuntime = {
+    requestId: runtimeResult.requestId,
+    version: runtimeResult.version,
+    retrieval: runtimeResult.retrieval,
+    decision: runtimeResult.decision,
+    strategy: runtimeResult.strategy,
+    finalOutput: runtimeFinalOutput,
+    feedback: runtimeFeedback,
+    validation: runtimeResult.validation,
+    diagnostics: runtimeResult.diagnostics
+  };
   const osTrace = os_core.recordTrace(osContext, {
     provider_status: providerStatus,
     fallbackUsed: visibleFallbackUsed,
@@ -1028,6 +1115,7 @@ export async function handleAiChatAsk(
       evolutionReport,
       businessSchemaGuard: businessSchemaGuardMetadata,
       autoSalesAgent: autoSalesAgentMetadata,
+      aiRuntime,
     },
   });
 
@@ -1127,7 +1215,8 @@ export async function handleAiChatAsk(
     gptOsDecisionMode: osContext.route.decision_mode,
     gptOsProviderFallbackChain: osContext.route.provider_fallback_chain,
     gptOsRagDiagnostics: ragDiagnostics,
-    gptOsGrowthEnhancer: osContext.growthEnhancer
+    gptOsGrowthEnhancer: osContext.growthEnhancer,
+    aiRuntime
   });
   await db.conversation.update({
     where: {
@@ -1293,6 +1382,7 @@ export async function handleAiChatAsk(
       optimization_suggestions: optimizationSuggestions,
       evolution_report: evolutionReport,
     },
+    ai_runtime: aiRuntime,
     feedback_meta: {
       message_id: String(assistantMessage.id),
       trace_id: osTrace.trace_id,

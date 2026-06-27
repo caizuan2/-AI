@@ -42,6 +42,8 @@ function readRequest(body: unknown) {
     source: readSource(body.source),
     sourceUrl: typeof body.sourceUrl === "string" && body.sourceUrl.trim() ? body.sourceUrl.trim() : null,
     agentId: typeof body.agentId === "string" && body.agentId.trim() ? body.agentId.trim() : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" && body.knowledgeBaseId.trim() ? body.knowledgeBaseId.trim() : null,
+    namespace: typeof body.namespace === "string" && body.namespace.trim() ? body.namespace.trim() : null,
     agentName: typeof body.agentName === "string" && body.agentName.trim() ? body.agentName.trim() : null,
     autoSave: body.autoSave !== false
   };

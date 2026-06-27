@@ -1,6 +1,5 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { AnalyticsEventType, recordAnalyticsEvent } from "@/lib/analytics";
 import { getEffectiveKnowledgeStatus } from "@/lib/knowledge/status";
@@ -13,6 +12,24 @@ import {
 } from "@/lib/server-config";
 import { toVectorLiteral } from "@/lib/knowledge/vector";
 import { logger } from "@/lib/logger";
+import {
+  buildKnowledgeAccessSql,
+  buildKnowledgeChunkAccessWhere,
+  resolveKnowledgeAccessScope,
+  type ResolvedKnowledgeAccessScope
+} from "@/lib/enterprise/knowledge-access-scope";
+import {
+  buildFeedbackRankingBoost,
+  buildGovernanceSqlFilter,
+  buildPolicyDiagnostics,
+  candidatePassesGovernance,
+  applyPolicyRankingAdjustment,
+  readKnowledgeGovernanceMetadata,
+  trackHitRate,
+  type KnowledgeGovernanceControls
+} from "@/lib/enterprise/knowledge-governance";
+import { calculateFeedbackAwareRankingScore } from "@/lib/enterprise/knowledge-feedback-ranking";
+import { analyzeKnowledgeOptimization } from "@/lib/enterprise/knowledge-self-optimization-engine";
 
 const STOP_TERMS = new Set([
   "什么",
@@ -81,6 +98,9 @@ export interface RetrievedKnowledgeChunk {
   sourceType: string;
   sourceTitle: string | null;
   sourceUrl: string | null;
+  agentId: string | null;
+  knowledgeBaseId: string | null;
+  namespace: string | null;
   createdAt: string;
   updatedAt: string;
   expiresAt: string | null;
@@ -90,12 +110,70 @@ export interface RetrievedKnowledgeChunk {
   score: number;
   vectorSimilarity: number | null;
   keywordSimilarity: number | null;
+  qualityScore: number | null;
+  feedbackScore: number;
+  behaviorScore: number;
+  behaviorEventCount: number;
+  behaviorReasons: string[];
+  usageScore: number;
+  freshnessScore: number;
+  optimizationScore: number;
+  stabilityScore: number;
+  confidenceWeight: number;
+  trustWeight: number;
+  volatilityPenalty: number;
+  stableOptimizationScore: number;
+  trendScore: number;
+  trendLabel: string;
+  trendConfidence: number;
+  staleRisk: number;
+  fastRising: boolean;
+  staleHighScore: boolean;
+  decliningTrend: boolean;
+  evergreen: boolean;
+  trendReason: string;
+  trendShadowMode: boolean;
+  lifecycleStage: string;
+  lifecycleScore: number;
+  lifecycleConfidence: number;
+  lifecycleReason: string;
+  lifecycleSuggestion: string;
+  shouldBoost: boolean;
+  shouldDecay: boolean;
+  shouldReview: boolean;
+  shouldArchiveCandidate: boolean;
+  policyDecision: string;
+  policyScore: number;
+  policyRiskLevel: string;
+  policyConfidence: number;
+  policySuggestion: string;
+  sampleCount: number;
+  suspectedGaming: boolean;
+  optimizationReason: string;
+  optimizationSuggestion: string;
+  duplicateLikely: boolean;
+  duplicateGroupKey?: string;
+  coldKnowledge: boolean;
+  conflictLikely: boolean;
+  staleVersion: boolean;
+  knowledgeVersion: string | null;
+  lowQuality: boolean;
+  highValue: boolean;
 }
 
 export interface RetrieveKnowledgeOptions {
   query: string;
   userId: string;
   tenantId?: string | null;
+  appType?: string | null;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  knowledgeVersion?: string | number | null;
+  minQualityScore?: number | null;
+  includeLowQuality?: boolean;
+  includeShared?: boolean;
+  includePublished?: boolean;
   topK?: number;
   minSimilarity?: number;
   minResults?: number;
@@ -136,6 +214,7 @@ type RawCandidate = {
   importance: number;
   vectorSimilarity: number | null;
   keywordSimilarity: number | null;
+  metadata: unknown;
 };
 
 type VectorSearchRow = {
@@ -155,6 +234,7 @@ type VectorSearchRow = {
   status: string;
   importance: number;
   similarity: number;
+  metadata: unknown;
 };
 
 type SearchRun = {
@@ -187,6 +267,37 @@ function clamp01(value: unknown) {
 
 function roundScore(value: number) {
   return Math.round(clamp01(value) * 10000) / 10000;
+}
+
+function readMetadataString(metadata: unknown, keys: string[]) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return null;
+  }
+
+  const record = metadata as Record<string, unknown>;
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function readChunkScope(metadata: unknown) {
+  const agentId = readMetadataString(metadata, ["agentId", "expertId", "expert_id"]);
+  const knowledgeBaseId = readMetadataString(metadata, ["knowledgeBaseId", "kbId", "kb_id"]);
+  const namespace = readMetadataString(metadata, ["namespace"])
+    ?? (agentId && knowledgeBaseId ? `agent:${agentId}:kb:${knowledgeBaseId}` : null);
+
+  return {
+    agentId,
+    knowledgeBaseId,
+    namespace
+  };
 }
 
 function toIsoString(value: Date | string) {
@@ -468,6 +579,97 @@ function rerankCandidate(candidate: RawCandidate): RetrievedKnowledgeChunk {
       + (recencyScore * RECENCY_WEIGHT)
     ) * getLifecycleWeight(candidate)
     : rawSimilarity;
+  const governance = readKnowledgeGovernanceMetadata(candidate.metadata);
+  const feedbackBoost = buildFeedbackRankingBoost(candidate.metadata);
+  const qualityScore = governance?.qualityScore ?? rawScore;
+  const feedbackScore = feedbackBoost.feedbackScore;
+  const behaviorScore = feedbackBoost.behaviorScore;
+  const usageScore = feedbackBoost.usageScore;
+  const optimization = analyzeKnowledgeOptimization({
+    baseScore: rawScore,
+    qualityScore,
+    feedbackScore,
+    behaviorScore,
+    usageScore,
+    freshnessScore: feedbackBoost.freshnessScore,
+    stabilityScore: feedbackBoost.stabilityScore,
+    confidenceWeight: feedbackBoost.confidenceWeight,
+    trustWeight: feedbackBoost.trustWeight,
+    volatilityPenalty: feedbackBoost.volatilityPenalty,
+    stableOptimizationScore: feedbackBoost.stableOptimizationScore,
+    trendScore: feedbackBoost.trendScore,
+    trendConfidence: feedbackBoost.trendConfidence,
+    trendLabel: feedbackBoost.trendLabel,
+    staleRisk: feedbackBoost.staleRisk,
+    fastRising: feedbackBoost.fastRising,
+    staleHighScore: feedbackBoost.staleHighScore,
+    decliningTrend: feedbackBoost.decliningTrend,
+    evergreen: feedbackBoost.evergreen,
+    sampleCount: feedbackBoost.sampleCount,
+    suspectedGaming: feedbackBoost.suspectedGaming,
+    metadata: candidate.metadata,
+    title: candidate.title,
+    content: candidate.chunkText,
+    createdAt: candidate.createdAt,
+    updatedAt: candidate.updatedAt,
+    expiresAt: candidate.expiresAt,
+    sourceType: candidate.sourceType,
+    status: getEffectiveKnowledgeStatus(candidate.status, candidate.expiresAt),
+    knowledgeVersion: governance?.version
+  });
+  const policy = buildPolicyDiagnostics({
+    metadata: candidate.metadata,
+    qualityScore,
+    feedbackScore,
+    behaviorScore,
+    optimizationScore: optimization.optimizationScore,
+    stableOptimizationScore: optimization.stableOptimizationScore,
+    trend: {
+      trendScore: optimization.trendScore,
+      confidence: optimization.trendConfidence,
+      fastRising: optimization.fastRising,
+      staleHighScore: optimization.staleHighScore,
+      decliningTrend: optimization.decliningTrend
+    },
+    lifecycle: {
+      lifecycleStage: optimization.lifecycleStage,
+      lifecycleScore: optimization.lifecycleScore,
+      lifecycleConfidence: optimization.lifecycleConfidence,
+      shouldArchiveCandidate: optimization.shouldArchiveCandidate
+    },
+    highValue: optimization.highValue,
+    lowQuality: optimization.lowQuality,
+    duplicateLikely: optimization.duplicateLikely,
+    conflictLikely: optimization.conflictLikely,
+    coldKnowledge: optimization.coldKnowledge,
+    confidence: optimization.lifecycleConfidence,
+    volatilityPenalty: optimization.volatilityPenalty,
+    trustWeight: optimization.trustWeight
+  });
+  const feedbackAwareScore = calculateFeedbackAwareRankingScore({
+    baseScore: rawScore,
+    qualityScore,
+    feedbackScore,
+    usageScore,
+    freshnessScore: feedbackBoost.freshnessScore,
+    optimizationScore: optimization.optimizationScore,
+    stabilityScore: optimization.stabilityScore,
+    stableOptimizationScore: optimization.stableOptimizationScore,
+    trendScore: optimization.trendScore,
+    trendConfidence: optimization.trendConfidence,
+    lifecycleScore: optimization.lifecycleScore,
+    lifecycleConfidence: optimization.lifecycleConfidence,
+    lifecycleStage: optimization.lifecycleStage,
+    confidenceWeight: optimization.confidenceWeight,
+    trustWeight: optimization.trustWeight,
+    volatilityPenalty: optimization.volatilityPenalty,
+    sampleCount: optimization.sampleCount,
+    behaviorScore,
+    lowQuality: optimization.lowQuality,
+    highValue: optimization.highValue
+  });
+  const finalScore = applyPolicyRankingAdjustment(feedbackAwareScore, policy);
+  const chunkScope = readChunkScope(candidate.metadata);
 
   return {
     chunkId: candidate.chunkId,
@@ -480,35 +682,86 @@ function rerankCandidate(candidate: RawCandidate): RetrievedKnowledgeChunk {
     sourceType: candidate.sourceType,
     sourceTitle: candidate.sourceTitle,
     sourceUrl: candidate.sourceUrl,
+    agentId: chunkScope.agentId,
+    knowledgeBaseId: chunkScope.knowledgeBaseId,
+    namespace: chunkScope.namespace,
     createdAt: toIsoString(candidate.createdAt),
     updatedAt: toIsoString(candidate.updatedAt),
     expiresAt: candidate.expiresAt ? toIsoString(candidate.expiresAt) : null,
     status: getEffectiveKnowledgeStatus(candidate.status, candidate.expiresAt),
     importance: candidate.importance,
     similarity: roundScore(rawSimilarity),
-    score: roundScore(rawScore),
+    score: roundScore(finalScore),
     vectorSimilarity: candidate.vectorSimilarity === null ? null : roundScore(candidate.vectorSimilarity),
-    keywordSimilarity: candidate.keywordSimilarity === null ? null : roundScore(candidate.keywordSimilarity)
+    keywordSimilarity: candidate.keywordSimilarity === null ? null : roundScore(candidate.keywordSimilarity),
+    qualityScore: governance?.qualityScore ?? null,
+    feedbackScore: Math.round(feedbackScore * 10000) / 10000,
+    behaviorScore: Math.round(behaviorScore * 10000) / 10000,
+    behaviorEventCount: feedbackBoost.behaviorEventCount,
+    behaviorReasons: feedbackBoost.behaviorReasons,
+    usageScore: roundScore(usageScore),
+    freshnessScore: roundScore(feedbackBoost.freshnessScore),
+    optimizationScore: roundScore(optimization.optimizationScore),
+    stabilityScore: roundScore(optimization.stabilityScore),
+    confidenceWeight: roundScore(optimization.confidenceWeight),
+    trustWeight: roundScore(optimization.trustWeight),
+    volatilityPenalty: roundScore(optimization.volatilityPenalty),
+    stableOptimizationScore: roundScore(optimization.stableOptimizationScore),
+    trendScore: roundScore(optimization.trendScore),
+    trendLabel: optimization.trendLabel,
+    trendConfidence: roundScore(optimization.trendConfidence),
+    staleRisk: roundScore(optimization.staleRisk),
+    fastRising: optimization.fastRising,
+    staleHighScore: optimization.staleHighScore,
+    decliningTrend: optimization.decliningTrend,
+    evergreen: optimization.evergreen,
+    trendReason: optimization.trendReason,
+    trendShadowMode: optimization.trendShadowMode,
+    lifecycleStage: optimization.lifecycleStage,
+    lifecycleScore: roundScore(optimization.lifecycleScore),
+    lifecycleConfidence: roundScore(optimization.lifecycleConfidence),
+    lifecycleReason: optimization.lifecycleReason,
+    lifecycleSuggestion: optimization.lifecycleSuggestion,
+    shouldBoost: optimization.shouldBoost,
+    shouldDecay: optimization.shouldDecay,
+    shouldReview: optimization.shouldReview,
+    shouldArchiveCandidate: optimization.shouldArchiveCandidate,
+    policyDecision: policy.decision,
+    policyScore: roundScore(policy.policyScore),
+    policyRiskLevel: policy.riskLevel,
+    policyConfidence: roundScore(policy.confidence),
+    policySuggestion: policy.suggestion,
+    sampleCount: optimization.sampleCount,
+    suspectedGaming: optimization.suspectedGaming,
+    optimizationReason: optimization.optimizationReason,
+    optimizationSuggestion: optimization.optimizationSuggestion,
+    duplicateLikely: optimization.duplicateLikely,
+    duplicateGroupKey: optimization.duplicateGroupKey,
+    coldKnowledge: optimization.coldKnowledge,
+    conflictLikely: optimization.conflictLikely,
+    staleVersion: optimization.staleVersion,
+    knowledgeVersion: governance?.version ?? null,
+    lowQuality: optimization.lowQuality,
+    highValue: optimization.highValue
   };
 }
 
 async function vectorSearch(
   query: string,
   candidateLimit: number,
-  userId: string,
-  tenantId?: string | null,
-  requestId?: string
+  scope: ResolvedKnowledgeAccessScope,
+  requestId?: string,
+  governance?: KnowledgeGovernanceControls
 ): Promise<RawCandidate[]> {
   const { createEmbedding } = await import("@/lib/ai/embeddings");
   const { embedding } = await createEmbedding(query, {
     requestId,
     operation: "rag_query_embedding",
-    userId
+    userId: scope.actorUserId
   });
   const vector = toVectorLiteral(embedding);
-  const scopeFilter = tenantId
-    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
-    : Prisma.sql`AND ki."userId" = ${userId}`;
+  const scopeFilter = buildKnowledgeAccessSql(scope);
+  const governanceFilter = buildGovernanceSqlFilter(governance);
 
   const rows = await prisma.$queryRaw<VectorSearchRow[]>`
     SELECT
@@ -527,11 +780,13 @@ async function vectorSearch(
       ki."expiresAt" AS "expiresAt",
       ki."status" AS "status",
       ki."importance" AS "importance",
+      kc."metadata" AS "metadata",
       1 - (kc."embedding" <=> ${vector}::vector) AS "similarity"
     FROM "knowledge_chunks" kc
     INNER JOIN "knowledge_items" ki ON ki."id" = kc."knowledgeItemId"
     WHERE kc."embedding" IS NOT NULL
       ${scopeFilter}
+      ${governanceFilter}
       AND ki."deleted_at" IS NULL
     ORDER BY kc."embedding" <=> ${vector}::vector
     LIMIT ${candidateLimit}
@@ -553,6 +808,7 @@ async function vectorSearch(
     expiresAt: row.expiresAt,
     status: row.status,
     importance: row.importance,
+    metadata: row.metadata,
     vectorSimilarity: clamp01(row.similarity),
     keywordSimilarity: null
   }));
@@ -582,7 +838,12 @@ function buildKeywordFilters(query: string) {
   }));
 }
 
-async function keywordSearch(query: string, candidateLimit: number, userId: string, tenantId?: string | null): Promise<RawCandidate[]> {
+async function keywordSearch(
+  query: string,
+  candidateLimit: number,
+  scope: ResolvedKnowledgeAccessScope,
+  governance?: KnowledgeGovernanceControls
+): Promise<RawCandidate[]> {
   const textFilters = buildKeywordFilters(query);
 
   if (textFilters.length === 0) {
@@ -591,13 +852,10 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
 
   const chunks = await prisma.knowledgeChunk.findMany({
     where: {
-      knowledgeItem: {
-        is: {
-          ...(tenantId ? { tenantId } : { userId }),
-          deletedAt: null
-        }
-      },
-      OR: textFilters
+      AND: [
+        buildKnowledgeChunkAccessWhere(scope),
+        { OR: textFilters }
+      ]
     },
     orderBy: [
       {
@@ -645,17 +903,17 @@ async function keywordSearch(query: string, candidateLimit: number, userId: stri
         expiresAt: chunk.knowledgeItem.expiresAt,
         status: chunk.knowledgeItem.status,
         importance: chunk.knowledgeItem.importance,
+        metadata: chunk.metadata,
         vectorSimilarity: null,
         keywordSimilarity
       };
     })
+    .filter((candidate) => candidatePassesGovernance(candidate.metadata, governance))
     .filter((candidate) => (candidate.keywordSimilarity ?? 0) > 0);
 }
 
-async function hasIndexedEmbeddings(userId: string, tenantId?: string | null) {
-  const scopeFilter = tenantId
-    ? Prisma.sql`AND ki."tenant_id" = ${tenantId}`
-    : Prisma.sql`AND ki."userId" = ${userId}`;
+async function hasIndexedEmbeddings(scope: ResolvedKnowledgeAccessScope) {
+  const scopeFilter = buildKnowledgeAccessSql(scope);
   const rows = await prisma.$queryRaw<Array<{ count: number }>>`
     SELECT COUNT(*)::int AS "count"
     FROM "knowledge_chunks" kc
@@ -707,10 +965,9 @@ async function runSearch(
   candidateLimit: number,
   topK: number,
   minSimilarity: number,
-  userId: string,
-  tenantId?: string | null,
+  scope: ResolvedKnowledgeAccessScope,
   requestId?: string,
-  options: { vectorEnabled?: boolean } = {}
+  options: { vectorEnabled?: boolean; governance?: KnowledgeGovernanceControls } = {}
 ): Promise<SearchRun> {
   const vectorEnabled = options.vectorEnabled ?? hasUsableOpenAIKey();
   const vectorCandidates: RawCandidate[] = [];
@@ -720,13 +977,13 @@ async function runSearch(
   for (const query of queries) {
     if (vectorEnabled) {
       try {
-        vectorCandidates.push(...await vectorSearch(query, candidateLimit, userId, tenantId, requestId));
+        vectorCandidates.push(...await vectorSearch(query, candidateLimit, scope, requestId, options.governance));
       } catch {
         vectorSearchFailed = true;
       }
     }
 
-    keywordCandidates.push(...await keywordSearch(query, candidateLimit, userId, tenantId));
+    keywordCandidates.push(...await keywordSearch(query, candidateLimit, scope, options.governance));
   }
 
   const mergedCandidates = mergeCandidates(vectorCandidates, keywordCandidates);
@@ -835,9 +1092,30 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
   const minResults = typeof options.minResults === "number" && options.minResults > 0
     ? Math.min(Math.round(options.minResults), topK)
     : DEFAULT_MIN_RESULTS;
+  const accessScope = await resolveKnowledgeAccessScope({
+    actorUserId: options.userId,
+    tenantId: options.tenantId,
+    appType: options.appType,
+    agentId: options.agentId,
+    knowledgeBaseId: options.knowledgeBaseId,
+    namespace: options.namespace,
+    includeShared: options.includeShared === true || Boolean(options.tenantId),
+    includePublished: options.includePublished === true || Boolean(options.tenantId)
+  });
+  console.info("RAG_SCOPE: agentId + knowledgeBaseId", {
+    requestId: options.requestId,
+    agentId: accessScope.agentId,
+    knowledgeBaseId: accessScope.knowledgeBaseId,
+    namespace: accessScope.namespace
+  });
   const intent = inferIntent(query);
   const queries = buildSearchQueries(query, intent);
-  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(options.userId, options.tenantId);
+  const governanceControls = {
+    knowledgeVersion: options.knowledgeVersion,
+    minQualityScore: options.minQualityScore,
+    includeLowQuality: options.includeLowQuality
+  };
+  const vectorEnabled = hasUsableOpenAIKey() && await hasIndexedEmbeddings(accessScope);
   const startedAt = Date.now();
 
   let selectedRun = await runSearch(
@@ -845,10 +1123,9 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
     candidateLimit,
     topK,
     minSimilarity,
-    options.userId,
-    options.tenantId,
+    accessScope,
     options.requestId,
-    { vectorEnabled }
+    { vectorEnabled, governance: governanceControls }
   );
   let relaxedRetrievalUsed = false;
   let keywordFallbackUsed = false;
@@ -860,10 +1137,9 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       candidateLimit * 2,
       topK,
       relaxedThreshold,
-      options.userId,
-      options.tenantId,
+      accessScope,
       options.requestId,
-      { vectorEnabled }
+      { vectorEnabled, governance: governanceControls }
     );
 
     relaxedRetrievalUsed = true;
@@ -876,10 +1152,9 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       candidateLimit * 2,
       topK,
       KEYWORD_FALLBACK_MIN_SIMILARITY,
-      options.userId,
-      options.tenantId,
+      accessScope,
       options.requestId,
-      { vectorEnabled: false }
+      { vectorEnabled: false, governance: governanceControls }
     );
 
     keywordFallbackUsed = true;
@@ -907,6 +1182,9 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
     minSimilarity,
     minResults,
     durationMs,
+    agentId: accessScope.agentId,
+    knowledgeBaseId: accessScope.knowledgeBaseId,
+    namespace: accessScope.namespace,
     hitCount: results.length,
     totalCandidates: selectedRun.mergedCandidates.length,
     filteredCandidates: selectedRun.rerankedCandidates.length,
@@ -937,6 +1215,9 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       minSimilarity,
       minResults,
       durationMs,
+      agentId: accessScope.agentId,
+      knowledgeBaseId: accessScope.knowledgeBaseId,
+      namespace: accessScope.namespace,
       hitCount: results.length,
       totalCandidates: selectedRun.mergedCandidates.length,
       filteredCandidates: selectedRun.rerankedCandidates.length,
@@ -954,8 +1235,21 @@ export async function retrieveKnowledge(options: RetrieveKnowledgeOptions): Prom
       minResultSimilarity: similarities.length > 0 ? Math.min(...similarities) : null,
       avgSimilarity: similarities.length > 0
         ? Math.round((similarities.reduce((sum, value) => sum + value, 0) / similarities.length) * 10000) / 10000
-        : null
+        : null,
+      governance: governanceControls,
+      avgQualityScore: results.length > 0
+        ? Math.round((results.reduce((sum, result) => sum + (result.qualityScore ?? 1), 0) / results.length) * 10000) / 10000
+        : null,
+      lowQualityHitCount: results.filter((result) => result.lowQuality).length
     }
+  });
+  await trackHitRate({
+    userId: options.userId,
+    requestId: options.requestId,
+    query,
+    scope: accessScope,
+    results,
+    controls: governanceControls
   });
 
   return {

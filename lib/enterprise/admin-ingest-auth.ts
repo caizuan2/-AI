@@ -2,9 +2,10 @@ import "server-only";
 
 import { requireUser } from "@/lib/auth";
 import { requireKbAdmin } from "@/lib/auth/guards";
-import type { RbacUser } from "@/lib/auth/rbac";
+import { getUserRoles, type RbacUser } from "@/lib/auth/rbac";
 import { ForbiddenError } from "@/lib/errors";
 import type { AuditAction } from "@/lib/audit-log";
+import { getHighestRole } from "@/lib/rbac/roles";
 
 type AdminIngestGuardOptions = {
   deniedAction?: AuditAction;
@@ -26,15 +27,19 @@ export async function requireAdminIngestActor(
     }
 
     const user = await requireUser();
+    const roles = await getUserRoles(user);
+    const hasIngestAccess = roles.some((role) =>
+      role === "kb_admin" || role === "ingest_admin" || role === "super_admin"
+    );
 
-    if (!user.isActive || !user.licenseActivated) {
+    if (!user.isActive || !hasIngestAccess) {
       throw error;
     }
 
     return {
       ...user,
-      role: "kb_admin",
-      roles: ["user", "kb_admin"]
+      role: getHighestRole(roles),
+      roles
     };
   }
 }

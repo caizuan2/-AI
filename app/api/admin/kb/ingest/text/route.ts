@@ -29,8 +29,31 @@ function readTextRequest(body: unknown) {
     throw new ValidationError("请求体必须是 JSON 对象。");
   }
 
+  const readString = (value: unknown) => typeof value === "string" ? value.trim() : "";
+  const readRecord = (value: unknown) => isPlainObject(value) ? value : {};
+  const activeKnowledgeBase = readRecord(body.activeKnowledgeBase);
+  const kbId =
+    readString(body.kb_id) ||
+    readString(body.kbId) ||
+    readString(body.knowledgeBaseId) ||
+    readString(activeKnowledgeBase.kb_id) ||
+    readString(activeKnowledgeBase.kbId) ||
+    readString(activeKnowledgeBase.knowledgeBaseId);
+  const expertId =
+    readString(body.expert_id) ||
+    readString(body.expertId) ||
+    readString(activeKnowledgeBase.expert_id) ||
+    readString(activeKnowledgeBase.expertId);
+  const tenantId =
+    readString(body.tenant_id) ||
+    readString(body.tenantId) ||
+    readString(activeKnowledgeBase.tenant_id) ||
+    readString(activeKnowledgeBase.tenantId) ||
+    "default";
   const title = typeof body.title === "string" ? body.title.trim() : "";
   const content = typeof body.content === "string" ? body.content : "";
+  const requestedSourceType = readString(body.sourceType) || readString(body.source_type);
+  const ingestSourceType: "chat" | "text" = requestedSourceType.toLowerCase().includes("chat") ? "chat" : "text";
   const categoryId = typeof body.category_id === "string"
     ? body.category_id.trim()
     : typeof body.categoryId === "string"
@@ -40,9 +63,25 @@ function readTextRequest(body: unknown) {
   return {
     title,
     content,
+    sourceType: ingestSourceType,
     categoryId,
     tags: body.tags,
-    metadata: body.metadata
+    metadata: {
+      ...readRecord(body.metadata),
+      source: "admin_ingest",
+      requestedSourceType: requestedSourceType || ingestSourceType,
+      sourceApp: "ingest_admin",
+      appType: "knowledge_base",
+      visibility: "published",
+      published: true,
+      enabled: true,
+      shared: true,
+      sharedToUserApp: true,
+      ...(kbId ? { kb_id: kbId, kbId, knowledgeBaseId: kbId } : {}),
+      ...(expertId ? { expert_id: expertId, expertId, agentId: readString(body.agentId) || expertId } : {}),
+      tenant_id: tenantId,
+      tenantId
+    }
   };
 }
 
@@ -86,7 +125,6 @@ export async function POST(request: Request) {
   try {
     const result = await createAdminKbTextIngestion(actor, {
       ...input,
-      sourceType: "text",
       auditAction: "INGEST_TEXT_CREATE"
     });
 

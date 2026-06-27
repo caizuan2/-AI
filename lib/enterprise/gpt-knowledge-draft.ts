@@ -1,4 +1,18 @@
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+import type { KnowledgeFactoryV2Result } from "@/lib/enterprise/knowledge-factory-v2";
+import type { KnowledgeFactoryV3Result } from "@/lib/enterprise/knowledge-factory-v3";
+import type { KnowledgeFactoryV4Result } from "@/lib/enterprise/knowledge-factory-v4";
+import type { KnowledgeFactoryV5Result } from "@/lib/enterprise/knowledge-factory-v5";
+import type { KnowledgeEvolutionResult } from "@/lib/enterprise/knowledge-evolution-engine";
+import type {
+  KnowledgeLoopCandidate,
+  KnowledgeLoopResult,
+  KnowledgeStoreDecision
+} from "@/lib/enterprise/knowledge-loop-engine";
+import type {
+  KnowledgeMemoryPlan,
+  KnowledgeMemoryReport
+} from "@/lib/enterprise/knowledge-memory-adapter";
 
 export type GptSaveRecommendation = "可以入库" | "暂缓入库" | "需要补充资料";
 
@@ -19,6 +33,33 @@ export interface GptKnowledgeDraft {
   missingFields: string[];
   trainingScore: number;
   userClientCallPlan?: GptUserClientCallPlan;
+  knowledgeFactory?: KnowledgeFactoryV2Result;
+  knowledgeFactoryV3?: KnowledgeFactoryV3Result;
+  knowledgeFactoryV4?: KnowledgeFactoryV4Result;
+  knowledgeFactoryV5?: KnowledgeFactoryV5Result;
+  knowledgeLoop?: KnowledgeLoopResult;
+  evolution?: KnowledgeEvolutionResult;
+  storeDecision?: KnowledgeStoreDecision;
+  reusableKnowledgeUnits?: KnowledgeLoopCandidate[];
+  reviewRequiredUnits?: KnowledgeLoopCandidate[];
+  autoStoreCandidates?: KnowledgeLoopCandidate[];
+  memory?: KnowledgeMemoryReport;
+  memoryPlan?: KnowledgeMemoryPlan;
+  knowledgeIntelligence?: {
+    overallScore?: number;
+    qualityLevel?: "high" | "medium" | "low";
+    highValueCount?: number;
+    reviewRequiredCount?: number;
+    lowQualityCount?: number;
+    improvementSuggestions?: string[];
+  };
+  ragOptimization?: {
+    ragFitScore?: number;
+    suggestedQueries?: string[];
+    retrievalHints?: string[];
+    rerankHints?: string[];
+    warnings?: string[];
+  };
 }
 
 export interface GptStructuredKnowledge {
@@ -111,6 +152,12 @@ function readDraftRecord(value: unknown) {
     : {};
 }
 
+function readOptionalRecord<T>(value: unknown): T | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as T
+    : undefined;
+}
+
 export function normalizeGptKnowledgeDraft(input: {
   parsed?: Record<string, unknown> | null;
   originalInput: string;
@@ -152,7 +199,9 @@ export function normalizeGptKnowledgeDraft(input: {
     complianceNotes: readStringArray(nested.complianceNotes ?? parsed.complianceNotes, 8),
     saveRecommendation: normalizeRecommendation(nested.saveRecommendation ?? parsed.saveRecommendation, trainingScore, missingFields),
     missingFields,
-    trainingScore
+    trainingScore,
+    knowledgeIntelligence: readOptionalRecord<GptKnowledgeDraft["knowledgeIntelligence"]>(nested.knowledgeIntelligence ?? parsed.knowledgeIntelligence),
+    ragOptimization: readOptionalRecord<GptKnowledgeDraft["ragOptimization"]>(nested.ragOptimization ?? parsed.ragOptimization)
   };
 }
 
