@@ -385,7 +385,13 @@ export function ChatSidebarDrawer({
               setNotificationsOpen(false);
               setOpenMenuId((value) => (value === item.id ? null : item.id));
             }}
-            className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-slate-500 hover:bg-white hover:text-slate-950"
+            title="会话操作"
+            className={cn(
+              "focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border transition",
+              openMenuId === item.id
+                ? "border-slate-300 bg-white text-slate-950 shadow-sm"
+                : "border-slate-200 bg-white/85 text-slate-600 hover:border-slate-300 hover:bg-white hover:text-slate-950 hover:shadow-sm"
+            )}
             aria-label={`${item.title} 会话操作`}
             aria-expanded={openMenuId === item.id}
           >
