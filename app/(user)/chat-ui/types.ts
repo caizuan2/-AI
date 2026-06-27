@@ -1,3 +1,5 @@
+import type { ChatModeCandidate, ChatModeKey, ChatModeSource } from "./lib/intent-mode-router";
+
 export type ChatMode = "fast" | "expert";
 export type RagConfidence = "high" | "medium" | "low";
 export type ProviderStatus = "ok" | "provider_not_configured" | "no_relevant_knowledge" | "error";
@@ -44,10 +46,27 @@ export interface ChatMessageView {
   sources?: ChatSource[] | null;
   confidence?: RagConfidence | null;
   customer_answer?: string | null;
+  finalized_answer?: FinalizedAnswerView | null;
   provider_status?: ProviderStatus | null;
   metadata?: Record<string, unknown> | null;
   created_at: string;
   pending?: boolean;
+}
+
+export interface FinalizedAnswerView {
+  title: string;
+  problemUnderstanding: string;
+  keyConclusion: string;
+  suggestedSteps: string[];
+  customerReply: string;
+  nextAction: string;
+  evidenceSummary?: string;
+  confidenceLabel?: "高" | "中" | "低";
+  debug?: {
+    removedInternalLabels: string[];
+    originalLength: number;
+    finalLength: number;
+  };
 }
 
 export interface ChatConversation {
@@ -73,11 +92,62 @@ export interface ChatQuickActionItem {
   action?: string | null;
 }
 
+export interface SelectedKnowledgeBase {
+  kb_id: string;
+  kbId?: string;
+  knowledgeBaseId?: string;
+  expert_id?: string;
+  expertId?: string;
+  agentId?: string;
+  tenant_id?: string;
+  tenantId?: string;
+  namespace?: string;
+  title: string;
+  name?: string;
+  expertName?: string;
+  category?: string;
+  description?: string;
+  active: boolean;
+}
+
+export interface ExpertMarketItem {
+  kb_id: string;
+  kbId?: string;
+  knowledgeBaseId?: string;
+  expert_id?: string;
+  expertId?: string;
+  agentId?: string;
+  tenant_id?: string;
+  tenantId?: string;
+  namespace?: string;
+  title: string;
+  name?: string;
+  expertName?: string;
+  category?: string;
+  description?: string;
+}
+
+export interface ExpertMarketSection {
+  key: string;
+  title: string;
+  items: ExpertMarketItem[];
+}
+
+export interface ExpertMarketResponse {
+  ok: boolean;
+  message?: string;
+  baseUrl?: string | null;
+  endpoint?: string | null;
+  sections: ExpertMarketSection[];
+}
+
 export interface CurrentChatUser {
   id: string;
   phone?: string | null;
   email?: string | null;
   account?: string | null;
+  displayName?: string | null;
+  username?: string | null;
   name?: string | null;
   nickname?: string | null;
   avatar?: string | null;
@@ -112,12 +182,28 @@ export interface AskChatRequest {
   attachments: ChatAttachmentDraft[];
   conversation_id: string | null;
   mode: ChatMode;
+  userMode?: ChatModeKey;
+  modeSource?: ChatModeSource;
+  modeLabel?: string;
+  modePrompt?: string;
+  modeConfidence?: number;
+  modeReason?: string;
+  modeAlternatives?: ChatModeCandidate[];
+  classifierVersion?: string;
   enable_deep_thinking: boolean;
   enable_web_search: boolean;
   business_execution?: unknown;
   business_execution_prompt?: string | null;
   auto_sales_agent?: unknown;
   conversion_feedback?: unknown;
+  selectedKnowledgeBases?: SelectedKnowledgeBase[];
+  activeKnowledgeBase?: SelectedKnowledgeBase | null;
+  kb_id?: string | null;
+  knowledgeBaseId?: string | null;
+  expert_id?: string | null;
+  agentId?: string | null;
+  tenant_id?: string | null;
+  namespace?: string | null;
 }
 
 export interface AskChatResponse {
@@ -126,6 +212,7 @@ export interface AskChatResponse {
   message_id: string;
   mode: ChatMode;
   customer_answer?: string | null;
+  finalized_answer?: FinalizedAnswerView | null;
   sources: ChatSource[];
   confidence: RagConfidence;
   provider_status?: ProviderStatus;

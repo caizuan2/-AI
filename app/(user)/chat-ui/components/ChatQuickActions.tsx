@@ -2,294 +2,157 @@
 
 import * as React from "react";
 import {
-  BookOpen,
   Brain,
   Camera,
   ClipboardList,
   MessageSquareText,
   Search,
   Sparkles,
-  Target,
-  Upload
+  Target
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  CHAT_MODE_CONFIGS,
+  CHAT_MODE_ORDER,
+  type FinalChatModeDecision,
+  type ChatModeKey
+} from "../lib/intent-mode-router";
 import type { ChatMode, ChatQuickActionItem } from "../types";
 
+const SHOW_DEBUG_MODE_PICKER = process.env.NEXT_PUBLIC_AI_DEBUG === "true";
+
 interface ChatQuickActionsProps {
-  mode: ChatMode;
-  enableDeepThinking: boolean;
-  enableWebSearch: boolean;
+  decision?: FinalChatModeDecision;
+  manualMode?: ChatModeKey | null;
+  onToggleManualMode?: (mode: ChatModeKey) => void;
+  mode?: ChatMode;
+  enableDeepThinking?: boolean;
+  enableWebSearch?: boolean;
   categoryLabels?: string[];
   quickActions?: ChatQuickActionItem[];
-  onModeChange: (mode: ChatMode) => void;
-  onToggleDeepThinking: () => void;
-  onToggleWebSearch: () => void;
+  onModeChange?: (mode: ChatMode) => void;
+  onToggleDeepThinking?: () => void;
+  onToggleWebSearch?: () => void;
   onQuickAction?: (action: ChatQuickActionItem) => void;
 }
 
-type DefaultQuickAction = ChatQuickActionItem & { iconComponent: LucideIcon };
-
-const defaultActions: DefaultQuickAction[] = [
-  {
-    id: "business-problem",
-    label: "业务问题",
-    iconComponent: Target,
-    kind: "mode",
-    mode: "fast"
-  },
-  {
-    id: "customer-dialog",
-    label: "客户对话",
-    iconComponent: MessageSquareText,
-    kind: "tool",
-    prompt: "请分析这段客户对话，判断客户意图并生成可直接复制的回复话术："
-  },
-  {
-    id: "knowledge-rag",
-    label: "小董AI大脑🧠检索",
-    iconComponent: BookOpen,
-    kind: "tool",
-    prompt: "请基于小董AI大脑🧠回答这个业务问题，并列出引用来源："
-  },
-  {
-    id: "deal-plan",
-    label: "成交建议",
-    iconComponent: ClipboardList,
-    kind: "tool",
-    prompt: "请根据当前客户状态给出成交路径、标准回复话术和下一步行动："
-  }
-];
-
-function hasDefaultIcon(action: ChatQuickActionItem): action is DefaultQuickAction {
-  return "iconComponent" in action;
-}
-
-function getActionIcon(action: ChatQuickActionItem): LucideIcon {
-  const icon = action.icon?.toLowerCase();
-
-  if (icon === "target" || icon === "zap" || icon === "bolt") {
-    return Target;
-  }
-
-  if (icon === "book" || icon === "bookopen" || icon === "knowledge") {
-    return BookOpen;
-  }
-
-  if (icon === "message" || icon === "chat") {
-    return MessageSquareText;
-  }
-
-  if (icon === "clipboard" || icon === "list") {
-    return ClipboardList;
-  }
-
-  if (icon === "brain") {
-    return Brain;
-  }
-
-  if (icon === "camera") {
-    return Camera;
-  }
-
-  if (icon === "upload") {
-    return Upload;
-  }
-
-  if (icon === "sparkles" || icon === "star") {
-    return Sparkles;
-  }
-
-  if (action.mode === "fast" || action.label.includes("业务") || action.label.includes("快速")) {
-    return Target;
-  }
-
-  if (action.label.includes("客户") || action.label.includes("对话") || action.label.includes("话术")) {
-    return MessageSquareText;
-  }
-
-  if (action.label.includes("知识") || action.label.includes("大脑") || action.label.toLowerCase().includes("rag")) {
-    return BookOpen;
-  }
-
-  if (action.label.includes("成交") || action.label.includes("下一步") || action.label.includes("方案")) {
-    return ClipboardList;
-  }
-
-  if (action.label.includes("截图") || action.label.includes("图片")) {
-    return Upload;
-  }
-
-  if (action.label.includes("思考")) {
-    return Brain;
-  }
-
-  return Sparkles;
-}
-
-function normalizeBusinessAction(action: ChatQuickActionItem): ChatQuickActionItem {
-  const label = action.label.trim();
-
-  if (label === "快速") {
-    return {
-      ...action,
-      label: "业务问题",
-      prompt: null,
-      kind: "mode",
-      mode: "fast",
-      icon: "target"
-    };
-  }
-
-  if (/创作/i.test(label)) {
-    return {
-      ...action,
-      label: "回复话术",
-      prompt: "请根据客户对话生成可直接复制的回复话术，并给出下一步引导：",
-      icon: "message"
-    };
-  }
-
-  if (label.includes("图片") || label.includes("照片")) {
-    return {
-      ...action,
-      label: "客户截图分析",
-      prompt: "我会上传客户对话截图，请识别关键信息并生成业务处理方案：",
-      icon: "upload"
-    };
-  }
-
-  if (label.includes("视频")) {
-    return {
-      ...action,
-      label: "成交路径",
-      prompt: "请把当前客户情况拆成成交路径、标准回复话术和跟进动作：",
-      icon: "clipboard"
-    };
-  }
-
-  return action;
-}
+const modeIcons: Record<ChatModeKey, LucideIcon> = {
+  business_problem: Target,
+  reply_script: MessageSquareText,
+  screenshot_analysis: Camera,
+  conversion_path: ClipboardList,
+  expert_review: Sparkles,
+  deep_thinking: Brain,
+  brain_search: Search
+};
 
 export function ChatQuickActions({
-  mode,
-  enableDeepThinking,
-  enableWebSearch,
-  categoryLabels = [],
-  quickActions = [],
-  onModeChange,
-  onToggleDeepThinking,
-  onToggleWebSearch,
-  onQuickAction
+  decision,
+  onToggleManualMode
 }: ChatQuickActionsProps) {
-  const categoryActions = quickActions.length > 0 ? quickActions : categoryLabels.map((label, index) => ({
-    id: `category-${label}-${index}`,
-    label,
-    kind: "category" as const,
-    prompt: label
-  }));
-  const visibleActions = (categoryActions.length > 0 ? categoryActions : defaultActions)
-    .map(normalizeBusinessAction);
+  const [panelOpen, setPanelOpen] = React.useState(false);
+  const rootRef = React.useRef<HTMLDivElement | null>(null);
+  const activeDecision = decision ?? {
+    mode: CHAT_MODE_CONFIGS.business_problem,
+    source: "rules" as const,
+    confidence: 0.5,
+    reason: "未提供智能模式上下文，使用业务问题默认模式。",
+    alternatives: [],
+    lockedByUser: false,
+    classifierVersion: "ai-knowledge-os-v13-local"
+  };
 
-  function handleAction(action: ChatQuickActionItem) {
-    if (action.kind === "mode" && action.mode) {
-      onModeChange(action.mode);
+  React.useEffect(() => {
+    if (!panelOpen) {
+      return undefined;
     }
 
-    onQuickAction?.(action);
+    function handlePointerDown(event: MouseEvent) {
+      const target = event.target;
+
+      if (target instanceof Node && rootRef.current?.contains(target)) {
+        return;
+      }
+
+      setPanelOpen(false);
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPanelOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [panelOpen]);
+
+  function handleModeClick(modeKey: ChatModeKey) {
+    onToggleManualMode?.(modeKey);
+    setPanelOpen(false);
   }
 
-  function handleStandaloneAction(action: ChatQuickActionItem, callback: () => void) {
-    callback();
-    onQuickAction?.(action);
+  if (!SHOW_DEBUG_MODE_PICKER) {
+    return null;
   }
 
   return (
-    <div className="shrink-0 bg-white px-3 pt-2">
-      <div
-        className="flex gap-2 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-        aria-label="快捷功能"
-      >
-        {visibleActions.map((action) => {
-          const Icon = hasDefaultIcon(action) ? action.iconComponent : getActionIcon(action);
-          const active = action.kind === "mode" && action.mode === mode;
-
-          return (
-            <button
-              key={action.id}
-              type="button"
-              onClick={() => handleAction(action)}
-              className={cn(
-                "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
-                active
-                  ? "border-slate-300 bg-slate-50 text-slate-950"
-                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-              )}
-            >
-              <Icon className="h-4 w-4" aria-hidden="true" />
-              {action.label}
-            </button>
-          );
-        })}
-
+    <div ref={rootRef} className="relative z-30 shrink-0 bg-white px-3 pt-2">
+      <div className="flex items-center">
         <button
           type="button"
-          onClick={() => handleStandaloneAction({
-            id: "expert-review",
-            label: "专家研判",
-            kind: "mode",
-            mode: "expert"
-          }, () => onModeChange("expert"))}
-          className={cn(
-            "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
-            mode === "expert"
-              ? "border-blue-200 bg-blue-50 text-blue-700"
-              : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-          )}
+          className="focus-ring inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950"
+          aria-expanded={panelOpen}
+          aria-label="打开开发调试模式选择"
+          onClick={() => setPanelOpen((open) => !open)}
         >
-          <Sparkles className="h-4 w-4" aria-hidden="true" />
-          专家研判
+          <Sparkles className="h-3.5 w-3.5" aria-hidden="true" />
+          开发调试：模式选择
         </button>
-
-        <button
-          type="button"
-          onClick={() => handleStandaloneAction({
-            id: "deep-thinking",
-            label: "深度思考",
-            kind: "tool"
-          }, onToggleDeepThinking)}
-          className={cn(
-            "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
-            enableDeepThinking
-              ? "border-blue-200 bg-blue-50 text-blue-700"
-              : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-          )}
-          aria-pressed={enableDeepThinking}
-        >
-          <Sparkles className="h-4 w-4" aria-hidden="true" />
-          深度思考
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleStandaloneAction({
-            id: "brain-search",
-            label: "大脑搜索",
-            kind: "tool"
-          }, onToggleWebSearch)}
-          className={cn(
-            "focus-ring inline-flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-sm font-semibold shadow-sm transition",
-            enableWebSearch
-              ? "border-blue-200 bg-blue-50 text-blue-700"
-              : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
-          )}
-          aria-pressed={enableWebSearch}
-        >
-          <Search className="h-4 w-4" aria-hidden="true" />
-          大脑搜索
-        </button>
-
       </div>
+
+      {panelOpen ? (
+        <div className="absolute inset-x-3 bottom-[calc(100%-0.5rem)] z-40 rounded-2xl border border-slate-200 bg-white p-2 shadow-2xl shadow-slate-300/40">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {CHAT_MODE_ORDER.map((modeKey) => {
+              const config = CHAT_MODE_CONFIGS[modeKey];
+              const Icon = modeIcons[modeKey];
+              const active = activeDecision.mode.key === modeKey;
+
+              return (
+                <button
+                  key={modeKey}
+                  type="button"
+                  onClick={() => handleModeClick(modeKey)}
+                  className={cn(
+                    "focus-ring flex min-h-14 items-center gap-2 rounded-xl border px-3 py-2 text-left text-sm font-semibold transition",
+                    active
+                      ? "border-slate-950 bg-slate-950 text-white"
+                      : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50"
+                  )}
+                  aria-pressed={active}
+                  title={`选择${config.label}`}
+                >
+                  <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span className="min-w-0 flex-1 truncate">{config.label}</span>
+                  {active ? (
+                    <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-bold">已选</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+          <p className="px-2 pt-2 text-xs font-medium text-slate-400">
+            小董AI会自动判断，也可以手动指定处理方式。
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

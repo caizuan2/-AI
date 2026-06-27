@@ -24,6 +24,10 @@ import {
   buildCustomerAnswerFromText,
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay
+} from "@/lib/ai-chat/response-finalizer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
 import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
@@ -63,14 +67,27 @@ export interface AiChatAskInput {
   enable_web_search?: unknown;
   conversation_id?: unknown;
   conversationId?: unknown;
-  agentId?: unknown;
-  knowledgeBaseId?: unknown;
-  namespace?: unknown;
   attachments?: unknown;
   business_execution?: unknown;
   business_execution_prompt?: unknown;
+  userMode?: unknown;
+  modeSource?: unknown;
+  modeLabel?: unknown;
+  modePrompt?: unknown;
+  modeConfidence?: unknown;
+  modeReason?: unknown;
+  modeAlternatives?: unknown;
+  classifierVersion?: unknown;
   auto_sales_agent?: unknown;
   conversion_feedback?: unknown;
+  selectedKnowledgeBases?: unknown;
+  activeKnowledgeBase?: unknown;
+  kb_id?: unknown;
+  knowledgeBaseId?: unknown;
+  expert_id?: unknown;
+  agentId?: unknown;
+  tenant_id?: unknown;
+  namespace?: unknown;
 }
 
 export interface AiChatAnswerProviderInput {
@@ -275,6 +292,26 @@ function readStringArray(value: unknown, limit = 6) {
     : [];
 }
 
+function readModeAlternatives(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => toJsonObject(item))
+    .filter((item): item is JsonObject => Boolean(item))
+    .map((item) => ({
+      key: trimString(item.key).slice(0, 80),
+      label: trimString(item.label).slice(0, 80),
+      confidence: typeof item.confidence === "number"
+        ? Math.max(0, Math.min(1, item.confidence))
+        : null,
+      reason: trimString(item.reason).slice(0, 180)
+    }))
+    .filter((item) => item.label || item.key)
+    .slice(0, 2);
+}
+
 function readNestedJsonObject(record: JsonObject | undefined, key: string) {
   return record ? toJsonObject(record[key]) : undefined;
 }
@@ -283,8 +320,19 @@ function readBusinessExecutionContext(input: AiChatAskInput) {
   const plan = toJsonObject(input.business_execution);
   const standaloneAutoSalesAgent = toJsonObject(input.auto_sales_agent);
   const rawPrompt = trimString(input.business_execution_prompt).slice(0, 2400);
+  const userMode = trimString(input.userMode).slice(0, 80);
+  const modeSource = trimString(input.modeSource).slice(0, 20);
+  const modeLabel = trimString(input.modeLabel).slice(0, 80);
+  const modePrompt = trimString(input.modePrompt).slice(0, 1000);
+  const modeReason = trimString(input.modeReason).slice(0, 240);
+  const modeAlternatives = readModeAlternatives(input.modeAlternatives);
+  const classifierVersion = trimString(input.classifierVersion).slice(0, 80);
+  const modeConfidence = typeof input.modeConfidence === "number"
+    ? Math.max(0, Math.min(1, input.modeConfidence))
+    : null;
+  const hasUserModeContext = Boolean(userMode || modeLabel || modePrompt || modeReason);
 
-  if (!plan && !standaloneAutoSalesAgent && !rawPrompt) {
+  if (!plan && !standaloneAutoSalesAgent && !rawPrompt && !hasUserModeContext) {
     return null;
   }
 
@@ -345,6 +393,15 @@ function readBusinessExecutionContext(input: AiChatAskInput) {
   const prompt = [
     "[BUSINESS CONTEXT]",
     `用户意图：${intent}`,
+    hasUserModeContext ? "[USER MODE ROUTING]" : "",
+    modeLabel ? `最终模式：${modeLabel}` : "",
+    modeSource ? `来源：${modeSource}` : "",
+    userMode ? `模式Key：${userMode}` : "",
+    modeConfidence !== null ? `置信度：${Math.round(modeConfidence * 100)}%` : "",
+    modeReason ? `原因：${modeReason}` : "",
+    modeAlternatives.length > 0 ? `备选模式：${modeAlternatives.map((item) => `${item.label || item.key}${item.confidence !== null ? `(${Math.round(item.confidence * 100)}%)` : ""}`).join("、")}` : "",
+    classifierVersion ? `分类器版本：${classifierVersion}` : "",
+    modePrompt ? `模式要求：${modePrompt}` : "",
     executionGoal ? `商业目标：${executionGoal}` : "",
     "",
     "商业策略：",
@@ -382,10 +439,118 @@ function readBusinessExecutionContext(input: AiChatAskInput) {
     prompt,
     metadata: {
       ...(plan ?? {}),
+      ...(hasUserModeContext ? {
+        userMode,
+        modeSource,
+        modeLabel,
+        modePrompt,
+        modeReason,
+        modeConfidence,
+        modeAlternatives,
+        classifierVersion
+      } : {}),
       ...(enrichedAutoSalesAgent ? { autoSalesAgent: enrichedAutoSalesAgent } : {}),
       outputEnforcerVersion: BUSINESS_OUTPUT_ENFORCER_VERSION,
       serverPromptApplied: true
     }
+  };
+}
+
+function readKnowledgeBaseItem(value: unknown) {
+  const record = toJsonObject(value);
+
+  if (!record) {
+    return null;
+  }
+
+  const kbId = trimString(record.kb_id ?? record.kbId ?? record.knowledgeBaseId).slice(0, 120);
+  const expertId = trimString(record.expert_id ?? record.expertId ?? record.agentId).slice(0, 120);
+  const tenantId = trimString(record.tenant_id ?? record.tenantId).slice(0, 120);
+  const namespace = trimString(record.namespace).slice(0, 120) || tenantId || "default";
+  const title = trimString(record.title ?? record.name).slice(0, 120);
+
+  if (!kbId || !title) {
+    return null;
+  }
+
+  return {
+    kb_id: kbId,
+    knowledgeBaseId: kbId,
+    expert_id: expertId || undefined,
+    agentId: expertId || undefined,
+    tenant_id: tenantId || undefined,
+    namespace,
+    title,
+    expertName: trimString(record.expertName).slice(0, 120) || undefined,
+    category: trimString(record.category).slice(0, 80) || undefined,
+    active: record.active === true
+  };
+}
+
+function readKnowledgeBaseSelectionContext(input: AiChatAskInput) {
+  const selected = Array.isArray(input.selectedKnowledgeBases)
+    ? input.selectedKnowledgeBases
+      .map(readKnowledgeBaseItem)
+      .filter((item): item is NonNullable<ReturnType<typeof readKnowledgeBaseItem>> => Boolean(item))
+      .slice(0, 8)
+    : [];
+  const explicitActive = readKnowledgeBaseItem(input.activeKnowledgeBase);
+  const fallbackActive = selected.find((item) => item.active) ?? selected[0] ?? null;
+  const rawKbId = trimString(input.kb_id ?? input.knowledgeBaseId).slice(0, 120);
+  const rawExpertId = trimString(input.expert_id ?? input.agentId).slice(0, 120);
+  const rawTenantId = trimString(input.tenant_id).slice(0, 120);
+  const rawNamespace = trimString(input.namespace).slice(0, 120);
+  const active = explicitActive ?? fallbackActive ?? (rawKbId
+    ? {
+        kb_id: rawKbId,
+        knowledgeBaseId: rawKbId,
+        expert_id: rawExpertId || undefined,
+        agentId: rawExpertId || undefined,
+        tenant_id: rawTenantId || undefined,
+        namespace: rawNamespace || rawTenantId || "default",
+        title: "已选知识库",
+        active: true
+      }
+    : null);
+
+  if (!active && selected.length === 0) {
+    return null;
+  }
+
+  const normalizedSelected = selected.map((item) => ({
+    ...item,
+    active: active ? item.kb_id === active.kb_id : item.active
+  }));
+  const prompt = active
+    ? [
+        "[KNOWLEDGE BASE SELECTION]",
+        `当前知识库：${active.title}`,
+        active.expertName ? `专家：${active.expertName}` : "",
+        active.category ? `分类：${active.category}` : "",
+        "使用要求：优先在既有 RAG 命中资料范围内结合该知识库语境回答；若没有命中，不要编造该知识库内容。"
+      ].filter(Boolean).join("\n").slice(0, 600)
+    : "";
+
+  return {
+    prompt,
+    metadata: {
+      selectedKnowledgeBases: normalizedSelected,
+      activeKnowledgeBase: active,
+      kb_id: active?.kb_id ?? null,
+      knowledgeBaseId: active?.knowledgeBaseId ?? active?.kb_id ?? null,
+      expert_id: active?.expert_id ?? null,
+      agentId: active?.agentId ?? active?.expert_id ?? null,
+      tenant_id: active?.tenant_id ?? null,
+      namespace: active?.namespace ?? active?.tenant_id ?? null
+    },
+    scope: active
+      ? {
+          knowledgeBaseId: active.knowledgeBaseId ?? active.kb_id,
+          agentId: active.agentId ?? active.expert_id ?? null,
+          tenantId: active.tenant_id ?? null,
+          namespace: active.namespace ?? active.tenant_id ?? null
+        }
+      : null
   };
 }
 
@@ -493,13 +658,18 @@ function toSource(chunk: RetrievedRagChunk) {
   return {
     chunk_id: chunk.chunkId,
     file_id: chunk.fileId,
+    item_id: chunk.knowledgeItemId,
+    knowledgeBaseId: chunk.knowledgeBaseId,
+    agentId: chunk.agentId,
+    tenantId: chunk.tenantId,
+    namespace: chunk.namespace,
+    sourceApp: chunk.sourceApp,
+    includeShared: chunk.includeShared,
+    includePublished: chunk.includePublished,
     title: chunk.title,
     content_preview: chunk.content.length > 240 ? `${chunk.content.slice(0, 240)}...` : chunk.content,
     score: chunk.score,
     relevance_score: chunk.relevance_score,
-    agentId: chunk.agentId,
-    knowledgeBaseId: chunk.knowledgeBaseId,
-    namespace: chunk.namespace,
     chunk_rank: chunk.chunk_rank
   };
 }
@@ -613,14 +783,28 @@ export async function handleAiChatAsk(
   const mode = normalizeAiChatMode(input.mode);
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
-  const conversationId = readConversationId(input);
-  const agentScope = resolveAgentKnowledgeScope({
-    agentId: trimString(input.agentId),
-    knowledgeBaseId: trimString(input.knowledgeBaseId),
-    namespace: trimString(input.namespace)
-  });
   const attachments = validateAttachments(input.attachments);
   const businessContext = readBusinessExecutionContext(input);
+  const knowledgeSelectionContext = readKnowledgeBaseSelectionContext(input);
+  const selectedKnowledgeScope = knowledgeSelectionContext?.scope ?? null;
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: selectedKnowledgeScope?.agentId ?? trimString(input.agentId ?? input.expert_id),
+    knowledgeBaseId: selectedKnowledgeScope?.knowledgeBaseId ?? trimString(input.knowledgeBaseId ?? input.kb_id),
+    namespace: selectedKnowledgeScope?.namespace ?? trimString(input.namespace)
+  });
+  const directTenantId = trimString(input.tenant_id);
+  const scopedTenantId = selectedKnowledgeScope?.tenantId ?? (directTenantId || actor.tenantId || null);
+  const hasExplicitAgentScope = Boolean(
+    selectedKnowledgeScope
+    || trimString(input.agentId ?? input.expert_id)
+    || trimString(input.knowledgeBaseId ?? input.kb_id)
+    || trimString(input.namespace)
+  );
+  const conversationId = readConversationId(input);
+  const businessExecutionContext = [
+    knowledgeSelectionContext?.prompt,
+    businessContext?.prompt
+  ].filter(Boolean).join("\n\n") || null;
   let osContext = os_core.process({
     query: question,
     userId: actor.id,
@@ -648,10 +832,15 @@ export async function handleAiChatAsk(
     enableWebSearch,
     ...agentScope,
     attachmentCount: attachments.length,
+    ...(knowledgeSelectionContext
+      ? {
+          knowledgeSelection: knowledgeSelectionContext.metadata
+        }
+      : {}),
     ...(businessContext
       ? {
           businessExecution: businessContext.metadata,
-          businessExecutionPrompt: businessContext.prompt
+          businessExecutionPrompt: businessExecutionContext
         }
       : {})
   });
@@ -661,19 +850,21 @@ export async function handleAiChatAsk(
     enableDeepThinking,
     enableWebSearch,
     ...agentScope,
-    attachmentCount: attachments.length
+    attachmentCount: attachments.length,
+    ...(knowledgeSelectionContext ? { knowledgeSelection: knowledgeSelectionContext.metadata } : {})
   });
 
   const topK = osContext.rag.topK;
   const chunks = await retrieveRelevantChunks(question, {
     userId: actor.id,
-    tenantId: actor.tenantId,
+    tenantId: scopedTenantId,
     appType: "user_app",
-    ...agentScope,
+    ...(hasExplicitAgentScope ? agentScope : {}),
     includeShared: true,
     includePublished: true,
     mode,
     topK,
+    knowledgeScope: selectedKnowledgeScope,
     db
   });
   const contexts = buildRagContext(chunks);
@@ -752,7 +943,7 @@ export async function handleAiChatAsk(
           providerFallbackChain: osContext.route.provider_fallback_chain,
           fallbackChain: osContext.route.fallback_chain,
           traceId: osContext.trace_id,
-          businessExecutionContext: businessContext?.prompt ?? null,
+          businessExecutionContext,
           ...agentScope
         });
 
@@ -796,13 +987,27 @@ export async function handleAiChatAsk(
     response: answer,
     intent: trimString(businessMetadata?.intent) || "knowledge_user",
     businessStrategy: trimString(businessMetadata?.executionGoal),
-    standardReply: trimString(primaryAction?.copySuggestion) || trimString(businessMetadata?.closingScript),
+    standardReply: customerAnswer || trimString(primaryAction?.copySuggestion) || trimString(businessMetadata?.closingScript),
     nextAction: trimString(businessMetadata?.nextBestQuestion)
   });
   answer = businessSchemaGuard.response;
   customerAnswer = answer;
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
+  const rawAnswerBeforeFinalizer = answer;
+  const rawCustomerAnswerBeforeFinalizer = customerAnswer;
+  const finalizedAnswer = finalizeUserAnswer({
+    rawAnswer: rawAnswerBeforeFinalizer,
+    customerAnswer: rawCustomerAnswerBeforeFinalizer,
+    sources,
+    businessContext: businessMetadata,
+    agentContext: autoSalesAgentMetadata,
+    userMessage: question
+  });
+
+  answer = formatFinalizedAnswerForDisplay(finalizedAnswer);
+  customerAnswer = finalizedAnswer.customerReply;
+
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
   const outputControlledAnswer = processAIOutput(answer, {
@@ -920,13 +1125,26 @@ export async function handleAiChatAsk(
     sourceCount: sources.length,
     enableDeepThinking,
     enableWebSearch,
+    ...(knowledgeSelectionContext
+      ? {
+          knowledgeSelection: knowledgeSelectionContext.metadata
+        }
+      : {}),
     ...(businessContext
       ? {
           businessExecution: businessContext.metadata,
-          businessExecutionPrompt: businessContext.prompt
+          businessExecutionPrompt: businessExecutionContext
         }
       : {}),
     businessSchemaGuard: businessSchemaGuardMetadata,
+    responseFinalizer: {
+      version: "ai-knowledge-os-v10",
+      finalized: true,
+      removedInternalLabels: finalizedAnswer.debug?.removedInternalLabels ?? []
+    },
+    finalizedAnswer,
+    rawAnswerBeforeFinalizer,
+    rawCustomerAnswerBeforeFinalizer,
     webSearchStatus: enableWebSearch ? "reserved_not_enabled" : "disabled",
     providerStatus,
     providerUsed: providerUsed ?? null,
@@ -1017,7 +1235,14 @@ export async function handleAiChatAsk(
         knowledgeGapEvent,
         optimizationSuggestions,
         evolutionReport,
+        ...(knowledgeSelectionContext ? { knowledgeSelection: knowledgeSelectionContext.metadata } : {}),
         businessSchemaGuard: businessSchemaGuardMetadata,
+        responseFinalizer: {
+          version: "ai-knowledge-os-v10",
+          finalized: true,
+          removedInternalLabels: finalizedAnswer.debug?.removedInternalLabels ?? []
+        },
+        finalizedAnswer,
         autoSalesAgent: autoSalesAgentMetadata,
         gptOsModel: osContext.route.model,
         gptOsActualModel: actualModel,
@@ -1078,6 +1303,7 @@ export async function handleAiChatAsk(
     message_id: String(assistantMessage.id),
     mode,
     customer_answer: customerAnswer,
+    finalized_answer: finalizedAnswer,
     sources,
     confidence,
     provider_status: providerStatus,
@@ -1244,6 +1470,9 @@ function serializeMessage(message: MessageRecord) {
   const confidence = typeof metadata.confidence === "string" ? metadata.confidence : null;
   const providerStatus = typeof metadata.providerStatus === "string" ? metadata.providerStatus : null;
   const customerAnswer = typeof metadata.customerAnswer === "string" ? metadata.customerAnswer : null;
+  const finalizedAnswer = metadata.finalizedAnswer && typeof metadata.finalizedAnswer === "object" && !Array.isArray(metadata.finalizedAnswer)
+    ? metadata.finalizedAnswer
+    : null;
 
   return {
     id: String(message.id),
@@ -1252,6 +1481,7 @@ function serializeMessage(message: MessageRecord) {
     attachments: message.attachments ?? null,
     sources: message.sources ?? null,
     customer_answer: customerAnswer,
+    finalized_answer: finalizedAnswer,
     provider_status: providerStatus,
     confidence,
     metadata: message.metadata ?? null,

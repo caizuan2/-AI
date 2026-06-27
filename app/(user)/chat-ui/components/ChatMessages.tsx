@@ -3,8 +3,8 @@
 import * as React from "react";
 import { Check, Copy, FileText, Image as ImageIcon, Pencil, User } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { sanitizeVisibleText } from "@/lib/ai-chat/visible-output-sanitizer";
 import { ChatMessageRenderer } from "@/app/(user)/app/components/chat/message-renderer";
-import { formatIntentConfidence, getCommercialIntentLabel, type UserIntent } from "@/lib/user-intent-detector";
 import { submitChatBehaviorFeedback, type ChatBehaviorFeedbackInput } from "../api";
 import { EmptyState } from "./EmptyState";
 import {
@@ -21,6 +21,7 @@ interface ChatMessagesProps {
   onModeChange: (mode: ChatMode) => void;
   onEditUserMessage?: (content: string) => void;
   currentUser?: CurrentChatUser | null;
+  userName?: string | null;
   userAvatarUrl?: string | null;
 }
 
@@ -134,7 +135,7 @@ function getAttachmentPreviewUrl(attachment: UserAttachment) {
 }
 
 export function getUserMessageCopyText(message: Pick<ChatMessageView, "content" | "attachments">) {
-  const content = message.content.trim();
+  const content = sanitizeVisibleText(message.content.trim());
 
   if (content) {
     return content;
@@ -365,7 +366,7 @@ function UserMessageBlock({
   currentUser?: CurrentChatUser | null;
   userAvatarUrl?: string | null;
 }) {
-  const content = message.content.trim();
+  const content = sanitizeVisibleText(message.content.trim());
   const messageTime = formatMessageTime(message.created_at);
 
   return (
@@ -394,26 +395,9 @@ function UserMessageBlock({
 }
 
 function UserCommercialIntentBadge({ message }: { message: ChatMessageView }) {
-  const commercialExecution = getRecordValue(message.metadata?.commercialExecution);
-  const businessExecution = getRecordValue(message.metadata?.businessExecution);
-  const primaryAction = getRecordValue(businessExecution.primaryAction);
-  const intent = getStringValue(commercialExecution.intent) as UserIntent;
-  const actionLabel = getStringValue(primaryAction.label);
-  const confidence = typeof commercialExecution.confidence === "number" ? commercialExecution.confidence : null;
+  void message;
 
-  if (!intent) {
-    return null;
-  }
-
-  return (
-    <div className="max-w-full self-end rounded-full border border-emerald-100 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-      商业意图：{getCommercialIntentLabel(intent)}
-      {actionLabel ? <span className="ml-1 text-emerald-600">→ {actionLabel}</span> : null}
-      {confidence !== null ? (
-        <span className="ml-1 text-emerald-500">{formatIntentConfidence(confidence)}</span>
-      ) : null}
-    </div>
-  );
+  return null;
 }
 
 function UserMessageAvatar({
@@ -465,6 +449,7 @@ export function ChatMessages({
   onModeChange,
   onEditUserMessage,
   currentUser = null,
+  userName = null,
   userAvatarUrl = null
 }: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
@@ -578,7 +563,7 @@ export function ChatMessages({
   }
 
   if (messages.length === 0) {
-    return <EmptyState mode={mode} onModeChange={onModeChange} />;
+    return <EmptyState mode={mode} onModeChange={onModeChange} userName={userName} />;
   }
 
   return (

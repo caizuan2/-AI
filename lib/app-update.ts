@@ -155,7 +155,7 @@ function normalizeSingleSourceManifest(value: unknown): LatestReleaseManifest | 
   return {
     updated_at: getString(value.updated_at) || getString(value.updatedAt),
     user: {
-      app_name: "AI知识库助手",
+      app_name: "小董AI",
       ...baseRelease
     },
     admin: {

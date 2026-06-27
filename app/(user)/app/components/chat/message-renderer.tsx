@@ -11,13 +11,18 @@ import {
   Copy,
   FileText,
   GitBranch,
-  Loader2,
-  MessageSquareText,
-  Quote,
   ShieldCheck,
   Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay
+} from "@/lib/ai-chat/response-finalizer";
+import {
+  sanitizeVisibleSources,
+  sanitizeVisibleText
+} from "@/lib/ai-chat/visible-output-sanitizer";
 import { rememberConversionFeedbackEvent } from "@/app/(user)/chat-ui/chat-ui-state";
 import {
   BUSINESS_OUTPUT_ENFORCER_VERSION
@@ -27,11 +32,12 @@ import { formatIntentConfidence, getCommercialIntentLabel, type UserIntent } fro
 import {
   buildRichAnswerSections,
   sanitizeDisplayText,
-  splitCustomerAnswerParagraphs,
   type RichAnswerSection
 } from "@/app/(user)/chat-ui/lib/answer-format";
+import { ProductAnswerView } from "@/app/(user)/chat-ui/components/ProductAnswerView";
 import type {
   ChatMessageView,
+  FinalizedAnswerView,
   ChatSource,
   ProviderStatus,
   RagConfidence
@@ -55,6 +61,10 @@ const providerStatusLabels: Record<ProviderStatus, string> = {
   no_relevant_knowledge: "小董AI大脑🧠暂无明确资料",
   error: "模型响应异常"
 };
+
+const isDevDebug =
+  process.env.NODE_ENV !== "production" &&
+  process.env.NEXT_PUBLIC_AI_DEBUG === "true";
 
 function formatScore(score: number) {
   if (!Number.isFinite(score)) {
@@ -157,22 +167,58 @@ function formatMessageTime(value: string) {
   }).format(date);
 }
 
-function getCopyText(message: ChatMessageView) {
-  return sanitizeDisplayText(message.customer_answer || message.content || "");
-}
-
-function getFinalAnswer(message: ChatMessageView) {
-  const customerAnswer = sanitizeDisplayText(message.customer_answer ?? "");
-
-  if (customerAnswer) {
-    return customerAnswer;
+function getFinalizedAnswer(message: ChatMessageView): FinalizedAnswerView | null {
+  if (message.finalized_answer) {
+    return message.finalized_answer;
   }
 
-  return sanitizeDisplayText(message.content);
+  const metadataFinalizedAnswer = getRecord(message.metadata?.finalizedAnswer);
+  const title = getString(metadataFinalizedAnswer.title);
+  const problemUnderstanding = getString(metadataFinalizedAnswer.problemUnderstanding);
+  const keyConclusion = getString(metadataFinalizedAnswer.keyConclusion);
+  const customerReply = getString(metadataFinalizedAnswer.customerReply);
+  const nextAction = getString(metadataFinalizedAnswer.nextAction);
+
+  if (!title && !problemUnderstanding && !keyConclusion && !customerReply && !nextAction) {
+    const rawAnswer = sanitizeDisplayText(message.content);
+    const rawCustomerAnswer = sanitizeDisplayText(message.customer_answer ?? "");
+
+    if (!rawAnswer && !rawCustomerAnswer) {
+      return null;
+    }
+
+    return finalizeUserAnswer({
+      rawAnswer,
+      customerAnswer: rawCustomerAnswer,
+      sources: (message.sources ?? []).map((source) => ({
+        title: source.title,
+        score: source.score
+      }))
+    });
+  }
+
+  return {
+    title: title || "处理建议",
+    problemUnderstanding,
+    keyConclusion,
+    suggestedSteps: getStringArray(metadataFinalizedAnswer.suggestedSteps),
+    customerReply,
+    nextAction,
+    evidenceSummary: getString(metadataFinalizedAnswer.evidenceSummary),
+    confidenceLabel: getString(metadataFinalizedAnswer.confidenceLabel) as FinalizedAnswerView["confidenceLabel"] || undefined
+  };
+}
+
+function getCopyText(finalizedAnswer: FinalizedAnswerView | null) {
+  return sanitizeVisibleText(sanitizeDisplayText(finalizedAnswer?.customerReply ?? ""));
+}
+
+function getFinalAnswer(finalizedAnswer: FinalizedAnswerView | null) {
+  return finalizedAnswer ? sanitizeVisibleText(formatFinalizedAnswerForDisplay(finalizedAnswer)) : "";
 }
 
 function hasDisplayContent(message: ChatMessageView) {
-  return Boolean(getFinalAnswer(message) || sanitizeDisplayText(message.content));
+  return Boolean(getFinalizedAnswer(message));
 }
 
 function markdownComponents() {
@@ -218,26 +264,6 @@ function CopyAnswerButton({ text }: { text: string }) {
       {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
       {copied ? "已复制" : "复制答案"}
     </button>
-  );
-}
-
-function StreamingStatus() {
-  return (
-    <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-blue-900">
-      <div className="flex items-center gap-2 font-semibold">
-        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-        正在调用小董AI大脑🧠并组织回答
-      </div>
-      <div className="mt-3 flex gap-1.5">
-        {[0, 1, 2].map((item) => (
-          <span
-            key={item}
-            className="h-2 w-2 animate-pulse rounded-full bg-blue-500"
-            style={{ animationDelay: `${item * 140}ms` }}
-          />
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -1073,42 +1099,6 @@ function BusinessOutputEnforcerPanel({
   );
 }
 
-function FinalAnswerBlock({
-  content,
-  streaming
-}: {
-  content: string;
-  streaming: boolean;
-}) {
-  if (!content && streaming) {
-    return <StreamingStatus />;
-  }
-
-  if (!content) {
-    return null;
-  }
-
-  const paragraphs = splitCustomerAnswerParagraphs(content, 220);
-
-  return (
-    <section className="rounded-2xl border border-green-200 bg-green-50 p-4 text-green-950">
-      <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <MessageSquareText className="h-4 w-4 text-green-700" aria-hidden="true" />
-        最终答案
-      </div>
-      <div className="space-y-3">
-        {paragraphs.map((paragraph, index) => (
-          <div key={`${paragraph}-${index}`} className="rounded-xl border border-green-100 bg-white/75 p-3 text-sm leading-7">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
-              {paragraph}
-            </ReactMarkdown>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function AnswerSectionDetails({
   section,
   defaultOpen
@@ -1135,14 +1125,16 @@ function AnswerSectionDetails({
 }
 
 function SourceCard({ source }: { source: ChatSource }) {
+  const [visibleSource] = sanitizeVisibleSources([source]);
+
   return (
     <div className="rounded-xl border border-blue-100 bg-blue-50/70 px-3 py-2 text-xs text-slate-600">
       <div className="flex items-center gap-2">
         <FileText className="h-3.5 w-3.5 shrink-0 text-blue-600" aria-hidden="true" />
-        <span className="min-w-0 truncate font-semibold text-slate-900">{source.title}</span>
+        <span className="min-w-0 truncate font-semibold text-slate-900">{visibleSource?.title ?? "小董AI大脑资料"}</span>
       </div>
       <div className="mt-1 flex items-center justify-between gap-2 text-slate-500">
-        <span className="min-w-0 truncate">chunk: {source.chunk_id}</span>
+        <span className="min-w-0 truncate">小董AI大脑🧠相关资料</span>
         <span className="shrink-0 font-semibold text-blue-700">{formatScore(source.score)}</span>
       </div>
     </div>
@@ -1164,7 +1156,7 @@ function RagSources({
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
-          <Quote className="h-4 w-4 text-blue-600" aria-hidden="true" />
+          <FileText className="h-4 w-4 text-blue-600" aria-hidden="true" />
           引用来源
         </span>
         {confidence ? (
@@ -1189,14 +1181,16 @@ function RagSources({
 
 export function ChatMessageRenderer({ message, streaming = false }: ChatMessageRendererProps) {
   const isStreaming = streaming || Boolean(message.pending);
-  const finalAnswer = getFinalAnswer(message);
-  const copyText = getCopyText(message);
-  const hasBusinessExecution = Boolean(getString(getRecord(message.metadata?.businessExecution).version));
-  const businessSchemaGuard = getRecord(message.metadata?.businessSchemaGuard);
+  const finalizedAnswer = getFinalizedAnswer(message);
+  const finalAnswer = getFinalAnswer(finalizedAnswer);
+  const copyText = getCopyText(finalizedAnswer);
+  const businessSchemaGuard = getRecord(
+    message.metadata?.businessSchemaGuard ?? message.metadata?.business_schema_guard
+  );
   const sections = hasDisplayContent(message)
     ? buildRichAnswerSections({
-      answer: message.content,
-      customerAnswer: message.customer_answer,
+      answer: finalAnswer,
+      customerAnswer: finalizedAnswer?.customerReply ?? "",
       providerStatus: message.provider_status
     })
     : [];
@@ -1206,50 +1200,70 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
     <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-4 text-slate-900 shadow-sm">
       <header className="flex flex-col gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <div className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
             <ClipboardList className="h-3.5 w-3.5 text-blue-600" aria-hidden="true" />
-            GPT OS 回答
+            小董AI
           </div>
-          <h3 className="mt-2 text-base font-semibold text-slate-950">已按小董AI大脑🧠资料整理</h3>
+          <h3 className="mt-2 text-base font-semibold text-slate-950">小董AI处理建议</h3>
           {messageTime ? <p className="mt-1 text-xs text-slate-400">{messageTime}</p> : null}
         </div>
         <CopyAnswerButton text={copyText} />
       </header>
 
       <div className="mt-4 space-y-4">
-        <ThinkingPanel message={message} streaming={isStreaming} />
-        <CommercialExecutionPanel message={message} />
-        <BusinessExecutionPanel message={message} />
-        <AutoSalesAgentPanel message={message} />
-        <BusinessOutputEnforcerPanel
-          content={finalAnswer || message.content}
-          enabled={hasBusinessExecution}
+        <ProductAnswerView
+          answer={finalizedAnswer}
+          sources={message.sources}
+          confidence={message.confidence}
           streaming={isStreaming}
-          schemaGuard={businessSchemaGuard}
         />
-        <RagVisualizationPanel message={message} />
-        <ModelRoutingPanel message={message} />
-        <FinalAnswerBlock content={finalAnswer} streaming={isStreaming} />
 
-        {sections.length > 0 ? (
-          <section className="rounded-2xl border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-3 flex items-center gap-2 px-1 text-sm font-semibold text-slate-950">
-              <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
-              分段解析
+        {isDevDebug ? (
+          <details className="group rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-amber-950">
+              <span className="inline-flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4 text-amber-600" aria-hidden="true" />
+                开发调试信息
+              </span>
+              <ChevronDown className="h-4 w-4 text-amber-500 transition group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="mt-3 space-y-3">
+              {sections.length > 0 ? (
+                <details className="group rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                  <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
+                    <span className="inline-flex items-center gap-2">
+                      <Sparkles className="h-4 w-4 text-blue-600" aria-hidden="true" />
+                      回答分析
+                    </span>
+                    <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
+                  </summary>
+                  <div className={cn("mt-3 grid gap-3", sections.length > 2 ? "sm:grid-cols-2" : "")}>
+                    {sections.map((section) => (
+                      <AnswerSectionDetails
+                        key={section.id}
+                        section={section}
+                        defaultOpen={false}
+                      />
+                    ))}
+                  </div>
+                </details>
+              ) : null}
+              <ThinkingPanel message={message} streaming={isStreaming} />
+              <RagVisualizationPanel message={message} />
+              <RagSources sources={message.sources} confidence={message.confidence} />
+              <CommercialExecutionPanel message={message} />
+              <BusinessExecutionPanel message={message} />
+              <AutoSalesAgentPanel message={message} />
+              <BusinessOutputEnforcerPanel
+                content={finalAnswer}
+                enabled={Boolean(finalAnswer)}
+                streaming={isStreaming}
+                schemaGuard={businessSchemaGuard}
+              />
+              <ModelRoutingPanel message={message} />
             </div>
-            <div className={cn("grid gap-3", sections.length > 2 ? "sm:grid-cols-2" : "")}>
-              {sections.map((section, index) => (
-                <AnswerSectionDetails
-                  key={section.id}
-                  section={section}
-                  defaultOpen={index < 2}
-                />
-              ))}
-            </div>
-          </section>
+          </details>
         ) : null}
-
-        <RagSources sources={message.sources} confidence={message.confidence} />
       </div>
     </div>
   );

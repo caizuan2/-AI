@@ -4,6 +4,18 @@ import {
   type KnowledgeFeedbackEventType,
   type KnowledgeFeedbackInput
 } from "@/lib/enterprise/feedback/feedback-collector";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay
+} from "@/lib/ai-chat/response-finalizer";
+import {
+  buildChatModeDecisionFromCandidate,
+  CHAT_MODE_CONFIGS,
+  toChatModeCandidate,
+  type ChatModeDecision,
+  type ChatModeKey,
+  type ChatModeSource
+} from "./lib/intent-mode-router";
 import type {
   AvatarUpdateResponse,
   AskChatRequest,
@@ -58,6 +70,14 @@ export type AskChatStreamEvent =
       title?: string | null;
       file_id?: string | null;
       chunk_id?: string | null;
+      item_id?: string | null;
+      knowledgeBaseId?: string | null;
+      agentId?: string | null;
+      tenantId?: string | null;
+      namespace?: string | null;
+      sourceApp?: string | null;
+      includeShared?: boolean | null;
+      includePublished?: boolean | null;
     }
   | {
       type: "rag_done";
@@ -118,6 +138,29 @@ export interface AskChatStreamHandlers {
 export interface ChatBehaviorFeedbackInput extends Omit<KnowledgeFeedbackInput, "eventType"> {
   eventType: KnowledgeFeedbackEventType;
 }
+
+export interface ChatModeClassifyInput {
+  message: string;
+  hasImage: boolean;
+  hasAttachment: boolean;
+  manualMode?: ChatModeKey | null;
+  signal?: AbortSignal;
+}
+
+type ChatModeClassifyResponse = {
+  mode: ChatModeKey;
+  modeLabel: string;
+  confidence: number;
+  reason: string;
+  alternatives: Array<{
+    key: ChatModeKey;
+    label: string;
+    confidence: number;
+    reason: string;
+  }>;
+  source: ChatModeSource;
+  classifierVersion: string;
+};
 
 export interface ConversationActionResponse {
   conversationId?: string;
@@ -274,21 +317,82 @@ export async function askChat(input: AskChatRequest) {
   return askChatStream(input);
 }
 
+function normalizeChatModeClassifyResponse(data: ChatModeClassifyResponse): ChatModeDecision {
+  const modeKey = CHAT_MODE_CONFIGS[data.mode] ? data.mode : "business_problem";
+  const alternatives = Array.isArray(data.alternatives)
+    ? data.alternatives
+      .filter((item) => CHAT_MODE_CONFIGS[item.key])
+      .map((item) => toChatModeCandidate(item.key, item.confidence, item.reason))
+    : [];
+
+  return buildChatModeDecisionFromCandidate({
+    candidate: toChatModeCandidate(modeKey, data.confidence, data.reason || CHAT_MODE_CONFIGS[modeKey].prompt),
+    source: data.source,
+    alternatives,
+    classifierVersion: data.classifierVersion
+  });
+}
+
+export async function classifyChatMode(input: ChatModeClassifyInput) {
+  const response = await fetch("/api/user/chat-mode/classify", {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Accept": "application/json",
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      message: input.message,
+      hasImage: input.hasImage,
+      hasAttachment: input.hasAttachment,
+      manualMode: input.manualMode ?? null
+    }),
+    signal: input.signal
+  });
+  const result = await readApiResponse<ChatModeClassifyResponse>(response);
+
+  return normalizeChatModeClassifyResponse(result);
+}
+
 function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse | null {
   if (event.type !== "final") {
     return null;
   }
 
   if (event.data) {
-    return event.data;
+    if (event.data.finalized_answer) {
+      return {
+        ...event.data,
+        answer: formatFinalizedAnswerForDisplay(event.data.finalized_answer),
+        customer_answer: event.data.finalized_answer.customerReply
+      };
+    }
+
+    const finalizedAnswer = finalizeUserAnswer({
+      rawAnswer: event.data.answer,
+      customerAnswer: event.data.customer_answer ?? undefined,
+      sources: event.data.sources
+    });
+
+    return {
+      ...event.data,
+      answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+      customer_answer: finalizedAnswer.customerReply,
+      finalized_answer: finalizedAnswer
+    };
   }
 
+  const finalizedAnswer = finalizeUserAnswer({
+    rawAnswer: event.content
+  });
+
   return {
-    answer: event.content,
+    answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
     conversation_id: "",
     message_id: `stream-final-${Date.now()}`,
     mode: "fast",
-    customer_answer: null,
+    customer_answer: finalizedAnswer.customerReply,
+    finalized_answer: finalizedAnswer,
     sources: [],
     confidence: "low",
     provider_status: "ok"
