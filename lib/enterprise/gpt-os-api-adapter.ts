@@ -91,6 +91,14 @@ function buildChatCompletionsUrl(baseUrl: string) {
     : `${normalized}/chat/completions`;
 }
 
+function resolveChatTemperature(provider: LLMCallProvider, requested?: number) {
+  if (provider === "kimi") {
+    return 1;
+  }
+
+  return requested ?? 0.7;
+}
+
 function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
   const requestedModel = sanitizeIngestPreferredModel(payload.model);
 
@@ -151,7 +159,7 @@ export async function callLLM(provider: LLMCallProvider, payload: LLMCallPayload
     : {
         model: config.model,
         messages,
-        temperature: payload.temperature ?? 0.7,
+        temperature: resolveChatTemperature(provider, payload.temperature),
         max_tokens: payload.maxTokens ?? 3000,
         stream: false
       };
