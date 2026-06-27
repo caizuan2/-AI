@@ -948,3 +948,12 @@ export async function updateCurrentUserAvatar(file: File) {
 
   return readApiResponse<AvatarUpdateResponse>(response);
 }
+
+export async function deleteCurrentUserAvatar() {
+  const response = await fetch("/api/auth/avatar", {
+    method: "DELETE",
+    credentials: "include"
+  });
+
+  return readApiResponse<AvatarUpdateResponse>(response);
+}

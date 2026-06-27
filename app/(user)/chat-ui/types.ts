@@ -160,7 +160,7 @@ export interface CurrentChatUser {
 }
 
 export interface AvatarUpdateResponse {
-  avatar_url: string;
+  avatar_url: string | null;
 }
 
 export interface ChatAttachmentUploadResponse {
