@@ -3,6 +3,16 @@ import {
   buildKnowledgeChunkAccessWhere,
   resolveKnowledgeAccessScope
 } from "@/lib/enterprise/knowledge-access-scope";
+import {
+  buildFeedbackRankingBoost,
+  buildPolicyDiagnostics,
+  candidatePassesGovernance,
+  applyPolicyRankingAdjustment,
+  readKnowledgeGovernanceMetadata,
+  type KnowledgeGovernanceControls
+} from "@/lib/enterprise/knowledge-governance";
+import { calculateFeedbackAwareRankingScore } from "@/lib/enterprise/knowledge-feedback-ranking";
+import { analyzeKnowledgeOptimization } from "@/lib/enterprise/knowledge-self-optimization-engine";
 import { ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 
@@ -21,8 +31,60 @@ export interface RetrievedRagChunk {
   sourceType: string | null;
   sourceTitle: string | null;
   sourceUrl: string | null;
+  agentId: string | null;
+  knowledgeBaseId: string | null;
+  namespace: string | null;
   score: number;
   relevance_score: number;
+  qualityScore: number | null;
+  feedbackScore: number;
+  behaviorScore: number;
+  behaviorEventCount: number;
+  behaviorReasons: string[];
+  usageScore: number;
+  freshnessScore: number;
+  optimizationScore: number;
+  stabilityScore: number;
+  confidenceWeight: number;
+  trustWeight: number;
+  volatilityPenalty: number;
+  stableOptimizationScore: number;
+  trendScore: number;
+  trendLabel: string;
+  trendConfidence: number;
+  staleRisk: number;
+  fastRising: boolean;
+  staleHighScore: boolean;
+  decliningTrend: boolean;
+  evergreen: boolean;
+  trendReason: string;
+  trendShadowMode: boolean;
+  lifecycleStage: string;
+  lifecycleScore: number;
+  lifecycleConfidence: number;
+  lifecycleReason: string;
+  lifecycleSuggestion: string;
+  shouldBoost: boolean;
+  shouldDecay: boolean;
+  shouldReview: boolean;
+  shouldArchiveCandidate: boolean;
+  policyDecision: string;
+  policyScore: number;
+  policyRiskLevel: string;
+  policyConfidence: number;
+  policySuggestion: string;
+  sampleCount: number;
+  suspectedGaming: boolean;
+  optimizationReason: string;
+  optimizationSuggestion: string;
+  duplicateLikely: boolean;
+  duplicateGroupKey?: string;
+  coldKnowledge: boolean;
+  conflictLikely: boolean;
+  staleVersion: boolean;
+  knowledgeVersion: string | null;
+  lowQuality: boolean;
+  highValue: boolean;
   chunk_rank: number;
   createdAt: string | null;
 }
@@ -32,6 +94,11 @@ export interface RetrieveRelevantChunksOptions {
   tenantId?: string | null;
   appType?: string | null;
   agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  knowledgeVersion?: string | number | null;
+  minQualityScore?: number | null;
+  includeLowQuality?: boolean;
   includeShared?: boolean;
   includePublished?: boolean;
   mode?: AiChatMode;
@@ -246,8 +313,15 @@ async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunks
     tenantId: options.tenantId,
     appType: options.appType,
     agentId: options.agentId,
+    knowledgeBaseId: options.knowledgeBaseId,
+    namespace: options.namespace,
     includeShared: options.includeShared === true || Boolean(options.tenantId),
     includePublished: options.includePublished === true || Boolean(options.tenantId)
+  });
+  console.info("RAG_SCOPE: agentId + knowledgeBaseId", {
+    agentId: accessScope.agentId,
+    knowledgeBaseId: accessScope.knowledgeBaseId,
+    namespace: accessScope.namespace
   });
   const termFilters = terms.map((term) => ({
     OR: [
@@ -302,6 +376,89 @@ async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunks
 
 function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRagChunk {
   const item = row.knowledgeItem ?? {};
+  const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+    ? row.metadata as Record<string, unknown>
+    : {};
+  const chunkAgentId = typeof metadata.agentId === "string"
+    ? metadata.agentId
+    : typeof metadata.expertId === "string"
+      ? metadata.expertId
+      : typeof metadata.expert_id === "string"
+        ? metadata.expert_id
+        : null;
+  const chunkKnowledgeBaseId = typeof metadata.knowledgeBaseId === "string"
+    ? metadata.knowledgeBaseId
+    : typeof metadata.kbId === "string"
+      ? metadata.kbId
+      : typeof metadata.kb_id === "string"
+        ? metadata.kb_id
+        : null;
+  const chunkNamespace = typeof metadata.namespace === "string"
+    ? metadata.namespace
+    : chunkAgentId && chunkKnowledgeBaseId
+      ? `agent:${chunkAgentId}:kb:${chunkKnowledgeBaseId}`
+      : null;
+  const governance = readKnowledgeGovernanceMetadata(row.metadata);
+  const feedbackBoost = buildFeedbackRankingBoost(row.metadata);
+  const optimization = analyzeKnowledgeOptimization({
+    baseScore: score,
+    qualityScore: governance?.qualityScore ?? score,
+    feedbackScore: feedbackBoost.feedbackScore,
+    behaviorScore: feedbackBoost.behaviorScore,
+    usageScore: feedbackBoost.usageScore,
+    freshnessScore: feedbackBoost.freshnessScore,
+    stabilityScore: feedbackBoost.stabilityScore,
+    confidenceWeight: feedbackBoost.confidenceWeight,
+    trustWeight: feedbackBoost.trustWeight,
+    volatilityPenalty: feedbackBoost.volatilityPenalty,
+    stableOptimizationScore: feedbackBoost.stableOptimizationScore,
+    trendScore: feedbackBoost.trendScore,
+    trendConfidence: feedbackBoost.trendConfidence,
+    trendLabel: feedbackBoost.trendLabel,
+    staleRisk: feedbackBoost.staleRisk,
+    fastRising: feedbackBoost.fastRising,
+    staleHighScore: feedbackBoost.staleHighScore,
+    decliningTrend: feedbackBoost.decliningTrend,
+    evergreen: feedbackBoost.evergreen,
+    sampleCount: feedbackBoost.sampleCount,
+    suspectedGaming: feedbackBoost.suspectedGaming,
+    metadata: row.metadata,
+    title: typeof item.title === "string" ? item.title : null,
+    content: typeof row.chunkText === "string" ? row.chunkText : null,
+    createdAt: row.createdAt,
+    sourceType: typeof item.sourceType === "string" ? item.sourceType : null,
+    status: typeof item.status === "string" ? item.status : null,
+    knowledgeVersion: governance?.version
+  });
+  const policy = buildPolicyDiagnostics({
+    metadata: row.metadata,
+    qualityScore: governance?.qualityScore ?? score,
+    feedbackScore: feedbackBoost.feedbackScore,
+    behaviorScore: feedbackBoost.behaviorScore,
+    optimizationScore: optimization.optimizationScore,
+    stableOptimizationScore: optimization.stableOptimizationScore,
+    trend: {
+      trendScore: optimization.trendScore,
+      confidence: optimization.trendConfidence,
+      fastRising: optimization.fastRising,
+      staleHighScore: optimization.staleHighScore,
+      decliningTrend: optimization.decliningTrend
+    },
+    lifecycle: {
+      lifecycleStage: optimization.lifecycleStage,
+      lifecycleScore: optimization.lifecycleScore,
+      lifecycleConfidence: optimization.lifecycleConfidence,
+      shouldArchiveCandidate: optimization.shouldArchiveCandidate
+    },
+    highValue: optimization.highValue,
+    lowQuality: optimization.lowQuality,
+    duplicateLikely: optimization.duplicateLikely,
+    conflictLikely: optimization.conflictLikely,
+    coldKnowledge: optimization.coldKnowledge,
+    confidence: optimization.lifecycleConfidence,
+    volatilityPenalty: optimization.volatilityPenalty,
+    trustWeight: optimization.trustWeight
+  });
 
   return {
     chunkId: String(row.id ?? ""),
@@ -319,8 +476,60 @@ function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRa
     sourceType: typeof item.sourceType === "string" ? item.sourceType : null,
     sourceTitle: typeof item.sourceTitle === "string" ? item.sourceTitle : null,
     sourceUrl: typeof item.sourceUrl === "string" ? item.sourceUrl : null,
+    agentId: chunkAgentId,
+    knowledgeBaseId: chunkKnowledgeBaseId,
+    namespace: chunkNamespace,
     score,
     relevance_score: score,
+    qualityScore: governance?.qualityScore ?? null,
+    feedbackScore: Math.round(feedbackBoost.feedbackScore * 10000) / 10000,
+    behaviorScore: Math.round(feedbackBoost.behaviorScore * 10000) / 10000,
+    behaviorEventCount: feedbackBoost.behaviorEventCount,
+    behaviorReasons: feedbackBoost.behaviorReasons,
+    usageScore: Math.round(feedbackBoost.usageScore * 10000) / 10000,
+    freshnessScore: Math.round(feedbackBoost.freshnessScore * 10000) / 10000,
+    optimizationScore: Math.round(optimization.optimizationScore * 10000) / 10000,
+    stabilityScore: Math.round(optimization.stabilityScore * 10000) / 10000,
+    confidenceWeight: Math.round(optimization.confidenceWeight * 10000) / 10000,
+    trustWeight: Math.round(optimization.trustWeight * 10000) / 10000,
+    volatilityPenalty: Math.round(optimization.volatilityPenalty * 10000) / 10000,
+    stableOptimizationScore: Math.round(optimization.stableOptimizationScore * 10000) / 10000,
+    trendScore: Math.round(optimization.trendScore * 10000) / 10000,
+    trendLabel: optimization.trendLabel,
+    trendConfidence: Math.round(optimization.trendConfidence * 10000) / 10000,
+    staleRisk: Math.round(optimization.staleRisk * 10000) / 10000,
+    fastRising: optimization.fastRising,
+    staleHighScore: optimization.staleHighScore,
+    decliningTrend: optimization.decliningTrend,
+    evergreen: optimization.evergreen,
+    trendReason: optimization.trendReason,
+    trendShadowMode: optimization.trendShadowMode,
+    lifecycleStage: optimization.lifecycleStage,
+    lifecycleScore: Math.round(optimization.lifecycleScore * 10000) / 10000,
+    lifecycleConfidence: Math.round(optimization.lifecycleConfidence * 10000) / 10000,
+    lifecycleReason: optimization.lifecycleReason,
+    lifecycleSuggestion: optimization.lifecycleSuggestion,
+    shouldBoost: optimization.shouldBoost,
+    shouldDecay: optimization.shouldDecay,
+    shouldReview: optimization.shouldReview,
+    shouldArchiveCandidate: optimization.shouldArchiveCandidate,
+    policyDecision: policy.decision,
+    policyScore: Math.round(policy.policyScore * 10000) / 10000,
+    policyRiskLevel: policy.riskLevel,
+    policyConfidence: Math.round(policy.confidence * 10000) / 10000,
+    policySuggestion: policy.suggestion,
+    sampleCount: optimization.sampleCount,
+    suspectedGaming: optimization.suspectedGaming,
+    optimizationReason: optimization.optimizationReason,
+    optimizationSuggestion: optimization.optimizationSuggestion,
+    duplicateLikely: optimization.duplicateLikely,
+    duplicateGroupKey: optimization.duplicateGroupKey,
+    coldKnowledge: optimization.coldKnowledge,
+    conflictLikely: optimization.conflictLikely,
+    staleVersion: optimization.staleVersion,
+    knowledgeVersion: governance?.version ?? null,
+    lowQuality: optimization.lowQuality,
+    highValue: optimization.highValue,
     chunk_rank: 0,
     createdAt: toIsoString(row.createdAt ?? item.createdAt)
   };
@@ -365,10 +574,102 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
   });
 
   return rows
-    .map((row) => ({
-      chunk: toRetrievedChunk(row, scoreChunk(row, safeQuery, terms)),
-      score: scoreChunk(row, safeQuery, terms)
-    }))
+    .filter((row) => candidatePassesGovernance(row.metadata, {
+      knowledgeVersion: options.knowledgeVersion,
+      minQualityScore: options.minQualityScore,
+      includeLowQuality: options.includeLowQuality
+    } satisfies KnowledgeGovernanceControls))
+    .map((row) => {
+      const baseScore = scoreChunk(row, safeQuery, terms);
+      const feedbackBoost = buildFeedbackRankingBoost(row.metadata);
+      const qualityScore = feedbackBoost.qualityScore ?? baseScore;
+      const optimization = analyzeKnowledgeOptimization({
+        baseScore,
+        qualityScore,
+        feedbackScore: feedbackBoost.feedbackScore,
+        behaviorScore: feedbackBoost.behaviorScore,
+        usageScore: feedbackBoost.usageScore,
+        freshnessScore: feedbackBoost.freshnessScore,
+        stabilityScore: feedbackBoost.stabilityScore,
+        confidenceWeight: feedbackBoost.confidenceWeight,
+        trustWeight: feedbackBoost.trustWeight,
+        volatilityPenalty: feedbackBoost.volatilityPenalty,
+        stableOptimizationScore: feedbackBoost.stableOptimizationScore,
+        trendScore: feedbackBoost.trendScore,
+        trendConfidence: feedbackBoost.trendConfidence,
+        trendLabel: feedbackBoost.trendLabel,
+        staleRisk: feedbackBoost.staleRisk,
+        fastRising: feedbackBoost.fastRising,
+        staleHighScore: feedbackBoost.staleHighScore,
+        decliningTrend: feedbackBoost.decliningTrend,
+        evergreen: feedbackBoost.evergreen,
+        sampleCount: feedbackBoost.sampleCount,
+        suspectedGaming: feedbackBoost.suspectedGaming,
+        metadata: row.metadata,
+        title: typeof row.knowledgeItem?.title === "string" ? row.knowledgeItem.title : null,
+        content: typeof row.chunkText === "string" ? row.chunkText : null,
+        createdAt: row.createdAt,
+        sourceType: typeof row.knowledgeItem?.sourceType === "string" ? row.knowledgeItem.sourceType : null,
+        status: typeof row.knowledgeItem?.status === "string" ? row.knowledgeItem.status : null
+      });
+      const policy = buildPolicyDiagnostics({
+        metadata: row.metadata,
+        qualityScore,
+        feedbackScore: feedbackBoost.feedbackScore,
+        behaviorScore: feedbackBoost.behaviorScore,
+        optimizationScore: optimization.optimizationScore,
+        stableOptimizationScore: optimization.stableOptimizationScore,
+        trend: {
+          trendScore: optimization.trendScore,
+          confidence: optimization.trendConfidence,
+          fastRising: optimization.fastRising,
+          staleHighScore: optimization.staleHighScore,
+          decliningTrend: optimization.decliningTrend
+        },
+        lifecycle: {
+          lifecycleStage: optimization.lifecycleStage,
+          lifecycleScore: optimization.lifecycleScore,
+          lifecycleConfidence: optimization.lifecycleConfidence,
+          shouldArchiveCandidate: optimization.shouldArchiveCandidate
+        },
+        highValue: optimization.highValue,
+        lowQuality: optimization.lowQuality,
+        duplicateLikely: optimization.duplicateLikely,
+        conflictLikely: optimization.conflictLikely,
+        coldKnowledge: optimization.coldKnowledge,
+        confidence: optimization.lifecycleConfidence,
+        volatilityPenalty: optimization.volatilityPenalty,
+        trustWeight: optimization.trustWeight
+      });
+      const feedbackAwareScore = calculateFeedbackAwareRankingScore({
+        baseScore,
+        qualityScore,
+        feedbackScore: feedbackBoost.feedbackScore,
+        behaviorScore: feedbackBoost.behaviorScore,
+        usageScore: feedbackBoost.usageScore,
+        freshnessScore: feedbackBoost.freshnessScore,
+        optimizationScore: optimization.optimizationScore,
+        stabilityScore: optimization.stabilityScore,
+        stableOptimizationScore: optimization.stableOptimizationScore,
+        trendScore: optimization.trendScore,
+        trendConfidence: optimization.trendConfidence,
+        lifecycleScore: optimization.lifecycleScore,
+        lifecycleConfidence: optimization.lifecycleConfidence,
+        lifecycleStage: optimization.lifecycleStage,
+        confidenceWeight: optimization.confidenceWeight,
+        trustWeight: optimization.trustWeight,
+        volatilityPenalty: optimization.volatilityPenalty,
+        sampleCount: optimization.sampleCount,
+        lowQuality: optimization.lowQuality,
+        highValue: optimization.highValue
+      });
+      const finalScore = applyPolicyRankingAdjustment(feedbackAwareScore, policy);
+
+      return {
+        chunk: toRetrievedChunk(row, finalScore),
+        score: finalScore
+      };
+    })
     .filter((item) => item.chunk.chunkId && item.chunk.content && item.score >= MIN_RELEVANT_SCORE)
     .sort((left, right) => right.score - left.score)
     .slice(0, topK)

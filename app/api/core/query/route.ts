@@ -34,7 +34,10 @@ function readRequest(body: unknown) {
   return {
     question,
     topK,
-    semantic
+    semantic,
+    agentId: typeof body.agentId === "string" ? body.agentId.trim() || null : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId.trim() || null : null,
+    namespace: typeof body.namespace === "string" ? body.namespace.trim() || null : null
   };
 }
 

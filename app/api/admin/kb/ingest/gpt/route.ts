@@ -501,6 +501,9 @@ function readRequest(body: unknown) {
     input,
     attachments: readAttachments(body.attachments),
     agentId: readString(body.agentId) || null,
+    knowledgeBaseId: readString(body.knowledgeBaseId) || null,
+    namespace: readString(body.namespace) || null,
+    knowledgeVersion: readString(body.knowledgeVersion) || readString(body.version) || "v1",
     expertId: readString(body.expertId) || null,
     agentName: readString(body.agentName) || null,
     category: readString(body.category) || null,
@@ -632,6 +635,9 @@ export async function POST(request: Request) {
         input: input.input,
         sourceType: "chat",
         agentId: input.agentId,
+        knowledgeBaseId: input.knowledgeBaseId,
+        namespace: input.namespace,
+        knowledgeVersion: input.knowledgeVersion,
         agentName: input.agentName,
         structured: structuredForTrainingLog
       })

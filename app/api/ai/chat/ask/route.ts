@@ -105,13 +105,19 @@ export async function POST(request: Request) {
               actualModel,
               provider,
               providerFallbackChain,
-              businessExecutionContext
+              businessExecutionContext,
+              agentId,
+              knowledgeBaseId,
+              namespace
             }) => {
               const ragAnswer = await generateRagAnswer(question, contexts, {
                 userId: actor.id,
                 provider,
                 providerChain: providerFallbackChain,
                 model: actualModel,
+                agentId,
+                knowledgeBaseId,
+                namespace,
                 answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
                 confidence: confidenceToNumber(confidence),
                 intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",

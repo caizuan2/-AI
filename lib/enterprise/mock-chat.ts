@@ -36,6 +36,8 @@ export interface IngestChatAgent {
   category?: string;
   tenantId?: string | null;
   userId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   platform?: AdminIngestPlatform;
   syncTarget?: AdminIngestSyncTarget[];
   createdAt?: string;

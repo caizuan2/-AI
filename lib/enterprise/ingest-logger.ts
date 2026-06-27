@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { buildContentHash, cleanIngestText, splitAdminKbChunks } from "@/lib/admin-kb/ingestion";
+import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import type { AppRole } from "@/lib/rbac/roles";
 import {
@@ -12,7 +13,11 @@ import {
   type EnterpriseQAPair,
   type EnterpriseStructuredKnowledge
 } from "@/lib/enterprise/ai-ingest-service";
-import { buildIngestSharedChunkMetadata } from "@/lib/enterprise/knowledge-access-scope";
+import {
+  buildIngestSharedChunkMetadata,
+  resolveAgentKnowledgeScope
+} from "@/lib/enterprise/knowledge-access-scope";
+import { mergeKnowledgeGovernanceMetadata } from "@/lib/enterprise/knowledge-governance";
 
 export interface EnterpriseIngestActor {
   id: string;
@@ -26,6 +31,9 @@ export interface CreateEnterpriseIngestLogInput {
   sourceUrl?: string | null;
   agentId?: string | null;
   agentName?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  knowledgeVersion?: string | number | null;
   structured: EnterpriseStructuredKnowledge;
 }
 
@@ -34,6 +42,12 @@ export interface SaveEnterpriseIngestInput {
   structured?: EnterpriseStructuredKnowledge | null;
   originalInput?: string | null;
   sourceUrl?: string | null;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  expertId?: string | null;
+  requestedTenantId?: string | null;
+  knowledgeVersion?: string | number | null;
 }
 
 export const enterpriseAdminIngestJobSourceTypes = [
@@ -49,7 +63,7 @@ function toJobSourceType(sourceType: EnterpriseIngestSourceType) {
 }
 
 function toKnowledgeSourceType(sourceType: EnterpriseIngestSourceType) {
-  return sourceType === "chat" ? "admin_chat" : `admin_${sourceType}`;
+  return normalizeKnowledgeSourceType(sourceType);
 }
 
 function readJsonObject(value: unknown): Record<string, unknown> {
@@ -299,7 +313,12 @@ export async function createEnterpriseIngestLog(actor: EnterpriseIngestActor, in
     status: "pending",
     sourceType: input.sourceType,
     sourceUrl: input.sourceUrl ?? null,
-    agentId: input.agentId ?? null,
+    ...resolveAgentKnowledgeScope({
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace
+    }),
+    knowledgeVersion: input.knowledgeVersion ?? "v1",
     agentName: input.agentName ?? null,
     input: cleanInput,
     ai_output: input.structured,
@@ -393,18 +412,33 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
   }
 
   const sourceType = readStoredSourceType(storedMetadata);
+  const knowledgeSourceType = toKnowledgeSourceType(sourceType);
   const sourceUrl = input.sourceUrl ?? readStoredSourceUrl(storedMetadata);
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: input.agentId ?? readString(storedMetadata.agentId),
+    knowledgeBaseId: input.knowledgeBaseId ?? readString(storedMetadata.knowledgeBaseId),
+    namespace: input.namespace ?? readString(storedMetadata.namespace)
+  });
+  const expertId = readString(input.expertId) || readString(storedMetadata.expert_id) || readString(storedMetadata.expertId) || agentScope.agentId;
+  const requestedTenantId = readString(input.requestedTenantId) || readString(storedMetadata.tenant_id) || readString(storedMetadata.tenantId) || "default";
+  const knowledgeVersion = (input.knowledgeVersion ?? readString(storedMetadata.knowledgeVersion)) || "v1";
   const content = buildEnterpriseKnowledgeContent({
     originalInput,
     structured
   });
   const chunks = splitAdminKbChunks(content, {
-    sourceType: toKnowledgeSourceType(sourceType),
+    sourceType: knowledgeSourceType,
     title: structured.title,
     category: structured.category,
     tags: structured.tags,
     contentHash: buildContentHash(content),
     adminIngestJobId: existing.id,
+    kb_id: agentScope.knowledgeBaseId,
+    kbId: agentScope.knowledgeBaseId,
+    expert_id: expertId,
+    expertId,
+    tenant_id: requestedTenantId,
+    tenantId: requestedTenantId,
     qaPairCount: structured.qa_pairs.length
   });
 
@@ -427,7 +461,7 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
         completenessScore: structured.completenessScore,
         usefulnessScore: structured.usefulnessScore,
         confidenceScore: structured.confidenceScore,
-        sourceType: toKnowledgeSourceType(sourceType),
+        sourceType: knowledgeSourceType,
         sourceId: existing.id,
         sourceTitle: structured.title,
         sourceUrl,
@@ -437,11 +471,28 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
             chunkText: chunk.chunkText,
             chunkIndex: chunk.chunkIndex,
             summary: chunk.summary,
-            metadata: buildIngestSharedChunkMetadata(chunk.metadata, {
-              tenantId: actor.tenantId ?? null,
-              createdByUserId: actor.id,
-              agentId: readString(storedMetadata.agentId)
-            }),
+            metadata: buildIngestSharedChunkMetadata(
+              mergeKnowledgeGovernanceMetadata(chunk.metadata, {
+                version: knowledgeVersion,
+                sourceType: knowledgeSourceType,
+                ingestTimestamp: new Date(),
+                contentHash: chunk.contentHash,
+                relevance: (
+                  structured.clarityScore
+                  + structured.completenessScore
+                  + structured.usefulnessScore
+                  + structured.confidenceScore
+                ) / 20,
+                usage: 0,
+                feedback: structured.confidence / 100,
+                freshness: 1
+              }),
+              {
+                tenantId: actor.tenantId ?? null,
+                createdByUserId: actor.id,
+                ...agentScope
+              }
+            ),
             charCount: chunk.charCount,
             tokenCount: chunk.tokenCount,
             contentHash: chunk.contentHash
@@ -467,7 +518,12 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
       shared: true,
       sharedToUserApp: true,
       tenantId: actor.tenantId ?? null,
+      tenant_id: requestedTenantId,
       createdByUserId: actor.id,
+      kb_id: agentScope.knowledgeBaseId,
+      expert_id: expertId,
+      ...agentScope,
+      knowledgeVersion,
       savedAt: new Date().toISOString(),
       knowledgeItemId: knowledgeItem.id,
       training_record: {
@@ -512,7 +568,11 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
           sourceType,
           category: knowledgeItem.category,
           tagCount: knowledgeItem.tags.length,
-          chunkCount: knowledgeItem.chunks.length
+          chunkCount: knowledgeItem.chunks.length,
+          agentId: agentScope.agentId,
+          knowledgeBaseId: agentScope.knowledgeBaseId,
+          namespace: agentScope.namespace,
+          knowledgeVersion
         }
       }
     });

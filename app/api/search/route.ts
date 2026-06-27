@@ -1,6 +1,7 @@
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireLicensedUser } from "@/lib/auth/guards";
+import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
 import { ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { retrieveKnowledge, type RetrieveKnowledgeResponse } from "@/lib/rag/retriever";
@@ -11,6 +12,9 @@ export const dynamic = "force-dynamic";
 interface SearchRequest {
   query: string;
   topK?: number;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
 }
 
 const MAX_SEARCH_QUERY_CHARS = 1000;
@@ -35,7 +39,13 @@ function parseSearchRequest(body: unknown): SearchRequest {
     ? Math.min(rawTopK, SEARCH_MAX_TOP_K)
     : SEARCH_DEFAULT_TOP_K;
 
-  return { query, topK };
+  return {
+    query,
+    topK,
+    agentId: typeof body.agentId === "string" ? body.agentId.trim() || null : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId.trim() || null : null,
+    namespace: typeof body.namespace === "string" ? body.namespace.trim() || null : null
+  };
 }
 
 export async function POST(request: Request) {
@@ -69,11 +79,17 @@ export async function POST(request: Request) {
   }
 
   try {
+    const agentScope = resolveAgentKnowledgeScope({
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace
+    });
     const result = await retrieveKnowledge({
       query: input.query,
       topK: input.topK ?? SEARCH_DEFAULT_TOP_K,
       userId: currentUser.id,
       appType: "user_app",
+      ...agentScope,
       includeShared: true,
       includePublished: true,
       requestId
