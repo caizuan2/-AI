@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { estimateTokenCount } from "@/lib/logger";
 import { ValidationError } from "@/lib/errors";
 import type { AppRole } from "@/lib/rbac/roles";
+import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 
 export type AdminKbIngestSourceType = "text" | "chat" | "file";
 export type AdminKbJobStatus =
@@ -141,6 +142,12 @@ function normalizeMetadata(value: unknown): Prisma.InputJsonValue | undefined {
   }
 
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function metadataRecord(value: Prisma.InputJsonValue | undefined): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 export function cleanIngestText(content: string) {
@@ -292,7 +299,7 @@ function buildKnowledgeCreateData(input: {
     completenessScore: 3,
     usefulnessScore: 3,
     confidenceScore: 3,
-    sourceType: input.sourceType,
+    sourceType: normalizeKnowledgeSourceType(input.sourceType),
     sourceId: input.sourceId ?? null,
     sourceTitle: input.sourceTitle ?? null,
     status: "active",
@@ -330,9 +337,12 @@ export async function createAdminKbTextIngestion(
   const category = trimString(input.categoryId) || "未分类";
   const title = trimString(input.title) || inferTitle(content);
   const metadata = normalizeMetadata(input.metadata);
+  const metadataScope = metadataRecord(metadata);
   const sourceType = input.sourceType ?? "text";
+  const knowledgeSourceType = normalizeKnowledgeSourceType(sourceType);
   const chunks = splitAdminKbChunks(content, {
-    sourceType,
+    ...metadataScope,
+    sourceType: knowledgeSourceType,
     title,
     category,
     tags,
@@ -366,7 +376,7 @@ export async function createAdminKbTextIngestion(
         content,
         category,
         tags,
-        sourceType: sourceType === "chat" ? "admin_chat" : "admin_text",
+        sourceType: knowledgeSourceType,
         sourceId: String(job.id),
         metadata,
         chunks
@@ -492,6 +502,7 @@ export async function createAdminKbFileIngestion(
   const category = trimString(input.categoryId) || "未分类";
   const originalName = sanitizeOriginalFileName(input.originalName);
   const metadata = normalizeMetadata(input.metadata);
+  const metadataScope = metadataRecord(metadata);
   const storagePath = await saveAdminKbUpload(originalName, input.bytes);
 
   if (validation.processor !== "text") {
@@ -560,8 +571,10 @@ export async function createAdminKbFileIngestion(
   }
 
   const title = originalName;
+  const knowledgeSourceType = normalizeKnowledgeSourceType("file");
   const chunks = splitAdminKbChunks(content, {
-    sourceType: "file",
+    ...metadataScope,
+    sourceType: knowledgeSourceType,
     title,
     category,
     tags,
@@ -607,7 +620,7 @@ export async function createAdminKbFileIngestion(
         content,
         category,
         tags,
-        sourceType: "admin_file",
+        sourceType: knowledgeSourceType,
         sourceId: String(file.id),
         sourceTitle: originalName,
         metadata,

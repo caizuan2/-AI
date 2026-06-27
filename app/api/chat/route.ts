@@ -7,7 +7,10 @@ import type { RagContext } from "@/lib/ai/rag-answer";
 import { AIError, RateLimitError, ValidationError } from "@/lib/errors";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { buildAiCacheKey, getAiCacheValue, setAiCacheValue } from "@/lib/cache/ai-cache";
-import { getKnowledgeAccessCorpusVersion } from "@/lib/enterprise/knowledge-access-scope";
+import {
+  getKnowledgeAccessCorpusVersion,
+  resolveAgentKnowledgeScope
+} from "@/lib/enterprise/knowledge-access-scope";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { retrieveKnowledge, type RetrievedKnowledgeChunk } from "@/lib/rag/retriever";
@@ -30,6 +33,12 @@ export const dynamic = "force-dynamic";
 
 interface ChatRequest {
   question: string;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  knowledgeVersion?: string | number | null;
+  minQualityScore?: number | null;
+  includeLowQuality?: boolean;
 }
 
 interface ChatSource {
@@ -43,9 +52,57 @@ interface ChatSource {
   sourceType: string;
   sourceTitle: string | null;
   sourceUrl: string | null;
+  agentId: string | null;
+  knowledgeBaseId: string | null;
+  namespace: string | null;
   createdAt: string;
   similarity: number;
   score: number;
+  qualityScore: number | null;
+  behaviorScore: number;
+  behaviorEventCount: number;
+  behaviorReasons: string[];
+  optimizationScore: number;
+  stabilityScore: number;
+  confidenceWeight: number;
+  trustWeight: number;
+  volatilityPenalty: number;
+  stableOptimizationScore: number;
+  trendScore: number;
+  trendLabel: string;
+  trendConfidence: number;
+  staleRisk: number;
+  fastRising: boolean;
+  staleHighScore: boolean;
+  decliningTrend: boolean;
+  evergreen: boolean;
+  trendReason: string;
+  trendShadowMode: boolean;
+  lifecycleStage: string;
+  lifecycleScore: number;
+  lifecycleConfidence: number;
+  lifecycleReason: string;
+  lifecycleSuggestion: string;
+  shouldBoost: boolean;
+  shouldDecay: boolean;
+  shouldReview: boolean;
+  shouldArchiveCandidate: boolean;
+  policyDecision: string;
+  policyScore: number;
+  policyRiskLevel: string;
+  policyConfidence: number;
+  policySuggestion: string;
+  sampleCount: number;
+  suspectedGaming: boolean;
+  optimizationReason: string;
+  optimizationSuggestion: string;
+  duplicateLikely: boolean;
+  coldKnowledge: boolean;
+  conflictLikely: boolean;
+  staleVersion: boolean;
+  knowledgeVersion: string | null;
+  lowQuality: boolean;
+  highValue: boolean;
 }
 
 interface ChatRetrievalInfo {
@@ -68,6 +125,19 @@ interface ChatResponse {
   sources: ChatSource[];
   retrievalMessage: string | null;
   retrieval: ChatRetrievalInfo;
+  messageId?: string;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  chunkIds?: string[];
+  evidenceIds?: string[];
+  retrievalTrace?: {
+    mode: string;
+    sourceCount: number;
+    confidence: number;
+  };
+  answerHash?: string;
+  questionHash?: string;
   providerUsed?: string;
   modelUsed?: string;
   fallbackUsed?: boolean;
@@ -114,7 +184,17 @@ function parseChatRequest(body: unknown): ChatRequest {
     throw new ValidationError(`问题过长，请控制在 ${MAX_CHAT_QUESTION_CHARS} 字以内。`);
   }
 
-  return { question };
+  return {
+    question,
+    agentId: typeof body.agentId === "string" ? body.agentId.trim() || null : null,
+    knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId.trim() || null : null,
+    namespace: typeof body.namespace === "string" ? body.namespace.trim() || null : null,
+    knowledgeVersion: typeof body.knowledgeVersion === "string" || typeof body.knowledgeVersion === "number"
+      ? body.knowledgeVersion
+      : null,
+    minQualityScore: typeof body.minQualityScore === "number" ? body.minQualityScore : null,
+    includeLowQuality: body.includeLowQuality === true
+  };
 }
 
 function toSources(results: RetrievedKnowledgeChunk[]): ChatSource[] {
@@ -140,9 +220,57 @@ function toSources(results: RetrievedKnowledgeChunk[]): ChatSource[] {
       sourceType: result.sourceType,
       sourceTitle: result.sourceTitle,
       sourceUrl: result.sourceUrl,
+      agentId: result.agentId,
+      knowledgeBaseId: result.knowledgeBaseId,
+      namespace: result.namespace,
       createdAt: result.createdAt,
       similarity: result.similarity,
-      score: result.score
+      score: result.score,
+      qualityScore: result.qualityScore,
+      behaviorScore: result.behaviorScore,
+      behaviorEventCount: result.behaviorEventCount,
+      behaviorReasons: result.behaviorReasons,
+      optimizationScore: result.optimizationScore,
+      stabilityScore: result.stabilityScore,
+      confidenceWeight: result.confidenceWeight,
+      trustWeight: result.trustWeight,
+      volatilityPenalty: result.volatilityPenalty,
+      stableOptimizationScore: result.stableOptimizationScore,
+      trendScore: result.trendScore,
+      trendLabel: result.trendLabel,
+      trendConfidence: result.trendConfidence,
+      staleRisk: result.staleRisk,
+      fastRising: result.fastRising,
+      staleHighScore: result.staleHighScore,
+      decliningTrend: result.decliningTrend,
+      evergreen: result.evergreen,
+      trendReason: result.trendReason,
+      trendShadowMode: result.trendShadowMode,
+      lifecycleStage: result.lifecycleStage,
+      lifecycleScore: result.lifecycleScore,
+      lifecycleConfidence: result.lifecycleConfidence,
+      lifecycleReason: result.lifecycleReason,
+      lifecycleSuggestion: result.lifecycleSuggestion,
+      shouldBoost: result.shouldBoost,
+      shouldDecay: result.shouldDecay,
+      shouldReview: result.shouldReview,
+      shouldArchiveCandidate: result.shouldArchiveCandidate,
+      policyDecision: result.policyDecision,
+      policyScore: result.policyScore,
+      policyRiskLevel: result.policyRiskLevel,
+      policyConfidence: result.policyConfidence,
+      policySuggestion: result.policySuggestion,
+      sampleCount: result.sampleCount,
+      suspectedGaming: result.suspectedGaming,
+      optimizationReason: result.optimizationReason,
+      optimizationSuggestion: result.optimizationSuggestion,
+      duplicateLikely: result.duplicateLikely,
+      coldKnowledge: result.coldKnowledge,
+      conflictLikely: result.conflictLikely,
+      staleVersion: result.staleVersion,
+      knowledgeVersion: result.knowledgeVersion,
+      lowQuality: result.lowQuality,
+      highValue: result.highValue
     });
   }
 
@@ -183,6 +311,42 @@ function toRagContexts(sources: ChatSource[]): RagContext[] {
 
 function buildNoKnowledgeAnswer(question: string) {
   return `这个问题当前没有足够的内部资料可以直接确认。你可以先补充和「${question}」相关的制度原文、标准口径、适用边界或实际沟通案例，我再帮你整理成可直接使用的回答。`;
+}
+
+function buildAnswerHash(text: string) {
+  let hash = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return `ans_${Math.abs(hash).toString(36)}`;
+}
+
+function buildFeedbackMetadata(input: {
+  messageId: string;
+  question: string;
+  answer: string;
+  agentScope: ReturnType<typeof resolveAgentKnowledgeScope>;
+  sources: ChatSource[];
+  retrieval: ChatRetrievalInfo;
+}) {
+  return {
+    messageId: input.messageId,
+    agentId: input.agentScope.agentId,
+    knowledgeBaseId: input.agentScope.knowledgeBaseId,
+    namespace: input.agentScope.namespace,
+    chunkIds: input.sources.map((source) => source.chunkId).filter(Boolean),
+    evidenceIds: input.sources.map((source) => source.knowledgeItemId).filter(Boolean),
+    retrievalTrace: {
+      mode: input.retrieval.mode,
+      sourceCount: input.sources.length,
+      confidence: input.retrieval.confidence
+    },
+    answerHash: buildAnswerHash(input.answer),
+    questionHash: buildAnswerHash(input.question)
+  };
 }
 
 function buildFallbackAnswer(question: string, sources: ChatSource[]) {
@@ -275,9 +439,15 @@ export async function POST(request: Request) {
     const effectiveMinScore = userSettings.ragMinScore ?? CHAT_MIN_RELEVANT_SIMILARITY;
     const providerForCache = toProviderName(userSettings.preferredProvider);
     const modelForCache = getEffectiveModel(providerForCache, userSettings.preferredModel);
+    const agentScope = resolveAgentKnowledgeScope({
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace
+    });
     const accessScope = {
       actorUserId: currentUser.id,
       appType: "user_app",
+      ...agentScope,
       includeShared: true,
       includePublished: true
     };
@@ -289,7 +459,7 @@ export async function POST(request: Request) {
       model: modelForCache,
       topK: effectiveTopK,
       corpusVersion,
-      input: input.question
+      input: `${agentScope.agentId}\n${agentScope.knowledgeBaseId}\n${agentScope.namespace}\n${input.question}`
     });
     const cached = await getAiCacheValue<ChatResponse>(cacheKey, requestId);
 
@@ -329,16 +499,21 @@ export async function POST(request: Request) {
       topK: effectiveTopK,
       userId: currentUser.id,
       appType: "user_app",
+      ...agentScope,
       includeShared: true,
       includePublished: true,
       minSimilarity: effectiveMinScore,
       minResults: 3,
+      knowledgeVersion: input.knowledgeVersion,
+      minQualityScore: input.minQualityScore,
+      includeLowQuality: input.includeLowQuality,
       requestId
     });
     const results = searchResult.results;
     const sources = toSources(results);
     const ragContexts = toRagContexts(sources);
     const retrieval = toRetrievalInfo(searchResult, sources, ragContexts.length);
+    const messageId = `rag-${requestId}`;
     await recordAnalyticsEvent({
       userId: currentUser.id,
       type: AnalyticsEventType.CHAT_QUESTION,
@@ -350,16 +525,68 @@ export async function POST(request: Request) {
         answerMode: searchResult.answerMode,
         confidence: searchResult.confidence,
         totalCandidates: searchResult.totalCandidates,
-        filteredCandidates: searchResult.filteredCandidates
+        filteredCandidates: searchResult.filteredCandidates,
+        governance: {
+          knowledgeVersion: input.knowledgeVersion,
+          minQualityScore: input.minQualityScore,
+          includeLowQuality: input.includeLowQuality,
+          avgQualityScore: sources.length > 0
+            ? Math.round((sources.reduce((sum, source) => sum + (source.qualityScore ?? 1), 0) / sources.length) * 10000) / 10000
+            : null,
+          avgStabilityScore: sources.length > 0
+            ? Math.round((sources.reduce((sum, source) => sum + source.stabilityScore, 0) / sources.length) * 10000) / 10000
+            : null,
+          avgConfidenceWeight: sources.length > 0
+            ? Math.round((sources.reduce((sum, source) => sum + source.confidenceWeight, 0) / sources.length) * 10000) / 10000
+            : null,
+          avgTrendScore: sources.length > 0
+            ? Math.round((sources.reduce((sum, source) => sum + source.trendScore, 0) / sources.length) * 10000) / 10000
+            : null,
+          fastRisingHitCount: sources.filter((source) => source.fastRising).length,
+          decliningTrendHitCount: sources.filter((source) => source.decliningTrend).length,
+          staleHighScoreHitCount: sources.filter((source) => source.staleHighScore).length,
+          evergreenHitCount: sources.filter((source) => source.evergreen).length,
+          lifecycle: {
+            newCount: sources.filter((source) => source.lifecycleStage === "new").length,
+            growingCount: sources.filter((source) => source.lifecycleStage === "growing").length,
+            stableCount: sources.filter((source) => source.lifecycleStage === "stable").length,
+            decliningCount: sources.filter((source) => source.lifecycleStage === "declining").length,
+            archiveCandidateCount: sources.filter((source) => source.lifecycleStage === "archive_candidate").length,
+            unknownCount: sources.filter((source) => source.lifecycleStage === "unknown").length
+          },
+          policy: {
+            boostCount: sources.filter((source) => source.policyDecision === "boost").length,
+            keepCount: sources.filter((source) => source.policyDecision === "keep").length,
+            monitorCount: sources.filter((source) => source.policyDecision === "monitor").length,
+            decayCount: sources.filter((source) => source.policyDecision === "decay").length,
+            reviewRequiredCount: sources.filter((source) => source.policyDecision === "review_required").length,
+            mergeCandidateCount: sources.filter((source) => source.policyDecision === "merge_candidate").length,
+            archiveCandidateCount: sources.filter((source) => source.policyDecision === "archive_candidate").length,
+            blockedAutoActionCount: sources.filter((source) => source.policyDecision === "blocked_auto_action").length,
+            unknownCount: sources.filter((source) => source.policyDecision === "unknown").length
+          },
+          volatilityHitCount: sources.filter((source) => source.volatilityPenalty >= 0.08 || source.suspectedGaming).length,
+          lowQualityHitCount: sources.filter((source) => source.lowQuality).length
+        }
       }
     });
 
     if (searchResult.insufficient) {
+      const answer = buildNoKnowledgeAnswer(input.question);
+      const feedbackMetadata = buildFeedbackMetadata({
+        messageId,
+        question: input.question,
+        answer,
+        agentScope,
+        sources: [],
+        retrieval
+      });
       const insufficientResponse: ChatResponse = {
-        answer: buildNoKnowledgeAnswer(input.question),
+        answer,
         sources: [],
         retrievalMessage: searchResult.message,
         retrieval,
+        ...feedbackMetadata,
         providerUsed: providerForCache,
         modelUsed: modelForCache,
         fallbackUsed: false,
@@ -381,7 +608,12 @@ export async function POST(request: Request) {
             retrievalMode: searchResult.mode,
             sourceCount: 0,
             answerMode: searchResult.answerMode,
-            confidence: searchResult.confidence
+            confidence: searchResult.confidence,
+            governance: {
+              knowledgeVersion: input.knowledgeVersion,
+              minQualityScore: input.minQualityScore,
+              includeLowQuality: input.includeLowQuality
+            }
           },
           cached: false
         }
@@ -403,6 +635,8 @@ export async function POST(request: Request) {
           userId: currentUser.id,
           provider: providerForCache,
           model: modelForCache,
+          messageId,
+          ...agentScope,
           answerMode: searchResult.answerMode,
           confidence: searchResult.confidence,
           intentLabel: searchResult.intent.label,
@@ -413,6 +647,14 @@ export async function POST(request: Request) {
           sources,
           retrievalMessage: searchResult.message,
           retrieval,
+          ...buildFeedbackMetadata({
+            messageId,
+            question: input.question,
+            answer: cleanUserFacingRagAnswer(ragAnswer.answer),
+            agentScope,
+            sources,
+            retrieval
+          }),
           providerUsed: ragAnswer.providerUsed,
           modelUsed: ragAnswer.model,
           fallbackUsed: ragAnswer.fallbackUsed,
@@ -440,7 +682,49 @@ export async function POST(request: Request) {
               answerMode: searchResult.answerMode,
               confidence: searchResult.confidence,
               intent: searchResult.intent.label,
-              queries: searchResult.queries
+              queries: searchResult.queries,
+              governance: {
+                knowledgeVersion: input.knowledgeVersion,
+                minQualityScore: input.minQualityScore,
+                includeLowQuality: input.includeLowQuality,
+                avgQualityScore: sources.length > 0
+                  ? Math.round((sources.reduce((sum, source) => sum + (source.qualityScore ?? 1), 0) / sources.length) * 10000) / 10000
+                  : null,
+                avgStabilityScore: sources.length > 0
+                  ? Math.round((sources.reduce((sum, source) => sum + source.stabilityScore, 0) / sources.length) * 10000) / 10000
+                  : null,
+                avgConfidenceWeight: sources.length > 0
+                  ? Math.round((sources.reduce((sum, source) => sum + source.confidenceWeight, 0) / sources.length) * 10000) / 10000
+                  : null,
+                avgTrendScore: sources.length > 0
+                  ? Math.round((sources.reduce((sum, source) => sum + source.trendScore, 0) / sources.length) * 10000) / 10000
+                  : null,
+                fastRisingHitCount: sources.filter((source) => source.fastRising).length,
+                decliningTrendHitCount: sources.filter((source) => source.decliningTrend).length,
+                staleHighScoreHitCount: sources.filter((source) => source.staleHighScore).length,
+                evergreenHitCount: sources.filter((source) => source.evergreen).length,
+                lifecycle: {
+                  newCount: sources.filter((source) => source.lifecycleStage === "new").length,
+                  growingCount: sources.filter((source) => source.lifecycleStage === "growing").length,
+                  stableCount: sources.filter((source) => source.lifecycleStage === "stable").length,
+                  decliningCount: sources.filter((source) => source.lifecycleStage === "declining").length,
+                  archiveCandidateCount: sources.filter((source) => source.lifecycleStage === "archive_candidate").length,
+                  unknownCount: sources.filter((source) => source.lifecycleStage === "unknown").length
+                },
+                policy: {
+                  boostCount: sources.filter((source) => source.policyDecision === "boost").length,
+                  keepCount: sources.filter((source) => source.policyDecision === "keep").length,
+                  monitorCount: sources.filter((source) => source.policyDecision === "monitor").length,
+                  decayCount: sources.filter((source) => source.policyDecision === "decay").length,
+                  reviewRequiredCount: sources.filter((source) => source.policyDecision === "review_required").length,
+                  mergeCandidateCount: sources.filter((source) => source.policyDecision === "merge_candidate").length,
+                  archiveCandidateCount: sources.filter((source) => source.policyDecision === "archive_candidate").length,
+                  blockedAutoActionCount: sources.filter((source) => source.policyDecision === "blocked_auto_action").length,
+                  unknownCount: sources.filter((source) => source.policyDecision === "unknown").length
+                },
+                volatilityHitCount: sources.filter((source) => source.volatilityPenalty >= 0.08 || source.suspectedGaming).length,
+                lowQualityHitCount: sources.filter((source) => source.lowQuality).length
+              }
             },
             cached: false
           }
@@ -464,11 +748,21 @@ export async function POST(request: Request) {
       return apiError(new AIError("生产环境必须配置真实 AI 生成模型，不能使用本地问答 fallback。"));
     }
 
+    const fallbackAnswer = cleanUserFacingRagAnswer(buildFallbackAnswer(input.question, sources));
+
     return apiSuccess<ChatResponse>({
-      answer: cleanUserFacingRagAnswer(buildFallbackAnswer(input.question, sources)),
+      answer: fallbackAnswer,
       sources,
       retrievalMessage: searchResult.message,
       retrieval,
+      ...buildFeedbackMetadata({
+        messageId,
+        question: input.question,
+        answer: fallbackAnswer,
+        agentScope,
+        sources,
+        retrieval
+      }),
       providerUsed: "local",
       modelUsed: "local-fallback",
       fallbackUsed: true,

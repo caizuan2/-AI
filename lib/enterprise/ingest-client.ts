@@ -346,6 +346,28 @@ function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function normalizeClientScopeId(value: string | null | undefined, fallback: string) {
+  return (value ?? "")
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^0-9A-Za-z_\-:.]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120) || fallback;
+}
+
+function buildClientAgentKnowledgeScope(agent: IngestChatAgent) {
+  const agentId = normalizeClientScopeId(agent.id, "chief");
+  const knowledgeBaseId = normalizeClientScopeId(agent.knowledgeBaseId, `kb:${agentId}`);
+  const namespace = normalizeClientScopeId(agent.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+
+  return {
+    agentId,
+    knowledgeBaseId,
+    namespace
+  };
+}
+
 function readNumber(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -941,6 +963,7 @@ export async function sendCoreIngest(input: {
     previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
     recentTrainingRecords: input.recentTrainingRecords ?? []
   });
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const health = await checkGptHealthStatus({
     provider: modelProvider,
     selectedModelLabel,
@@ -962,7 +985,8 @@ export async function sendCoreIngest(input: {
         input: input.text,
         source: "admin_ingest",
         sourceApp: "admin_ingest",
-        agentId: input.agent.id,
+        ...agentKnowledgeScope,
+        knowledgeVersion: "v1",
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
         expertName: input.agent.expertId ? input.agent.name : null,
@@ -1112,6 +1136,14 @@ export async function saveKnowledgeDraft(input: {
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
+  const draftWithMetadata = input.draft as unknown as { metadata?: unknown };
+  const draftMetadata = typeof draftWithMetadata.metadata === "object" && draftWithMetadata.metadata !== null
+    ? draftWithMetadata.metadata as Record<string, unknown>
+    : {};
+  const knowledgeVersion = typeof draftMetadata.knowledgeGovernanceVersion === "string" && draftMetadata.knowledgeGovernanceVersion.trim()
+    ? draftMetadata.knowledgeGovernanceVersion.trim()
+    : "v1";
   const memoryAdapter = new KnowledgeMemoryAdapter();
   const memoryPlan = input.draft.memoryPlan ?? memoryAdapter.buildMemoryPlan(input.draft);
   const qaPairs = memoryPlan.qaPairs.length > 0
@@ -1184,7 +1216,8 @@ export async function saveKnowledgeDraft(input: {
         originalInput: input.originalInput,
         structured,
         knowledge: structured,
-        agentId: input.agent.id,
+        ...agentKnowledgeScope,
+        knowledgeVersion,
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
         expertName: input.agent.expertId ? input.agent.name : null,
@@ -1369,6 +1402,7 @@ export async function sendUrlIngestPreview(input: {
   const modelProvider = input.modelProvider ?? selectedModelOption.provider;
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
   const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const response = await fetch("/api/admin/kb/ingest/url", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1378,7 +1412,8 @@ export async function sendUrlIngestPreview(input: {
       source: "admin_ingest",
       sourceApp: "admin_ingest",
       sourceType: "url",
-      agentId: input.agent.id,
+      ...agentKnowledgeScope,
+      knowledgeVersion: "v1",
       expertId: input.agent.expertId ?? null,
       agentName: input.agent.name,
       expertName: input.agent.expertId ? input.agent.name : null,

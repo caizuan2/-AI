@@ -23,6 +23,8 @@ export interface RagCitation {
 export interface RagAnswerResult {
   answer: string;
   citations: RagCitation[];
+  messageId?: string;
+  answerHash: string;
   model: string;
   providerUsed: string;
   fallbackUsed: boolean;
@@ -33,9 +35,13 @@ export interface RagAnswerResult {
 
 export interface GenerateRagAnswerOptions {
   requestId?: string;
+  messageId?: string;
   userId?: string;
   provider?: ChatProviderName;
   model?: string;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   answerMode?: RagAnswerMode;
   confidence?: number;
   intentLabel?: string;
@@ -75,6 +81,17 @@ function calculateAnswerGroundingScore(answer: string, contexts: RagContext[]) {
   const structureBonus = hasStructuredOutput ? 0.1 : 0;
 
   return clamp01((relevance * 0.7) + answerPresence + structureBonus);
+}
+
+function buildAnswerHash(text: string) {
+  let hash = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return `ans_${Math.abs(hash).toString(36)}`;
 }
 
 export async function generateRagAnswer(
@@ -141,6 +158,7 @@ export async function generateRagAnswer(
     const estimatedOutputTokens = estimateTokenCount(answer);
     const durationMs = Date.now() - startedAt;
     const answerGroundingScore = calculateAnswerGroundingScore(answer, contexts);
+    const answerHash = buildAnswerHash(answer);
     const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
       query: normalizedQuestion,
       baseResponse: answer,
@@ -185,6 +203,11 @@ export async function generateRagAnswer(
       estimatedInputTokens,
       estimatedOutputTokens,
       metadata: {
+        messageId: options.messageId,
+        questionHash: buildAnswerHash(normalizedQuestion),
+        answerHash,
+        chunkIds: contexts.map((context) => context.sourceId).filter(Boolean).slice(0, 30),
+        evidenceIds: contexts.map((context) => context.id).filter(Boolean).slice(0, 30),
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
         originalProviderErrorCode: response.originalProviderErrorCode,
@@ -192,8 +215,11 @@ export async function generateRagAnswer(
         answerGroundingScore,
         answerMode: options.answerMode,
         confidence: options.confidence,
-        intentLabel: options.intentLabel,
-        aiRuntime
+      intentLabel: options.intentLabel,
+      agentId: options.agentId,
+      knowledgeBaseId: options.knowledgeBaseId,
+      namespace: options.namespace,
+      aiRuntime
       }
     });
 
@@ -205,6 +231,8 @@ export async function generateRagAnswer(
         sourceType: context.sourceType,
         sourceId: context.sourceId
       })),
+      messageId: options.messageId,
+      answerHash,
       model: response.model,
       providerUsed: response.provider,
       fallbackUsed: response.fallbackUsed,

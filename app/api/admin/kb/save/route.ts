@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { buildContentHash, cleanIngestText, splitAdminKbChunks } from "@/lib/admin-kb/ingestion";
+import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 import { requireKbAdmin } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -16,7 +17,11 @@ import {
   completeEnterpriseIngestSave,
   listEnterpriseTrainingRecords
 } from "@/lib/enterprise/ingest-logger";
-import { buildIngestSharedChunkMetadata } from "@/lib/enterprise/knowledge-access-scope";
+import {
+  buildIngestSharedChunkMetadata,
+  resolveAgentKnowledgeScope
+} from "@/lib/enterprise/knowledge-access-scope";
+import { mergeKnowledgeGovernanceMetadata } from "@/lib/enterprise/knowledge-governance";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,6 +52,18 @@ function readStringArray(value: unknown, limit = 12) {
 
 function readRecord(value: unknown) {
   return isPlainObject(value) ? value : {};
+}
+
+function readFirstString(...values: unknown[]) {
+  for (const value of values) {
+    const text = readString(value);
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
 }
 
 function clampScore(value: unknown, fallback: number, max = 100) {
@@ -168,7 +185,41 @@ function readSaveRequest(body: unknown) {
   const sourceUrl = typeof body.sourceUrl === "string" && body.sourceUrl.trim() ? body.sourceUrl.trim() : null;
   const sourceFiles = readStringArray(body.sourceFiles);
   const knowledgeDraft = body.knowledgeDraft;
-  const agentId = readString(body.agentId) || readString(readRecord(knowledgeDraft).agentId);
+  const draftRecord = readRecord(knowledgeDraft);
+  const activeKnowledgeBase = readRecord(body.activeKnowledgeBase);
+  const knowledgeVersion = readString(body.knowledgeVersion) || readString(body.version) || readString(readRecord(knowledgeDraft).knowledgeVersion);
+  const expertId = readFirstString(
+    body.expert_id,
+    body.expertId,
+    draftRecord.expert_id,
+    draftRecord.expertId,
+    activeKnowledgeBase.expert_id,
+    activeKnowledgeBase.expertId
+  );
+  const tenantId = readFirstString(
+    body.tenant_id,
+    body.tenantId,
+    draftRecord.tenant_id,
+    draftRecord.tenantId,
+    activeKnowledgeBase.tenant_id,
+    activeKnowledgeBase.tenantId
+  );
+  const agentId = readFirstString(body.agentId, body.agent_id, draftRecord.agentId, draftRecord.agent_id, expertId);
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId,
+    knowledgeBaseId: readFirstString(
+      body.kb_id,
+      body.kbId,
+      body.knowledgeBaseId,
+      draftRecord.kb_id,
+      draftRecord.kbId,
+      draftRecord.knowledgeBaseId,
+      activeKnowledgeBase.kb_id,
+      activeKnowledgeBase.kbId,
+      activeKnowledgeBase.knowledgeBaseId
+    ),
+    namespace: readFirstString(body.namespace, draftRecord.namespace, activeKnowledgeBase.namespace)
+  });
   const saveableText = cleanIngestText([
     originalInput,
     content,
@@ -187,7 +238,12 @@ function readSaveRequest(body: unknown) {
     messageId: messageId || null,
     originalInput,
     sourceUrl,
-    agentId: agentId || null,
+    agentId: agentScope.agentId,
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace,
+    expertId,
+    tenantId,
+    knowledgeVersion,
     structured,
     content: saveableText,
     sourceFiles,
@@ -213,14 +269,21 @@ async function saveDraftOnlyKnowledge(
     structured
   });
   const sourceId = input.draftId ?? input.messageId ?? null;
+  const knowledgeSourceType = normalizeKnowledgeSourceType("admin_chat");
   const chunks = splitAdminKbChunks(content, {
-    sourceType: "admin_chat",
+    sourceType: knowledgeSourceType,
     title: structured.title,
     category: structured.category,
     tags: structured.tags,
     contentHash: buildContentHash(content),
     draftId: input.draftId,
     messageId: input.messageId,
+    kb_id: input.knowledgeBaseId,
+    kbId: input.knowledgeBaseId,
+    expert_id: input.expertId || input.agentId,
+    expertId: input.expertId || input.agentId,
+    tenant_id: input.tenantId || "default",
+    tenantId: input.tenantId || "default",
     qaPairCount: structured.qa_pairs.length
   });
 
@@ -244,7 +307,7 @@ async function saveDraftOnlyKnowledge(
         completenessScore: structured.completenessScore,
         usefulnessScore: structured.usefulnessScore,
         confidenceScore: structured.confidenceScore,
-        sourceType: "admin_chat",
+        sourceType: knowledgeSourceType,
         sourceId,
         sourceTitle: structured.title,
         sourceUrl: input.sourceUrl,
@@ -255,11 +318,30 @@ async function saveDraftOnlyKnowledge(
             chunkText: chunk.chunkText,
             chunkIndex: chunk.chunkIndex,
             summary: chunk.summary,
-            metadata: buildIngestSharedChunkMetadata(chunk.metadata, {
-              tenantId,
-              createdByUserId: actor.id,
-              agentId: input.agentId
-            }),
+            metadata: buildIngestSharedChunkMetadata(
+              mergeKnowledgeGovernanceMetadata(chunk.metadata, {
+                version: input.knowledgeVersion,
+                sourceType: knowledgeSourceType,
+                ingestTimestamp: new Date(),
+                contentHash: chunk.contentHash,
+                relevance: (
+                  structured.clarityScore
+                  + structured.completenessScore
+                  + structured.usefulnessScore
+                  + structured.confidenceScore
+                ) / 20,
+                usage: 0,
+                feedback: structured.confidence / 100,
+                freshness: 1
+              }),
+              {
+                tenantId,
+                createdByUserId: actor.id,
+                agentId: input.agentId,
+                knowledgeBaseId: input.knowledgeBaseId,
+                namespace: input.namespace
+              }
+            ),
             charCount: chunk.charCount,
             tokenCount: chunk.tokenCount,
             contentHash: chunk.contentHash
@@ -288,7 +370,14 @@ async function saveDraftOnlyKnowledge(
           sourceFiles: input.sourceFiles,
           category: knowledgeItem.category,
           tagCount: knowledgeItem.tags.length,
-          chunkCount: knowledgeItem.chunks.length
+          chunkCount: knowledgeItem.chunks.length,
+          agentId: input.agentId,
+          knowledgeBaseId: input.knowledgeBaseId,
+          namespace: input.namespace,
+          kb_id: input.knowledgeBaseId,
+          expert_id: input.expertId || input.agentId,
+          tenant_id: input.tenantId || "default",
+          knowledgeVersion: input.knowledgeVersion || "v1"
         }
       }
     });
@@ -355,6 +444,12 @@ export async function POST(request: Request) {
       jobId: input.jobId,
       originalInput: input.originalInput,
       sourceUrl: input.sourceUrl,
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace,
+      expertId: input.expertId,
+      requestedTenantId: input.tenantId || "default",
+      knowledgeVersion: input.knowledgeVersion,
       structured: input.structured
     });
     const records = await listEnterpriseTrainingRecords(actor);

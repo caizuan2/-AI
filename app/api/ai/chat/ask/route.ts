@@ -67,11 +67,14 @@ export async function POST(request: Request) {
     }, body, {
       providerConfigured,
       answerProvider: providerConfigured
-        ? async ({ question, contexts, mode, enableDeepThinking, confidence, model }) => {
+        ? async ({ question, contexts, mode, enableDeepThinking, confidence, model, agentId, knowledgeBaseId, namespace }) => {
             const ragAnswer = await generateRagAnswer(question, contexts, {
               userId: actor.id,
               provider,
               model,
+              agentId,
+              knowledgeBaseId,
+              namespace,
               answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
               confidence: confidenceToNumber(confidence),
               intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard"

@@ -16,6 +16,8 @@ export type KnowledgeAccessScope = {
   tenantId?: string | null;
   appType?: string | null;
   agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   includeShared?: boolean;
   includePublished?: boolean;
 };
@@ -25,7 +27,9 @@ export type ResolvedKnowledgeAccessScope = Required<
 > & {
   tenantId: string | null;
   appType: string | null;
-  agentId: string | null;
+  agentId: string;
+  knowledgeBaseId: string;
+  namespace: string;
 };
 
 function normalizeNullableString(value: string | null | undefined) {
@@ -34,9 +38,43 @@ function normalizeNullableString(value: string | null | undefined) {
   return text || null;
 }
 
+export const DEFAULT_KNOWLEDGE_AGENT_ID = "chief";
+
+function normalizeScopeId(value: string | null | undefined, fallback: string) {
+  const normalized = normalizeNullableString(value)
+    ?.replace(/\s+/g, "-")
+    .replace(/[^0-9A-Za-z_\-:.]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 120);
+
+  return normalized || fallback;
+}
+
+export function resolveAgentKnowledgeScope(input: {
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+} = {}) {
+  const agentId = normalizeScopeId(input.agentId, DEFAULT_KNOWLEDGE_AGENT_ID);
+  const knowledgeBaseId = normalizeScopeId(input.knowledgeBaseId, `kb:${agentId}`);
+  const namespace = normalizeScopeId(input.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+
+  return {
+    agentId,
+    knowledgeBaseId,
+    namespace
+  };
+}
+
 export async function resolveKnowledgeAccessScope(scope: KnowledgeAccessScope): Promise<ResolvedKnowledgeAccessScope> {
   const explicitTenantId = normalizeNullableString(scope.tenantId);
   let tenantId = explicitTenantId;
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: scope.agentId,
+    knowledgeBaseId: scope.knowledgeBaseId,
+    namespace: scope.namespace
+  });
 
   if (scope.tenantId === undefined) {
     const user = await prisma.user.findUnique({
@@ -51,7 +89,9 @@ export async function resolveKnowledgeAccessScope(scope: KnowledgeAccessScope): 
     actorUserId: scope.actorUserId,
     tenantId,
     appType: normalizeNullableString(scope.appType),
-    agentId: normalizeNullableString(scope.agentId),
+    agentId: agentScope.agentId,
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace,
     includeShared: scope.includeShared === true,
     includePublished: scope.includePublished === true
   };
@@ -72,11 +112,45 @@ function sharedTenantGuard(scope: ResolvedKnowledgeAccessScope): Prisma.Knowledg
   return scope.tenantId ? { tenantId: scope.tenantId } : { tenantId: null };
 }
 
+function knowledgeChunkScopeWhere(scope: ResolvedKnowledgeAccessScope): Prisma.KnowledgeChunkWhereInput {
+  return {
+    OR: [
+      {
+        metadata: {
+          path: ["knowledgeBaseId"],
+          equals: scope.knowledgeBaseId
+        }
+      },
+      {
+        metadata: {
+          path: ["namespace"],
+          equals: scope.namespace
+        }
+      },
+      {
+        metadata: {
+          path: ["agentId"],
+          equals: scope.agentId
+        }
+      }
+    ]
+  };
+}
+
+function knowledgeItemScopeWhere(scope: ResolvedKnowledgeAccessScope): Prisma.KnowledgeItemWhereInput {
+  return {
+    chunks: {
+      some: knowledgeChunkScopeWhere(scope)
+    }
+  };
+}
+
 export function buildKnowledgeItemAccessWhere(scope: ResolvedKnowledgeAccessScope): Prisma.KnowledgeItemWhereInput {
   const orFilters: Prisma.KnowledgeItemWhereInput[] = [
     {
       userId: scope.actorUserId,
-      deletedAt: null
+      deletedAt: null,
+      ...knowledgeItemScopeWhere(scope)
     }
   ];
 
@@ -84,6 +158,7 @@ export function buildKnowledgeItemAccessWhere(scope: ResolvedKnowledgeAccessScop
     orFilters.push({
       ...activeKnowledgeWhere(),
       ...sharedTenantGuard(scope),
+      ...knowledgeItemScopeWhere(scope),
       sourceType: {
         in: [...adminIngestKnowledgeSourceTypes]
       }
@@ -99,6 +174,7 @@ function buildSharedChunkMetadataFilters(scope: ResolvedKnowledgeAccessScope): P
   }
 
   const filters: Prisma.KnowledgeChunkWhereInput[] = [
+    knowledgeChunkScopeWhere(scope),
     {
       metadata: {
         path: ["sharedToUserApp"],
@@ -113,34 +189,42 @@ function buildSharedChunkMetadataFilters(scope: ResolvedKnowledgeAccessScope): P
     }
   ];
 
-  void scope.agentId;
-
   return filters;
 }
 
 export function buildKnowledgeChunkAccessWhere(scope: ResolvedKnowledgeAccessScope): Prisma.KnowledgeChunkWhereInput {
   const orFilters: Prisma.KnowledgeChunkWhereInput[] = [
     {
-      knowledgeItem: {
-        is: {
-          userId: scope.actorUserId,
-          deletedAt: null
+      AND: [
+        knowledgeChunkScopeWhere(scope),
+        {
+          knowledgeItem: {
+            is: {
+              userId: scope.actorUserId,
+              deletedAt: null
+            }
+          }
         }
-      }
+      ]
     }
   ];
 
   if (scope.includePublished || scope.includeShared) {
     orFilters.push({
-      knowledgeItem: {
-        is: {
-          ...activeKnowledgeWhere(),
-          ...sharedTenantGuard(scope),
-          sourceType: {
-            in: [...adminIngestKnowledgeSourceTypes]
+      AND: [
+        knowledgeChunkScopeWhere(scope),
+        {
+          knowledgeItem: {
+            is: {
+              ...activeKnowledgeWhere(),
+              ...sharedTenantGuard(scope),
+              sourceType: {
+                in: [...adminIngestKnowledgeSourceTypes]
+              }
+            }
           }
         }
-      }
+      ]
     });
   }
 
@@ -184,6 +268,13 @@ export function buildKnowledgeAccessSql(scope: ResolvedKnowledgeAccessScope) {
     AND kc."metadata"->>'sharedToUserApp' = 'true'
     AND kc."metadata"->>'sourceApp' = 'ingest_admin'
   `;
+  const agentKnowledgeScope = Prisma.sql`
+    (
+      kc."metadata"->>'knowledgeBaseId' = ${scope.knowledgeBaseId}
+      OR kc."metadata"->>'namespace' = ${scope.namespace}
+      OR kc."metadata"->>'agentId' = ${scope.agentId}
+    )
+  `;
   const filters = [ownKnowledge];
 
   if (scope.includePublished || scope.includeShared) {
@@ -198,6 +289,7 @@ export function buildKnowledgeAccessSql(scope: ResolvedKnowledgeAccessScope) {
   // Never remove this guarded OR, or RAG will become an unsafe full-table query.
   return Prisma.sql`
     AND ki."deleted_at" IS NULL
+    AND ${agentKnowledgeScope}
     AND (${Prisma.join(filters, " OR ")})
   `;
 }
@@ -208,11 +300,14 @@ export function buildIngestSharedChunkMetadata(
     tenantId?: string | null;
     createdByUserId: string;
     agentId?: string | null;
+    knowledgeBaseId?: string | null;
+    namespace?: string | null;
   }
 ): Prisma.InputJsonObject {
   const base = metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? JSON.parse(JSON.stringify(metadata)) as Record<string, unknown>
     : {};
+  const agentScope = resolveAgentKnowledgeScope(scope);
 
   return {
     ...base,
@@ -226,7 +321,9 @@ export function buildIngestSharedChunkMetadata(
     sharedToUserApp: true,
     tenantId: normalizeNullableString(scope.tenantId),
     createdByUserId: scope.createdByUserId,
-    agentId: normalizeNullableString(scope.agentId)
+    agentId: agentScope.agentId,
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace
   };
 }
 

@@ -11,6 +11,7 @@ import {
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
+import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
@@ -44,6 +45,9 @@ export interface AiChatAskInput {
   enable_web_search?: unknown;
   conversation_id?: unknown;
   conversationId?: unknown;
+  agentId?: unknown;
+  knowledgeBaseId?: unknown;
+  namespace?: unknown;
   attachments?: unknown;
 }
 
@@ -56,6 +60,9 @@ export interface AiChatAnswerProviderInput {
   model: string;
   actualModel: string;
   traceId: string;
+  agentId: string;
+  knowledgeBaseId: string;
+  namespace: string;
 }
 
 export interface AiChatAnswerProviderResult {
@@ -302,8 +309,12 @@ function toSource(chunk: RetrievedRagChunk) {
     chunk_id: chunk.chunkId,
     file_id: chunk.fileId,
     title: chunk.title,
+    content_preview: chunk.content.length > 240 ? `${chunk.content.slice(0, 240)}...` : chunk.content,
     score: chunk.score,
     relevance_score: chunk.relevance_score,
+    agentId: chunk.agentId,
+    knowledgeBaseId: chunk.knowledgeBaseId,
+    namespace: chunk.namespace,
     chunk_rank: chunk.chunk_rank
   };
 }
@@ -418,6 +429,11 @@ export async function handleAiChatAsk(
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
   const conversationId = readConversationId(input);
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: trimString(input.agentId),
+    knowledgeBaseId: trimString(input.knowledgeBaseId),
+    namespace: trimString(input.namespace)
+  });
   const attachments = validateAttachments(input.attachments);
   const osContext = os_core.process({
     query: question,
@@ -444,6 +460,7 @@ export async function handleAiChatAsk(
     mode,
     enableDeepThinking,
     enableWebSearch,
+    ...agentScope,
     attachmentCount: attachments.length
   });
   await writeAuditLog(db, actor, "CHAT_ASK", normalizedConversationId, {
@@ -451,6 +468,7 @@ export async function handleAiChatAsk(
     questionLength: question.length,
     enableDeepThinking,
     enableWebSearch,
+    ...agentScope,
     attachmentCount: attachments.length
   });
 
@@ -459,6 +477,7 @@ export async function handleAiChatAsk(
     userId: actor.id,
     tenantId: actor.tenantId,
     appType: "user_app",
+    ...agentScope,
     includeShared: true,
     includePublished: true,
     mode,
@@ -523,6 +542,7 @@ export async function handleAiChatAsk(
           model: osContext.route.model,
           actualModel: osContext.route.actualModel,
           traceId: osContext.trace_id,
+          ...agentScope
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
