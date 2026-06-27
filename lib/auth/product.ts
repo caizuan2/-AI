@@ -110,7 +110,7 @@ export function isPathAllowedForEntryRole(pathname: string, role: EntryRole) {
   }
 
   if (role === "super-admin") {
-    return product === "super_admin";
+    return product === "super_admin" || product === "ingest_admin";
   }
 
   if (role === "admin-feed") {

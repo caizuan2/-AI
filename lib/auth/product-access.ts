@@ -64,7 +64,7 @@ export function roleCanAccessProduct(product: ProductAccess, role: string | null
   }
 
   if (product === "ingest_admin") {
-    return role === "ingest_admin" || role === "kb_admin";
+    return role === "ingest_admin" || role === "kb_admin" || role === "super_admin";
   }
 
   if (product === "super_admin") {

@@ -144,7 +144,7 @@ function isRoleAllowedForProduct(product: AppProduct, roles: AppRole[], highestR
   }
 
   if (product === "ingest_admin") {
-    return roles.includes("ingest_admin") || roles.includes("kb_admin") || roles.includes("enterprise_admin");
+    return roles.includes("ingest_admin") || roles.includes("kb_admin") || roles.includes("enterprise_admin") || roles.includes("super_admin");
   }
 
   return highestRole === "user";
