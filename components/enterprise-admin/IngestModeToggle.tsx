@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MessageSquareText } from "lucide-react";
+import { GaugeCircle, MessageSquareText } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
@@ -15,6 +15,7 @@ import {
   IngestSettingsPanel,
   type IngestSettingsState
 } from "@/components/enterprise-admin/IngestSettingsPanel";
+import { IngestKnowledgeOSDashboard } from "@/components/enterprise-admin/IngestKnowledgeOSDashboard";
 import {
   checkLicenseStatus,
   checkGptHealthStatus,
@@ -69,7 +70,7 @@ import {
 import { sanitizeGptOSUserMessage, toUserFriendlyMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
-type IngestMode = "chat" | "workbench";
+type IngestMode = "chat" | "workbench" | "knowledge";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
 type IngestActionResult = Awaited<ReturnType<typeof sendCoreIngest>>;
 type OpenPanel = "notifications" | "settings" | null;
@@ -2096,10 +2097,25 @@ export function IngestModeToggle() {
             <MessageSquareText className="h-4 w-4" aria-hidden="true" />
             对话
           </button>
+          <button
+            type="button"
+            onClick={() => setMode("knowledge")}
+            className={[
+              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
+              mode === "knowledge" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+            ].join(" ")}
+          >
+            <GaugeCircle className="h-4 w-4" aria-hidden="true" />
+            AI总控
+          </button>
         </div>
       ) : null}
 
-      {mode === "chat" ? <IngestChatGPTShell {...sharedProps} /> : <IngestEXEShell {...sharedProps} />}
+      {mode === "knowledge"
+        ? <IngestKnowledgeOSDashboard onBack={() => setMode("chat")} />
+        : mode === "chat"
+          ? <IngestChatGPTShell {...sharedProps} />
+          : <IngestEXEShell {...sharedProps} />}
       <IngestCreateAgentDialog
         open={isCreateAgentOpen}
         onClose={() => setIsCreateAgentOpen(false)}
