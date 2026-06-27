@@ -197,7 +197,9 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
     throw new ForbiddenError("当前账号不能访问该产品入口。");
   }
 
-  if (options.requireLicense) {
+  const skipLicenseForSuperAdminIngest = product === "ingest_admin" && roles.includes("super_admin");
+
+  if (options.requireLicense && !skipLicenseForSuperAdminIngest) {
     const expectedAppType = options.requiredAppType ?? getLicenseAppTypeForProduct(product) ?? "user_app";
 
     await checkUserLicense(user.id, expectedAppType);

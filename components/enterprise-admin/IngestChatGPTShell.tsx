@@ -235,10 +235,12 @@ const uploadAcceptByTool: Record<string, string> = {
 
 interface ApiEnvelope<T> {
   ok: boolean;
+  success?: boolean;
   data?: T;
   message?: string;
   error?: {
     message?: string;
+    code?: string;
   };
 }
 
@@ -316,7 +318,7 @@ interface AdminGptIngestResponse {
   message?: string | {
     content?: string;
   };
-  replyMarkdown: string;
+  replyMarkdown?: string;
   knowledgeDraft?: {
     title: string;
     summary: string;
@@ -368,7 +370,7 @@ interface AdminGptIngestResponse {
   saveRecommendation?: string;
   gptOS?: GptOSRouteResult;
   autonomousResult?: AutonomousTaskResult;
-  structured: {
+  structured?: {
     title?: string;
     category?: string;
     summary?: string;
@@ -408,6 +410,66 @@ function readString(value: unknown) {
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+const adminGptResponseTopLevelFields = [
+  "jobId",
+  "trainingRecord",
+  "records",
+  "provider",
+  "model",
+  "requestedModel",
+  "actualModel",
+  "responseId",
+  "proofId",
+  "usage",
+  "gptProof",
+  "modelDisplayName",
+  "modelMode",
+  "fallback",
+  "fallbackUsed",
+  "content",
+  "answer",
+  "reply",
+  "visibleReply",
+  "message",
+  "replyMarkdown",
+  "knowledgeDraft",
+  "knowledgeLoop",
+  "evolution",
+  "storeDecision",
+  "reusableKnowledgeUnits",
+  "reviewRequiredUnits",
+  "autoStoreCandidates",
+  "memory",
+  "memoryPlan",
+  "knowledgeIntelligence",
+  "ragOptimization",
+  "metadata",
+  "userClientCallPlan",
+  "sourceFiles",
+  "suggestedQuestions",
+  "saveRecommendation",
+  "gptOS",
+  "autonomousResult",
+  "structured"
+] as const;
+
+function unwrapAdminGptIngestResponse(payload: unknown): AdminGptIngestResponse | null {
+  if (!isPlainRecord(payload)) {
+    return null;
+  }
+
+  const nested = isPlainRecord(payload.data) ? payload.data : {};
+  const merged: Record<string, unknown> = { ...nested };
+
+  for (const field of adminGptResponseTopLevelFields) {
+    if (payload[field] !== undefined) {
+      merged[field] = payload[field];
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? merged as unknown as AdminGptIngestResponse : null;
 }
 
 function readGptResponseContent(data: AdminGptIngestResponse) {
@@ -1594,29 +1656,60 @@ export function IngestChatGPTShell({
           }
         })
       }).finally(() => window.clearTimeout(timeout));
-      const data = await readApiData<AdminGptIngestResponse>(response);
-      const replyContent = readGptResponseContent(data);
+      const payload = await response.json().catch(() => null) as ApiEnvelope<AdminGptIngestResponse> | null;
+      const data = unwrapAdminGptIngestResponse(payload);
+      const replyContent = data ? readGptResponseContent(data) : "";
+      const isSuccess = response.ok
+        && (
+          payload?.ok === true
+          || payload?.success === true
+          || Boolean(replyContent)
+        );
+
+      if (!isSuccess || !data) {
+        console.error("[admin-ingest:gpt:error]", {
+          url: "/api/admin/kb/ingest/gpt",
+          status: response.status,
+          errorCode: payload?.error?.code,
+          message: payload?.message ?? payload?.error?.message,
+          provider: data?.provider,
+          model: data?.model,
+          requestId: data?.responseId
+        });
+        throw new Error(payload?.message ?? payload?.error?.message ?? "请求失败，请稍后重试。");
+      }
+
       if (!replyContent) {
-        throw new Error("AI服务暂时不稳定，请稍后再试。");
+        console.error("[admin-ingest:gpt:error]", {
+          url: "/api/admin/kb/ingest/gpt",
+          status: response.status,
+          errorCode: "EMPTY_REPLY",
+          message: "GPT ingest response succeeded without visible reply content.",
+          provider: data.provider,
+          model: data.model,
+          requestId: data.responseId
+        });
+        throw new Error("AI生成完成但没有返回可展示正文，请重新生成。");
       }
 
       setErrorMessage("");
       persistAutonomousTask(data.autonomousResult ?? data.gptOS?.autonomousResult);
       persistTaskChain(data.gptOS?.taskChain);
       const knowledgeDraft = data.knowledgeDraft;
+      const structured = data.structured ?? {};
       const draftJobId = data.jobId || data.trainingRecord?.jobId || `gpt-${Date.now()}`;
       const nextDraft = mapDraft({
         jobId: draftJobId,
-        title: knowledgeDraft?.title || data.structured.title || "GPT 结构化知识",
-        category: knowledgeDraft?.category || data.structured.category || activeAgent.role,
-        tags: knowledgeDraft?.tags ?? data.structured.tags ?? [],
-        summary: knowledgeDraft?.summary || data.structured.summary || data.structured.answer || value,
+        title: knowledgeDraft?.title || structured.title || "GPT 结构化知识",
+        category: knowledgeDraft?.category || structured.category || activeAgent.role,
+        tags: knowledgeDraft?.tags ?? structured.tags ?? [],
+        summary: knowledgeDraft?.summary || structured.summary || structured.answer || value,
         qa_pairs: [{
-          q: knowledgeDraft?.standardQuestion || data.structured.question || `关于“${data.structured.title || value}”，应该如何处理？`,
-          a: knowledgeDraft?.standardAnswer || data.structured.answer || data.structured.summary || value
+          q: knowledgeDraft?.standardQuestion || structured.question || `关于“${structured.title || value}”，应该如何处理？`,
+          a: knowledgeDraft?.standardAnswer || structured.answer || structured.summary || value
         }],
-        confidence: knowledgeDraft?.trainingScore ?? data.structured.confidence ?? 78,
-        should_save: data.structured.saveSuggestion ?? data.saveRecommendation !== "暂缓入库",
+        confidence: knowledgeDraft?.trainingScore ?? structured.confidence ?? 78,
+        should_save: structured.saveSuggestion ?? data.saveRecommendation !== "暂缓入库",
         providerUsed: data.provider,
         model: data.modelDisplayName || data.model,
         scenarios: knowledgeDraft?.scenarios,
@@ -1691,7 +1784,7 @@ export function IngestChatGPTShell({
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: data.modelDisplayName || data.model,
           provider: data.provider,
-          saveSuggestion: data.structured.saveSuggestion,
+          saveSuggestion: structured.saveSuggestion,
           gptProof: data.gptProof,
           gptOS: data.gptOS,
           isRestored: false,

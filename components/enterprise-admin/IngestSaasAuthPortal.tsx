@@ -27,6 +27,7 @@ type IngestAuthUser = {
   name: string;
   isActive?: boolean;
   licenseActivated: boolean;
+  hasIngestAccess?: boolean;
   isSuperAdmin?: boolean;
   roles?: string[];
 };
@@ -35,14 +36,18 @@ type IngestAuthResponse = {
   success: true;
   sessionToken?: string;
   licenseActivated: boolean;
+  hasIngestAccess?: boolean;
   user: IngestAuthUser;
 };
 
 type IngestAuthMeState = {
   success: boolean;
   authenticated: boolean;
+  activated: boolean;
   licenseActivated: boolean;
+  hasIngestAccess: boolean;
   role: string | null;
+  roles: string[];
   user: IngestAuthUser | null;
   errorCode?: string;
   message?: string;
@@ -120,6 +125,14 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
   const user = isRecord(source.user) ? source.user as IngestAuthUser : null;
   const authenticated = typeof source.authenticated === "boolean" ? source.authenticated : Boolean(user);
   const licenseActivated = source.licenseActivated === true || user?.licenseActivated === true;
+  const activated = source.activated === true || licenseActivated;
+  const roles = Array.isArray(source.roles)
+    ? source.roles.filter((role): role is string => typeof role === "string")
+    : Array.isArray(user?.roles)
+      ? user.roles.filter((role): role is string => typeof role === "string")
+      : [];
+  const hasPrivilegedIngestRole = roles.some((role) => role === "super_admin" || role === "ingest_admin" || role === "kb_admin");
+  const hasIngestAccess = source.hasIngestAccess === true || (authenticated && hasPrivilegedIngestRole && activated);
   const role = typeof source.role === "string" ? source.role : null;
   const errorCode = typeof source.errorCode === "string" ? source.errorCode : undefined;
   const message = typeof source.message === "string" ? source.message : undefined;
@@ -127,8 +140,11 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
   return {
     success: source.success !== false,
     authenticated,
+    activated,
     licenseActivated,
+    hasIngestAccess,
     role,
+    roles,
     user,
     errorCode,
     message
@@ -165,8 +181,8 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const [error, setError] = useState("");
   const [checkError, setCheckError] = useState("");
 
-  const goNext = useCallback((licenseActivated: boolean) => {
-    router.replace(licenseActivated ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
+  const goNext = useCallback((hasIngestAccess: boolean) => {
+    router.replace(hasIngestAccess ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
     router.refresh();
   }, [nextPath, router]);
 
@@ -200,7 +216,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         }
 
         if (mode === "activate") {
-          if (authState.licenseActivated) {
+          if (authState.hasIngestAccess) {
             goNext(true);
             return;
           }
@@ -209,7 +225,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           return;
         }
 
-        goNext(authState.licenseActivated);
+        goNext(authState.hasIngestAccess);
         return;
       } catch {
         if (!active) {
@@ -277,7 +293,11 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       });
       const data = await unwrapApiResponse<IngestAuthResponse>(response, "请求失败，请稍后重试。");
 
-      goNext(data.licenseActivated || data.user.licenseActivated);
+      const hasIngestAccess = data.hasIngestAccess
+        ?? data.user.hasIngestAccess
+        ?? (data.licenseActivated || data.user.licenseActivated);
+
+      goNext(hasIngestAccess);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
     } finally {

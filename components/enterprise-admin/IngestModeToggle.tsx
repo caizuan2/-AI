@@ -464,6 +464,7 @@ export function IngestModeToggle() {
   const [isSaving, setIsSaving] = useState(false);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
+  const activeGptRequestIdRef = useRef("");
   const [isUrlDialogOpen, setIsUrlDialogOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
@@ -1212,7 +1213,10 @@ export function IngestModeToggle() {
 
     const conversationId = ensureConversationForSend(activeAgent);
     const userMessageId = `user-${Date.now()}`;
+    const requestId = `admin-ingest-gpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const isCurrentRequest = () => activeGptRequestIdRef.current === requestId;
 
+    activeGptRequestIdRef.current = requestId;
     markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
@@ -1263,6 +1267,10 @@ export function IngestModeToggle() {
           syncTarget: [...platformContext.syncTarget]
         }));
 
+        if (!isCurrentRequest()) {
+          return null;
+        }
+
         setMessages((current) => current.map((message) => message.id === userMessageId
           ? { ...message, attachments: outgoingAttachments }
           : message));
@@ -1300,6 +1308,11 @@ export function IngestModeToggle() {
         },
         platform: platformContext.platform
       });
+
+      if (!isCurrentRequest()) {
+        return null;
+      }
+
       const nextRecords = mergeTrainingRecords(result.records, records);
 
       setDraft(result.draft);
@@ -1354,15 +1367,30 @@ export function IngestModeToggle() {
         records: nextRecords
       };
     } catch (error) {
+      if (!isCurrentRequest()) {
+        return null;
+      }
+
       const friendlyError = toUserFriendlyMessage(error);
       const message = friendlyError?.message ?? sanitizeGptOSUserMessage(error instanceof Error ? error.message : "AI服务暂时不稳定，请稍后再试。");
 
+      console.error("[admin-ingest:gpt:error]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: undefined,
+        errorCode: error instanceof Error ? error.name : undefined,
+        message,
+        provider: selectedModelOption.provider,
+        model: currentModelLabel,
+        requestId
+      });
       showGptFallbackToast(message);
       setNoticeMessage("AI服务暂时不稳定，请稍后再试。");
       setErrorMessage(message);
       return null;
     } finally {
-      setIsParsing(false);
+      if (isCurrentRequest()) {
+        setIsParsing(false);
+      }
     }
   }
 

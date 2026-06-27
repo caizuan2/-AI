@@ -11,30 +11,36 @@ export async function GET(request: Request) {
   try {
     const user = await getCurrentUser();
     const authUser = await toIngestAuthUser(user);
-    const hasIngestAccess = authUser.roles.some((role) =>
-      role === "kb_admin" || role === "ingest_admin" || role === "super_admin"
+    const role = authUser.roles.length > 0
+      ? getHighestRole(authUser.roles as AppRole[])
+      : null;
+    const activated = authUser.licenseActivated === true;
+    const hasIngestRole = authUser.roles.some((candidateRole) =>
+      candidateRole === "kb_admin" || candidateRole === "ingest_admin" || candidateRole === "super_admin"
     );
+    const hasIngestAccess = user.isActive && hasIngestRole && activated;
     const effectiveUser = hasIngestAccess
       ? { ...user, licenseActivated: true }
       : { ...user, licenseActivated: false };
     const responseUser = {
       ...authUser,
-      licenseActivated: hasIngestAccess
+      licenseActivated: hasIngestAccess,
+      hasIngestAccess
     };
-    const role = authUser.roles.length > 0
-      ? getHighestRole(authUser.roles as AppRole[])
-      : null;
 
     await setIngestPortalCookie(effectiveUser, request);
 
     return apiSuccess({
       success: true,
       authenticated: true,
+      activated,
       appType: "ingest_admin",
       requiredAppType: "ingest_admin",
       licenseActivated: hasIngestAccess,
+      hasIngestAccess,
       redirectTarget: hasIngestAccess ? "/admin-ingest?app=ingest-admin&platform=web" : "/ingest/activate",
       role,
+      roles: authUser.roles,
       user: responseUser
     });
   } catch (error) {
@@ -44,11 +50,14 @@ export async function GET(request: Request) {
       return apiSuccess({
         success: true,
         authenticated: false,
+        activated: false,
         appType: "ingest_admin",
         requiredAppType: "ingest_admin",
         licenseActivated: false,
+        hasIngestAccess: false,
         redirectTarget: "/ingest/login",
         role: null,
+        roles: [],
         user: null
       });
     }
