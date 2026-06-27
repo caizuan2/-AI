@@ -3,6 +3,7 @@ import { LicenseKeyStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { BOOTSTRAP_SUPER_ADMIN_PHONE, isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { normalizePhone } from "@/lib/auth/phone";
+import { getSaasLicenseStatus } from "@/lib/core/license-gate";
 import {
   ForbiddenError,
   InvalidLicenseKeyError,
@@ -354,7 +355,13 @@ export async function checkUserLicense(userId: string) {
     throw new ForbiddenError("账号已禁用。");
   }
 
-  if (!user.licenseActivated && !isBootstrapSuperAdminUser(user)) {
+  if (user.licenseActivated || isBootstrapSuperAdminUser(user)) {
+    return true;
+  }
+
+  const saasLicense = await getSaasLicenseStatus({ id: userId }, null).catch(() => null);
+
+  if (!saasLicense?.active || !saasLicense.features.chat) {
     throw new LicenseRequiredError("请先输入卡密激活知识库。");
   }
 
