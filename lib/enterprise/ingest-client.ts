@@ -165,7 +165,7 @@ interface GptIngestResponse {
   message?: string | {
     content?: string;
   };
-  replyMarkdown: string;
+  replyMarkdown?: string;
   knowledgeDraft?: GptKnowledgeDraft;
   knowledgeLoop?: KnowledgeLoopResult;
   evolution?: KnowledgeEvolutionResult;
@@ -195,7 +195,7 @@ interface GptIngestResponse {
   diagnostics?: string[];
   gptOS?: GptOSRouteResult;
   autonomousResult?: AutonomousTaskResult;
-  structured: {
+  structured?: {
     title?: string;
     category?: string;
     summary?: string;
@@ -408,6 +408,70 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function isGptFailureResponse(value: unknown): value is GptFailureResponse {
   return isPlainRecord(value) && value.ok === false;
+}
+
+const gptResponseTopLevelFields = [
+  "jobId",
+  "trainingRecord",
+  "records",
+  "provider",
+  "model",
+  "requestedModel",
+  "actualModel",
+  "responseId",
+  "proofId",
+  "createdAt",
+  "usage",
+  "gptProof",
+  "modelDisplayName",
+  "modelMode",
+  "fallback",
+  "fallbackUsed",
+  "selectedModelLabel",
+  "content",
+  "answer",
+  "reply",
+  "visibleReply",
+  "message",
+  "replyMarkdown",
+  "knowledgeDraft",
+  "knowledgeLoop",
+  "evolution",
+  "storeDecision",
+  "reusableKnowledgeUnits",
+  "reviewRequiredUnits",
+  "autoStoreCandidates",
+  "memory",
+  "memoryPlan",
+  "knowledgeIntelligence",
+  "ragOptimization",
+  "metadata",
+  "userClientCallPlan",
+  "sourceFiles",
+  "suggestedQuestions",
+  "saveRecommendation",
+  "diagnostics",
+  "gptOS",
+  "autonomousResult",
+  "structured",
+  "sync"
+] as const;
+
+function unwrapGptIngestResponse(payload: unknown): GptIngestResponse | null {
+  if (!isPlainRecord(payload)) {
+    return null;
+  }
+
+  const nested = isPlainRecord(payload.data) ? payload.data : {};
+  const merged: Record<string, unknown> = { ...nested };
+
+  for (const field of gptResponseTopLevelFields) {
+    if (payload[field] !== undefined) {
+      merged[field] = payload[field];
+    }
+  }
+
+  return Object.keys(merged).length > 0 ? merged as unknown as GptIngestResponse : null;
 }
 
 function readGptResponseContent(data: GptIngestResponse) {
@@ -878,11 +942,12 @@ export function normalizeTrainingRecord(record: AdminTrainingRecordResponse, age
 
 function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agent: IngestChatAgent): IngestKnowledgeDraft {
   const generatedId = data.jobId || data.trainingRecord?.jobId || `gpt-${Date.now()}`;
+  const structured = data.structured ?? {};
 
   return normalizeDraftFromUnknown({
-    ...(data.knowledgeDraft ?? data.structured),
+    ...(data.knowledgeDraft ?? structured),
     userClientCallPlan: data.userClientCallPlan ?? data.knowledgeDraft?.userClientCallPlan,
-    suggestedQuestions: data.suggestedQuestions ?? data.structured.followUpQuestions,
+    suggestedQuestions: data.suggestedQuestions ?? structured.followUpQuestions,
     saveRecommendation: data.saveRecommendation ?? data.knowledgeDraft?.saveRecommendation,
     id: generatedId,
     jobId: data.jobId || data.trainingRecord?.jobId || null,
@@ -1025,17 +1090,52 @@ export async function sendCoreIngest(input: {
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 
     if (isGptFailureResponse(payload)) {
+      console.error("[admin-ingest:gpt:error]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: response.status,
+        errorCode: payload.errorCode,
+        message: payload.message,
+        provider: payload.provider,
+        model: payload.model,
+        requestId: runtimeResult.requestId
+      });
       throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
 
-    if (!response.ok || !payload?.ok || !payload.data) {
+    const data = unwrapGptIngestResponse(payload);
+    const replyContent = data ? readGptResponseContent(data) : "";
+    const payloadRecord = isPlainRecord(payload) ? payload : null;
+    const isSuccess = response.ok
+      && (
+        payloadRecord?.ok === true
+        || payloadRecord?.success === true
+        || Boolean(replyContent)
+      );
+
+    if (!isSuccess || !data) {
+      console.error("[admin-ingest:gpt:error]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: response.status,
+        errorCode: payloadRecord?.errorCode ?? (isPlainRecord(payloadRecord?.error) ? payloadRecord.error.code : undefined),
+        message: payloadRecord?.message ?? (isPlainRecord(payloadRecord?.error) ? payloadRecord.error.message : undefined),
+        provider: payloadRecord?.provider,
+        model: payloadRecord?.model,
+        requestId: runtimeResult.requestId
+      });
       throw new Error(getFriendlyIngestError(response, payload));
     }
 
-    const data = payload.data;
-    const replyContent = readGptResponseContent(data);
     if (!replyContent) {
-      throw new Error("AI服务暂时不稳定，请稍后再试。");
+      console.error("[admin-ingest:gpt:error]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: response.status,
+        errorCode: "EMPTY_REPLY",
+        message: "GPT ingest response succeeded without visible reply content.",
+        provider: data.provider,
+        model: data.model,
+        requestId: runtimeResult.requestId
+      });
+      throw new Error("AI生成完成但没有返回可展示正文，请重新生成。");
     }
 
     const styledReply = applyExpressionLayer(replyContent, selectedModelLabel, "admin_ingest_model_reply");
