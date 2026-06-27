@@ -230,6 +230,17 @@ function redirectToNoAccess(request: NextRequest) {
   return NextResponse.redirect(noAccessUrl);
 }
 
+function redirectToAdminIngestEntry(request: NextRequest) {
+  const adminIngestUrl = request.nextUrl.clone();
+
+  adminIngestUrl.pathname = "/admin-ingest";
+  adminIngestUrl.search = "";
+  adminIngestUrl.searchParams.set("app", "ingest-admin");
+  adminIngestUrl.searchParams.set("platform", "web");
+
+  return NextResponse.redirect(adminIngestUrl);
+}
+
 function redirectToIngestLogin(request: NextRequest) {
   const loginUrl = request.nextUrl.clone();
   const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
@@ -340,6 +351,19 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
   const product = getProductFromPath(pathname);
 
   requestHeaders.set(PRODUCT_ACCESS_HEADER, product);
+
+  if (pathname === "/ingest") {
+    const redirectResponse = redirectToAdminIngestEntry(request);
+
+    logger.info("auth.ingest_entry_redirect", {
+      requestId,
+      pathname,
+      redirectTarget: redirectResponse.headers.get("location"),
+      reason: "legacy_ingest_entry"
+    });
+
+    return redirectResponse;
+  }
 
   if (isPublicPath(pathname)) {
     logger.info("auth.redirect_check", {
