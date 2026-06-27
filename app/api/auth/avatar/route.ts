@@ -31,6 +31,10 @@ allowedAvatarExtensions.set("jpg", "image/jpeg");
 
 interface AvatarResponse {
   avatar_url: string | null;
+  avatarUrl?: string | null;
+  updated_at?: string | null;
+  avatar_updated_at?: string | null;
+  avatarUpdatedAt?: string | null;
 }
 
 function inferAvatarMimeType(file: File) {
@@ -83,7 +87,12 @@ export async function DELETE() {
     const user = await requireUser();
     const result = await clearUserAvatarProfile(user.id);
 
-    return apiSuccess<AvatarResponse>(result);
+    return apiSuccess<AvatarResponse>({
+      ...result,
+      avatarUrl: result.avatar_url,
+      avatar_updated_at: result.updated_at,
+      avatarUpdatedAt: result.updated_at
+    });
   } catch (error) {
     return apiError(error);
   }
@@ -119,13 +128,25 @@ export async function POST(request: Request) {
       await mkdir(avatarDirectory, { recursive: true });
       await writeFile(storagePath, avatarBytes);
       const profile = await writeUserAvatarProfile(user.id, fileName, request);
+      const avatarUrl = profile?.avatar_url ?? new URL(`/api/auth/avatar/${fileName}`, getPublicBaseUrl(request)).toString();
 
       return apiSuccess<AvatarResponse>({
-        avatar_url: profile?.avatar_url ?? new URL(`/api/auth/avatar/${fileName}`, getPublicBaseUrl(request)).toString(),
+        avatar_url: avatarUrl,
+        avatarUrl,
+        updated_at: profile?.updated_at ?? null,
+        avatar_updated_at: profile?.updated_at ?? null,
+        avatarUpdatedAt: profile?.updated_at ?? null
       });
     } catch {
+      const avatarUrl = `data:${mimeType};base64,${avatarBytes.toString("base64")}`;
+      const updatedAt = new Date().toISOString();
+
       return apiSuccess<AvatarResponse>({
-        avatar_url: `data:${mimeType};base64,${avatarBytes.toString("base64")}`,
+        avatar_url: avatarUrl,
+        avatarUrl,
+        updated_at: updatedAt,
+        avatar_updated_at: updatedAt,
+        avatarUpdatedAt: updatedAt
       });
     }
   } catch (error) {

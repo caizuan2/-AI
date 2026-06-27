@@ -53,6 +53,7 @@ export function ExpertMarketDrawer({
   const [message, setMessage] = React.useState("专家库暂未连接");
   const [sections, setSections] = React.useState<ExpertMarketSection[]>([]);
   const [expandedSections, setExpandedSections] = React.useState<Record<string, boolean>>({});
+  const [marketLoaded, setMarketLoaded] = React.useState(false);
 
   React.useEffect(() => {
     if (!open) {
@@ -76,6 +77,10 @@ export function ExpertMarketDrawer({
     }
 
     setExpandedSections({});
+
+    if (marketLoaded) {
+      return;
+    }
 
     const controller = new AbortController();
 
@@ -102,6 +107,7 @@ export function ExpertMarketDrawer({
 
         setSections(payload.sections);
         setMessage(payload.sections.length > 0 ? "" : payload.message || "专家库暂无可展示内容");
+        setMarketLoaded(true);
       } catch (error) {
         if ((error as Error).name !== "AbortError") {
           setSections([]);
@@ -115,7 +121,7 @@ export function ExpertMarketDrawer({
     void loadExpertMarket();
 
     return () => controller.abort();
-  }, [open]);
+  }, [marketLoaded, open]);
 
   if (!open) {
     return null;

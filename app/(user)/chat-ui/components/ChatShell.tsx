@@ -43,6 +43,7 @@ import {
   type ChatModeDecision,
   type ChatModeKey
 } from "../lib/intent-mode-router";
+import { safeCopyText } from "../lib/clipboard";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { ChatQuickActions } from "./ChatQuickActions";
@@ -84,7 +85,26 @@ type LinkDialogState = {
   link: string;
   description: string;
   copySuccessMessage: string;
+  copied: boolean;
   allowGroupLinkManagement?: boolean;
+} | null;
+
+type ChatActionKind =
+  | "share"
+  | "group-chat"
+  | "avatar"
+  | "rename"
+  | "pin"
+  | "archive"
+  | "delete"
+  | "copy"
+  | "general";
+
+type ChatActionFeedback = {
+  type: "success" | "error" | "info";
+  kind: ChatActionKind;
+  message: string;
+  createdAt: number;
 } | null;
 
 type RenameDialogState = {
@@ -248,7 +268,7 @@ export function ChatShell() {
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = React.useState<ChatActionFeedback>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [currentUser, setCurrentUser] = React.useState<CurrentChatUser | null>(null);
   const [currentUserLoaded, setCurrentUserLoaded] = React.useState(false);
@@ -257,7 +277,6 @@ export function ChatShell() {
   const [selectedKnowledgeBases, setSelectedKnowledgeBases] = React.useState<SelectedKnowledgeBase[]>([]);
   const [linkDialog, setLinkDialog] = React.useState<LinkDialogState>(null);
   const [linkActionBusy, setLinkActionBusy] = React.useState(false);
-  const [linkDialogError, setLinkDialogError] = React.useState<string | null>(null);
   const [linkCopyFailureSignal, setLinkCopyFailureSignal] = React.useState(0);
   const [renameDialog, setRenameDialog] = React.useState<RenameDialogState>(null);
   const [renameSubmitting, setRenameSubmitting] = React.useState(false);
@@ -317,6 +336,13 @@ export function ChatShell() {
     manualMode: manualChatMode
   }), [manualChatMode, remoteChatModeDecision, ruleChatModeDecision]);
   const inputPlaceholder = "发送消息给小董AI...";
+
+  const refreshCurrentUser = React.useCallback(async (options: { cacheBust?: boolean } = {}) => {
+    const result = await fetchCurrentChatUser(options);
+
+    setCurrentUser(result.user);
+    return result.user;
+  }, []);
 
   const loadConversations = React.useCallback(async () => {
     setConversationLoading(true);
@@ -437,6 +463,21 @@ export function ChatShell() {
     });
   }, [messages, loading]);
 
+  React.useEffect(() => {
+    if (!actionFeedback?.message) {
+      return undefined;
+    }
+
+    const feedbackCreatedAt = actionFeedback.createdAt;
+    const timer = window.setTimeout(() => {
+      setActionFeedback((current) => (
+        current?.createdAt === feedbackCreatedAt ? null : current
+      ));
+    }, actionFeedback.type === "error" ? 5000 : 3600);
+
+    return () => window.clearTimeout(timer);
+  }, [actionFeedback]);
+
   React.useEffect(() => () => {
     activeAskAbortRef.current?.abort();
     chatModeClassifyAbortRef.current?.abort();
@@ -546,10 +587,9 @@ export function ChatShell() {
     setHistoryLoading(false);
     setConversationLoading(false);
     setError(null);
-    setNotice(null);
+    setActionFeedback(null);
     setLinkDialog(null);
     setLinkActionBusy(false);
-    setLinkDialogError(null);
     setRenameDialog(null);
     setRenameSubmitting(false);
     setRenameError(null);
@@ -567,7 +607,7 @@ export function ChatShell() {
 
     historyRequestIdRef.current = requestId;
     setError(null);
-    setNotice(null);
+    setActionFeedback(null);
     setHistoryLoading(true);
     setConversationId(nextConversationId);
     setMessages([]);
@@ -610,12 +650,51 @@ export function ChatShell() {
     setInputAttachments([]);
     setManualChatMode(null);
     setError(nextState.error);
-    setNotice(null);
+    setActionFeedback(null);
     closeSidebarAfterNavigation();
   }
 
+  function setActionInfo(message: string, kind: ChatActionKind = "general") {
+    setError(null);
+    setActionFeedback({
+      type: "info",
+      kind,
+      message,
+      createdAt: Date.now()
+    });
+  }
+
+  function setActionSuccess(message: string, kind: ChatActionKind = "general") {
+    setError(null);
+    setActionFeedback({
+      type: "success",
+      kind,
+      message,
+      createdAt: Date.now()
+    });
+  }
+
+  function setActionError(message: string, kind: ChatActionKind = "general", technical?: unknown) {
+    if (technical) {
+      console.warn(`[chat-ui] ${kind} action failed`, technical);
+    }
+
+    setError(null);
+    setActionFeedback({
+      type: "error",
+      kind,
+      message,
+      createdAt: Date.now()
+    });
+  }
+
   function showNotice(message: string) {
-    setNotice(message);
+    setActionInfo(message);
+  }
+
+  function clearActionFeedback() {
+    setError(null);
+    setActionFeedback(null);
   }
 
   function updateAssistantMessageMetadata(
@@ -662,7 +741,7 @@ export function ChatShell() {
   }
 
   function handleToggleManualChatMode(nextMode: ChatModeKey) {
-    setNotice(null);
+    setActionFeedback(null);
     setManualChatMode((current) => current === nextMode ? null : nextMode);
   }
 
@@ -722,42 +801,6 @@ export function ChatShell() {
     showNotice("已打开通知面板。");
   }
 
-  async function copyLinkToClipboard(link: string) {
-    const value = link.trim();
-
-    if (!value) {
-      return false;
-    }
-
-    if (navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch {
-        // HTTP origins can reject the Clipboard API; fall back to an old-school selection copy.
-      }
-    }
-
-    const textArea = document.createElement("textarea");
-    textArea.value = value;
-    textArea.setAttribute("readonly", "true");
-    textArea.style.position = "fixed";
-    textArea.style.left = "-9999px";
-    textArea.style.top = "0";
-    document.body.appendChild(textArea);
-
-    try {
-      textArea.focus();
-      textArea.select();
-      textArea.setSelectionRange(0, textArea.value.length);
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    } finally {
-      document.body.removeChild(textArea);
-    }
-  }
-
   function getActionErrorMessage(actionLabel: string, requestError: unknown) {
     const message = requestError instanceof Error ? requestError.message : "未知错误";
 
@@ -774,6 +817,21 @@ export function ChatShell() {
     const cleanMessage = message
       .replace(/（endpoint:.*?）/g, "")
       .replace(/\s*endpoint:.*$/i, "")
+      .replace(/\s*status\s*[:=]\s*\d+.*$/gim, "")
+      .replace(/\s*content-type\s*[:=].*$/gim, "")
+      .replace(/\s*stack\s*[:=][\s\S]*$/i, "")
+      .replace(/\bFEATURE_DISABLED\b/gi, "")
+      .replace(/\bUPSTREAM_UNAVAILABLE\b/gi, "")
+      .replace(/\bsourceApp\b/gi, "")
+      .replace(/\bmodel_select\b/gi, "")
+      .replace(/\bmodel_reason\b/gi, "")
+      .replace(/\bcontent-type\b/gi, "")
+      .replace(/\bstatus\b/gi, "")
+      .replace(/\bACTION_[A-Z0-9_]+\b/gi, "推荐动作")
+      .replace(/\bV(?:6|7|8|9)(?:\.\d+)?\b/gi, "")
+      .replace(/\bprompt\.[a-z0-9_.-]+\b/gi, "提示策略")
+      .replace(/\bchunk(?:[_-]?id)?\b/gi, "知识片段")
+      .replace(/\s{2,}/g, " ")
       .trim();
 
     return `${actionLabel}失败：${cleanMessage || "请稍后再试。"}`;
@@ -790,41 +848,44 @@ export function ChatShell() {
   async function handleShareConversationAction(item: { id: string; title: string }) {
     setLinkDialog(null);
     setLinkActionBusy(false);
-    setLinkDialogError(null);
+    clearActionFeedback();
     setRenameDialog(null);
     setConfirmDialog(null);
-    showNotice("正在创建分享链接...");
+    setActionInfo("正在创建分享链接...", "share");
 
     try {
       const result = await shareConversation(item.id);
       const link = getConversationActionLink(result, ["shareUrl", "link", "url"]);
 
       if (!link) {
-        showNotice("分享接口已返回成功，但缺少 shareUrl / link / url 字段。");
+        console.warn("[chat-ui] share action succeeded without link", result);
+        setActionError("分享链接创建失败，请稍后再试。", "share");
         return;
       }
 
+      setError(null);
       setLinkDialog({
         kind: "share",
         title: "分享链接",
         link,
         description: "复制链接后可发送给其他人查看当前会话。",
         copySuccessMessage: "分享链接已复制。",
+        copied: false,
         allowGroupLinkManagement: false
       });
-      showNotice("分享链接已创建。");
+      setActionSuccess("分享链接已创建。", "share");
     } catch (requestError) {
-      showNotice(getActionErrorMessage("分享", requestError));
+      setActionError(getActionErrorMessage("分享", requestError), "share");
     }
   }
 
   async function handleGroupChatConversationAction(item: { id: string; title: string }) {
     setLinkDialog(null);
     setLinkActionBusy(false);
-    setLinkDialogError(null);
+    clearActionFeedback();
     setRenameDialog(null);
     setConfirmDialog(null);
-    showNotice("正在创建群聊链接...");
+    setActionInfo("正在创建群聊链接...", "group-chat");
 
     try {
       const result = await createConversationGroupChat(item.id);
@@ -839,16 +900,12 @@ export function ChatShell() {
       ]);
 
       if (!link) {
-        const message = [
-          "群聊已创建，但没有邀请链接",
-          "服务器已创建群聊，但没有返回 inviteUrl、inviteLink、groupLink、shareUrl、joinUrl、link 或 url 字段。",
-          "请联系管理员检查 group-chat 接口返回字段。"
-        ].join("\n");
-
-        showNotice(message);
+        console.warn("[chat-ui] group chat action succeeded without link", result);
+        setActionError("群聊链接创建失败，请稍后再试。", "group-chat");
         return;
       }
 
+      setError(null);
       setLinkDialog({
         kind: "group-chat",
         conversationId: item.id,
@@ -856,23 +913,24 @@ export function ChatShell() {
         link,
         description: "使用群组链接邀请他人加入群聊。任何人可通过此链接加入群聊，并可查看本群历史消息。",
         copySuccessMessage: "群聊链接已复制。",
+        copied: false,
         allowGroupLinkManagement: true
       });
-      showNotice("群组链接已创建。");
+      setActionSuccess("群组链接已创建。", "group-chat");
     } catch (requestError) {
-      showNotice(getActionErrorMessage("开始群聊", requestError));
+      setActionError(getActionErrorMessage("开始群聊", requestError), "group-chat");
     }
   }
 
   async function handleResetGroupChatLink() {
     if (!linkDialog || linkDialog.kind !== "group-chat" || !linkDialog.conversationId) {
-      setLinkDialogError("当前群聊弹窗缺少会话 ID，无法重置链接。");
+      setActionError("当前群聊弹窗缺少会话 ID，无法重置链接。", "group-chat");
       return;
     }
 
     setLinkActionBusy(true);
-    setLinkDialogError(null);
-    showNotice("正在重置群聊链接...");
+    clearActionFeedback();
+    setActionInfo("正在重置群聊链接...", "group-chat");
 
     try {
       const result = await resetConversationGroupChatLink(linkDialog.conversationId);
@@ -887,19 +945,20 @@ export function ChatShell() {
       ]);
 
       if (!nextLink) {
-        throw new Error("后端已响应重置，但没有返回新的 inviteUrl / inviteLink / groupLink / shareUrl / joinUrl / link / url 字段。");
+        console.warn("[chat-ui] group chat reset succeeded without link", result);
+        throw new Error("群聊链接重置失败，请稍后再试。");
       }
 
       setLinkDialog({
         ...linkDialog,
-        link: nextLink
+        link: nextLink,
+        copied: false
       });
-      showNotice("群聊链接已重置。");
+      setActionSuccess("群聊链接已重置。", "group-chat");
     } catch (requestError) {
       const message = getActionErrorMessage("重置群聊链接", requestError);
 
-      setLinkDialogError(message);
-      showNotice(message);
+      setActionError(message, "group-chat");
     } finally {
       setLinkActionBusy(false);
     }
@@ -907,7 +966,7 @@ export function ChatShell() {
 
   function handleDeleteGroupChatLinkRequest() {
     if (!linkDialog || linkDialog.kind !== "group-chat" || !linkDialog.conversationId) {
-      setLinkDialogError("当前群聊弹窗缺少会话 ID，无法删除链接。");
+      setActionError("当前群聊弹窗缺少会话 ID，无法删除链接。", "group-chat");
       return;
     }
 
@@ -927,18 +986,17 @@ export function ChatShell() {
 
   async function runDeleteGroupChatLink(targetConversationId: string) {
     setLinkActionBusy(true);
-    setLinkDialogError(null);
-    showNotice("正在删除群聊链接...");
+    clearActionFeedback();
+    setActionInfo("正在删除群聊链接...", "group-chat");
 
     try {
       await deleteConversationGroupChatLink(targetConversationId);
       setLinkDialog(null);
-      showNotice("群聊链接已删除。");
+      setActionSuccess("群聊链接已删除。", "group-chat");
     } catch (requestError) {
       const message = getActionErrorMessage("删除群聊链接", requestError);
 
-      setLinkDialogError(message);
-      showNotice(message);
+      setActionError(message, "group-chat");
     } finally {
       setLinkActionBusy(false);
     }
@@ -1103,6 +1161,7 @@ export function ChatShell() {
 
   async function handleChangePassword(input: ChangePasswordInput) {
     await changeCurrentUserPassword(input);
+    clearActionFeedback();
     showNotice("密码已修改。");
   }
 
@@ -1123,6 +1182,7 @@ export function ChatShell() {
   }
 
   function handleAvatarSaved(nextAvatarUrl: string | null) {
+    clearActionFeedback();
     setCurrentAvatarUrl(nextAvatarUrl);
     setCurrentUser((user) => (
       user
@@ -1137,6 +1197,15 @@ export function ChatShell() {
           }
         : user
     ));
+    void refreshCurrentUser({ cacheBust: true })
+      .then((user) => {
+        const refreshedAvatarUrl = getCurrentChatUserAvatarUrl(user);
+        setCurrentAvatarUrl(refreshedAvatarUrl || nextAvatarUrl);
+      })
+      .catch((requestError) => {
+        console.warn("[chat-ui] refresh current user after avatar save failed", requestError);
+      });
+    setActionSuccess(nextAvatarUrl ? "头像已更新。" : "已恢复默认头像。", "avatar");
   }
 
   async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
@@ -1149,7 +1218,7 @@ export function ChatShell() {
     }
 
     setError(null);
-    setNotice(null);
+    setActionFeedback(null);
     setLoading(true);
     let localUserMessage: ChatMessageView | null = null;
     let localAssistantMessageId: string | null = null;
@@ -1523,28 +1592,49 @@ export function ChatShell() {
     return submitText(input.trim(), attachments);
   }
 
-  async function handleCopyLinkDialog() {
+  async function handleCopyLinkDialog(selectionElement?: HTMLInputElement | null) {
     if (!linkDialog) {
       return;
     }
 
-    const copied = await copyLinkToClipboard(linkDialog.link);
-    showNotice(copied ? linkDialog.copySuccessMessage : `自动复制失败，请按 Ctrl+C 复制：${linkDialog.link}`);
-    if (!copied) {
-      setLinkCopyFailureSignal((value) => value + 1);
-      setLinkDialogError("自动复制失败，链接已保留在输入框中，可点击输入框后按 Ctrl+C 复制。");
-    }
+    clearActionFeedback();
+
+    const copied = await safeCopyText(linkDialog.link, { selectionElement });
+
     if (copied) {
-      setLinkDialog(null);
-      setLinkDialogError(null);
+      setLinkDialog((current) => current ? { ...current, copied: true } : current);
+      setActionSuccess(linkDialog.copySuccessMessage, "copy");
+      return;
     }
+
+    setLinkDialog((current) => current ? { ...current, copied: false } : current);
+    setLinkCopyFailureSignal((value) => value + 1);
+    setActionError("复制失败，请手动选中链接复制。", "copy");
   }
 
   function handleCloseLinkDialog() {
     setLinkDialog(null);
-    setLinkDialogError(null);
+    setActionFeedback(null);
     setLinkActionBusy(false);
   }
+
+  const actionFeedbackClassName = actionFeedback?.type === "error"
+    ? "border-red-100 bg-red-50 text-red-700"
+    : actionFeedback?.type === "success"
+      ? "border-emerald-100 bg-emerald-50 text-emerald-700"
+      : "border-blue-100 bg-blue-50 text-blue-700";
+  const linkDialogFeedback = linkDialog && actionFeedback && (
+    actionFeedback.kind === linkDialog.kind ||
+    actionFeedback.kind === "copy"
+  )
+    ? actionFeedback
+    : null;
+  const linkDialogMessage = linkDialogFeedback?.type && linkDialogFeedback.type !== "error"
+    ? (linkDialog?.copied ? linkDialog.copySuccessMessage : linkDialogFeedback.message)
+    : null;
+  const linkDialogError = linkDialogFeedback?.type === "error"
+    ? linkDialogFeedback.message
+    : null;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-950">
@@ -1608,9 +1698,9 @@ export function ChatShell() {
               {error}
             </div>
           ) : null}
-          {notice ? (
-            <div className="mx-4 mt-3 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700">
-              {notice}
+          {actionFeedback?.message ? (
+            <div className={cn("mx-4 mt-3 rounded-2xl border px-4 py-3 text-sm", actionFeedbackClassName)}>
+              {actionFeedback.message}
             </div>
           ) : null}
 
@@ -1680,6 +1770,7 @@ export function ChatShell() {
             copyLabel={linkDialog?.kind === "share" ? "复制分享链接" : "复制群组链接"}
             selectSignal={linkCopyFailureSignal}
             busy={linkActionBusy}
+            message={linkDialogMessage}
             error={linkDialogError}
             actionMenu={linkDialog?.allowGroupLinkManagement ? {
               onReset: () => void handleResetGroupChatLink(),
