@@ -10,6 +10,7 @@ const DEFAULT_MODEL = "kimi-k2.7-code-highspeed";
 const DEFAULT_MODEL_LABEL = "Kimi-K2.7-Code-HighSpeed";
 const HEALTH_TIMEOUT_MS = 25_000;
 const KIMI_PLACEHOLDER_API_KEY = "sk-your-kimi-api-key";
+const KIMI_FIXED_TEMPERATURE = 1;
 
 export interface KimiIngestHealthStatus {
   ok: boolean;
@@ -149,7 +150,7 @@ export async function checkKimiIngestHealth(input: {
           { role: "user", content: "只回复 OK" }
         ],
         max_tokens: 8,
-        temperature: 0
+        temperature: KIMI_FIXED_TEMPERATURE
       }),
       signal: controller.signal,
       cache: "no-store"

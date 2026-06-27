@@ -128,6 +128,7 @@ const DEFAULT_BASE_URL = "https://api.moonshot.cn/v1";
 const DEFAULT_MODEL = "kimi-k2.7-code-highspeed";
 const DEFAULT_MODEL_LABEL = "Kimi-K2.7-Code-HighSpeed";
 const KIMI_PLACEHOLDER_API_KEY = "sk-your-kimi-api-key";
+const KIMI_FIXED_TEMPERATURE = 1;
 
 function readEnv(name: string) {
   return process.env[name]?.trim() ?? "";
@@ -252,6 +253,10 @@ function normalizeKimiResponseError(status: number) {
   return new KimiIngestError("KIMI_REQUEST_FAILED", "AI暂时不稳定，请稍后再试。");
 }
 
+function resolveKimiTemperature() {
+  return KIMI_FIXED_TEMPERATURE;
+}
+
 export async function callKimi(payload: {
   apiKey?: string;
   baseUrl?: string;
@@ -277,7 +282,7 @@ export async function callKimi(payload: {
     body: JSON.stringify({
       model,
       messages,
-      temperature: payload.temperature ?? 0.6,
+      temperature: resolveKimiTemperature(),
       max_tokens: payload.maxTokens ?? 8000,
       stream: false
     }),
@@ -317,7 +322,7 @@ async function callKimiChatCompletions(input: {
       { role: "system", content: input.systemPrompt },
       { role: "user", content: input.userPrompt }
     ],
-    temperature: 0.6,
+    temperature: resolveKimiTemperature(),
     maxTokens: 8000,
     signal: input.signal
   }), {
