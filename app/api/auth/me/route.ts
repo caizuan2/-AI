@@ -4,6 +4,7 @@ import { getUserRoles } from "@/lib/auth/rbac";
 import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
 import { prisma } from "@/lib/prisma";
 import { ValidationError } from "@/lib/errors";
+import { readUserAvatarProfile } from "@/lib/user-avatar";
 
 export const dynamic = "force-dynamic";
 
@@ -13,7 +14,8 @@ interface MeResponse {
     phone: string;
     email: string | null;
     name: string;
-    avatar_url: null;
+    avatar_url: string | null;
+    avatarUrl: string | null;
     licenseActivated: boolean;
     isSuperAdmin: boolean;
     role: EntryRole;
@@ -22,11 +24,13 @@ interface MeResponse {
   };
 }
 
-async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>): Promise<MeResponse> {
+async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, request: Request): Promise<MeResponse> {
   const roles = await getUserRoles(user);
   const isSuperAdmin = roles.includes("super_admin");
   const licenseActivated = user.licenseActivated || isSuperAdmin;
   const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
+  const avatar = await readUserAvatarProfile(user.id, request);
+  const avatarUrl = avatar?.avatar_url ?? null;
 
   return {
     user: {
@@ -34,7 +38,8 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>): Prom
       phone: user.phone,
       email: user.email,
       name: user.name,
-      avatar_url: null,
+      avatar_url: avatarUrl,
+      avatarUrl,
       licenseActivated,
       isSuperAdmin,
       role,
@@ -44,10 +49,10 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>): Prom
   };
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const user = await requireUser();
-    return apiSuccess<MeResponse>(await toMeResponse(user));
+    return apiSuccess<MeResponse>(await toMeResponse(user, request));
   } catch (error) {
     return apiError(error);
   }
@@ -90,7 +95,7 @@ export async function PATCH(request: Request) {
       name: updatedUser.name?.trim() || updatedUser.phone || updatedUser.email || updatedUser.id,
       isActive: updatedUser.isActive,
       licenseActivated: updatedUser.licenseActivated
-    }));
+    }, request));
   } catch (error) {
     return apiError(error);
   }

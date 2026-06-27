@@ -258,6 +258,7 @@ export function ChatShell() {
   const [linkDialog, setLinkDialog] = React.useState<LinkDialogState>(null);
   const [linkActionBusy, setLinkActionBusy] = React.useState(false);
   const [linkDialogError, setLinkDialogError] = React.useState<string | null>(null);
+  const [linkCopyFailureSignal, setLinkCopyFailureSignal] = React.useState(0);
   const [renameDialog, setRenameDialog] = React.useState<RenameDialogState>(null);
   const [renameSubmitting, setRenameSubmitting] = React.useState(false);
   const [renameError, setRenameError] = React.useState<string | null>(null);
@@ -722,22 +723,60 @@ export function ChatShell() {
   }
 
   async function copyLinkToClipboard(link: string) {
-    if (!navigator.clipboard) {
+    const value = link.trim();
+
+    if (!value) {
       return false;
     }
 
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch {
+        // HTTP origins can reject the Clipboard API; fall back to an old-school selection copy.
+      }
+    }
+
+    const textArea = document.createElement("textarea");
+    textArea.value = value;
+    textArea.setAttribute("readonly", "true");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    document.body.appendChild(textArea);
+
     try {
-      await navigator.clipboard.writeText(link);
-      return true;
+      textArea.focus();
+      textArea.select();
+      textArea.setSelectionRange(0, textArea.value.length);
+      return document.execCommand("copy");
     } catch {
       return false;
+    } finally {
+      document.body.removeChild(textArea);
     }
   }
 
   function getActionErrorMessage(actionLabel: string, requestError: unknown) {
     const message = requestError instanceof Error ? requestError.message : "未知错误";
 
-    return `${actionLabel}失败：${message}`;
+    console.warn(`[chat-ui] ${actionLabel} action failed`, requestError);
+
+    if (actionLabel === "分享") {
+      return "分享失败：当前会话暂时无法分享，请稍后再试。";
+    }
+
+    if (actionLabel === "开始群聊") {
+      return "开始群聊失败：当前会话暂时无法创建群聊链接，请稍后再试。";
+    }
+
+    const cleanMessage = message
+      .replace(/（endpoint:.*?）/g, "")
+      .replace(/\s*endpoint:.*$/i, "")
+      .trim();
+
+    return `${actionLabel}失败：${cleanMessage || "请稍后再试。"}`;
   }
 
   function removeConversationFromList(targetConversationId: string) {
@@ -1490,7 +1529,11 @@ export function ChatShell() {
     }
 
     const copied = await copyLinkToClipboard(linkDialog.link);
-    showNotice(copied ? linkDialog.copySuccessMessage : `链接已创建，请手动复制：${linkDialog.link}`);
+    showNotice(copied ? linkDialog.copySuccessMessage : `自动复制失败，请按 Ctrl+C 复制：${linkDialog.link}`);
+    if (!copied) {
+      setLinkCopyFailureSignal((value) => value + 1);
+      setLinkDialogError("自动复制失败，链接已保留在输入框中，可点击输入框后按 Ctrl+C 复制。");
+    }
     if (copied) {
       setLinkDialog(null);
       setLinkDialogError(null);
@@ -1634,6 +1677,8 @@ export function ChatShell() {
             title={linkDialog?.title ?? ""}
             link={linkDialog?.link ?? ""}
             description={linkDialog?.description ?? ""}
+            copyLabel={linkDialog?.kind === "share" ? "复制分享链接" : "复制群组链接"}
+            selectSignal={linkCopyFailureSignal}
             busy={linkActionBusy}
             error={linkDialogError}
             actionMenu={linkDialog?.allowGroupLinkManagement ? {

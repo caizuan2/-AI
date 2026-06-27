@@ -57,7 +57,7 @@ export function EmptyState({ mode, onModeChange, userName }: EmptyStateProps) {
           ))}
         </div>
 
-        <div className="mx-auto mt-8 max-w-2xl rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-left text-sm leading-6 text-emerald-900">
+        <div className="mx-auto mt-8 max-w-full rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-left text-sm leading-6 text-emerald-900 sm:max-w-[760px] md:max-w-[820px]">
           <div className="mb-1 inline-flex items-center gap-2 font-semibold">
             <Target className="h-4 w-4" aria-hidden="true" />
             试试这样问

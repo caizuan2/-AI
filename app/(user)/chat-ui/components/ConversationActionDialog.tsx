@@ -87,6 +87,7 @@ export function LinkActionDialog({
   link,
   description,
   copyLabel = "复制链接",
+  selectSignal = 0,
   actionMenu,
   busy = false,
   error = null,
@@ -98,6 +99,7 @@ export function LinkActionDialog({
   link: string;
   description: string;
   copyLabel?: string;
+  selectSignal?: number;
   actionMenu?: {
     onReset: () => void;
     onDelete: () => void;
@@ -108,6 +110,7 @@ export function LinkActionDialog({
   onCopy: () => void;
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
+  const inputRef = React.useRef<HTMLInputElement | null>(null);
   const menuRootRef = React.useRef<HTMLDivElement | null>(null);
 
   React.useEffect(() => {
@@ -115,6 +118,17 @@ export function LinkActionDialog({
       setMenuOpen(false);
     }
   }, [open]);
+
+  React.useEffect(() => {
+    if (!open || selectSignal <= 0) {
+      return;
+    }
+
+    window.setTimeout(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    }, 0);
+  }, [open, selectSignal]);
 
   React.useEffect(() => {
     if (!menuOpen) {
@@ -159,6 +173,7 @@ export function LinkActionDialog({
           <span className="sr-only">{title}</span>
           <div className="flex gap-2">
             <input
+              ref={inputRef}
               value={link}
               readOnly
               className="h-12 min-w-0 flex-1 rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm font-medium text-slate-900 outline-none focus:ring-2 focus:ring-slate-200"

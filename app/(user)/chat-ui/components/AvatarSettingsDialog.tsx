@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ImagePlus, RotateCcw, Save, X } from "lucide-react";
 import { getChatUserAvatarStorageKey } from "../chat-ui-state";
-import { updateCurrentUserAvatar } from "../api";
+import { deleteCurrentUserAvatar, updateCurrentUserAvatar } from "../api";
 import type { CurrentChatUser } from "../types";
 
 export const AVATAR_MAX_SIZE_BYTES = 2 * 1024 * 1024;
@@ -23,6 +23,23 @@ export function validateAvatarFile(file: File) {
   }
 
   return null;
+}
+
+function withAvatarVersion(url: string | null) {
+  const value = typeof url === "string" ? url.trim() : "";
+
+  if (!value || value.startsWith("data:") || value.startsWith("blob:")) {
+    return value || null;
+  }
+
+  try {
+    const nextUrl = new URL(value, window.location.origin);
+    nextUrl.searchParams.set("t", String(Date.now()));
+
+    return nextUrl.toString();
+  } catch {
+    return `${value}${value.includes("?") ? "&" : "?"}t=${Date.now()}`;
+  }
 }
 
 interface AvatarSettingsDialogProps {
@@ -116,6 +133,7 @@ export function AvatarSettingsDialog({
 
     try {
       if (restoreDefault) {
+        await deleteCurrentUserAvatar();
         window.localStorage.removeItem(getChatUserAvatarStorageKey(user));
         onSaved(null);
         onClose();
@@ -128,9 +146,14 @@ export function AvatarSettingsDialog({
       }
 
       const result = await updateCurrentUserAvatar(selectedFile);
+      const nextAvatarUrl = withAvatarVersion(result.avatar_url);
 
-      window.localStorage.setItem(getChatUserAvatarStorageKey(user), result.avatar_url);
-      onSaved(result.avatar_url);
+      if (!nextAvatarUrl) {
+        throw new Error("头像保存成功，但服务器没有返回头像地址。");
+      }
+
+      window.localStorage.setItem(getChatUserAvatarStorageKey(user), nextAvatarUrl);
+      onSaved(nextAvatarUrl);
       onClose();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "头像保存失败，请稍后重试。");
