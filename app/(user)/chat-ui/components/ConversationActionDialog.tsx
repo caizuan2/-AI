@@ -90,6 +90,7 @@ export function LinkActionDialog({
   selectSignal = 0,
   actionMenu,
   busy = false,
+  message = null,
   error = null,
   onClose,
   onCopy
@@ -105,9 +106,10 @@ export function LinkActionDialog({
     onDelete: () => void;
   };
   busy?: boolean;
+  message?: string | null;
   error?: string | null;
   onClose: () => void;
-  onCopy: () => void;
+  onCopy: (selectionElement?: HTMLInputElement | null) => void;
 }) {
   const [menuOpen, setMenuOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
@@ -124,10 +126,12 @@ export function LinkActionDialog({
       return;
     }
 
-    window.setTimeout(() => {
+    const timer = window.setTimeout(() => {
       inputRef.current?.focus();
       inputRef.current?.select();
     }, 0);
+
+    return () => window.clearTimeout(timer);
   }, [open, selectSignal]);
 
   React.useEffect(() => {
@@ -222,6 +226,11 @@ export function LinkActionDialog({
             {error}
           </p>
         ) : null}
+        {message ? (
+          <p className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700">
+            {message}
+          </p>
+        ) : null}
         <p className="mt-3 text-sm leading-6 text-slate-500">{description}</p>
         <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
           <button
@@ -234,7 +243,7 @@ export function LinkActionDialog({
           </button>
           <button
             type="button"
-            onClick={onCopy}
+            onClick={() => onCopy(inputRef.current)}
             disabled={busy}
             className="focus-ring h-11 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
@@ -269,8 +278,12 @@ export function RenameConversationDialog({
   React.useEffect(() => {
     if (open) {
       setDraftTitle(initialTitle);
-      window.setTimeout(() => inputRef.current?.focus(), 0);
+      const timer = window.setTimeout(() => inputRef.current?.focus(), 0);
+
+      return () => window.clearTimeout(timer);
     }
+
+    return undefined;
   }, [initialTitle, open]);
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {

@@ -156,11 +156,17 @@ export interface CurrentChatUser {
   image?: string | null;
   profileImage?: string | null;
   profile_image?: string | null;
+  avatarUpdatedAt?: string | null;
+  avatar_updated_at?: string | null;
   licenseActivated: boolean;
 }
 
 export interface AvatarUpdateResponse {
   avatar_url: string | null;
+  avatarUrl?: string | null;
+  updated_at?: string | null;
+  avatar_updated_at?: string | null;
+  avatarUpdatedAt?: string | null;
 }
 
 export interface ChatAttachmentUploadResponse {

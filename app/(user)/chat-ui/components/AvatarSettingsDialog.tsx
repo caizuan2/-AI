@@ -146,7 +146,7 @@ export function AvatarSettingsDialog({
       }
 
       const result = await updateCurrentUserAvatar(selectedFile);
-      const nextAvatarUrl = withAvatarVersion(result.avatar_url);
+      const nextAvatarUrl = withAvatarVersion(result.avatar_url ?? result.avatarUrl ?? null);
 
       if (!nextAvatarUrl) {
         throw new Error("头像保存成功，但服务器没有返回头像地址。");

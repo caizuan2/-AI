@@ -200,18 +200,50 @@ async function readApiPayload<T>(response: Response) {
 
 function getApiErrorMessage<T>(payload: ApiEnvelope<T> | null, fallback: string) {
   if (payload?.error && typeof payload.error === "object" && payload.error.message) {
-    return payload.error.message;
+    return sanitizeUserVisibleApiMessage(payload.error.message, fallback);
   }
 
   if (payload?.message) {
-    return payload.message;
+    return sanitizeUserVisibleApiMessage(payload.message, fallback);
   }
 
   if (typeof payload?.error === "string") {
-    return payload.error;
+    return sanitizeUserVisibleApiMessage(payload.error, fallback);
   }
 
-  return fallback;
+  return sanitizeUserVisibleApiMessage(fallback, "请求失败，请稍后重试。");
+}
+
+function sanitizeUserVisibleApiMessage(message: string, fallback = "请求失败，请稍后重试。") {
+  const normalized = message.trim();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (/^\s*<!doctype html|^\s*<html/i.test(normalized)) {
+    return "服务暂时不可用，请稍后再试。";
+  }
+
+  if (/\b(FEATURE_DISABLED|UPSTREAM_UNAVAILABLE)\b/i.test(normalized)) {
+    return fallback;
+  }
+
+  const cleaned = normalized
+    .replace(/（endpoint:.*?）/gi, "")
+    .replace(/\s*endpoint\s*[:=].*$/gim, "")
+    .replace(/\s*status\s*[:=]\s*\d+.*$/gim, "")
+    .replace(/\s*content-type\s*[:=].*$/gim, "")
+    .replace(/\s*stack\s*[:=][\s\S]*$/i, "")
+    .replace(/\b(content-type|endpoint|FEATURE_DISABLED|UPSTREAM_UNAVAILABLE|sourceApp|model_select|model_reason)\b/gi, "")
+    .replace(/\bACTION_[A-Z0-9_]+\b/gi, "推荐动作")
+    .replace(/\bV(?:6|7|8|9)(?:\.\d+)?\b/gi, "")
+    .replace(/\bprompt\.[a-z0-9_.-]+\b/gi, "提示策略")
+    .replace(/\bchunk(?:[_-]?id)?\b/gi, "知识片段")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+  return cleaned || fallback;
 }
 
 async function readApiResponse<T>(response: Response): Promise<T> {
@@ -249,29 +281,41 @@ function getActionApiFailureMessage<T>(
   const code = payload?.code || (typeof payload?.error === "object" ? payload.error.code : undefined);
   const apiMessage = getApiErrorMessage(payload, "").trim();
   const htmlResponse = contentType.toLowerCase().includes("text/html") || /^\s*<!doctype html|^\s*<html/i.test(rawText);
-  const suffix = `（endpoint: ${endpoint}，status: ${response.status}，content-type: ${contentType}）`;
+
+  console.warn("[chat-ui] conversation action API failed", {
+    endpoint,
+    status: response.status,
+    contentType,
+    code,
+    message: apiMessage || null,
+    bodyPreview: rawText.slice(0, 240)
+  });
 
   if (htmlResponse) {
-    return `接口返回 HTML，可能命中了页面路由或服务端崩溃页。${suffix}`;
+    return "服务暂时不可用，请稍后再试。";
   }
 
   if (response.status === 401) {
-    return `请重新登录后再操作。${suffix}`;
+    return "登录状态已失效，请重新登录后再操作。";
   }
 
   if (response.status === 403) {
-    return `${apiMessage || "当前账号无权限，或超级管理员未开启该会话功能。"}${code ? ` code: ${code}` : ""}${suffix}`;
+    if (code === "FEATURE_DISABLED") {
+      return "当前会话功能暂时无法使用，请稍后再试。";
+    }
+
+    return apiMessage || "当前账号没有权限执行该操作。";
   }
 
   if (response.status === 404) {
-    return `后台未开启该接口。${suffix}`;
+    return "当前会话功能暂时无法使用，请稍后再试。";
   }
 
   if (response.status >= 500) {
-    return `${apiMessage || "服务器错误，请稍后重试。"}${code ? ` code: ${code}` : ""}${suffix}`;
+    return apiMessage || "服务器暂时不可用，请稍后再试。";
   }
 
-  return `${apiMessage || rawText || "请求失败，请稍后重试。"}${code ? ` code: ${code}` : ""}${suffix}`;
+  return apiMessage || rawText || "请求失败，请稍后重试。";
 }
 
 async function readConversationActionResponse<T extends Record<string, unknown>>(
@@ -291,7 +335,11 @@ async function readConversationActionResponse<T extends Record<string, unknown>>
   const data = payload.data ?? (topLevelPayload as T | null);
 
   if (!data) {
-    throw new Error(`接口返回字段缺失：data 为空。（endpoint: ${endpoint}，status: ${response.status}）`);
+    console.warn("[chat-ui] conversation action response data is empty", {
+      endpoint,
+      status: response.status
+    });
+    throw new Error("接口返回数据为空，请稍后再试。");
   }
 
   return data;
@@ -891,8 +939,9 @@ export async function fetchQuickActionCategories() {
   return fetchCategoryEndpoint("/api/user/quick-actions");
 }
 
-export async function fetchCurrentChatUser() {
-  const response = await fetch("/api/auth/me", {
+export async function fetchCurrentChatUser(options: { cacheBust?: boolean } = {}) {
+  const endpoint = options.cacheBust ? `/api/auth/me?ts=${Date.now()}` : "/api/auth/me";
+  const response = await fetch(endpoint, {
     method: "GET"
   });
 

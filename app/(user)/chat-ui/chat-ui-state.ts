@@ -391,8 +391,18 @@ export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undef
   return `chat-ui:user-avatar:${identity}`;
 }
 
+function withAvatarCacheVersion(url: string | null, version: string | null) {
+  if (!url || !version || url.startsWith("data:") || url.startsWith("blob:")) {
+    return url;
+  }
+
+  const separator = url.includes("?") ? "&" : "?";
+
+  return `${url}${separator}avatar_v=${encodeURIComponent(version)}`;
+}
+
 export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {
-  return (
+  const avatarUrl = (
     cleanText(user?.avatar_url) ||
     cleanText(user?.avatarUrl) ||
     cleanText(user?.avatar) ||
@@ -401,6 +411,9 @@ export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undef
     cleanText(user?.image) ||
     null
   );
+  const avatarVersion = cleanText(user?.avatar_updated_at) || cleanText(user?.avatarUpdatedAt) || null;
+
+  return withAvatarCacheVersion(avatarUrl, avatarVersion);
 }
 
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {

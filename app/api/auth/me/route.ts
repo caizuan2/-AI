@@ -16,6 +16,8 @@ interface MeResponse {
     name: string;
     avatar_url: string | null;
     avatarUrl: string | null;
+    avatar_updated_at: string | null;
+    avatarUpdatedAt: string | null;
     licenseActivated: boolean;
     isSuperAdmin: boolean;
     role: EntryRole;
@@ -31,6 +33,7 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, reque
   const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
   const avatar = await readUserAvatarProfile(user.id, request);
   const avatarUrl = avatar?.avatar_url ?? null;
+  const avatarUpdatedAt = avatar?.updated_at ?? null;
 
   return {
     user: {
@@ -40,6 +43,8 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, reque
       name: user.name,
       avatar_url: avatarUrl,
       avatarUrl,
+      avatar_updated_at: avatarUpdatedAt,
+      avatarUpdatedAt,
       licenseActivated,
       isSuperAdmin,
       role,
