@@ -209,10 +209,6 @@ function getFinalizedAnswer(message: ChatMessageView): FinalizedAnswerView | nul
   };
 }
 
-function getCopyText(finalizedAnswer: FinalizedAnswerView | null) {
-  return sanitizeVisibleText(sanitizeDisplayText(finalizedAnswer?.customerReply ?? ""));
-}
-
 function getFinalAnswer(finalizedAnswer: FinalizedAnswerView | null) {
   return finalizedAnswer ? sanitizeVisibleText(formatFinalizedAnswerForDisplay(finalizedAnswer)) : "";
 }
@@ -238,33 +234,6 @@ function markdownComponents() {
       <code className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.92em] text-slate-800">{children}</code>
     )
   };
-}
-
-function CopyAnswerButton({ text }: { text: string }) {
-  const [copied, setCopied] = React.useState(false);
-  const canCopy = text.trim().length > 0;
-
-  async function handleCopy() {
-    if (!canCopy || !navigator.clipboard) {
-      return;
-    }
-
-    await navigator.clipboard.writeText(text);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1400);
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      disabled={!canCopy}
-      className="focus-ring inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
-    >
-      {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-      {copied ? "已复制" : "复制答案"}
-    </button>
-  );
 }
 
 function ThinkingPanel({
@@ -1183,7 +1152,6 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
   const isStreaming = streaming || Boolean(message.pending);
   const finalizedAnswer = getFinalizedAnswer(message);
   const finalAnswer = getFinalAnswer(finalizedAnswer);
-  const copyText = getCopyText(finalizedAnswer);
   const businessSchemaGuard = getRecord(
     message.metadata?.businessSchemaGuard ?? message.metadata?.business_schema_guard
   );
@@ -1197,20 +1165,18 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
   const messageTime = formatMessageTime(message.created_at);
 
   return (
-    <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-4 text-slate-900 shadow-sm">
-      <header className="flex flex-col gap-3 border-b border-slate-100 pb-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm">
+      <header className="flex items-center justify-between gap-3 px-1 pb-2">
         <div className="min-w-0">
           <div className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
             <ClipboardList className="h-3.5 w-3.5 text-blue-600" aria-hidden="true" />
             小董AI
           </div>
-          <h3 className="mt-2 text-base font-semibold text-slate-950">小董AI处理建议</h3>
-          {messageTime ? <p className="mt-1 text-xs text-slate-400">{messageTime}</p> : null}
         </div>
-        <CopyAnswerButton text={copyText} />
+        {messageTime ? <p className="shrink-0 text-xs text-slate-400">{messageTime}</p> : null}
       </header>
 
-      <div className="mt-4 space-y-4">
+      <div className="mt-1 space-y-4">
         <ProductAnswerView
           answer={finalizedAnswer}
           sources={message.sources}
