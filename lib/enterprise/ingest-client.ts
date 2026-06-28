@@ -30,6 +30,12 @@ import type {
 import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import {
+  isSuccessfulIngestResponse,
+  mergeIngestResponsePayload,
+  normalizeIngestErrorPayload,
+  normalizeIngestSuccessPayload
+} from "@/lib/enterprise/ingest-response-normalizer";
 import { GPTOSRendererV3, processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import { enrichDraftWithKnowledgeFactoryV5 } from "@/lib/enterprise/knowledge-factory-v5";
 import {
@@ -410,68 +416,10 @@ function isGptFailureResponse(value: unknown): value is GptFailureResponse {
   return isPlainRecord(value) && value.ok === false;
 }
 
-const gptResponseTopLevelFields = [
-  "jobId",
-  "trainingRecord",
-  "records",
-  "provider",
-  "model",
-  "requestedModel",
-  "actualModel",
-  "responseId",
-  "proofId",
-  "createdAt",
-  "usage",
-  "gptProof",
-  "modelDisplayName",
-  "modelMode",
-  "fallback",
-  "fallbackUsed",
-  "selectedModelLabel",
-  "content",
-  "answer",
-  "reply",
-  "visibleReply",
-  "message",
-  "replyMarkdown",
-  "knowledgeDraft",
-  "knowledgeLoop",
-  "evolution",
-  "storeDecision",
-  "reusableKnowledgeUnits",
-  "reviewRequiredUnits",
-  "autoStoreCandidates",
-  "memory",
-  "memoryPlan",
-  "knowledgeIntelligence",
-  "ragOptimization",
-  "metadata",
-  "userClientCallPlan",
-  "sourceFiles",
-  "suggestedQuestions",
-  "saveRecommendation",
-  "diagnostics",
-  "gptOS",
-  "autonomousResult",
-  "structured",
-  "sync"
-] as const;
-
 function unwrapGptIngestResponse(payload: unknown): GptIngestResponse | null {
-  if (!isPlainRecord(payload)) {
-    return null;
-  }
+  const merged = mergeIngestResponsePayload(payload);
 
-  const nested = isPlainRecord(payload.data) ? payload.data : {};
-  const merged: Record<string, unknown> = { ...nested };
-
-  for (const field of gptResponseTopLevelFields) {
-    if (payload[field] !== undefined) {
-      merged[field] = payload[field];
-    }
-  }
-
-  return Object.keys(merged).length > 0 ? merged as unknown as GptIngestResponse : null;
+  return merged ? merged as unknown as GptIngestResponse : null;
 }
 
 function readGptResponseContent(data: GptIngestResponse) {
@@ -1088,8 +1036,14 @@ export async function sendCoreIngest(input: {
       })
     });
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
+    const normalizedSuccess = normalizeIngestSuccessPayload(payload);
+    const data = normalizedSuccess?.raw
+      ? normalizedSuccess.raw as unknown as GptIngestResponse
+      : unwrapGptIngestResponse(payload);
+    const replyContent = normalizedSuccess?.replyText || (data ? readGptResponseContent(data) : "");
+    const isSuccess = isSuccessfulIngestResponse(response.ok, payload);
 
-    if (isGptFailureResponse(payload)) {
+    if (isGptFailureResponse(payload) && !isSuccess) {
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
         status: response.status,
@@ -1102,43 +1056,35 @@ export async function sendCoreIngest(input: {
       throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
 
-    const data = unwrapGptIngestResponse(payload);
-    const replyContent = data ? readGptResponseContent(data) : "";
-    const payloadRecord = isPlainRecord(payload) ? payload : null;
-    const isSuccess = response.ok
-      && (
-        payloadRecord?.ok === true
-        || payloadRecord?.success === true
-        || Boolean(replyContent)
-      );
-
     if (!isSuccess || !data) {
+      const normalizedError = normalizeIngestErrorPayload(response, payload);
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
-        status: response.status,
-        errorCode: payloadRecord?.errorCode ?? (isPlainRecord(payloadRecord?.error) ? payloadRecord.error.code : undefined),
-        message: payloadRecord?.message ?? (isPlainRecord(payloadRecord?.error) ? payloadRecord.error.message : undefined),
-        provider: payloadRecord?.provider,
-        model: payloadRecord?.model,
+        status: normalizedError.status,
+        errorCode: normalizedError.errorCode,
+        message: normalizedError.message,
+        provider: normalizedError.provider,
+        actualModel: normalizedError.actualModel,
         requestId: runtimeResult.requestId
       });
       throw new Error(getFriendlyIngestError(response, payload));
     }
 
-    if (!replyContent) {
-      console.error("[admin-ingest:gpt:error]", {
-        url: "/api/admin/kb/ingest/gpt",
-        status: response.status,
-        errorCode: "EMPTY_REPLY",
-        message: "GPT ingest response succeeded without visible reply content.",
-        provider: data.provider,
-        model: data.model,
-        requestId: runtimeResult.requestId
-      });
-      throw new Error("AI生成完成但没有返回可展示正文，请重新生成。");
-    }
+    const visibleReply = replyContent
+      || readString(data.structured?.summary)
+      || readString(data.structured?.answer)
+      || readString(data.knowledgeDraft?.summary)
+      || readString(data.knowledgeDraft?.standardAnswer)
+      || "AI已完成知识整理，训练记录已更新。";
 
-    const styledReply = applyExpressionLayer(replyContent, selectedModelLabel, "admin_ingest_model_reply");
+    console.info("[admin-ingest:gpt:success]", {
+      provider: normalizedSuccess?.provider ?? data.provider,
+      actualModel: normalizedSuccess?.actualModel ?? data.actualModel ?? data.model,
+      contentLength: visibleReply.length,
+      requestId: runtimeResult.requestId
+    });
+
+    const styledReply = applyExpressionLayer(visibleReply, selectedModelLabel, "admin_ingest_model_reply");
     const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
       query: input.text,
       baseResponse: styledReply,

@@ -1248,6 +1248,8 @@ export function IngestModeToggle() {
     setInput("");
     setUploadedFiles([]);
 
+    let successRendered = false;
+
     try {
       let outgoingAttachments = draftAttachments;
 
@@ -1354,6 +1356,13 @@ export function IngestModeToggle() {
           status: "streaming"
         }
       ]);
+      successRendered = true;
+      console.info("[admin-ingest:gpt:success]", {
+        provider: result.provider,
+        actualModel: result.actualModel ?? result.model,
+        contentLength: (result.replyMarkdown || result.draft.summary || result.message || "").length,
+        requestId
+      });
       pushNotification({
         type: "success",
         title: "最近投喂完成",
@@ -1368,6 +1377,12 @@ export function IngestModeToggle() {
       };
     } catch (error) {
       if (!isCurrentRequest()) {
+        return null;
+      }
+
+      if (successRendered) {
+        setGptFallbackToast(null);
+        setErrorMessage("");
         return null;
       }
 
