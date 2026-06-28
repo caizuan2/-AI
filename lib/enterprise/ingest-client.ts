@@ -16,6 +16,7 @@ import {
 } from "@/lib/enterprise/gpt-model-options";
 import {
   getIngestModelOptionByLabel,
+  normalizeIngestModelSelection,
   type IngestModelProvider
 } from "@/lib/enterprise/ingest-model-options";
 import type {
@@ -31,9 +32,8 @@ import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-cal
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import {
-  isSuccessfulIngestResponse,
-  mergeIngestResponsePayload,
   normalizeIngestErrorPayload,
+  normalizeIngestResult,
   normalizeIngestSuccessPayload
 } from "@/lib/enterprise/ingest-response-normalizer";
 import { GPTOSRendererV3, processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
@@ -301,8 +301,28 @@ export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<
     payload?.error?.code
   ].filter(Boolean).join(" ").toLowerCase();
 
-  if (response.status === 401 || raw.includes("unauthorized") || raw.includes("login") || raw.includes("登录")) {
-    return "当前为本地预览模式，登录后将同步企业知识库。";
+  if (
+    response.status === 401
+    || raw.includes("auth_required")
+    || raw.includes("invalid_session")
+    || raw.includes("unauthorized")
+    || raw.includes("login")
+    || raw.includes("请先登录")
+    || raw.includes("重新登录")
+    || raw.includes("登录状态")
+  ) {
+    return "请重新登录后再试。";
+  }
+
+  if (
+    response.status === 403
+    || raw.includes("forbidden")
+    || raw.includes("no_ingest_access")
+    || raw.includes("license_app_type_mismatch")
+    || raw.includes("没有权限")
+    || raw.includes("不能访问")
+  ) {
+    return "当前账号没有投喂权限，请确认卡密或账号权限。";
   }
 
   if (raw.includes("license") || raw.includes("卡密") || raw.includes("授权") || raw.includes("expired")) {
@@ -414,12 +434,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function isGptFailureResponse(value: unknown): value is GptFailureResponse {
   return isPlainRecord(value) && value.ok === false;
-}
-
-function unwrapGptIngestResponse(payload: unknown): GptIngestResponse | null {
-  const merged = mergeIngestResponsePayload(payload);
-
-  return merged ? merged as unknown as GptIngestResponse : null;
 }
 
 function readGptResponseContent(data: GptIngestResponse) {
@@ -955,11 +969,17 @@ export async function sendCoreIngest(input: {
   streaming?: IngestStreamingOptions;
 }) {
   const platform = input.platform ?? "web";
-  const selectedModelOption = getIngestModelOptionByLabel(input.selectedModelLabel ?? input.model);
-  const modelProvider = input.modelProvider ?? selectedModelOption.provider;
+  const normalizedModelSelection = normalizeIngestModelSelection({
+    provider: input.modelProvider,
+    selectedModelLabel: input.selectedModelLabel ?? input.model,
+    modelDisplayName: input.model,
+    preferredModel: input.model
+  });
+  const selectedModelOption = normalizedModelSelection.option;
+  const modelProvider = normalizedModelSelection.provider;
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
-  const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
-  const preferredModel = modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel;
+  const selectedModelLabel = normalizedModelSelection.label;
+  const preferredModel = normalizedModelSelection.actualModel;
   const runtimeOrchestrator = new AIRuntimeOrchestrator();
   const runtimeResult = runtimeOrchestrator.handleRequest(input.text, {
     source: "admin_ingest",
@@ -982,16 +1002,34 @@ export async function sendCoreIngest(input: {
     selectedModelLabel,
     preferredModel
   });
+  const healthState = normalizeIngestResult(health.ok ? 200 : 503, health);
 
-  if (!health.ok && !health.apiKeyConfigured) {
-    throw new Error(health.message || (modelProvider === "deepseek"
-      ? "DeepSeek-V4-Pro 未配置 API Key，请配置 DEEPSEEK_API_KEY 或切换 GPT-5.5。"
-      : "未配置 OpenAI API Key，无法调用 GPT-5.5。"));
+  if (healthState.type === "auth_failure") {
+    console.warn("[admin-ingest:auth-access:health-warning]", {
+      status: healthState.status,
+      errorCode: healthState.errorCode,
+      provider: health.provider,
+      actualModel: health.actualModel ?? health.model,
+      requestId: runtimeResult.requestId,
+      message: healthState.message
+    });
+  }
+
+  if (healthState.type === "model_health_failure") {
+    console.warn("[admin-ingest:model-health:warning]", {
+      status: healthState.status,
+      errorCode: healthState.errorCode,
+      provider: health.provider,
+      actualModel: health.actualModel ?? health.model,
+      requestId: runtimeResult.requestId,
+      message: healthState.message
+    });
   }
 
   try {
     const response = await fetch("/api/admin/kb/ingest/gpt", {
       method: "POST",
+      credentials: "include",
       signal: input.streaming?.signal,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1006,7 +1044,7 @@ export async function sendCoreIngest(input: {
         agentDescription: input.agent.description,
         targetUser: input.agent.role,
         category: input.category,
-        model: input.model,
+        model: selectedModelOption.label,
         tenantId: input.tenantId ?? null,
         userId: input.userId ?? null,
         attachments: input.attachments ?? [],
@@ -1036,14 +1074,33 @@ export async function sendCoreIngest(input: {
       })
     });
     const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
-    const normalizedSuccess = normalizeIngestSuccessPayload(payload);
-    const data = normalizedSuccess?.raw
-      ? normalizedSuccess.raw as unknown as GptIngestResponse
-      : unwrapGptIngestResponse(payload);
-    const replyContent = normalizedSuccess?.replyText || (data ? readGptResponseContent(data) : "");
-    const isSuccess = isSuccessfulIngestResponse(response.ok, payload);
+    const ingestResult = normalizeIngestResult(response, payload);
 
-    if (isGptFailureResponse(payload) && !isSuccess) {
+    if (ingestResult.type === "auth_failure") {
+      console.warn("[admin-ingest:auth-access:error]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: ingestResult.status,
+        errorCode: ingestResult.errorCode,
+        message: ingestResult.message,
+        requestId: runtimeResult.requestId
+      });
+      throw new Error(`${ingestResult.errorCode ?? "AUTH_REQUIRED"}: ${ingestResult.message}`);
+    }
+
+    if (ingestResult.type === "model_health_failure") {
+      console.warn("[admin-ingest:model-health:warning]", {
+        url: "/api/admin/kb/ingest/gpt",
+        status: ingestResult.status,
+        errorCode: ingestResult.errorCode,
+        message: ingestResult.message,
+        provider: ingestResult.provider,
+        actualModel: ingestResult.actualModel,
+        requestId: runtimeResult.requestId
+      });
+      throw new Error(`${ingestResult.errorCode ?? "MODEL_HEALTH_FAILURE"}: ${ingestResult.message}`);
+    }
+
+    if (isGptFailureResponse(payload) && ingestResult.type !== "success") {
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
         status: response.status,
@@ -1056,7 +1113,7 @@ export async function sendCoreIngest(input: {
       throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
 
-    if (!isSuccess || !data) {
+    if (ingestResult.type !== "success" || !ingestResult.raw) {
       const normalizedError = normalizeIngestErrorPayload(response, payload);
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
@@ -1070,6 +1127,9 @@ export async function sendCoreIngest(input: {
       throw new Error(getFriendlyIngestError(response, payload));
     }
 
+    const normalizedSuccess = normalizeIngestSuccessPayload(payload);
+    const data = ingestResult.raw as unknown as GptIngestResponse;
+    const replyContent = ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data);
     const visibleReply = replyContent
       || readString(data.structured?.summary)
       || readString(data.structured?.answer)
@@ -1245,6 +1305,7 @@ export async function saveKnowledgeDraft(input: {
   try {
     const response = await fetch("/api/admin/kb/save", {
       method: "POST",
+      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         jobId: input.draft.jobId ?? null,
@@ -1401,6 +1462,7 @@ export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<
 
   const response = await fetch("/api/admin/kb/ingest/files/parse", {
     method: "POST",
+    credentials: "include",
     body: formData
   });
   const payload = await response.json().catch(() => null) as ParseFileResponse | null;
@@ -1444,13 +1506,20 @@ export async function sendUrlIngestPreview(input: {
   platform?: IngestPlatform;
 }) {
   const platform = input.platform ?? "web";
-  const selectedModelOption = getIngestModelOptionByLabel(input.selectedModelLabel ?? input.model);
-  const modelProvider = input.modelProvider ?? selectedModelOption.provider;
+  const normalizedModelSelection = normalizeIngestModelSelection({
+    provider: input.modelProvider,
+    selectedModelLabel: input.selectedModelLabel ?? input.model,
+    modelDisplayName: input.model,
+    preferredModel: input.model
+  });
+  const selectedModelOption = normalizedModelSelection.option;
+  const modelProvider = normalizedModelSelection.provider;
   const gptSelection = getGptModelSelectionByDisplayName(modelProvider === "openai" ? input.selectedModelLabel ?? input.model : "GPT-5.5 超高");
-  const selectedModelLabel = input.selectedModelLabel ?? selectedModelOption.label;
+  const selectedModelLabel = normalizedModelSelection.label;
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const response = await fetch("/api/admin/kb/ingest/url", {
     method: "POST",
+    credentials: "include",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       input: input.url,
@@ -1464,14 +1533,14 @@ export async function sendUrlIngestPreview(input: {
       agentName: input.agent.name,
       expertName: input.agent.expertId ? input.agent.name : null,
       category: input.category,
-      model: input.model,
+      model: selectedModelOption.label,
       tenantId: input.tenantId ?? null,
       userId: input.userId ?? null,
       platform,
       syncTarget: [...ingestSyncTarget],
       modelProvider,
       modelMode: "highest",
-      preferredModel: modelProvider === "openai" ? gptSelection.apiModel : selectedModelOption.defaultModel,
+      preferredModel: normalizedModelSelection.actualModel,
       gptTier: modelProvider === "openai" ? input.gptTier ?? gptSelection.tier : undefined,
       gptTierLabel: modelProvider === "openai" ? input.gptTierLabel ?? gptSelection.tierLabel : undefined,
       gptVersion: modelProvider === "openai" ? input.gptVersion ?? gptSelection.version : undefined,
@@ -1523,7 +1592,7 @@ export async function sendUrlIngestPreview(input: {
 
 export async function checkLicenseStatus(): Promise<IngestConnectionStatus> {
   try {
-    const response = await fetch("/api/license/status", { cache: "no-store" });
+    const response = await fetch("/api/license/status", { cache: "no-store", credentials: "include" });
     const payload = await response.json().catch(() => null) as ApiEnvelope<{
       active?: boolean;
       status?: string;
@@ -1587,8 +1656,32 @@ export async function checkGptHealthStatus(input: {
   const suffix = params.toString() ? `?${params.toString()}` : "";
 
   try {
-    const response = await fetch(`/api/admin/kb/ingest/models/health${suffix}`, { cache: "no-store" });
+    const response = await fetch(`/api/admin/kb/ingest/models/health${suffix}`, { cache: "no-store", credentials: "include" });
     const payload = await response.json().catch(() => null) as IngestGptHealthStatus | ApiEnvelope<IngestGptHealthStatus> | null;
+
+    if (response.status === 401 || response.status === 403) {
+      const message = response.status === 401
+        ? "请重新登录后再试。"
+        : "当前账号没有投喂权限，请确认卡密或账号权限。";
+
+      return {
+        ok: false,
+        configured: false,
+        provider,
+        baseUrlConfigured: true,
+        baseUrlSource: "default",
+        modelConfigured: true,
+        modelSource: "default",
+        apiKeyConfigured: false,
+        selectedModelLabel: input.selectedModelLabel ?? selectedOption.label,
+        model: input.preferredModel ?? selectedOption.defaultModel,
+        mode: "highest",
+        message,
+        diagnostics: [`auth:${response.status === 401 ? "AUTH_REQUIRED" : "NO_INGEST_ACCESS"}`],
+        checkedAt: new Date().toISOString(),
+        requestTested: false
+      };
+    }
 
     if (isPlainRecord(payload) && typeof payload.provider === "string") {
       return payload as IngestGptHealthStatus;

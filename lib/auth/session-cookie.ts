@@ -22,7 +22,48 @@ function parseCookieSecureFromUrl(value?: string | null): boolean | null {
   return null;
 }
 
+function getRequestHost(request?: Request) {
+  const headerHost = request?.headers.get("x-forwarded-host")?.split(",")[0]?.trim()
+    || request?.headers.get("host")?.trim()
+    || "";
+
+  if (headerHost) {
+    return headerHost;
+  }
+
+  try {
+    return request ? new URL(request.url).host : "";
+  } catch {
+    return "";
+  }
+}
+
+function stripPort(host: string) {
+  const normalized = host.trim().toLowerCase();
+
+  if (normalized.startsWith("[") && normalized.includes("]")) {
+    return normalized.slice(1, normalized.indexOf("]"));
+  }
+
+  return normalized.split(":")[0] ?? normalized;
+}
+
+function isLocalOrIpHost(host: string) {
+  const hostname = stripPort(host);
+
+  return hostname === "localhost"
+    || hostname === "127.0.0.1"
+    || hostname === "::1"
+    || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+}
+
 export function resolveSessionCookieSecure(request?: Request): boolean {
+  const host = getRequestHost(request);
+
+  if (isLocalOrIpHost(host)) {
+    return false;
+  }
+
   const forwardedProto = request?.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
 
   if (forwardedProto === "https") {

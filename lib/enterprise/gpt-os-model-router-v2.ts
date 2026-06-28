@@ -158,10 +158,18 @@ export function routeModel(ctx: ModelRoutingContext): ModelType {
 }
 
 export function buildEnterpriseFallbackChain(primary: ModelType): ModelType[] {
-  const fallbackOrder: ModelType[] = ["deepseek-pro", "qwen", "deepseek-flash", "openai"];
+  const fallbackOrder: ModelType[] = ["deepseek-pro", "qwen", "kimi", "deepseek-flash"];
 
   if (primary === "kimi") {
-    return ["kimi", ...fallbackOrder];
+    return ["kimi", "deepseek-pro", "qwen", "deepseek-flash"];
+  }
+
+  if (primary === "openai") {
+    return fallbackOrder;
+  }
+
+  if (primary === "deepseek-flash") {
+    return ["deepseek-flash", "qwen", "kimi"];
   }
 
   const startIndex = fallbackOrder.indexOf(primary);

@@ -78,6 +78,7 @@ import {
 import {
   DEFAULT_INGEST_MODEL_OPTION,
   getIngestModelOptionByLabel,
+  normalizeIngestModelSelection,
   type IngestModelProvider
 } from "@/lib/enterprise/ingest-model-options";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
@@ -113,9 +114,8 @@ import {
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import {
   extractIngestReplyText,
-  isSuccessfulIngestResponse,
-  mergeIngestResponsePayload,
   normalizeIngestErrorPayload,
+  normalizeIngestResult,
   normalizeIngestSuccessPayload
 } from "@/lib/enterprise/ingest-response-normalizer";
 import {
@@ -413,12 +413,6 @@ async function readApiData<T>(response: Response): Promise<T> {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function unwrapAdminGptIngestResponse(payload: unknown): AdminGptIngestResponse | null {
-  const merged = mergeIngestResponsePayload(payload);
-
-  return merged ? merged as unknown as AdminGptIngestResponse : null;
 }
 
 function readGptResponseContent(data: AdminGptIngestResponse) {
@@ -905,7 +899,10 @@ export function IngestChatGPTShell({
   const noticeMessage = controlledNoticeMessage ?? internalNoticeMessage;
   const setErrorMessage = onErrorChange ?? (() => undefined);
   const setNoticeMessage = onNoticeChange ?? setInternalNoticeMessage;
-  const selectedModelLabel = selectedModel;
+  const normalizedModelSelection = useMemo(() => normalizeIngestModelSelection({
+    selectedModelLabel: selectedModel
+  }), [selectedModel]);
+  const selectedModelLabel = normalizedModelSelection.label;
   const autonomousEnabled = controlledAutonomousEnabled ?? internalAutonomousEnabled;
   const setAutonomousEnabled = onAutonomousEnabledChange ?? setInternalAutonomousEnabled;
 
@@ -1328,7 +1325,7 @@ export function IngestChatGPTShell({
 
     async function loadRecords() {
       try {
-        const response = await fetch("/api/admin/kb/ingest", { cache: "no-store" });
+        const response = await fetch("/api/admin/kb/ingest", { cache: "no-store", credentials: "include" });
         const data = await readApiData<{ records: AdminTrainingRecordResponse[] }>(response);
 
         if (!cancelled && data.records.length > 0) {
@@ -1564,6 +1561,7 @@ export function IngestChatGPTShell({
       const timeout = window.setTimeout(() => abortController.abort(), GPT_CLIENT_TIMEOUT_MS);
       const response = await fetch("/api/admin/kb/ingest/gpt", {
         method: "POST",
+        credentials: "include",
         signal: abortController.signal,
         headers: {
           "Content-Type": "application/json"
@@ -1596,14 +1594,9 @@ export function IngestChatGPTShell({
         })
       }).finally(() => window.clearTimeout(timeout));
       const payload = await response.json().catch(() => null) as ApiEnvelope<AdminGptIngestResponse> | null;
-      const normalizedSuccess = normalizeIngestSuccessPayload(payload);
-      const data = normalizedSuccess?.raw
-        ? normalizedSuccess.raw as unknown as AdminGptIngestResponse
-        : unwrapAdminGptIngestResponse(payload);
-      const replyContent = normalizedSuccess?.replyText || (data ? readGptResponseContent(data) : "");
-      const isSuccess = isSuccessfulIngestResponse(response.ok, payload);
+      const ingestResult = normalizeIngestResult(response, payload);
 
-      if (!isSuccess || !data) {
+      if (ingestResult.type !== "success" || !ingestResult.raw) {
         const normalizedError = normalizeIngestErrorPayload(response, payload);
         console.error("[admin-ingest:gpt:error]", {
           url: "/api/admin/kb/ingest/gpt",
@@ -1612,11 +1605,14 @@ export function IngestChatGPTShell({
           message: normalizedError.message,
           provider: normalizedError.provider,
           actualModel: normalizedError.actualModel,
-          requestId: data?.responseId ?? normalizedError.requestId
+          requestId: normalizedError.requestId
         });
-        throw new Error(normalizedError.message || "请求失败，请稍后重试。");
+        throw new Error(ingestResult.message || normalizedError.message || "请求失败，请稍后重试。");
       }
 
+      const normalizedSuccess = normalizeIngestSuccessPayload(payload);
+      const data = ingestResult.raw as unknown as AdminGptIngestResponse;
+      const replyContent = ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data);
       const visibleReply = replyContent
         || readString(data.structured?.summary)
         || readString(data.structured?.answer)
@@ -1775,6 +1771,7 @@ export function IngestChatGPTShell({
     try {
       const response = await fetch("/api/admin/kb/save", {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json"
         },

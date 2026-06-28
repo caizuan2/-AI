@@ -1,13 +1,17 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { getCurrentUser } from "@/lib/auth";
+import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 import { toAppError } from "@/lib/errors";
 import { getHighestRole, type AppRole } from "@/lib/rbac/roles";
+import { cookies } from "next/headers";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request) {
+  const hasSessionCookie = Boolean(cookies().get(SESSION_COOKIE_NAME)?.value);
+
   try {
     const user = await getCurrentUser();
     const authUser = await toIngestAuthUser(user);
@@ -58,7 +62,9 @@ export async function GET(request: Request) {
         redirectTarget: "/ingest/login",
         role: null,
         roles: [],
-        user: null
+        user: null,
+        errorCode: hasSessionCookie ? "INVALID_SESSION" : "AUTH_REQUIRED",
+        message: hasSessionCookie ? "登录状态已失效，请重新登录。" : "请先登录后再继续。"
       });
     }
 

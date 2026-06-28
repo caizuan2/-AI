@@ -1,4 +1,5 @@
 import {
+  normalizeIngestModelProvider,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
@@ -140,10 +141,11 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
 }
 
 export async function callLLM(provider: LLMCallProvider, payload: LLMCallPayload) {
-  const config = getProviderConfig(provider, payload);
+  const effectiveProvider = normalizeIngestModelProvider(provider) as LLMCallProvider;
+  const config = getProviderConfig(effectiveProvider, payload);
 
   if (!config.apiKey) {
-    throw new Error(`${provider.toUpperCase()}_API_KEY_MISSING`);
+    throw new Error(`${effectiveProvider.toUpperCase()}_API_KEY_MISSING`);
   }
 
   const messages = payload.messages?.length
@@ -159,7 +161,7 @@ export async function callLLM(provider: LLMCallProvider, payload: LLMCallPayload
     : {
         model: config.model,
         messages,
-        temperature: resolveChatTemperature(provider, payload.temperature),
+        temperature: resolveChatTemperature(effectiveProvider, payload.temperature),
         max_tokens: payload.maxTokens ?? 3000,
         stream: false
       };
@@ -176,13 +178,13 @@ export async function callLLM(provider: LLMCallProvider, payload: LLMCallPayload
   const bodyText = await response.text();
 
   if (!response.ok) {
-    throw new Error(`${provider.toUpperCase()}_REQUEST_FAILED:${response.status}:${bodyText.slice(0, 200)}`);
+    throw new Error(`${effectiveProvider.toUpperCase()}_REQUEST_FAILED:${response.status}:${bodyText.slice(0, 200)}`);
   }
 
   try {
     return bodyText ? JSON.parse(bodyText) as unknown : null;
   } catch {
-    throw new LLMResponseNormalizationError(`${provider} returned invalid JSON`);
+    throw new LLMResponseNormalizationError(`${effectiveProvider} returned invalid JSON`);
   }
 }
 

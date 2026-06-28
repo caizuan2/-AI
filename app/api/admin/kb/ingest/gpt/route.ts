@@ -236,6 +236,7 @@ function buildModelDiagnostics(input: {
   routeDecision?: string;
   fallbackUsed: boolean;
   fallbackChain?: string[];
+  normalizedFrom?: string | null;
 }) {
   return {
     provider: input.provider,
@@ -243,7 +244,8 @@ function buildModelDiagnostics(input: {
     actualModel: input.actualModel,
     routeDecision: input.routeDecision ?? input.provider,
     fallbackUsed: input.fallbackUsed,
-    fallbackChain: input.fallbackChain ?? []
+    fallbackChain: input.fallbackChain ?? [],
+    normalizedFrom: input.normalizedFrom ?? null
   };
 }
 
@@ -516,7 +518,7 @@ function readRequest(body: unknown) {
     syncTarget: readSyncTarget(body.syncTarget),
     modelProvider: readString(body.modelProvider) || null,
     modelMode: readString(body.modelMode) || "highest",
-    preferredModel: readString(body.preferredModel) || "gpt-5.5",
+    preferredModel: readString(body.preferredModel) || null,
     gptTier: readString(body.gptTier) || null,
     gptTierLabel: readString(body.gptTierLabel) || null,
     gptVersion: readString(body.gptVersion) || null,
@@ -614,7 +616,8 @@ export async function POST(request: Request) {
       actualModel: result.actualModel || modelRuntime.actualModel,
       routeDecision,
       fallbackUsed: result.fallbackUsed,
-      fallbackChain: fallbackChainText ? fallbackChainText.split(">").filter(Boolean) : []
+      fallbackChain: fallbackChainText ? fallbackChainText.split(">").filter(Boolean) : [],
+      normalizedFrom: modelRuntime.normalizedFrom
     });
     const rawResult = {
       ...result,
@@ -669,6 +672,7 @@ export async function POST(request: Request) {
       provider: rawResult.provider,
       requestedModel: rawResult.requestedModel,
       actualModel: rawResult.actualModel,
+      normalizedFrom: modelRuntime.normalizedFrom,
       modelDiagnostics,
       responseId: rawResult.responseId,
       jobId: trainingLog?.job.id ?? null,
@@ -732,7 +736,8 @@ export async function POST(request: Request) {
       actualModel: modelRuntime.actualModel,
       routeDecision: modelOption.provider,
       fallbackUsed: true,
-      fallbackChain: []
+      fallbackChain: [],
+      normalizedFrom: modelRuntime.normalizedFrom
     });
 
     logGptRoute({
@@ -771,6 +776,7 @@ export async function POST(request: Request) {
         selectedModelLabel: modelRuntime.displayModelLabel,
         model: modelRuntime.actualModel,
         actualModel: modelRuntime.actualModel,
+        normalizedFrom: modelRuntime.normalizedFrom,
         modelDiagnostics,
         diagnostics: {
           ...safeDiagnostics,
@@ -796,6 +802,7 @@ export async function POST(request: Request) {
       selectedModelLabel: modelRuntime.displayModelLabel,
       model: modelRuntime.actualModel,
       actualModel: modelRuntime.actualModel,
+      normalizedFrom: modelRuntime.normalizedFrom,
       modelDiagnostics
     }, status);
   }
