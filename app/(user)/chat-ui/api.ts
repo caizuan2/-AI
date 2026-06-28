@@ -942,7 +942,8 @@ export async function fetchQuickActionCategories() {
 export async function fetchCurrentChatUser(options: { cacheBust?: boolean } = {}) {
   const endpoint = options.cacheBust ? `/api/auth/me?ts=${Date.now()}` : "/api/auth/me";
   const response = await fetch(endpoint, {
-    method: "GET"
+    method: "GET",
+    credentials: "include"
   });
 
   return readApiResponse<CurrentUserResponse>(response);
@@ -992,6 +993,7 @@ export async function updateCurrentUserAvatar(file: File) {
 
   const response = await fetch("/api/auth/avatar", {
     method: "POST",
+    credentials: "include",
     body: formData
   });
 
