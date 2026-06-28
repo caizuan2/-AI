@@ -734,6 +734,22 @@ export function IngestModeToggle() {
     return () => window.clearTimeout(timeout);
   }, [actionToast]);
 
+  useEffect(() => {
+    if (!gptFallbackToast || isParsing || errorMessage) {
+      return;
+    }
+
+    const hasRenderedAssistantReply = messages.some((message) => (
+      message.role === "assistant"
+      && message.content.trim()
+      && message.content.trim() !== "暂无历史内容"
+    ));
+
+    if (hasRenderedAssistantReply) {
+      setGptFallbackToast(null);
+    }
+  }, [errorMessage, gptFallbackToast, isParsing, messages]);
+
   function pushNotification(input: Pick<IngestNotification, "type" | "title" | "description">) {
     setNotifications((current) => [createNotification({
       ...input,
@@ -1602,13 +1618,13 @@ export function IngestModeToggle() {
       } else {
         const safeMessage = sanitizeGptOSUserMessage(nextStatus.message);
 
+        setGptFallbackToast(null);
         setNoticeMessage(safeMessage);
         showActionToast({
           type: "warning",
           title: "AI连接暂时不可用",
           description: safeMessage
         });
-        showGptFallbackToast(safeMessage);
       }
 
       pushNotification({
