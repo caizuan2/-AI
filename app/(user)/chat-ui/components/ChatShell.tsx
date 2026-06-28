@@ -1609,7 +1609,7 @@ export function ChatShell() {
 
     setLinkDialog((current) => current ? { ...current, copied: false } : current);
     setLinkCopyFailureSignal((value) => value + 1);
-    setActionError("复制失败，请手动选中链接复制。", "copy");
+    setActionError("浏览器限制了自动复制，链接已选中，请按 Ctrl+C 复制。", "copy");
   }
 
   function handleCloseLinkDialog() {

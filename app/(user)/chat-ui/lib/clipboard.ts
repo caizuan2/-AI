@@ -27,16 +27,6 @@ export async function safeCopyText(text: string, options: SafeCopyTextOptions = 
     return false;
   }
 
-  if (navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(value);
-      return true;
-    } catch (clipboardError) {
-      console.warn("[chat-ui] navigator clipboard copy failed", clipboardError);
-      // HTTP origins and strict browser permissions can reject the Clipboard API.
-    }
-  }
-
   if (tryCopySelectedElement(options.selectionElement)) {
     return true;
   }
@@ -55,11 +45,25 @@ export async function safeCopyText(text: string, options: SafeCopyTextOptions = 
     textArea.focus();
     textArea.select();
     textArea.setSelectionRange(0, textArea.value.length);
-    return document.execCommand("copy");
+
+    if (document.execCommand("copy")) {
+      return true;
+    }
   } catch (copyError) {
     console.warn("[chat-ui] textarea clipboard copy failed", copyError);
-    return false;
   } finally {
     document.body.removeChild(textArea);
   }
+
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(value);
+      return true;
+    } catch (clipboardError) {
+      console.warn("[chat-ui] navigator clipboard copy failed", clipboardError);
+      // HTTP origins and strict browser permissions can reject the Clipboard API.
+    }
+  }
+
+  return false;
 }

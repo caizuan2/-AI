@@ -114,6 +114,7 @@ export function LinkActionDialog({
   const [menuOpen, setMenuOpen] = React.useState(false);
   const inputRef = React.useRef<HTMLInputElement | null>(null);
   const menuRootRef = React.useRef<HTMLDivElement | null>(null);
+  const pointerCopyTriggeredRef = React.useRef(false);
 
   React.useEffect(() => {
     if (!open) {
@@ -243,7 +244,21 @@ export function LinkActionDialog({
           </button>
           <button
             type="button"
-            onClick={() => onCopy(inputRef.current)}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              inputRef.current?.focus();
+              inputRef.current?.select();
+              pointerCopyTriggeredRef.current = true;
+              onCopy(inputRef.current);
+            }}
+            onClick={() => {
+              if (pointerCopyTriggeredRef.current) {
+                pointerCopyTriggeredRef.current = false;
+                return;
+              }
+
+              onCopy(inputRef.current);
+            }}
             disabled={busy}
             className="focus-ring h-11 rounded-2xl bg-slate-950 px-5 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >

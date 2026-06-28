@@ -66,6 +66,7 @@ export function AvatarSettingsDialog({
   const [restoreDefault, setRestoreDefault] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [previewLoadFailed, setPreviewLoadFailed] = React.useState(false);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
 
   React.useEffect(() => {
@@ -75,8 +76,13 @@ export function AvatarSettingsDialog({
       setRestoreDefault(false);
       setSaving(false);
       setError(null);
+      setPreviewLoadFailed(false);
     }
   }, [avatarUrl, open]);
+
+  React.useEffect(() => {
+    setPreviewLoadFailed(false);
+  }, [previewUrl]);
 
   React.useEffect(() => {
     return () => {
@@ -113,6 +119,7 @@ export function AvatarSettingsDialog({
     setSelectedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
     setRestoreDefault(false);
+    setPreviewLoadFailed(false);
     setError(null);
   }
 
@@ -124,6 +131,7 @@ export function AvatarSettingsDialog({
     setPreviewUrl(null);
     setSelectedFile(null);
     setRestoreDefault(true);
+    setPreviewLoadFailed(false);
     setError(null);
   }
 
@@ -185,9 +193,14 @@ export function AvatarSettingsDialog({
 
         <div className="mt-5 flex flex-col items-center">
           <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-full bg-slate-100 text-3xl font-bold text-slate-500 ring-1 ring-slate-200">
-            {previewUrl ? (
+            {previewUrl && !previewLoadFailed ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="当前头像预览" className="h-full w-full object-cover" />
+              <img
+                src={previewUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                onError={() => setPreviewLoadFailed(true)}
+              />
             ) : (
               <span aria-label="当前头像预览">{userName.slice(0, 1) || "用"}</span>
             )}

@@ -396,9 +396,15 @@ function withAvatarCacheVersion(url: string | null, version: string | null) {
     return url;
   }
 
-  const separator = url.includes("?") ? "&" : "?";
+  let value = url;
 
-  return `${url}${separator}avatar_v=${encodeURIComponent(version)}`;
+  if (url.startsWith("/") && typeof window !== "undefined") {
+    value = new URL(url, window.location.origin).toString();
+  }
+
+  const separator = value.includes("?") ? "&" : "?";
+
+  return `${value}${separator}avatar_v=${encodeURIComponent(version)}`;
 }
 
 export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {

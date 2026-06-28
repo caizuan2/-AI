@@ -9,26 +9,38 @@ import { hasDatabaseUrl } from "@/lib/server-config";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+type RouteContext = {
+  params: { id: string } | Promise<{ id: string }>;
+};
+
+async function readConversationId(context: RouteContext) {
+  const params = await context.params;
+
+  return typeof params?.id === "string" ? params.id : "";
+}
+
+export async function POST(request: Request, context: RouteContext) {
+  const conversationId = await readConversationId(context);
+
   logger.info("[conversation-share] request start", {
-    conversationId: params.id
+    conversationId
   });
 
   try {
-    const actor = await requireConversationUser(request, "conversation", params.id);
+    const actor = await requireConversationUser(request, "conversation", conversationId);
     logger.info("[conversation-share] auth ok", {
       userId: actor.id,
-      conversationId: params.id
+      conversationId
     });
 
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("分享会话"));
     }
 
-    const result = await shareConversation(actor, params.id, request);
+    const result = await shareConversation(actor, conversationId, request);
     logger.info("[conversation-share] created share link", {
       userId: actor.id,
-      conversationId: params.id,
+      conversationId,
       hasUrl: Boolean(result.shareUrl)
     });
 
@@ -38,7 +50,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
 
     if (appError.code === "FEATURE_DISABLED") {
       logger.warn("[conversation-share] denied", {
-        conversationId: params.id,
+        conversationId,
         reason: "FEATURE_DISABLED"
       });
     }
