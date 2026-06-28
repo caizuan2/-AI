@@ -17,7 +17,20 @@ export interface IngestModelOption {
 
 export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model";
 
-export const INGEST_MODEL_OPTIONS: IngestModelOption[] = [
+function readRuntimeEnv(name: string) {
+  return typeof process !== "undefined" ? process.env[name]?.trim() ?? "" : "";
+}
+
+export function isOpenAIIngestEnabled() {
+  return readRuntimeEnv("AI_ENABLE_GPT_55").toLowerCase() === "true"
+    || readRuntimeEnv("NEXT_PUBLIC_AI_ENABLE_GPT_55").toLowerCase() === "true"
+    || readRuntimeEnv("AI_ENABLE_OPENAI_INGEST").toLowerCase() === "true"
+    || readRuntimeEnv("NEXT_PUBLIC_AI_ENABLE_OPENAI_INGEST").toLowerCase() === "true";
+}
+
+export const INGEST_DEFAULT_DEEPSEEK_PROVIDER: IngestModelProvider = "deepseek-flash";
+
+export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   {
     provider: "openai",
     label: "GPT-5.5 超高",
@@ -90,25 +103,36 @@ export const INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   }
 ];
 
-export const DEFAULT_INGEST_MODEL_OPTION = INGEST_MODEL_OPTIONS[0];
-export const INGEST_MODEL_DISPLAY_NAMES = INGEST_MODEL_OPTIONS.map((option) => option.label);
+export const INGEST_MODEL_OPTIONS: IngestModelOption[] = ALL_INGEST_MODEL_OPTIONS.filter((option) => (
+  option.provider !== "openai" || isOpenAIIngestEnabled()
+));
 
-function readRuntimeEnv(name: string) {
-  return typeof process !== "undefined" ? process.env[name]?.trim() ?? "" : "";
-}
+export const DISABLED_INGEST_MODEL_OPTIONS: IngestModelOption[] = ALL_INGEST_MODEL_OPTIONS.filter((option) => (
+  option.provider === "openai" && !isOpenAIIngestEnabled()
+));
+
+export const DEFAULT_INGEST_MODEL_OPTION = INGEST_MODEL_OPTIONS.find((option) => option.provider === INGEST_DEFAULT_DEEPSEEK_PROVIDER)
+  ?? INGEST_MODEL_OPTIONS.find((option) => option.provider === "deepseek-pro")
+  ?? INGEST_MODEL_OPTIONS[0]
+  ?? ALL_INGEST_MODEL_OPTIONS.find((option) => option.provider === INGEST_DEFAULT_DEEPSEEK_PROVIDER)
+  ?? ALL_INGEST_MODEL_OPTIONS[0];
+export const INGEST_MODEL_DISPLAY_NAMES = INGEST_MODEL_OPTIONS.map((option) => option.label);
 
 function normalizeLabel(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
 }
 
 const DISPLAY_MODEL_LABELS = new Set([
-  ...INGEST_MODEL_OPTIONS.flatMap((option) => [
+  ...ALL_INGEST_MODEL_OPTIONS.flatMap((option) => [
     option.label,
     option.displayName,
-    option.shortLabel
+    option.shortLabel,
+    option.defaultModel
   ]),
   "GPT-5.5",
   "GPT-5.5 超高",
+  "GPT-5.5 专业版",
+  "GPT-4.1-mini",
   "DeepSeek-V4-Pro",
   "DeepSeek-V4-Flash",
   "DeepSeek Flash",
@@ -118,8 +142,26 @@ const DISPLAY_MODEL_LABELS = new Set([
   "千问"
 ].map(normalizeLabel));
 
+function isOpenAIModelLike(value: string | null | undefined) {
+  const normalized = normalizeLabel(value);
+
+  return Boolean(normalized && (
+    normalized === "openai"
+    || normalized.includes("openai")
+    || normalized.includes("gpt")
+  ));
+}
+
 export function normalizeIngestModelProvider(value: string | null | undefined): IngestModelProvider {
   const normalized = value?.trim().toLowerCase();
+
+  if (!normalized) {
+    return INGEST_DEFAULT_DEEPSEEK_PROVIDER;
+  }
+
+  if (normalized === "openai" || normalized === "gpt" || normalized.includes("gpt")) {
+    return isOpenAIIngestEnabled() ? "openai" : INGEST_DEFAULT_DEEPSEEK_PROVIDER;
+  }
 
   if (normalized === "deepseek") {
     return "deepseek-pro";
@@ -141,7 +183,7 @@ export function normalizeIngestModelProvider(value: string | null | undefined): 
     return "kimi";
   }
 
-  return "openai";
+  return INGEST_DEFAULT_DEEPSEEK_PROVIDER;
 }
 
 export function getIngestModelOptionByProvider(provider: string | null | undefined) {
@@ -153,6 +195,11 @@ export function getIngestModelOptionByProvider(provider: string | null | undefin
 export function getIngestModelOptionByLabel(label: string | null | undefined) {
   const value = (label ?? "").trim();
   const lower = value.toLowerCase();
+
+  if (isOpenAIModelLike(value) && !isOpenAIIngestEnabled()) {
+    return DEFAULT_INGEST_MODEL_OPTION;
+  }
+
   const exactMatch = INGEST_MODEL_OPTIONS.find((option) =>
     option.label === value ||
     option.displayName === value ||
@@ -192,6 +239,10 @@ export function isIngestDisplayModelLabel(value: string | null | undefined) {
 export function sanitizeIngestPreferredModel(value: string | null | undefined) {
   const model = (value ?? "").trim();
 
+  if (!isOpenAIIngestEnabled() && isOpenAIModelLike(model)) {
+    return "";
+  }
+
   return model && !isIngestDisplayModelLabel(model) ? model : "";
 }
 
@@ -226,24 +277,54 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
     || "gpt-5.5";
 }
 
+export function normalizeIngestModelSelection(input: {
+  provider?: string | null;
+  selectedModelLabel?: string | null;
+  modelDisplayName?: string | null;
+  preferredModel?: string | null;
+}) {
+  const rawValues = [
+    input.provider,
+    input.selectedModelLabel,
+    input.modelDisplayName,
+    input.preferredModel
+  ].filter(Boolean).map((value) => String(value));
+  const normalizedFrom = rawValues.find((value) => isOpenAIModelLike(value) && !isOpenAIIngestEnabled()) ?? null;
+  const option = normalizedFrom
+    ? DEFAULT_INGEST_MODEL_OPTION
+    : input.provider
+      ? getIngestModelOptionByProvider(input.provider)
+      : getIngestModelOption(input);
+  const preferredActualModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const actualModel = preferredActualModel || resolveIngestActualModel(option.provider);
+
+  return {
+    option,
+    provider: option.provider,
+    actualModel,
+    requestedModel: input.preferredModel || input.selectedModelLabel || input.modelDisplayName || input.provider || "",
+    label: option.label,
+    displayModelLabel: option.label,
+    normalizedFrom,
+    disabledReason: normalizedFrom ? "GPT-5.5/OpenAI is temporarily disabled for admin-ingest; normalized to DeepSeek." : null
+  };
+}
+
 export function resolveIngestModelRuntime(input: {
   provider?: string | null;
   selectedModelLabel?: string | null;
   modelDisplayName?: string | null;
   preferredModel?: string | null;
 }) {
-  const option = input.provider
-    ? getIngestModelOptionByProvider(input.provider)
-    : getIngestModelOption(input);
-  const displayModelLabel = input.selectedModelLabel
-    || input.modelDisplayName
-    || option.label;
-  const preferredActualModel = sanitizeIngestPreferredModel(input.preferredModel);
+  const selection = normalizeIngestModelSelection(input);
 
   return {
-    option,
-    provider: option.provider,
-    displayModelLabel,
-    actualModel: preferredActualModel || resolveIngestActualModel(option.provider)
+    option: selection.option,
+    provider: selection.provider,
+    displayModelLabel: selection.displayModelLabel,
+    actualModel: selection.actualModel,
+    requestedModel: selection.requestedModel,
+    normalizedFrom: selection.normalizedFrom,
+    disabledReason: selection.disabledReason
   };
 }

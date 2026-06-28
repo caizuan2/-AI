@@ -24,6 +24,20 @@ export type NormalizedIngestErrorPayload = {
   raw?: unknown;
 };
 
+export type NormalizedIngestResult = {
+  type: "success" | "auth_failure" | "model_health_failure" | "ingest_failure";
+  ok: boolean;
+  replyText: string;
+  status?: number;
+  errorCode?: string;
+  message: string;
+  provider?: string;
+  actualModel?: string;
+  requestedModel?: string;
+  fallback?: boolean;
+  raw?: unknown;
+};
+
 const responseFields = [
   "jobId",
   "trainingRecord",
@@ -165,8 +179,10 @@ export function extractIngestReplyText(data: unknown) {
     ["answer"],
     ["reply"],
     ["message", "content"],
+    ["result", "replyMarkdown"],
     ["result", "content"],
     ["result", "answer"],
+    ["result", "reply"],
     ["payload", "replyMarkdown"],
     ["payload", "content"],
     ["payload", "answer"],
@@ -227,7 +243,177 @@ export function isSuccessfulIngestResponse(httpOk: boolean, data: unknown) {
     || (records && records.length > 0)
     || (readString(merged?.jobId) && !merged?.error)
     || (readString(merged?.knowledgeItemId) && !merged?.error)
+    || (Boolean(merged?.knowledgeDraft) && !merged?.error)
   );
+}
+
+function getResponseStatus(responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined) {
+  return typeof responseOrStatus === "number" ? responseOrStatus : responseOrStatus?.status;
+}
+
+function getResponseOk(responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined) {
+  if (typeof responseOrStatus === "number") {
+    return responseOrStatus >= 200 && responseOrStatus < 300;
+  }
+
+  if (typeof responseOrStatus?.ok === "boolean") {
+    return responseOrStatus.ok;
+  }
+
+  const status = responseOrStatus?.status;
+
+  return typeof status === "number" ? status >= 200 && status < 300 : false;
+}
+
+function collectTextSignals(data: unknown, error?: unknown) {
+  const raw = mergeIngestResponsePayload(data);
+  const nestedError = isPlainRecord(raw?.error) ? raw.error : null;
+  const parts = [
+    readString(raw?.errorCode),
+    readString(nestedError?.code),
+    readString(raw?.code),
+    readString(raw?.message),
+    readString(nestedError?.message),
+    readString(raw?.status),
+    error instanceof Error ? error.name : "",
+    error instanceof Error ? error.message : "",
+    typeof error === "string" ? error : ""
+  ];
+
+  return parts.filter(Boolean).join(" ").toLowerCase();
+}
+
+export function isIngestSuccessState(
+  responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined,
+  data: unknown
+) {
+  return isSuccessfulIngestResponse(getResponseOk(responseOrStatus), data);
+}
+
+export function isAuthFailure(
+  responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined,
+  data: unknown,
+  error?: unknown
+) {
+  const status = getResponseStatus(responseOrStatus);
+  const raw = mergeIngestResponsePayload(data);
+  const text = collectTextSignals(data, error);
+  const authenticated = readAtPath(data, ["data", "authenticated"]) ?? readAtPath(data, ["authenticated"]) ?? raw?.authenticated;
+  const hasIngestAccess = readAtPath(data, ["data", "hasIngestAccess"]) ?? readAtPath(data, ["hasIngestAccess"]) ?? raw?.hasIngestAccess;
+
+  return status === 401
+    || status === 403
+    || text.includes("auth_required")
+    || text.includes("invalid_session")
+    || text.includes("no_ingest_access")
+    || text.includes("license_app_type_mismatch")
+    || text.includes("unauthorized")
+    || text.includes("forbidden")
+    || text.includes("请先登录")
+    || text.includes("重新登录")
+    || text.includes("登录状态")
+    || text.includes("没有权限")
+    || text.includes("不能访问")
+    || authenticated === false
+    || hasIngestAccess === false;
+}
+
+export function isModelHealthFailure(
+  responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined,
+  data: unknown,
+  error?: unknown
+) {
+  const raw = mergeIngestResponsePayload(data);
+  const text = collectTextSignals(data, error);
+  const requestTested = readAtPath(data, ["requestTested"]) ?? readAtPath(data, ["data", "requestTested"]) ?? raw?.requestTested;
+  const configured = readAtPath(data, ["configured"]) ?? readAtPath(data, ["data", "configured"]) ?? raw?.configured;
+
+  return text.includes("health")
+    || text.includes("模型健康")
+    || text.includes("provider unavailable")
+    || text.includes("model disabled")
+    || text.includes("openai unavailable")
+    || text.includes("gpt-5.5")
+    || text.includes("gpt-55")
+    || text.includes("disabled")
+    || requestTested === false
+    || configured === false;
+}
+
+export function normalizeIngestResult(
+  responseOrStatus: Pick<Response, "status" | "ok"> | number | null | undefined,
+  data: unknown,
+  error?: unknown
+): NormalizedIngestResult {
+  const status = getResponseStatus(responseOrStatus);
+  const raw = mergeIngestResponsePayload(data);
+  const success = isIngestSuccessState(responseOrStatus, data);
+  const successPayload = success ? normalizeIngestSuccessPayload(data) : null;
+
+  if (successPayload) {
+    return {
+      type: "success",
+      ok: true,
+      replyText: successPayload.replyText,
+      status,
+      message: successPayload.replyText || "AI已完成知识整理。",
+      provider: successPayload.provider,
+      actualModel: successPayload.actualModel,
+      requestedModel: successPayload.requestedModel,
+      fallback: successPayload.fallback,
+      raw: successPayload.raw
+    };
+  }
+
+  const normalizedError = normalizeIngestErrorPayload(
+    typeof responseOrStatus === "number" ? { status: responseOrStatus } : responseOrStatus,
+    data,
+    error
+  );
+
+  if (isAuthFailure(responseOrStatus, data, error)) {
+    const code = normalizedError.errorCode || (status === 403 ? "NO_INGEST_ACCESS" : "AUTH_REQUIRED");
+
+    return {
+      type: "auth_failure",
+      ok: false,
+      replyText: "",
+      status,
+      errorCode: code,
+      message: status === 403 || code === "NO_INGEST_ACCESS"
+        ? "当前账号没有投喂权限，请确认卡密或账号权限。"
+        : "请重新登录后再试。",
+      provider: normalizedError.provider,
+      actualModel: normalizedError.actualModel,
+      raw: data
+    };
+  }
+
+  if (isModelHealthFailure(responseOrStatus, data, error)) {
+    return {
+      type: "model_health_failure",
+      ok: false,
+      replyText: "",
+      status,
+      errorCode: normalizedError.errorCode || "MODEL_HEALTH_FAILURE",
+      message: "模型健康检查暂不可用，已继续使用当前可用模型。",
+      provider: normalizedError.provider || readString(raw?.provider) || undefined,
+      actualModel: normalizedError.actualModel,
+      raw: data
+    };
+  }
+
+  return {
+    type: "ingest_failure",
+    ok: false,
+    replyText: "",
+    status,
+    errorCode: normalizedError.errorCode || "INGEST_FAILURE",
+    message: normalizedError.message,
+    provider: normalizedError.provider,
+    actualModel: normalizedError.actualModel,
+    raw: data
+  };
 }
 
 export function normalizeIngestSuccessPayload(data: unknown): NormalizedIngestSuccessPayload | null {

@@ -159,6 +159,7 @@ async function fetchAuthMeWithTimeout(timeoutMs = 5000) {
     return await fetch("/api/ingest/auth/me", {
       method: "GET",
       cache: "no-store",
+      credentials: "include",
       signal: controller.signal
     });
   } finally {
@@ -188,6 +189,19 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
   useEffect(() => {
     let active = true;
+    const checkTimeoutId = window.setTimeout(() => {
+      if (!active) {
+        return;
+      }
+
+      if (mode === "activate") {
+        router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+        return;
+      }
+
+      setCheckError("");
+      setChecking(false);
+    }, 5200);
 
     async function checkSession() {
       try {
@@ -198,6 +212,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           return;
         }
 
+        window.clearTimeout(checkTimeoutId);
         const payload = await response.json().catch(() => null);
         const authState = normalizeAuthMePayload(payload);
 
@@ -232,6 +247,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           return;
         }
 
+        window.clearTimeout(checkTimeoutId);
         if (mode === "activate") {
           router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
           return;
@@ -246,6 +262,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
     return () => {
       active = false;
+      window.clearTimeout(checkTimeoutId);
     };
   }, [goNext, mode, nextPath, router]);
 
@@ -286,6 +303,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           };
       const response = await fetch(endpoint, {
         method: "POST",
+        credentials: "include",
         headers: {
           "Content-Type": "application/json"
         },

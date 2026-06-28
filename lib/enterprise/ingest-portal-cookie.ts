@@ -1,4 +1,5 @@
 import { SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
+import { resolveSessionCookieSecure } from "@/lib/auth/session-cookie";
 
 export const INGEST_PORTAL_COOKIE_NAME = "ai_kb_ingest_gate";
 
@@ -65,29 +66,11 @@ async function sign(value: string) {
   return bytesToHex(signature);
 }
 
-function isHttpsRequest(request?: Request) {
-  if (!request) {
-    return process.env.NODE_ENV === "production";
-  }
-
-  const forwardedProto = request.headers.get("x-forwarded-proto")?.split(",")[0]?.trim().toLowerCase();
-
-  if (forwardedProto) {
-    return forwardedProto === "https";
-  }
-
-  try {
-    return new URL(request.url).protocol === "https:";
-  } catch {
-    return process.env.NODE_ENV === "production";
-  }
-}
-
 export function getIngestPortalCookieOptions(request?: Request, expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000)) {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: isHttpsRequest(request),
+    secure: resolveSessionCookieSecure(request),
     path: "/",
     expires: expiresAt,
     maxAge: Math.max(1, Math.floor((expiresAt.getTime() - Date.now()) / 1000))

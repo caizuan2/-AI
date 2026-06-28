@@ -22,6 +22,7 @@ import {
 } from "@/lib/enterprise/kimi-client";
 import {
   getIngestModelOptionByProvider,
+  normalizeIngestModelSelection,
   resolveIngestActualModel,
   type IngestModelProvider
 } from "@/lib/enterprise/ingest-model-options";
@@ -115,12 +116,19 @@ function deriveTaskType(input: AdminIngestModelInput) {
 
 async function runProvider(provider: ModelType, input: AdminIngestModelInput, preserveUserSelection: boolean) {
   const option = getIngestModelOptionByProvider(provider);
+  const normalizedSelection = normalizeIngestModelSelection({
+    provider,
+    selectedModelLabel: input.selectedModelLabel,
+    modelDisplayName: input.modelDisplayName,
+    preferredModel: input.preferredModel
+  });
   const baseInput = { ...input };
   const actualModel = resolveIngestActualModel(provider);
-  const displayModelLabel = preserveUserSelection
+  const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
+  const displayModelLabel = shouldPreserveUserSelection
     ? input.selectedModelLabel || input.modelDisplayName || option.label
     : option.label;
-  const modelDisplayName = preserveUserSelection
+  const modelDisplayName = shouldPreserveUserSelection
     ? input.modelDisplayName || input.selectedModelLabel || option.displayName
     : option.displayName;
 

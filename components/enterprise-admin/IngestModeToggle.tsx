@@ -60,7 +60,8 @@ import {
   ADMIN_INGEST_MODEL_STORAGE_KEY,
   DEFAULT_INGEST_MODEL_OPTION,
   getIngestModelOptionByLabel,
-  INGEST_MODEL_DISPLAY_NAMES
+  INGEST_MODEL_DISPLAY_NAMES,
+  normalizeIngestModelSelection
 } from "@/lib/enterprise/ingest-model-options";
 import {
   ADMIN_INGEST_APP_NAME_STORAGE_KEY,
@@ -68,6 +69,13 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import { sanitizeGptOSUserMessage, toUserFriendlyMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import {
+  getStateDomain,
+  isRealIngestFailure,
+  shouldClearTransientErrorOnAgentSwitch,
+  shouldRestoreToastFromHistory,
+  shouldSuppressFallbackToast
+} from "@/lib/enterprise/ingest-ui-state";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
 type IngestMode = "chat" | "workbench" | "knowledge";
@@ -143,6 +151,19 @@ const INGEST_PINNED_AGENTS_STORAGE_KEY = "ai-kb-ingest-pinned-agents";
 const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
 const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
+const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
+
+function createIngestRequestId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {
+    // Browser crypto can be unavailable in older embedded shells.
+  }
+
+  return `admin-ingest-gpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
 
 function readLocalArray<T>(key: string): T[] {
   try {
@@ -158,6 +179,66 @@ function readLocalArray<T>(key: string): T[] {
   } catch {
     return [];
   }
+}
+
+function getAuthAccessErrorMessage(error: unknown) {
+  const raw = error instanceof Error
+    ? `${error.name} ${error.message}`
+    : typeof error === "string"
+      ? error
+      : "";
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes("auth_required")
+    || normalized.includes("invalid_session")
+    || normalized.includes("unauthorized")
+    || normalized.includes("401")
+    || normalized.includes("请先登录")
+    || normalized.includes("重新登录")
+    || normalized.includes("登录状态")
+  ) {
+    return "请重新登录后再试。";
+  }
+
+  if (
+    normalized.includes("no_ingest_access")
+    || normalized.includes("license_app_type_mismatch")
+    || normalized.includes("forbidden")
+    || normalized.includes("403")
+    || normalized.includes("没有权限")
+    || normalized.includes("不能访问")
+    || normalized.includes("卡密")
+    || normalized.includes("授权")
+  ) {
+    return "当前账号没有投喂权限，请确认卡密或账号权限。";
+  }
+
+  return "";
+}
+
+function getModelHealthWarningMessage(error: unknown) {
+  const raw = error instanceof Error
+    ? `${error.name} ${error.message}`
+    : typeof error === "string"
+      ? error
+      : "";
+  const normalized = raw.toLowerCase();
+
+  if (
+    normalized.includes("model_health_failure")
+    || normalized.includes("模型健康")
+    || normalized.includes("provider unavailable")
+    || normalized.includes("model disabled")
+    || normalized.includes("openai unavailable")
+    || normalized.includes("gpt-5.5")
+    || normalized.includes("gpt-55")
+    || normalized.includes("health check")
+  ) {
+    return "模型健康检查暂不可用，已继续使用当前可用模型。";
+  }
+
+  return "";
 }
 
 function readLocalRecord<T>(key: string): Record<string, T> {
@@ -464,7 +545,11 @@ export function IngestModeToggle() {
   const [isSaving, setIsSaving] = useState(false);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
-  const activeGptRequestIdRef = useRef("");
+  const activeIngestRequestIdRef = useRef("");
+  const ingestSuccessLockRef = useRef(false);
+  const lastSuccessfulIngestAtRef = useRef(0);
+  const lastSuccessfulIngestRequestIdRef = useRef("");
+  const suppressFallbackToastUntilRef = useRef(0);
   const [isUrlDialogOpen, setIsUrlDialogOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
@@ -567,10 +652,16 @@ export function IngestModeToggle() {
 
     setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
     setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
-    const storedModel = getIngestModelOptionByLabel(window.localStorage.getItem(ADMIN_INGEST_MODEL_STORAGE_KEY));
+    const storedModelValue = window.localStorage.getItem(ADMIN_INGEST_MODEL_STORAGE_KEY);
+    const storedModel = normalizeIngestModelSelection({
+      selectedModelLabel: storedModelValue
+    });
 
     setSelectedModel(storedModel.label);
     setResolvedModel(storedModel.label);
+    if (storedModelValue !== storedModel.label) {
+      window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, storedModel.label);
+    }
     setHistoryLoaded(true);
   }, []);
 
@@ -765,7 +856,38 @@ export function IngestModeToggle() {
     });
   }
 
-  function showGptFallbackToast(description = GPT_FALLBACK_TOAST.description) {
+  function showGptFallbackToast(description = GPT_FALLBACK_TOAST.description, guard?: {
+    reason?: string;
+    stateDomain?: ReturnType<typeof getStateDomain>;
+    requestId?: string;
+    status?: number;
+    errorCode?: string;
+  }) {
+    const hasCurrentSuccess = ingestSuccessLockRef.current
+      || Boolean(lastSuccessfulIngestRequestIdRef.current && lastSuccessfulIngestRequestIdRef.current === guard?.requestId);
+
+    if (shouldSuppressFallbackToast({
+      reason: guard?.reason,
+      stateDomain: guard?.stateDomain,
+      requestId: guard?.requestId,
+      activeRequestId: activeIngestRequestIdRef.current,
+      hasCurrentSuccess,
+      lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
+      suppressUntil: suppressFallbackToastUntilRef.current,
+      status: guard?.status,
+      errorCode: guard?.errorCode
+    })) {
+      return;
+    }
+
+    console.warn("[admin-ingest:gpt:fallback-toast]", {
+      reason: guard?.reason,
+      status: guard?.status,
+      errorCode: guard?.errorCode,
+      requestId: guard?.requestId,
+      hasCurrentSuccess,
+      stateDomain: guard?.stateDomain
+    });
     setGptFallbackToast({
       id: `gpt-fallback-${Date.now()}`,
       title: GPT_FALLBACK_TOAST.title,
@@ -839,6 +961,10 @@ export function IngestModeToggle() {
   function restoreConversationState(conversation: IngestAgentConversation, agent: IngestChatAgent) {
     const restoredMessages = conversationMessagesById[conversation.id];
 
+    if (!shouldRestoreToastFromHistory()) {
+      setGptFallbackToast(null);
+      setErrorMessage("");
+    }
     setMessages(restoredMessages?.length
       ? normalizeRestoredMessages(restoredMessages)
       : createEmptyHistoryMessages({ conversation, agent, context: platformContext }));
@@ -846,6 +972,10 @@ export function IngestModeToggle() {
   }
 
   function clearConversationState() {
+    if (!shouldRestoreToastFromHistory()) {
+      setGptFallbackToast(null);
+      setErrorMessage("");
+    }
     setMessages([]);
     setDraft(ingestChatInitialDraft);
   }
@@ -877,7 +1007,10 @@ export function IngestModeToggle() {
   function setCurrentAgent(agent: IngestChatAgent) {
     setActiveAgentId(agent.id);
     setOpenPanel(null);
-    setErrorMessage("");
+    if (shouldClearTransientErrorOnAgentSwitch()) {
+      setGptFallbackToast(null);
+      setErrorMessage("");
+    }
   }
 
   function createAgentLifecycleRecord(agent: IngestChatAgent, action: "archived" | "deleted_local"): IngestTrainingRecord {
@@ -1229,10 +1362,11 @@ export function IngestModeToggle() {
 
     const conversationId = ensureConversationForSend(activeAgent);
     const userMessageId = `user-${Date.now()}`;
-    const requestId = `admin-ingest-gpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    const isCurrentRequest = () => activeGptRequestIdRef.current === requestId;
+    const requestId = createIngestRequestId();
+    const isCurrentRequest = () => activeIngestRequestIdRef.current === requestId;
 
-    activeGptRequestIdRef.current = requestId;
+    activeIngestRequestIdRef.current = requestId;
+    ingestSuccessLockRef.current = false;
     markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
@@ -1332,6 +1466,12 @@ export function IngestModeToggle() {
       }
 
       const nextRecords = mergeTrainingRecords(result.records, records);
+      const successAt = Date.now();
+
+      ingestSuccessLockRef.current = true;
+      lastSuccessfulIngestAtRef.current = successAt;
+      lastSuccessfulIngestRequestIdRef.current = requestId;
+      suppressFallbackToastUntilRef.current = successAt + INGEST_SUCCESS_TOAST_SUPPRESS_MS;
 
       setDraft(result.draft);
       setRecords(nextRecords);
@@ -1396,9 +1536,68 @@ export function IngestModeToggle() {
         return null;
       }
 
-      if (successRendered) {
+      const stateDomain = getStateDomain(error);
+      const errorCode = error instanceof Error ? error.name : undefined;
+      const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
+      const shouldSuppress = shouldSuppressFallbackToast({
+        reason: rawErrorMessage,
+        stateDomain,
+        requestId,
+        activeRequestId: activeIngestRequestIdRef.current,
+        hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
+        lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
+        suppressUntil: suppressFallbackToastUntilRef.current,
+        status: undefined,
+        errorCode
+      });
+
+      if (successRendered || shouldSuppress) {
+        console.warn("[admin-ingest:gpt:toast-suppressed]", {
+          reason: rawErrorMessage,
+          status: undefined,
+          errorCode,
+          requestId,
+          hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
+          stateDomain
+        });
         setGptFallbackToast(null);
         setErrorMessage("");
+        return null;
+      }
+
+      const authAccessMessage = getAuthAccessErrorMessage(error);
+
+      if (authAccessMessage) {
+        console.warn("[admin-ingest:auth-access:error]", {
+          message: authAccessMessage,
+          rawMessage: error instanceof Error ? error.message : String(error ?? ""),
+          requestId
+        });
+        setGptFallbackToast(null);
+        setNoticeMessage(authAccessMessage);
+        setErrorMessage(authAccessMessage);
+        showActionToast({
+          type: "warning",
+          title: authAccessMessage
+        });
+        return null;
+      }
+
+      const modelHealthMessage = getModelHealthWarningMessage(error);
+
+      if (modelHealthMessage) {
+        console.warn("[admin-ingest:model-health:warning]", {
+          message: modelHealthMessage,
+          rawMessage: error instanceof Error ? error.message : String(error ?? ""),
+          requestId
+        });
+        setGptFallbackToast(null);
+        setNoticeMessage(modelHealthMessage);
+        setErrorMessage("");
+        showActionToast({
+          type: "info",
+          title: modelHealthMessage
+        });
         return null;
       }
 
@@ -1408,13 +1607,45 @@ export function IngestModeToggle() {
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
         status: undefined,
-        errorCode: error instanceof Error ? error.name : undefined,
+        errorCode,
         message,
         provider: selectedModelOption.provider,
         model: currentModelLabel,
         requestId
       });
-      showGptFallbackToast(message);
+      const realIngestFailure = isRealIngestFailure({
+        reason: error instanceof Error ? error.message : String(error ?? ""),
+        stateDomain,
+        requestId,
+        activeRequestId: activeIngestRequestIdRef.current,
+        hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
+        lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
+        suppressUntil: suppressFallbackToastUntilRef.current,
+        status: undefined,
+        errorCode
+      });
+
+      if (!realIngestFailure) {
+        console.warn("[admin-ingest:gpt:error:ignored]", {
+          reason: "not_real_ingest_failure",
+          status: undefined,
+          errorCode,
+          requestId,
+          stateDomain
+        });
+        setGptFallbackToast(null);
+        setErrorMessage("");
+        setNoticeMessage("已忽略非当前投喂请求的临时状态。");
+        return null;
+      }
+
+      showGptFallbackToast(message, {
+        reason: "ingest_failure",
+        stateDomain,
+        requestId,
+        status: undefined,
+        errorCode
+      });
       setNoticeMessage("AI服务暂时不稳定，请稍后再试。");
       setErrorMessage(message);
       return null;
