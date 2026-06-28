@@ -157,7 +157,12 @@ const publicExactPaths = [
 const publicPathPrefixes = [
   "/api/auth",
   "/api/ingest/auth",
+  "/api/public",
   "/_next",
+  "/assets",
+  "/icons",
+  "/uploads",
+  "/public",
   "/static"
 ];
 const staticAssetPattern = /\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|map|txt|xml)$/i;

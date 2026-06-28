@@ -1,7 +1,11 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { requireUser } from "@/lib/auth";
-import { getUserRoles } from "@/lib/auth/rbac";
-import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
+import {
+  getEntryPathFromAccessProfile,
+  getEntryRoleFromAccessProfile,
+  getUserAccessProfile
+} from "@/lib/auth/access-control";
+import type { EntryRole } from "@/lib/auth/product";
 import { prisma } from "@/lib/prisma";
 import { ValidationError } from "@/lib/errors";
 import { readUserAvatarProfile } from "@/lib/user-avatar";
@@ -14,6 +18,7 @@ interface MeResponse {
     phone: string;
     email: string | null;
     name: string;
+    displayName: string;
     avatar_url: string | null;
     avatarUrl: string | null;
     avatar_updated_at: string | null;
@@ -21,16 +26,24 @@ interface MeResponse {
     licenseActivated: boolean;
     isSuperAdmin: boolean;
     role: EntryRole;
+    rbacRole: string;
+    baseRole: string | null;
     roles: string[];
+    productType: string | null;
+    cardType: string | null;
+    licenseType: string | null;
+    appType: string | null;
+    permissions: string[];
     entryPath: string;
   };
 }
 
 async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, request: Request): Promise<MeResponse> {
-  const roles = await getUserRoles(user);
+  const accessProfile = await getUserAccessProfile(user);
+  const roles = accessProfile.roles;
   const isSuperAdmin = roles.includes("super_admin");
-  const licenseActivated = user.licenseActivated || isSuperAdmin;
-  const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
+  const licenseActivated = accessProfile.licenseActivated;
+  const role = getEntryRoleFromAccessProfile(accessProfile);
   const avatar = await readUserAvatarProfile(user.id, request);
   const avatarUrl = avatar?.avatar_url ?? null;
   const avatarUpdatedAt = avatar?.updated_at ?? null;
@@ -41,6 +54,7 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, reque
       phone: user.phone,
       email: user.email,
       name: user.name,
+      displayName: user.name,
       avatar_url: avatarUrl,
       avatarUrl,
       avatar_updated_at: avatarUpdatedAt,
@@ -48,8 +62,15 @@ async function toMeResponse(user: Awaited<ReturnType<typeof requireUser>>, reque
       licenseActivated,
       isSuperAdmin,
       role,
+      rbacRole: accessProfile.role,
+      baseRole: accessProfile.baseRole,
       roles,
-      entryPath: getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated })
+      productType: accessProfile.productType,
+      cardType: accessProfile.cardType,
+      licenseType: accessProfile.licenseType,
+      appType: accessProfile.appType,
+      permissions: accessProfile.permissions,
+      entryPath: getEntryPathFromAccessProfile(accessProfile)
     }
   };
 }
