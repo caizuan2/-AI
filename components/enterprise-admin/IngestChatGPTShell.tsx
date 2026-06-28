@@ -112,6 +112,13 @@ import {
 } from "@/lib/enterprise/gpt-os-task-state";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import {
+  extractIngestReplyText,
+  isSuccessfulIngestResponse,
+  mergeIngestResponsePayload,
+  normalizeIngestErrorPayload,
+  normalizeIngestSuccessPayload
+} from "@/lib/enterprise/ingest-response-normalizer";
+import {
   KnowledgeEvolutionEngine,
   type KnowledgeEvolutionResult
 } from "@/lib/enterprise/knowledge-evolution-engine";
@@ -408,82 +415,14 @@ function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
-}
-
-const adminGptResponseTopLevelFields = [
-  "jobId",
-  "trainingRecord",
-  "records",
-  "provider",
-  "model",
-  "requestedModel",
-  "actualModel",
-  "responseId",
-  "proofId",
-  "usage",
-  "gptProof",
-  "modelDisplayName",
-  "modelMode",
-  "fallback",
-  "fallbackUsed",
-  "content",
-  "answer",
-  "reply",
-  "visibleReply",
-  "message",
-  "replyMarkdown",
-  "knowledgeDraft",
-  "knowledgeLoop",
-  "evolution",
-  "storeDecision",
-  "reusableKnowledgeUnits",
-  "reviewRequiredUnits",
-  "autoStoreCandidates",
-  "memory",
-  "memoryPlan",
-  "knowledgeIntelligence",
-  "ragOptimization",
-  "metadata",
-  "userClientCallPlan",
-  "sourceFiles",
-  "suggestedQuestions",
-  "saveRecommendation",
-  "gptOS",
-  "autonomousResult",
-  "structured"
-] as const;
-
 function unwrapAdminGptIngestResponse(payload: unknown): AdminGptIngestResponse | null {
-  if (!isPlainRecord(payload)) {
-    return null;
-  }
+  const merged = mergeIngestResponsePayload(payload);
 
-  const nested = isPlainRecord(payload.data) ? payload.data : {};
-  const merged: Record<string, unknown> = { ...nested };
-
-  for (const field of adminGptResponseTopLevelFields) {
-    if (payload[field] !== undefined) {
-      merged[field] = payload[field];
-    }
-  }
-
-  return Object.keys(merged).length > 0 ? merged as unknown as AdminGptIngestResponse : null;
+  return merged ? merged as unknown as AdminGptIngestResponse : null;
 }
 
 function readGptResponseContent(data: AdminGptIngestResponse) {
-  const messageContent = typeof data.message === "string"
-    ? data.message
-    : isPlainRecord(data.message)
-      ? readString(data.message.content)
-      : "";
-
-  return readString(data.replyMarkdown)
-    || readString(data.content)
-    || readString(data.answer)
-    || readString(data.reply)
-    || messageContent;
+  return extractIngestReplyText(data);
 }
 
 function getTimeLabel(value?: string) {
@@ -1657,40 +1596,40 @@ export function IngestChatGPTShell({
         })
       }).finally(() => window.clearTimeout(timeout));
       const payload = await response.json().catch(() => null) as ApiEnvelope<AdminGptIngestResponse> | null;
-      const data = unwrapAdminGptIngestResponse(payload);
-      const replyContent = data ? readGptResponseContent(data) : "";
-      const isSuccess = response.ok
-        && (
-          payload?.ok === true
-          || payload?.success === true
-          || Boolean(replyContent)
-        );
+      const normalizedSuccess = normalizeIngestSuccessPayload(payload);
+      const data = normalizedSuccess?.raw
+        ? normalizedSuccess.raw as unknown as AdminGptIngestResponse
+        : unwrapAdminGptIngestResponse(payload);
+      const replyContent = normalizedSuccess?.replyText || (data ? readGptResponseContent(data) : "");
+      const isSuccess = isSuccessfulIngestResponse(response.ok, payload);
 
       if (!isSuccess || !data) {
+        const normalizedError = normalizeIngestErrorPayload(response, payload);
         console.error("[admin-ingest:gpt:error]", {
           url: "/api/admin/kb/ingest/gpt",
-          status: response.status,
-          errorCode: payload?.error?.code,
-          message: payload?.message ?? payload?.error?.message,
-          provider: data?.provider,
-          model: data?.model,
-          requestId: data?.responseId
+          status: normalizedError.status,
+          errorCode: normalizedError.errorCode,
+          message: normalizedError.message,
+          provider: normalizedError.provider,
+          actualModel: normalizedError.actualModel,
+          requestId: data?.responseId ?? normalizedError.requestId
         });
-        throw new Error(payload?.message ?? payload?.error?.message ?? "请求失败，请稍后重试。");
+        throw new Error(normalizedError.message || "请求失败，请稍后重试。");
       }
 
-      if (!replyContent) {
-        console.error("[admin-ingest:gpt:error]", {
-          url: "/api/admin/kb/ingest/gpt",
-          status: response.status,
-          errorCode: "EMPTY_REPLY",
-          message: "GPT ingest response succeeded without visible reply content.",
-          provider: data.provider,
-          model: data.model,
-          requestId: data.responseId
-        });
-        throw new Error("AI生成完成但没有返回可展示正文，请重新生成。");
-      }
+      const visibleReply = replyContent
+        || readString(data.structured?.summary)
+        || readString(data.structured?.answer)
+        || readString(data.knowledgeDraft?.summary)
+        || readString(data.knowledgeDraft?.standardAnswer)
+        || "AI已完成知识整理，训练记录已更新。";
+
+      console.info("[admin-ingest:gpt:success]", {
+        provider: normalizedSuccess?.provider ?? data.provider,
+        actualModel: normalizedSuccess?.actualModel ?? data.actualModel ?? data.model,
+        contentLength: visibleReply.length,
+        requestId: data.responseId
+      });
 
       setErrorMessage("");
       persistAutonomousTask(data.autonomousResult ?? data.gptOS?.autonomousResult);
@@ -1735,7 +1674,7 @@ export function IngestChatGPTShell({
       const enrichedDraft = enrichDraftWithKnowledgeLoop({
         draft: nextDraft,
         userInput: value,
-        replyMarkdown: data.replyMarkdown || replyContent,
+        replyMarkdown: data.replyMarkdown || visibleReply,
         uploadedFiles,
         response: data
       });
@@ -1776,7 +1715,7 @@ export function IngestChatGPTShell({
         {
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
-          content: data.replyMarkdown || replyContent || `GPT 已完成解析：AI解析 → 结构化为「${enrichedDraft.title}」→ 分类到「${enrichedDraft.category}」→ 等待保存确认。`,
+          content: data.replyMarkdown || visibleReply || `GPT 已完成解析：AI解析 → 结构化为「${enrichedDraft.title}」→ 分类到「${enrichedDraft.category}」→ 等待保存确认。`,
           time: getTimeLabel(),
           agentId: activeAgent.id,
           expertId: activeAgent.expertId ?? null,
