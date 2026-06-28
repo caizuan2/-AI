@@ -4,8 +4,12 @@ import { isPlainObject } from "@/lib/api/responses";
 import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth";
-import { getUserRoles } from "@/lib/auth/rbac";
-import { getEntryPathFromRoles, getEntryRoleFromRoles, type EntryRole } from "@/lib/auth/product";
+import {
+  getEntryPathFromAccessProfile,
+  getEntryRoleFromAccessProfile,
+  getUserAccessProfile
+} from "@/lib/auth/access-control";
+import type { EntryRole } from "@/lib/auth/product";
 import { ForbiddenError, UnauthorizedError, ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
@@ -18,6 +22,10 @@ interface LoginResponse {
   role: EntryRole;
   roles: string[];
   entryPath: string;
+  productType: string | null;
+  cardType: string | null;
+  licenseType: string | null;
+  appType: string | null;
   user: {
     id: string;
     phone: string;
@@ -92,11 +100,12 @@ export async function POST(request: Request) {
 
     await createSession(user.id, request);
 
-    const roles = await getUserRoles(user);
+    const accessProfile = await getUserAccessProfile(user);
+    const roles = accessProfile.roles;
     const isSuperAdmin = roles.includes("super_admin");
-    const licenseActivated = user.licenseActivated || isSuperAdmin;
-    const role = getEntryRoleFromRoles({ roles, isSuperAdmin });
-    const entryPath = getEntryPathFromRoles({ roles, isSuperAdmin, licenseActivated });
+    const licenseActivated = accessProfile.licenseActivated;
+    const role = getEntryRoleFromAccessProfile(accessProfile);
+    const entryPath = getEntryPathFromAccessProfile(accessProfile);
 
     return apiSuccess<LoginResponse>({
       success: true,
@@ -105,6 +114,10 @@ export async function POST(request: Request) {
       role,
       roles,
       entryPath,
+      productType: accessProfile.productType,
+      cardType: accessProfile.cardType,
+      licenseType: accessProfile.licenseType,
+      appType: accessProfile.appType,
       user: {
         id: user.id,
         phone: user.phone,

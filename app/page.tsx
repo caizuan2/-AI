@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
-import { getUserRoles } from "@/lib/auth/rbac";
-import { getEntryPathForRole, getEntryRoleFromRoles } from "@/lib/auth/product";
+import { getEntryPathFromAccessProfile, getUserAccessProfile } from "@/lib/auth/access-control";
 import { UnauthorizedError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +18,5 @@ export default async function HomePage() {
     throw error;
   }
 
-  const roles = await getUserRoles(user);
-  const entryRole = getEntryRoleFromRoles({
-    roles,
-    isSuperAdmin: roles.includes("super_admin")
-  });
-
-  redirect(getEntryPathForRole(entryRole, user.licenseActivated));
+  redirect(getEntryPathFromAccessProfile(await getUserAccessProfile(user)));
 }
