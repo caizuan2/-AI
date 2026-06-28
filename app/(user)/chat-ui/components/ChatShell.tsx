@@ -43,7 +43,7 @@ import {
   type ChatModeDecision,
   type ChatModeKey
 } from "../lib/intent-mode-router";
-import { safeCopyText } from "../lib/clipboard";
+import { safeCopyTextDetailed } from "../lib/clipboard";
 import { ChatInput } from "./ChatInput";
 import { ChatMessages } from "./ChatMessages";
 import { ChatQuickActions } from "./ChatQuickActions";
@@ -1599,17 +1599,28 @@ export function ChatShell() {
 
     clearActionFeedback();
 
-    const copied = await safeCopyText(linkDialog.link, { selectionElement });
+    const result = await safeCopyTextDetailed(linkDialog.link, { selectTarget: selectionElement });
 
-    if (copied) {
+    if (result.copied) {
       setLinkDialog((current) => current ? { ...current, copied: true } : current);
       setActionSuccess(linkDialog.copySuccessMessage, "copy");
       return;
     }
 
+    if (result.selected) {
+      const manualMessage = result.message.includes("长按")
+        ? "已选中链接，请长按复制。"
+        : "已选中链接，请按 Ctrl+C 复制。";
+
+      setLinkDialog((current) => current ? { ...current, copied: false } : current);
+      setLinkCopyFailureSignal((value) => value + 1);
+      setActionInfo(manualMessage, "copy");
+      return;
+    }
+
     setLinkDialog((current) => current ? { ...current, copied: false } : current);
     setLinkCopyFailureSignal((value) => value + 1);
-    setActionError("浏览器限制了自动复制，链接已选中，请按 Ctrl+C 复制。", "copy");
+    setActionError("请手动复制选中的链接", "copy");
   }
 
   function handleCloseLinkDialog() {
