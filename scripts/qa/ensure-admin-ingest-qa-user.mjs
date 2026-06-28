@@ -20,6 +20,19 @@ const QA_METADATA = {
 };
 const PASSWORD_SALT_ROUNDS = 12;
 
+async function hashQaPassword(password) {
+  try {
+    const { hashPassword } = await tsImport(
+      "../../lib/auth/password.ts",
+      import.meta.url
+    );
+
+    return hashPassword(password);
+  } catch {
+    return bcrypt.hash(password, PASSWORD_SALT_ROUNDS);
+  }
+}
+
 assertLocalQaDatabaseOrThrow();
 
 const prisma = new PrismaClient();
@@ -71,7 +84,7 @@ async function recordQaAudit(userId, targetId, action) {
 }
 
 async function main() {
-  const passwordHash = await bcrypt.hash(QA_PASSWORD, PASSWORD_SALT_ROUNDS);
+  const passwordHash = await hashQaPassword(QA_PASSWORD);
   const existing = await prisma.user.findUnique({
     where: { phone: QA_STORED_PHONE },
     select: { id: true }
@@ -121,9 +134,11 @@ async function main() {
 
   console.log("QA_USER_READY");
   console.log(`username: ${QA_LOGIN_PHONE}`);
+  console.log(`phone: ${QA_LOGIN_PHONE}`);
   console.log(`displayName: ${QA_DISPLAY_NAME}`);
   console.log("password: ******");
   console.log(`role: ${user.role}`);
+  console.log(`roles: user,${QA_ROLE}`);
   console.log(`isActive: ${user.isActive}`);
   console.log(`licenseActivated: ${user.licenseActivated}`);
   console.log("hasIngestAccess expected: true");
