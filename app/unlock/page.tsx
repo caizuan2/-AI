@@ -9,11 +9,11 @@ export const dynamic = "force-dynamic";
 export default async function UnlockPage() {
   try {
     const user = await requireUser();
+    const profile = await getUserAccessProfile(user);
+    const entryPath = getEntryPathFromAccessProfile(profile);
 
-    if (user.licenseActivated) {
-      const profile = await getUserAccessProfile(user);
-
-      redirect(getEntryPathFromAccessProfile(profile));
+    if (entryPath !== "/unlock") {
+      redirect(entryPath);
     }
 
     return <UnlockPanel user={{ phone: user.phone, name: user.name }} />;

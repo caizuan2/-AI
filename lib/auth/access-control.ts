@@ -215,7 +215,7 @@ function isLicenseActivated(value: unknown) {
   return value === true || value === "true" || value === 1;
 }
 
-function inferAccessFromRoles(roles: readonly AppRole[], baseRole: AppRole | null, licenseActivated: boolean): NormalizedProductAccess {
+function inferAccessFromRoles(roles: readonly AppRole[], baseRole: AppRole | null): NormalizedProductAccess {
   if (roles.includes("super_admin") || baseRole === "super_admin") {
     return "super_admin";
   }
@@ -231,7 +231,7 @@ function inferAccessFromRoles(roles: readonly AppRole[], baseRole: AppRole | nul
     return "ingest_admin";
   }
 
-  return licenseActivated ? "user_app" : null;
+  return null;
 }
 
 async function getLatestLicenseType(userId: string): Promise<NormalizedProductAccess> {
@@ -289,7 +289,7 @@ export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | 
     getLatestLicenseType(user.id)
   ]);
   const role = getHighestRole(roles);
-  const inferredAccess = licenseAccess ?? inferAccessFromRoles(roles, baseRole, Boolean(user.licenseActivated));
+  const inferredAccess = licenseAccess ?? inferAccessFromRoles(roles, baseRole);
   const externalLicenseType = toExternalLicenseType(inferredAccess);
 
   return {
@@ -316,10 +316,6 @@ export function hasUserClientAccess(profile: AccessSubject | null | undefined) {
   const hasIngestProduct = hasSignal(productSignals, "ingest_admin", ingestTokens);
   const hasSuperAdminProduct = hasSignal(productSignals, "super_admin", superAdminTokens);
 
-  if (hasSignal(productSignals, "user_app", userClientTokens)) {
-    return true;
-  }
-
   if (hasIngestProduct || hasSuperAdminProduct) {
     return false;
   }
@@ -328,7 +324,15 @@ export function hasUserClientAccess(profile: AccessSubject | null | undefined) {
     return false;
   }
 
-  return hasSignal(roleSignals, "user_app", userClientTokens);
+  if (hasSignal(productSignals, "user_app", userClientTokens)) {
+    return true;
+  }
+
+  return roleSignals.some((value) => {
+    const token = normalizeAccessValue(value);
+
+    return token === "user-app" || token === "user-client" || token === "xt-user" || token === "knowledge-user";
+  });
 }
 
 export function hasIngestAccess(profile: AccessSubject | null | undefined) {
@@ -389,5 +393,9 @@ export function getEntryRoleFromAccessProfile(profile: UserAccessProfile): Entry
 }
 
 export function getEntryPathFromAccessProfile(profile: UserAccessProfile) {
+  if (getEntryRoleFromAccessProfile(profile) === "user" && !hasUserClientAccess(profile)) {
+    return "/unlock";
+  }
+
   return getEntryPathForRole(getEntryRoleFromAccessProfile(profile), profile.licenseActivated);
 }
