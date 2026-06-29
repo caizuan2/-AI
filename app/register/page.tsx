@@ -152,7 +152,7 @@ function RegisterForm() {
       ) : null}
 
       <Button type="submit" disabled={loading} className="h-11 w-full">
-        {loading ? "正在注册" : "注册并登录"}
+        {loading ? "正在注册" : "注册并去激活"}
         <ArrowRight className="h-4 w-4" />
       </Button>
     </form>

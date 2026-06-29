@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
-import { ArrowRight, KeyRound, Loader2, LockKeyhole, TriangleAlert } from "lucide-react";
+import { ArrowRight, KeyRound, Loader2, LockKeyhole, LogIn, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -18,7 +18,23 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
   const router = useRouter();
   const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [error, setError] = useState("");
+
+  async function goToLogin() {
+    setLeaving(true);
+    setError("");
+
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        cache: "no-store"
+      });
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
+  }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -50,7 +66,11 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
 
       localStorage.setItem("aikb_license_activated", "true");
       localStorage.setItem("aikb_license_code", data.code || licenseKey.trim());
-      router.push("/");
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        cache: "no-store"
+      });
+      router.replace("/login?activated=1");
       router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "卡密激活失败，请稍后重试。");
@@ -143,6 +163,17 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
             <Button type="submit" disabled={loading} className="h-11 w-full">
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
               立即激活
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              disabled={loading || leaving}
+              onClick={goToLogin}
+              className="h-11 w-full"
+            >
+              {leaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
+              返回登录 / 换账号
             </Button>
           </form>
         </div>
