@@ -293,13 +293,14 @@ export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | 
   const role = getHighestRole(roles);
   const inferredAccess = licenseAccess ?? inferAccessFromRoles(roles, baseRole);
   const externalLicenseType = toExternalLicenseType(inferredAccess);
+  const hasRedeemedProductLicense = licenseAccess !== null;
 
   return {
     id: user.id,
     role,
     roles,
     baseRole,
-    licenseActivated: user.licenseActivated || roles.includes("super_admin"),
+    licenseActivated: user.licenseActivated || hasRedeemedProductLicense || roles.includes("super_admin"),
     licenseType: externalLicenseType,
     productType: externalLicenseType,
     cardType: externalLicenseType,

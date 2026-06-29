@@ -389,13 +389,13 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
     return true;
   }
 
-  const saasLicense = await getSaasLicenseStatus({ id: userId }, null).catch(() => null);
-
-  if (!saasLicense?.active || !saasLicense.features.chat) {
-    throw new LicenseRequiredError("请先输入卡密激活知识库。");
-  }
-
   if (!requiredAppType) {
+    const saasLicense = await getSaasLicenseStatus({ id: userId }, null).catch(() => null);
+
+    if (!saasLicense?.active || !saasLicense.features.chat) {
+      throw new LicenseRequiredError("请先输入卡密激活知识库。");
+    }
+
     return true;
   }
 
@@ -426,6 +426,8 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
       });
       throw new LicenseAppTypeMismatchError("投喂端必须使用 XT-INGEST 卡密激活。");
     }
+
+    return true;
   }
 
   if (requiredAppType === "user_app") {
@@ -442,6 +444,14 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
       });
       throw new LicenseAppTypeMismatchError("用户端必须使用 XT-USER 卡密激活。");
     }
+
+    return true;
+  }
+
+  const saasLicense = await getSaasLicenseStatus({ id: userId }, null).catch(() => null);
+
+  if (!saasLicense?.active || !saasLicense.features.chat) {
+    throw new LicenseRequiredError("请先输入卡密激活知识库。");
   }
 
   return true;
