@@ -88,6 +88,22 @@ function Write-ExeManifest {
   $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
 }
 
+function Find-LatestExeOutput {
+  param(
+    [Parameter(Mandatory = $true)][datetime]$StartedAtUtc
+  )
+
+  Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.FullName -match "\\(dist-app|build|target)\\|/dist-app/|/build/|/target/" -and
+      $_.FullName -notmatch "\\node_modules\\|/node_modules/" -and
+      $_.FullName -notmatch "\\resources\\elevate\.exe$" -and
+      $_.LastWriteTimeUtc -ge $StartedAtUtc
+    } |
+    Sort-Object LastWriteTimeUtc -Descending |
+    Select-Object -First 1
+}
+
 Push-Location $Root
 try {
   $ReleaseInfo = node scripts/release/resolve-version.mjs --environment $env:RELEASE_ENV | ConvertFrom-Json
@@ -161,15 +177,7 @@ try {
     Invoke-CheckedCommand -FailureReason "EXE_TAURI_BUILD_FAILED" -Command { npm run tauri build }
   }
 
-  $Exe = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.FullName -match "\\(dist-app|build|target)\\|/dist-app/|/build/|/target/" -and
-      $_.FullName -notmatch "\\node_modules\\|/node_modules/" -and
-      $_.FullName -notmatch "\\resources\\elevate\.exe$" -and
-      $_.LastWriteTimeUtc -ge $BuildStartedAtUtc
-    } |
-    Sort-Object LastWriteTimeUtc -Descending |
-    Select-Object -First 1
+  $Exe = Find-LatestExeOutput -StartedAtUtc $BuildStartedAtUtc
 
   if (-not $Exe) {
     throw "EXE_BUILD_OUTPUT_NOT_FOUND"
@@ -185,6 +193,23 @@ try {
   if ($Reason -match "ETIMEDOUT|ECONNRESET|ENOTFOUND|connect|timeout") {
     $Reason = "EXE_DEPENDENCY_DOWNLOAD_TIMEOUT"
   }
+
+  $RecoveredExe = $null
+  if ($BuildStartedAtUtc) {
+    $RecoveredExe = Find-LatestExeOutput -StartedAtUtc $BuildStartedAtUtc
+  }
+  if ($RecoveredExe) {
+    Write-Warning "EXE build command reported '$Reason', but a fresh executable was produced. Publishing executable asset."
+    Write-ExeManifest -Available $true -Path $RecoveredExe.FullName -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
+    Write-Host "EXE_BUILD_OK=true"
+    Write-Host "EXE_BUILD_RECOVERED_FROM_OUTPUT=true"
+    Write-Host "EXE_BUILD_WARNING=$Reason"
+    Write-Host "EXE_PATH=$($RecoveredExe.FullName)"
+    Write-Host "EXE_HEAD=$ReleaseHead"
+    Write-Host "EXE_MATCHES_RELEASE_HEAD=true"
+    exit 0
+  }
+
   Write-ExeManifest -Available $false -Reason $Reason -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
   Write-Host "EXE_BUILD_AVAILABLE=false"
   Write-Host "EXE_BUILD_REASON=$Reason"

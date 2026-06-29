@@ -13,6 +13,10 @@ $ExistingAdminApkScript = Join-Path $Root "scripts/build-admin-android-apk.ps1"
 $AndroidDir = Join-Path $Root "android"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $AdminConfig = Join-Path $Root "capacitor.admin.config.ts"
+$PowerShellExecutable = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+if (-not $PowerShellExecutable) {
+  $PowerShellExecutable = (Get-Command powershell -ErrorAction SilentlyContinue).Source
+}
 
 function Invoke-CheckedCommand {
   param(
@@ -152,7 +156,10 @@ try {
   $env:BUILD_ENV = $ReleaseInfo.environment
 
   if ($UsesCapacitor) {
-    Invoke-CheckedCommand -FailureReason "APK_CAPACITOR_BUILD_FAILED" -Command { powershell -ExecutionPolicy Bypass -File $ExistingAdminApkScript }
+    if (-not $PowerShellExecutable) {
+      throw "POWERSHELL_RUNTIME_NOT_FOUND"
+    }
+    Invoke-CheckedCommand -FailureReason "APK_CAPACITOR_BUILD_FAILED" -Command { & $PowerShellExecutable -ExecutionPolicy Bypass -File $ExistingAdminApkScript }
   } elseif ($UsesFlutter) {
     Push-Location (Join-Path $Root "flutter_app")
     try {

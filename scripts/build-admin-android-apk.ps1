@@ -78,11 +78,16 @@ try {
   $adminBuildGradle = [regex]::Replace($adminBuildGradle, 'applicationId\s+"[^"]+"', 'applicationId "com.aiknowledge.admin"', 1)
   [System.IO.File]::WriteAllText($BuildGradle, $adminBuildGradle, $utf8NoBom)
 
-  $GradleWrapper = Join-Path $AndroidDir "gradlew.bat"
+  $IsWindowsPlatform = ($PSVersionTable.PSEdition -eq "Desktop") -or ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -eq "Windows_NT")
+  $GradleWrapperName = if ($IsWindowsPlatform) { "gradlew.bat" } else { "gradlew" }
+  $GradleWrapper = Join-Path $AndroidDir $GradleWrapperName
   if (-not (Test-Path $GradleWrapper)) {
     throw "Android Gradle wrapper was not found."
   }
 
+  if (-not $IsWindowsPlatform) {
+    Invoke-ProjectCommand -FilePath "chmod" -Arguments @("+x", $GradleWrapper) -WorkingDirectory $AndroidDir
+  }
   Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments @("assembleDebug") -WorkingDirectory $AndroidDir
 
   $SourceApk = Join-Path $AndroidDir "app/build/outputs/apk/debug/app-debug.apk"
