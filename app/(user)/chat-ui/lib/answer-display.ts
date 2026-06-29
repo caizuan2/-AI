@@ -873,22 +873,47 @@ function getSalesNextAction(answer: unknown) {
   return "请客户补充当前情况，再给下一步建议。";
 }
 
-function getSourceDetail(sources?: ChatSource[] | null) {
-  const titles = sanitizeVisibleSources(sources ?? undefined)
-    .map((source) => source.title)
-    .filter(Boolean)
-    .slice(0, 3);
+function getRawSourceTitle(source: ChatSource, index: number) {
+  return source.title
+    || source.knowledgeBaseId
+    || source.agentId
+    || source.namespace
+    || source.chunk_id
+    || `小董AI大脑资料 ${index + 1}`;
+}
 
-  if (titles.length === 0) {
-    return "暂无可展开的明确来源。";
+function getSourceAppDetail(source: ChatSource) {
+  return source.sourceApp
+    || (source.includePublished ? "published" : "")
+    || (source.includeShared ? "shared" : "")
+    || "";
+}
+
+function getSourceDetail(sources?: ChatSource[] | null, hasRagHit = false) {
+  const rawSources = (sources ?? []).slice(0, 3);
+
+  if (rawSources.length === 0) {
+    return hasRagHit
+      ? "已命中小董AI大脑🧠，来源标题仍在同步整理。"
+      : "暂无可展开的明确来源。";
   }
+
+  const visibleSources = sanitizeVisibleSources(rawSources);
+  const titles = rawSources.map((source, index) => {
+    const visibleTitle = visibleSources[index]?.title;
+    const sourceApp = getSourceAppDetail(source);
+    const title = visibleTitle || getRawSourceTitle(source, index);
+
+    return sourceApp ? `${title} / ${sourceApp}` : title;
+  });
 
   return `参考资料：${titles.join("、")}`;
 }
 
 export function buildSalesAnswerDisplay(
   answer: FinalizedAnswerView | null,
-  sources?: ChatSource[] | null
+  sources?: ChatSource[] | null,
+  hasRagHit = false
 ): ProductAnswerDisplay | null {
   if (!answer) {
     return null;
@@ -940,8 +965,8 @@ export function buildSalesAnswerDisplay(
   const nextAction = truncateReadable(getSalesNextAction(answer), 60);
   const analysis = buildAnalysis(answer, decision, actionSuggestions, customerReply);
   const evidenceSummary = normalizeAnswerText(answer.evidenceSummary)
-    || getCleanEvidenceSummary(Boolean(sources?.length));
-  const sourceDetail = getSourceDetail(sources);
+    || getCleanEvidenceSummary(Boolean(sources?.length) || hasRagHit);
+  const sourceDetail = getSourceDetail(sources, hasRagHit);
   const fullScriptText = salesModes
     .map((mode) => `【${mode.label}】\n${mode.text}`)
     .join("\n\n");
@@ -983,7 +1008,8 @@ export function buildSalesAnswerDisplay(
 
 export function buildProductAnswerDisplay(
   answer: FinalizedAnswerView | null,
-  sources?: ChatSource[] | null
+  sources?: ChatSource[] | null,
+  hasRagHit = false
 ) {
-  return buildSalesAnswerDisplay(answer, sources);
+  return buildSalesAnswerDisplay(answer, sources, hasRagHit);
 }

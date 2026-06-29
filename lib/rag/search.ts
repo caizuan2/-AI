@@ -89,6 +89,7 @@ export interface RetrievedRagChunk {
   knowledgeVersion: string | null;
   lowQuality: boolean;
   highValue: boolean;
+  matchedBy: "kb_id" | "expert_id" | "namespace" | "shared_public" | "none";
   chunk_rank: number;
   createdAt: string | null;
 }
@@ -141,7 +142,7 @@ const FAST_TOP_K = 5;
 const EXPERT_TOP_K = 10;
 const MAX_TOP_K = 20;
 const MIN_RELEVANT_SCORE = 0.08;
-const SHARED_INGEST_SOURCE_APPS = ["ingest_admin", "admin_ingest", "admin_feed"];
+const SHARED_INGEST_SOURCE_APPS = ["ingest_admin", "admin_ingest", "admin_feed", "public", "shared", "published"];
 const SHARED_INGEST_VISIBILITIES = ["published", "shared"];
 
 const STOP_TERMS = new Set([
@@ -398,21 +399,22 @@ function buildKnowledgeScopeWhere(options: RetrieveRelevantChunksOptions) {
   const agentId = cleanScopeValue(scope.agentId);
   const tenantId = cleanScopeValue(scope.tenantId);
   const namespace = cleanScopeValue(scope.namespace);
+  const hasExplicitKnowledgeTarget = Boolean(knowledgeBaseId || agentId);
   const filters = [];
 
   if (knowledgeBaseId) {
-    filters.push(metadataEqualsAnyPath(["knowledgeBaseId", "kb_id", "kbId"], knowledgeBaseId));
+    filters.push(metadataEqualsAnyPath(["knowledgeBaseId", "knowledge_base_id", "kb_id", "kbId"], knowledgeBaseId));
   }
 
   if (agentId) {
-    filters.push(metadataEqualsAnyPath(["agentId", "expert_id", "expertId"], agentId));
+    filters.push(metadataEqualsAnyPath(["agentId", "agent_id", "expert_id", "expertId"], agentId));
   }
 
-  if (tenantId) {
+  if (tenantId && !hasExplicitKnowledgeTarget) {
     filters.push(metadataEqualsAnyPath(["tenantId", "tenant_id"], tenantId));
   }
 
-  if (namespace && namespace !== tenantId) {
+  if (namespace && namespace !== tenantId && !hasExplicitKnowledgeTarget) {
     filters.push(metadataEqualsAnyPath(["namespace"], namespace));
   }
 
@@ -578,6 +580,81 @@ function metadataBoolean(metadata: unknown, keys: string[]) {
   return keys.some((key) => record[key] === true);
 }
 
+function metadataStringLower(metadata: unknown, keys: string[]) {
+  return metadataString(metadata, keys)?.toLowerCase() ?? null;
+}
+
+function isSharedOrPublishedMetadata(metadata: unknown) {
+  const sourceApp = metadataStringLower(metadata, ["sourceApp", "source"]);
+  const visibility = metadataStringLower(metadata, ["visibility", "status"]);
+
+  return Boolean(
+    (sourceApp && SHARED_INGEST_SOURCE_APPS.includes(sourceApp))
+    || (visibility && SHARED_INGEST_VISIBILITIES.includes(visibility))
+    || metadataBoolean(metadata, ["sharedToUserApp", "shared", "published"])
+  );
+}
+
+function chunkMatchesKnowledgeScope(row: KnowledgeChunkRecord, options: RetrieveRelevantChunksOptions) {
+  const scope = options.knowledgeScope;
+
+  if (!scope) {
+    return {
+      matched: true,
+      matchedBy: "shared_public" as const
+    };
+  }
+
+  const metadata = row.metadata;
+  const knowledgeBaseId = cleanScopeValue(scope.knowledgeBaseId);
+  const agentId = cleanScopeValue(scope.agentId);
+  const tenantId = cleanScopeValue(scope.tenantId);
+  const namespace = cleanScopeValue(scope.namespace);
+  const chunkKnowledgeBaseId = metadataString(metadata, ["knowledgeBaseId", "knowledge_base_id", "kb_id", "kbId"]);
+  const chunkAgentId = metadataString(metadata, ["agentId", "agent_id", "expert_id", "expertId"]);
+  const chunkTenantId = metadataString(metadata, ["tenantId", "tenant_id"]);
+  const chunkNamespace = metadataString(metadata, ["namespace"]);
+  const tenantMatches = !tenantId || !chunkTenantId || chunkTenantId === tenantId;
+  const sharedOrPublished = isSharedOrPublishedMetadata(metadata);
+
+  if (knowledgeBaseId) {
+    return {
+      matched: chunkKnowledgeBaseId === knowledgeBaseId && tenantMatches && sharedOrPublished,
+      matchedBy: chunkKnowledgeBaseId === knowledgeBaseId ? "kb_id" as const : "none" as const
+    };
+  }
+
+  if (agentId) {
+    return {
+      matched: chunkAgentId === agentId && tenantMatches && sharedOrPublished,
+      matchedBy: chunkAgentId === agentId ? "expert_id" as const : "none" as const
+    };
+  }
+
+  if (namespace) {
+    const namespaceMatches = chunkNamespace === namespace
+      || chunkKnowledgeBaseId === namespace
+      || chunkAgentId === namespace;
+
+    return {
+      matched: namespaceMatches && tenantMatches && sharedOrPublished,
+      matchedBy: namespaceMatches ? "namespace" as const : "none" as const
+    };
+  }
+
+  if (tenantId) {
+    return {
+      matched: tenantMatches && sharedOrPublished,
+      matchedBy: tenantMatches && sharedOrPublished ? "shared_public" as const : "none" as const
+    };
+  }
+
+  return {
+    matched: true,
+    matchedBy: "shared_public" as const
+  };
+}
+
 function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRagChunk {
   const item = row.knowledgeItem ?? {};
   const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
@@ -727,6 +804,7 @@ function toRetrievedChunk(row: KnowledgeChunkRecord, score: number): RetrievedRa
     knowledgeVersion: governance?.version ?? null,
     lowQuality: optimization.lowQuality,
     highValue: optimization.highValue,
+    matchedBy: "none",
     chunk_rank: 0,
     createdAt: toIsoString(row.createdAt ?? item.createdAt)
   };
@@ -771,12 +849,17 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
   });
 
   return rows
-    .filter((row) => candidatePassesGovernance(row.metadata, {
+    .map((row) => ({
+      row,
+      scopeMatch: chunkMatchesKnowledgeScope(row, options)
+    }))
+    .filter((item) => item.scopeMatch.matched)
+    .filter(({ row }) => candidatePassesGovernance(row.metadata, {
       knowledgeVersion: options.knowledgeVersion,
       minQualityScore: options.minQualityScore,
       includeLowQuality: options.includeLowQuality
     } satisfies KnowledgeGovernanceControls))
-    .map((row) => {
+    .map(({ row, scopeMatch }) => {
       const baseScore = scoreChunk(row, safeQuery, terms);
       const feedbackBoost = buildFeedbackRankingBoost(row.metadata);
       const qualityScore = feedbackBoost.qualityScore ?? baseScore;
@@ -863,7 +946,10 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
       const finalScore = applyPolicyRankingAdjustment(feedbackAwareScore, policy);
 
       return {
-        chunk: toRetrievedChunk(row, finalScore),
+        chunk: {
+          ...toRetrievedChunk(row, finalScore),
+          matchedBy: scopeMatch.matchedBy
+        },
         score: finalScore,
         identifierMatch: hasExplicitIdentifierMatch(row, safeQuery)
       };

@@ -104,6 +104,122 @@ function getStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(getString).filter(Boolean) : [];
 }
 
+function getRagVisualization(message: ChatMessageView) {
+  return getRecord(message.metadata?.ragVisualization);
+}
+
+function toChatSource(source: Record<string, unknown>, index: number): ChatSource {
+    const score = getNumber(source.score ?? source.relevance_score);
+
+    return {
+      chunk_id: getString(source.chunk_id) || getString(source.source) || `rag-source-${index + 1}`,
+      file_id: getString(source.file_id) || null,
+      item_id: getString(source.item_id) || null,
+      knowledgeBaseId: getString(source.knowledgeBaseId) || null,
+      agentId: getString(source.agentId) || null,
+      tenantId: getString(source.tenantId) || null,
+      namespace: getString(source.namespace) || null,
+      sourceApp: getString(source.sourceApp) || null,
+      includeShared: source.includeShared === true,
+      includePublished: source.includePublished === true,
+      title: getString(source.title) || getString(source.source) || getString(source.knowledgeBaseId) || `小董AI大脑资料 ${index + 1}`,
+      score: score ?? 0,
+      relevance_score: getNumber(source.relevance_score),
+      chunk_rank: getNumber(source.chunk_rank),
+      matchedBy: getString(source.matchedBy) || null,
+      content_preview: getString(source.content_preview) || null
+    };
+}
+
+function getRagVisualizationSources(message: ChatMessageView): ChatSource[] {
+  return getRecordArray(getRagVisualization(message).sources).map(toChatSource);
+}
+
+function getMetadataRagSources(message: ChatMessageView): ChatSource[] {
+  const metadataRag = getRecord(message.metadata?.rag);
+  const metadataSources = getRecordArray(metadataRag.sources);
+
+  return metadataSources.map(toChatSource);
+}
+
+function getFinalizedAnswerSources(message: ChatMessageView): ChatSource[] {
+  const directFinalizedAnswer = getRecord(message.finalized_answer);
+  const metadataFinalizedAnswer = getRecord(message.metadata?.finalizedAnswer);
+  const directSources = getRecordArray(directFinalizedAnswer.sources);
+  const metadataSources = getRecordArray(metadataFinalizedAnswer.sources);
+
+  return [...directSources, ...metadataSources].map(toChatSource);
+}
+
+function dedupeSources(sources: ChatSource[]) {
+  const seen = new Set<string>();
+  const deduped: ChatSource[] = [];
+
+  for (const source of sources) {
+    const key = [
+      source.item_id,
+      source.chunk_id,
+      source.file_id,
+      source.knowledgeBaseId,
+      source.agentId,
+      source.title
+    ].filter(Boolean).join("|") || `${source.title}-${deduped.length}`;
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(source);
+  }
+
+  return deduped;
+}
+
+function getUsefulEvidenceSummary(message: ChatMessageView, finalizedAnswer: FinalizedAnswerView | null) {
+  const metadataFinalizedAnswer = getRecord(message.metadata?.finalizedAnswer);
+  const evidenceSummary = getString(finalizedAnswer?.evidenceSummary)
+    || getString(message.finalized_answer?.evidenceSummary)
+    || getString(metadataFinalizedAnswer.evidenceSummary);
+
+  if (!evidenceSummary || /暂无|未命中|没有明确|无明确/.test(evidenceSummary)) {
+    return "";
+  }
+
+  return evidenceSummary;
+}
+
+function getRagHitState(message: ChatMessageView, finalizedAnswer: FinalizedAnswerView | null) {
+  const ragVisualization = getRagVisualization(message);
+  const metadataRag = getRecord(message.metadata?.rag);
+  const sources = dedupeSources([
+    ...(message.sources ?? []),
+    ...getFinalizedAnswerSources(message),
+    ...getRagVisualizationSources(message),
+    ...getMetadataRagSources(message)
+  ]);
+  const evidenceSummary = getUsefulEvidenceSummary(message, finalizedAnswer);
+  const hitCountCandidates = [
+    getNumber(ragVisualization.hitCount),
+    getNumber(metadataRag.hitCount),
+    getNumber(metadataRag.hit_count),
+    sources.length
+  ].filter((value): value is number => typeof value === "number" && value > 0);
+  const hitCount = hitCountCandidates.length > 0 ? Math.max(...hitCountCandidates) : 0;
+  const hasRagHit = hitCount > 0 || sources.length > 0 || Boolean(evidenceSummary);
+  const sourceApps = Array.from(new Set(sources.map((source) => getString(source.sourceApp)).filter(Boolean)));
+  const sourceTitles = Array.from(new Set(sources.map((source) => getString(source.title)).filter(Boolean))).slice(0, 3);
+
+  return {
+    hasRagHit,
+    hitCount,
+    sources,
+    evidenceSummary,
+    sourceApps,
+    sourceTitles
+  };
+}
+
 function toConversionFeedbackAction(value: unknown): ConversionFeedbackEvent["action_clicked"] {
   const action = getString(value);
 
@@ -1163,6 +1279,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
     })
     : [];
   const messageTime = formatMessageTime(message.created_at);
+  const ragHitState = getRagHitState(message, finalizedAnswer);
 
   return (
     <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm">
@@ -1179,7 +1296,10 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
       <div className="mt-1 space-y-4">
         <ProductAnswerView
           answer={finalizedAnswer}
-          sources={message.sources}
+          sources={ragHitState.sources}
+          hitCount={ragHitState.hitCount}
+          hasRagHit={ragHitState.hasRagHit}
+          evidenceSummary={ragHitState.evidenceSummary}
           confidence={message.confidence}
           streaming={isStreaming}
         />
@@ -1216,7 +1336,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
               ) : null}
               <ThinkingPanel message={message} streaming={isStreaming} />
               <RagVisualizationPanel message={message} />
-              <RagSources sources={message.sources} confidence={message.confidence} />
+              <RagSources sources={ragHitState.sources} confidence={message.confidence} />
               <CommercialExecutionPanel message={message} />
               <BusinessExecutionPanel message={message} />
               <AutoSalesAgentPanel message={message} />

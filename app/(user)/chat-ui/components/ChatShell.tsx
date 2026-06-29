@@ -1414,7 +1414,15 @@ export function ChatShell() {
                     source: event.source,
                     title: event.title ?? null,
                     file_id: event.file_id ?? null,
-                    chunk_id: event.chunk_id ?? null
+                    chunk_id: event.chunk_id ?? null,
+                    item_id: event.item_id ?? null,
+                    knowledgeBaseId: event.knowledgeBaseId ?? null,
+                    agentId: event.agentId ?? null,
+                    tenantId: event.tenantId ?? null,
+                    namespace: event.namespace ?? null,
+                    sourceApp: event.sourceApp ?? null,
+                    includeShared: event.includeShared ?? null,
+                    includePublished: event.includePublished ?? null
                   }
                 ]
               }

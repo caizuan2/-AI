@@ -654,6 +654,70 @@ function validateAttachments(value: unknown) {
   });
 }
 
+function readAttachmentSearchText(metadata: JsonObject | undefined) {
+  if (!metadata) {
+    return "";
+  }
+
+  return [
+    metadata.ocr,
+    metadata.ocrText,
+    metadata.text,
+    metadata.caption,
+    metadata.description,
+    metadata.summary
+  ]
+    .map((value) => trimString(value).slice(0, 160))
+    .filter(Boolean)
+    .join(" ");
+}
+
+function buildRagQueryContext(
+  question: string,
+  input: AiChatAskInput,
+  attachments: ReturnType<typeof validateAttachments>
+) {
+  const userMode = trimString(input.userMode);
+  const modeLabel = trimString(input.modeLabel);
+  const modePrompt = trimString(input.modePrompt);
+  const modeReason = trimString(input.modeReason);
+  const modeParts: string[] = [];
+
+  if (/business_problem|business|经营|业务/.test(userMode)) {
+    modeParts.push("业务问题 客户问题 成交 回复 处理建议");
+  }
+
+  if (/wechat|screenshot|customer_screenshot|截图|图片/.test(userMode)) {
+    modeParts.push("微信截图 客户截图 聊天记录 客户反馈");
+  }
+
+  modeParts.push(
+    modeLabel,
+    modePrompt,
+    modeReason
+  );
+
+  const attachmentParts = attachments.flatMap((attachment) => [
+    attachment.type,
+    attachment.filename,
+    attachment.name,
+    attachment.mime_type,
+    readAttachmentSearchText(attachment.metadata ?? undefined)
+  ]);
+
+  return [
+    question,
+    ...modeParts,
+    ...attachmentParts
+  ]
+    .map((value) => trimString(value))
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 2000);
+}
+
 function toSource(chunk: RetrievedRagChunk) {
   return {
     chunk_id: chunk.chunkId,
@@ -670,7 +734,8 @@ function toSource(chunk: RetrievedRagChunk) {
     content_preview: chunk.content.length > 240 ? `${chunk.content.slice(0, 240)}...` : chunk.content,
     score: chunk.score,
     relevance_score: chunk.relevance_score,
-    chunk_rank: chunk.chunk_rank
+    chunk_rank: chunk.chunk_rank,
+    matchedBy: chunk.matchedBy
   };
 }
 
@@ -784,6 +849,7 @@ export async function handleAiChatAsk(
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
   const attachments = validateAttachments(input.attachments);
+  const ragQueryContext = buildRagQueryContext(question, input, attachments);
   const businessContext = readBusinessExecutionContext(input);
   const knowledgeSelectionContext = readKnowledgeBaseSelectionContext(input);
   const selectedKnowledgeScope = knowledgeSelectionContext?.scope ?? null;
@@ -855,7 +921,7 @@ export async function handleAiChatAsk(
   });
 
   const topK = osContext.rag.topK;
-  const chunks = await retrieveRelevantChunks(question, {
+  const chunks = await retrieveRelevantChunks(ragQueryContext, {
     userId: actor.id,
     tenantId: scopedTenantId,
     appType: "user_app",
