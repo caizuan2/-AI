@@ -46,7 +46,8 @@ jobs:
           curl -fsS "$BASE_URL/api/ingest/auth/me" | tee ingest-auth-me.json
           node -e 'const fs=require("fs"); const v=JSON.parse(fs.readFileSync("ingest-auth-me.json","utf8")); if (typeof v !== "object") process.exit(1); console.log("AUTH_ME_JSON_OK=true")'
           curl -fsSI "$BASE_URL/api/public/expert-market" | tee expert-market.headers
-          curl -fsS "$BASE_URL/api/public/expert-market" | head -c 300
+          curl -fsS "$BASE_URL/api/public/expert-market" -o expert-market.json
+          head -c 300 expert-market.json
           echo
           if [ -z "${QA_USER_PHONE:-}" ] || [ -z "${QA_USER_PASSWORD:-}" ]; then
             echo "QA_LOGIN_SKIPPED_MISSING_SECRETS=true"
@@ -69,4 +70,5 @@ jobs:
             chat-ui.headers
             ingest-auth-me.json
             expert-market.headers
+            expert-market.json
           if-no-files-found: warn
