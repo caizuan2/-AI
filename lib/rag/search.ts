@@ -475,7 +475,7 @@ function hasDirectRuntimeScope(options: RetrieveRelevantChunksOptions) {
   );
 }
 
-async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunksOptions) {
+async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunksOptions, includeTermFilters = true) {
   const accessScope = await resolveKnowledgeAccessScope({
     actorUserId: options.userId,
     tenantId: cleanScopeValue(options.knowledgeScope?.tenantId) || options.tenantId,
@@ -548,7 +548,7 @@ async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunks
         ]
       }
     ],
-    ...(termFilters.length > 0 ? { OR: termFilters } : {})
+    ...(includeTermFilters && termFilters.length > 0 ? { OR: termFilters } : {})
   };
 }
 
@@ -814,42 +814,46 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
   const safeQuery = sanitizeRagInput(query);
   const terms = extractRagSearchTerms(safeQuery);
 
-  if (terms.length === 0) {
+  if (terms.length === 0 && !hasKnowledgeScope(options)) {
     return [];
   }
 
   const topK = normalizeTopK(options);
   const db = options.db ?? (prisma as unknown as RagSearchDb);
-  const where = await buildPrismaWhere(terms, options);
-  const rows = await db.knowledgeChunk.findMany({
-    where,
-    take: Math.min(topK * 4, 80),
-    orderBy: [
-      {
-        knowledgeItem: {
-          importance: "desc"
-        }
-      },
-      {
-        knowledgeItem: {
-          updatedAt: "desc"
-        }
-      }
-    ],
-    include: {
-      knowledgeItem: true,
-      file: {
-        select: {
-          id: true,
-          originalName: true,
-          deletedAt: true
-        }
-      }
-    }
-  });
 
-  return rows
-    .map((row) => ({
+  async function fetchRows(includeTermFilters: boolean) {
+    const where = await buildPrismaWhere(terms, options, includeTermFilters);
+
+    return db.knowledgeChunk.findMany({
+      where,
+      take: Math.min(topK * 4, 80),
+      orderBy: [
+        {
+          knowledgeItem: {
+            importance: "desc"
+          }
+        },
+        {
+          knowledgeItem: {
+            updatedAt: "desc"
+          }
+        }
+      ],
+      include: {
+        knowledgeItem: true,
+        file: {
+          select: {
+            id: true,
+            originalName: true,
+            deletedAt: true
+          }
+        }
+      }
+    });
+  }
+
+  function rankRows(rows: KnowledgeChunkRecord[], scopedFallback = false) {
+    return rows.map((row) => ({
       row,
       scopeMatch: chunkMatchesKnowledgeScope(row, options)
     }))
@@ -860,7 +864,8 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
       includeLowQuality: options.includeLowQuality
     } satisfies KnowledgeGovernanceControls))
     .map(({ row, scopeMatch }) => {
-      const baseScore = scoreChunk(row, safeQuery, terms);
+      const directScore = scoreChunk(row, safeQuery, terms);
+      const baseScore = scopedFallback ? Math.max(directScore, MIN_RELEVANT_SCORE) : directScore;
       const feedbackBoost = buildFeedbackRankingBoost(row.metadata);
       const qualityScore = feedbackBoost.qualityScore ?? baseScore;
       const optimization = analyzeKnowledgeOptimization({
@@ -943,7 +948,8 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
         lowQuality: optimization.lowQuality,
         highValue: optimization.highValue
       });
-      const finalScore = applyPolicyRankingAdjustment(feedbackAwareScore, policy);
+      const adjustedScore = applyPolicyRankingAdjustment(feedbackAwareScore, policy);
+      const finalScore = scopedFallback ? Math.max(adjustedScore, MIN_RELEVANT_SCORE) : adjustedScore;
 
       return {
         chunk: {
@@ -964,6 +970,16 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
       ...item.chunk,
       chunk_rank: index + 1,
     }));
+  }
+
+  const primaryRows = terms.length > 0 ? await fetchRows(true) : [];
+  const primaryChunks = rankRows(primaryRows);
+
+  if (primaryChunks.length > 0 || !hasKnowledgeScope(options)) {
+    return primaryChunks;
+  }
+
+  return rankRows(await fetchRows(false), true);
 }
 
 export function buildRagContext(chunks: RetrievedRagChunk[]): RagContext[] {
