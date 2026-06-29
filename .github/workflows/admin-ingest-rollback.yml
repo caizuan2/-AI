@@ -1,0 +1,62 @@
+name: Admin Ingest Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Rollback environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - staging
+          - prod
+      rollbackRef:
+        description: release/admin-ingest-* or backup/admin-ingest-* ref
+        required: true
+        type: string
+      confirm:
+        description: Type CONFIRM_ROLLBACK to execute
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Rollback admin-ingest
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Validate confirmation
+        if: ${{ inputs.confirm != 'CONFIRM_ROLLBACK' }}
+        run: |
+          echo "Rollback confirmation text mismatch."
+          exit 1
+
+      - name: Checkout rollback script
+        uses: actions/checkout@v4
+
+      - name: Configure SSH key
+        shell: bash
+        env:
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+        run: |
+          test -n "$ALIYUN_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ALIYUN_SSH_KEY" > ~/.ssh/aliyun_admin_ingest
+          chmod 600 ~/.ssh/aliyun_admin_ingest
+
+      - name: Execute remote rollback
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+          ROLLBACK_REF: ${{ inputs.rollbackRef }}
+        run: |
+          test -n "$ALIYUN_HOST"
+          test -n "$ALIYUN_USER"
+          test -n "$ALIYUN_APP_DIR"
+          ssh -i ~/.ssh/aliyun_admin_ingest -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" "APP_DIR='$ALIYUN_APP_DIR' ROLLBACK_REF='$ROLLBACK_REF' CONFIRM_ROLLBACK=true bash -s" < scripts/rollback/rollback-admin-ingest.sh

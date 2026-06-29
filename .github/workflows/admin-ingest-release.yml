@@ -1,23 +1,51 @@
-name: Admin Ingest Web APK EXE Release
+name: Admin Ingest Enterprise Release
 
 on:
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Release environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      deployWeb:
+        description: Deploy web after release verification
+        required: true
+        default: false
+        type: boolean
+      runQa:
+        description: Run post-release QA checks
+        required: true
+        default: true
+        type: boolean
   push:
     tags:
       - "release/admin-ingest-*"
 
 permissions:
   contents: read
+  actions: read
+
+concurrency:
+  group: admin-ingest-release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
-  ADMIN_INGEST_WEB_URL: "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web"
   RELEASE_HEAD: ${{ github.sha }}
-  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('manual-{0}', github.sha) }}
+  RELEASE_ENV: ${{ inputs.environment || 'prod' }}
 
 jobs:
-  verify-web:
-    name: Verify and build Web
+  release-info:
+    name: Resolve release version
     runs-on: ubuntu-latest
+    outputs:
+      release-head: ${{ steps.info.outputs.release_head }}
+      release-tag: ${{ steps.info.outputs.release_tag }}
+      release-env: ${{ steps.info.outputs.release_env }}
     steps:
       - name: Checkout release commit
         uses: actions/checkout@v4
@@ -28,128 +56,64 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: npm
 
-      - name: Install dependencies
-        run: npm install --include=dev
+      - name: Resolve version
+        id: info
+        shell: bash
+        run: |
+          node scripts/release/resolve-version.mjs --environment "$RELEASE_ENV" > release-info.json
+          cat release-info.json
+          echo "release_head=$(node -e 'const r=require("./release-info.json"); console.log(r.commit)')" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$(node -e 'const r=require("./release-info.json"); console.log(r.tag)')" >> "$GITHUB_OUTPUT"
+          echo "release_env=$(node -e 'const r=require("./release-info.json"); console.log(r.environment)')" >> "$GITHUB_OUTPUT"
 
-      - name: Build Web and write manifest
-        shell: pwsh
-        run: ./scripts/build/build-admin-ingest-web.ps1
-
-      - name: Upload web manifest
+      - name: Upload release info
         uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: admin-ingest-web-manifest
-          path: artifacts/admin-ingest/web/manifest.json
-          if-no-files-found: error
+          name: admin-ingest-release-info
+          path: release-info.json
+
+  verify-web:
+    name: Build and verify Web
+    needs: release-info
+    uses: ./.github/workflows/admin-ingest-deploy-web.yml
+    with:
+      environment: ${{ needs.release-info.outputs.release-env }}
+      deploy: false
+      runQa: false
+    secrets: inherit
 
   build-apk:
     name: Build APK
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout release commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Install dependencies
-        run: npm install --include=dev
-
-      - name: Build APK and write manifest
-        id: build_apk
-        shell: pwsh
-        continue-on-error: true
-        run: ./scripts/build/build-admin-ingest-apk.ps1
-
-      - name: Upload APK artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: admin-ingest-apk
-          path: |
-            artifacts/admin-ingest/apk/manifest.json
-            dist-app/admin-android/*.apk
-            android/app/build/outputs/apk/**/*.apk
-            flutter_app/build/app/outputs/flutter-apk/*.apk
-          if-no-files-found: warn
-
-      - name: Fail when APK build failed
-        if: steps.build_apk.outcome == 'failure'
-        run: exit 1
+    needs: release-info
+    uses: ./.github/workflows/admin-ingest-build-apk.yml
+    with:
+      environment: ${{ needs.release-info.outputs.release-env }}
+      strict: false
+    secrets: inherit
 
   build-exe:
     name: Build EXE
-    runs-on: windows-latest
-    steps:
-      - name: Checkout release commit
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Install dependencies
-        run: npm install --include=dev
-
-      - name: Build EXE and write manifest
-        id: build_exe
-        shell: pwsh
-        continue-on-error: true
-        run: ./scripts/build/build-admin-ingest-exe.ps1
-
-      - name: Upload EXE artifacts
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: admin-ingest-exe
-          path: |
-            artifacts/admin-ingest/exe/manifest.json
-            dist-app/admin-ingest/windows/**/*.exe
-            dist-app/admin-windows/**/*.exe
-            flutter_app/build/windows/**/*.exe
-            src-tauri/target/release/bundle/**/*.exe
-          if-no-files-found: warn
-
-      - name: Fail when EXE build failed
-        if: steps.build_exe.outcome == 'failure'
-        run: exit 1
+    needs: release-info
+    uses: ./.github/workflows/admin-ingest-build-exe.yml
+    with:
+      environment: ${{ needs.release-info.outputs.release-env }}
+      strict: false
+    secrets: inherit
 
   verify-sync:
     name: Verify Web APK EXE sync
     runs-on: ubuntu-latest
     needs:
+      - release-info
       - verify-web
       - build-apk
       - build-exe
     if: always()
+    env:
+      RELEASE_HEAD: ${{ needs.release-info.outputs.release-head }}
+      RELEASE_TAG: ${{ needs.release-info.outputs.release-tag }}
+      RELEASE_ENV: ${{ needs.release-info.outputs.release-env }}
     steps:
       - name: Checkout release commit
         uses: actions/checkout@v4
@@ -181,11 +145,11 @@ jobs:
           name: admin-ingest-exe
           path: artifacts/admin-ingest/exe
 
-      - name: Write release manifest
-        run: node scripts/ci/write-release-manifest.mjs
+      - name: Write unified release manifest
+        run: node scripts/release/write-release-manifest.mjs
 
-      - name: Verify release artifact heads
-        run: node scripts/ci/verify-web-apk-exe-sync.mjs
+      - name: Verify artifact sync
+        run: node scripts/release/verify-release-sync.mjs
 
       - name: Upload release manifest
         uses: actions/upload-artifact@v4
@@ -195,6 +159,49 @@ jobs:
           path: artifacts/admin-ingest/release-manifest.json
           if-no-files-found: error
 
-      - name: Fail when required jobs failed
-        if: needs.verify-web.result != 'success' || needs.build-apk.result != 'success' || needs.build-exe.result != 'success'
-        run: exit 1
+  qa:
+    name: Release QA
+    needs:
+      - release-info
+      - verify-sync
+    if: ${{ (inputs.runQa == true || github.event_name == 'push') && needs.verify-sync.result == 'success' }}
+    uses: ./.github/workflows/admin-ingest-qa.yml
+    with:
+      environment: ${{ needs.release-info.outputs.release-env }}
+      baseUrl: ${{ vars.ADMIN_INGEST_BASE_URL || 'http://47.238.0.23' }}
+    secrets: inherit
+
+  deploy-web:
+    name: Deploy Web
+    needs:
+      - release-info
+      - verify-sync
+      - qa
+    if: ${{ always() && (inputs.deployWeb == true || github.event_name == 'push') && needs.verify-sync.result == 'success' && (needs.qa.result == 'success' || needs.qa.result == 'skipped') }}
+    uses: ./.github/workflows/admin-ingest-deploy-web.yml
+    with:
+      environment: ${{ needs.release-info.outputs.release-env }}
+      deploy: true
+      runQa: true
+    secrets: inherit
+
+  summary:
+    name: Release summary
+    runs-on: ubuntu-latest
+    needs:
+      - verify-web
+      - build-apk
+      - build-exe
+      - verify-sync
+      - qa
+      - deploy-web
+    if: always()
+    steps:
+      - name: Print release status
+        run: |
+          echo "WEB=${{ needs.verify-web.result }}"
+          echo "APK=${{ needs.build-apk.result }}"
+          echo "EXE=${{ needs.build-exe.result }}"
+          echo "SYNC=${{ needs.verify-sync.result }}"
+          echo "QA=${{ needs.qa.result }}"
+          echo "DEPLOY=${{ needs.deploy-web.result }}"

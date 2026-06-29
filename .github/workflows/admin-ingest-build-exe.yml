@@ -1,0 +1,84 @@
+name: Admin Ingest EXE Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Build environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      strict:
+        description: Fail when EXE cannot be produced
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      strict:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_ENV: ${{ inputs.environment || 'prod' }}
+  RELEASE_HEAD: ${{ github.sha }}
+  ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+  ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+
+jobs:
+  build-exe:
+    name: Build EXE
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build EXE and write manifest
+        id: build_exe
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/build/build-admin-ingest-exe.ps1
+
+      - name: Upload EXE artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-exe
+          path: |
+            artifacts/admin-ingest/exe/manifest.json
+            dist-app/admin-ingest/windows/**/*.exe
+            dist-app/admin-windows/**/*.exe
+            flutter_app/build/windows/**/*.exe
+            src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: warn
+
+      - name: Enforce strict EXE
+        if: ${{ inputs.strict == true && steps.build_exe.outcome == 'failure' }}
+        run: exit 1
