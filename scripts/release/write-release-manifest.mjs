@@ -84,11 +84,21 @@ function normalizeArtifact(name, manifest, releaseHead) {
     };
   }
 
+  const assetName = manifest.assetName || (name === "apk" ? "admin-ingest.apk" : name === "exe" ? "admin-ingest.exe" : null);
+  const releaseDownloadUrl = name === "apk"
+    ? manifest.downloadUrl || manifest.releaseDownloadUrl || manifest.url || null
+    : name === "exe"
+      ? manifest.downloadUrl || manifest.releaseDownloadUrl || manifest.url || null
+      : manifest.webUrl || manifest.url || null;
+
   return {
     available: Boolean(manifest.available),
     head: manifest.head || manifest.commit || releaseHead,
     path: manifest.path || null,
-    url: manifest.webUrl || manifest.url || null,
+    url: releaseDownloadUrl,
+    downloadUrl: releaseDownloadUrl,
+    latestDownloadUrl: manifest.latestDownloadUrl || null,
+    assetName,
     buildId: manifest.buildId || null,
     size: manifest.size || null,
     sha256: manifest.sha256 || null,
@@ -134,6 +144,13 @@ const releaseManifest = {
   buildNumber: releaseInfo.buildNumber,
   buildTime: new Date().toISOString(),
   artifactPrefix: releaseInfo.artifactPrefix,
+  github: releaseInfo.github,
+  repository: releaseInfo.repository,
+  releaseUrl: releaseInfo.releaseUrl,
+  expectedDownloads: {
+    apk: releaseInfo.latestApkUrl,
+    exe: releaseInfo.latestExeUrl
+  },
   dryRun,
   web: normalizeArtifact("web", webManifest, releaseHead),
   apk: normalizeArtifact("apk", apkManifest, releaseHead),

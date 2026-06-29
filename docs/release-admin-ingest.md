@@ -30,9 +30,12 @@ git diff --check
 3. Run release dry-runs:
 
 ```powershell
+node scripts/release/resolve-github-repo.mjs
 node scripts/release/resolve-version.mjs
 node scripts/release/write-release-manifest.mjs --dry-run
+node scripts/release/write-release-notes.mjs --dry-run
 node scripts/release/verify-release-sync.mjs --dry-run
+node scripts/release/verify-github-release-assets.mjs --dry-run
 powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-web.ps1 -DryRun
 powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-apk.ps1 -DryRun
 powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps1 -DryRun
@@ -44,11 +47,15 @@ powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps
    - `buildApk=true` builds the APK on GitHub Actions; local Android SDK is not required.
    - `buildExe=true` builds the EXE on GitHub Actions; local Electron dependency download stability is not required.
    - `deployWeb=false` keeps the run as build/verify only.
+   - GitHub Release assets are uploaded only from real artifact files. APK and EXE keep fixed asset names:
+     - `admin-ingest.apk`
+     - `admin-ingest.exe`
 6. Confirm the unified release manifest:
    - Web artifact is available.
    - APK artifact is available or has a clear unavailable reason.
    - EXE artifact is available or has a clear unavailable reason.
    - All available artifacts point to the same `releaseHead`.
+   - APK/EXE download buttons appear only when `available=true` and a real `downloadUrl` exists.
 7. If deploy is enabled, confirm:
    - `/admin-ingest?app=ingest-admin&platform=web`
    - `/api/public/expert-market`
@@ -118,6 +125,8 @@ Available APK/EXE artifacts must include:
 
 - `head`
 - `path`
+- `assetName`
+- `downloadUrl`
 - `size`
 - `sha256`
 

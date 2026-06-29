@@ -82,6 +82,7 @@ jobs:
           name: admin-ingest-exe
           path: |
             artifacts/admin-ingest/exe/manifest.json
+            artifacts/admin-ingest/exe/admin-ingest.exe
             dist-app/admin-ingest/windows/**/*.exe
             dist-app/admin-windows/**/*.exe
             flutter_app/build/windows/**/*.exe

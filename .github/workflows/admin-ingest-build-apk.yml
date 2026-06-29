@@ -86,6 +86,7 @@ jobs:
           name: admin-ingest-apk
           path: |
             artifacts/admin-ingest/apk/manifest.json
+            artifacts/admin-ingest/apk/admin-ingest.apk
             dist-app/admin-android/*.apk
             android/app/build/outputs/apk/**/*.apk
             flutter_app/build/app/outputs/flutter-apk/*.apk
