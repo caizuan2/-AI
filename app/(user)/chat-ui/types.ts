@@ -34,8 +34,20 @@ export interface ChatAttachmentDraft {
 export interface ChatSource {
   chunk_id: string;
   file_id: string | null;
+  item_id?: string | null;
+  knowledgeBaseId?: string | null;
+  agentId?: string | null;
+  tenantId?: string | null;
+  namespace?: string | null;
+  sourceApp?: string | null;
+  includeShared?: boolean | null;
+  includePublished?: boolean | null;
   title: string;
   score: number;
+  relevance_score?: number | null;
+  chunk_rank?: number | null;
+  matchedBy?: string | null;
+  content_preview?: string | null;
 }
 
 export interface ChatMessageView {
