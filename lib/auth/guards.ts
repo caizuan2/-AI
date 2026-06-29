@@ -48,6 +48,8 @@ export async function requireUserAppAccess(request?: Request) {
     throw new ForbiddenError("当前账号不能访问用户端入口。");
   }
 
+  await checkUserLicense(user.id, "user_app");
+
   return {
     ...user,
     role: "user" as const,

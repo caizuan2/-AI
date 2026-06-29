@@ -381,7 +381,7 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
 
   const bootstrapSuperAdmin = isBootstrapSuperAdminUser(user);
 
-  if (user.licenseActivated) {
+  if (user.licenseActivated && !requiredAppType) {
     return true;
   }
 
