@@ -203,10 +203,6 @@ function getRoleSignals(subject: AccessSubject) {
   ];
 }
 
-function getPermissionSignals(subject: AccessSubject) {
-  return readValues(subject.permissions);
-}
-
 function hasSignal(values: readonly unknown[], access: Exclude<NormalizedProductAccess, null>, tokens: Set<string>) {
   return values.some((value) => normalizeProductAccess(value) === access || tokens.has(normalizeAccessValue(value)));
 }
@@ -317,13 +313,19 @@ export function hasUserClientAccess(profile: AccessSubject | null | undefined) {
 
   const productSignals = getProductSignals(profile);
   const roleSignals = getRoleSignals(profile);
+  const hasIngestProduct = hasSignal(productSignals, "ingest_admin", ingestTokens);
+  const hasSuperAdminProduct = hasSignal(productSignals, "super_admin", superAdminTokens);
 
   if (hasSignal(productSignals, "user_app", userClientTokens)) {
     return true;
   }
 
-  if (hasSignal(productSignals, "ingest_admin", ingestTokens) || hasSignal(productSignals, "super_admin", superAdminTokens)) {
-    return hasSignal(getPermissionSignals(profile), "user_app", userClientTokens);
+  if (hasIngestProduct || hasSuperAdminProduct) {
+    return false;
+  }
+
+  if (hasSignal(roleSignals, "ingest_admin", ingestTokens) || hasSuperAdminSignal(profile)) {
+    return false;
   }
 
   return hasSignal(roleSignals, "user_app", userClientTokens);
@@ -375,12 +377,12 @@ export function getEntryRoleFromAccessProfile(profile: UserAccessProfile): Entry
     return "super-admin";
   }
 
-  if (hasUserClientAccess(profile)) {
-    return "user";
-  }
-
   if (hasIngestAccess(profile)) {
     return "admin-feed";
+  }
+
+  if (hasUserClientAccess(profile)) {
+    return "user";
   }
 
   return "user";
