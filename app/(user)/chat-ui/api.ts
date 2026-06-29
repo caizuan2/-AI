@@ -308,7 +308,7 @@ function getActionApiFailureMessage<T>(
   }
 
   if (response.status === 404) {
-    return "当前会话功能暂时无法使用，请稍后再试。";
+    return apiMessage ? `${apiMessage} 请刷新历史列表后再试。` : "当前会话不存在或不属于当前账号，请刷新历史列表后再试。";
   }
 
   if (response.status >= 500) {

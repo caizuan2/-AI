@@ -806,14 +806,6 @@ export function ChatShell() {
 
     console.warn(`[chat-ui] ${actionLabel} action failed`, requestError);
 
-    if (actionLabel === "分享") {
-      return "分享失败：当前会话暂时无法分享，请稍后再试。";
-    }
-
-    if (actionLabel === "开始群聊") {
-      return "开始群聊失败：当前会话暂时无法创建群聊链接，请稍后再试。";
-    }
-
     const cleanMessage = message
       .replace(/（endpoint:.*?）/g, "")
       .replace(/\s*endpoint:.*$/i, "")
@@ -833,6 +825,14 @@ export function ChatShell() {
       .replace(/\bchunk(?:[_-]?id)?\b/gi, "知识片段")
       .replace(/\s{2,}/g, " ")
       .trim();
+
+    if (actionLabel === "分享") {
+      return `分享失败：${cleanMessage || "当前会话暂时无法分享，请稍后再试。"}`;
+    }
+
+    if (actionLabel === "开始群聊") {
+      return `开始群聊失败：${cleanMessage || "当前会话暂时无法创建群聊链接，请稍后再试。"}`;
+    }
 
     return `${actionLabel}失败：${cleanMessage || "请稍后再试。"}`;
   }
