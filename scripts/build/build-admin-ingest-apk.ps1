@@ -12,6 +12,26 @@ $AndroidDir = Join-Path $Root "android"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $AdminConfig = Join-Path $Root "capacitor.admin.config.ts"
 
+function Invoke-CheckedCommand {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Command,
+    [Parameter(Mandatory = $true)][string]$FailureReason
+  )
+
+  $Output = & $Command 2>&1
+  $ExitCode = $LASTEXITCODE
+  $Output | ForEach-Object { Write-Host $_ }
+
+  if ($ExitCode -ne 0) {
+    $OutputText = ($Output | Out-String)
+    if ($OutputText -match "SDK location not found|ANDROID_HOME|sdk.dir") {
+      throw "ANDROID_SDK_NOT_FOUND"
+    }
+
+    throw $FailureReason
+  }
+}
+
 function Write-ApkManifest {
   param(
     [Parameter(Mandatory = $true)][bool]$Available,
@@ -79,6 +99,7 @@ try {
   }
 
   node scripts/ci/verify-release-head.mjs --expected $ReleaseHead --label apk
+  $BuildStartedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-5)
 
   if (-not $UsesCapacitor -and -not $UsesFlutter) {
     Write-Host "APK_BUILD_AVAILABLE=false"
@@ -106,20 +127,23 @@ try {
   $env:BUILD_TAG = $ReleaseTag
 
   if ($UsesCapacitor) {
-    & powershell -ExecutionPolicy Bypass -File $ExistingAdminApkScript
+    Invoke-CheckedCommand -FailureReason "APK_CAPACITOR_BUILD_FAILED" -Command { powershell -ExecutionPolicy Bypass -File $ExistingAdminApkScript }
   } elseif ($UsesFlutter) {
     Push-Location (Join-Path $Root "flutter_app")
     try {
-      flutter --version
-      flutter pub get
-      flutter build apk --release --dart-define=APP_TYPE=ingest-admin --dart-define=WEB_URL=$($ReleaseInfo.webUrl) --dart-define=BUILD_COMMIT=$ReleaseHead --dart-define=BUILD_TAG=$ReleaseTag
+      Invoke-CheckedCommand -FailureReason "APK_FLUTTER_VERSION_FAILED" -Command { flutter --version }
+      Invoke-CheckedCommand -FailureReason "APK_FLUTTER_PUB_GET_FAILED" -Command { flutter pub get }
+      Invoke-CheckedCommand -FailureReason "APK_FLUTTER_BUILD_FAILED" -Command { flutter build apk --release --dart-define=APP_TYPE=ingest-admin --dart-define=WEB_URL=$($ReleaseInfo.webUrl) --dart-define=BUILD_COMMIT=$ReleaseHead --dart-define=BUILD_TAG=$ReleaseTag }
     } finally {
       Pop-Location
     }
   }
 
   $Apk = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.apk" -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "\\(dist-app|build)\\|/dist-app/|/build/" } |
+    Where-Object {
+      $_.FullName -match "\\(dist-app|build)\\|/dist-app/|/build/" -and
+      $_.LastWriteTimeUtc -ge $BuildStartedAtUtc
+    } |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
 
