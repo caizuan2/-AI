@@ -1,0 +1,200 @@
+name: Admin Ingest Web APK EXE Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "release/admin-ingest-*"
+
+permissions:
+  contents: read
+
+env:
+  ADMIN_INGEST_WEB_URL: "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web"
+  RELEASE_HEAD: ${{ github.sha }}
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('manual-{0}', github.sha) }}
+
+jobs:
+  verify-web:
+    name: Verify and build Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build Web and write manifest
+        shell: pwsh
+        run: ./scripts/build/build-admin-ingest-web.ps1
+
+      - name: Upload web manifest
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-web-manifest
+          path: artifacts/admin-ingest/web/manifest.json
+          if-no-files-found: error
+
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build APK and write manifest
+        id: build_apk
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/build/build-admin-ingest-apk.ps1
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-apk
+          path: |
+            artifacts/admin-ingest/apk/manifest.json
+            dist-app/admin-android/*.apk
+            android/app/build/outputs/apk/**/*.apk
+            flutter_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: warn
+
+      - name: Fail when APK build failed
+        if: steps.build_apk.outcome == 'failure'
+        run: exit 1
+
+  build-exe:
+    name: Build EXE
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build EXE and write manifest
+        id: build_exe
+        shell: pwsh
+        continue-on-error: true
+        run: ./scripts/build/build-admin-ingest-exe.ps1
+
+      - name: Upload EXE artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-exe
+          path: |
+            artifacts/admin-ingest/exe/manifest.json
+            dist-app/admin-ingest/windows/**/*.exe
+            dist-app/admin-windows/**/*.exe
+            flutter_app/build/windows/**/*.exe
+            src-tauri/target/release/bundle/**/*.exe
+          if-no-files-found: warn
+
+      - name: Fail when EXE build failed
+        if: steps.build_exe.outcome == 'failure'
+        run: exit 1
+
+  verify-sync:
+    name: Verify Web APK EXE sync
+    runs-on: ubuntu-latest
+    needs:
+      - verify-web
+      - build-apk
+      - build-exe
+    if: always()
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download web manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: admin-ingest-web-manifest
+          path: artifacts/admin-ingest/web
+
+      - name: Download APK artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: admin-ingest-apk
+          path: artifacts/admin-ingest/apk
+
+      - name: Download EXE artifacts
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: admin-ingest-exe
+          path: artifacts/admin-ingest/exe
+
+      - name: Write release manifest
+        run: node scripts/ci/write-release-manifest.mjs
+
+      - name: Verify release artifact heads
+        run: node scripts/ci/verify-web-apk-exe-sync.mjs
+
+      - name: Upload release manifest
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-release-manifest
+          path: artifacts/admin-ingest/release-manifest.json
+          if-no-files-found: error
+
+      - name: Fail when required jobs failed
+        if: needs.verify-web.result != 'success' || needs.build-apk.result != 'success' || needs.build-exe.result != 'success'
+        run: exit 1
