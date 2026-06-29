@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GaugeCircle, MessageSquareText } from "lucide-react";
+import { GaugeCircle, MessageSquareText, Rocket } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
@@ -16,6 +16,7 @@ import {
   type IngestSettingsState
 } from "@/components/enterprise-admin/IngestSettingsPanel";
 import { IngestKnowledgeOSDashboard } from "@/components/enterprise-admin/IngestKnowledgeOSDashboard";
+import { IngestReleaseConsole } from "@/components/enterprise-admin/IngestReleaseConsole";
 import {
   checkLicenseStatus,
   checkGptHealthStatus,
@@ -78,7 +79,7 @@ import {
 } from "@/lib/enterprise/ingest-ui-state";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
-type IngestMode = "chat" | "workbench" | "knowledge";
+type IngestMode = "chat" | "workbench" | "knowledge" | "release";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
 type IngestActionResult = Awaited<ReturnType<typeof sendCoreIngest>>;
 type OpenPanel = "notifications" | "settings" | null;
@@ -2428,11 +2429,24 @@ export function IngestModeToggle() {
             <GaugeCircle className="h-4 w-4" aria-hidden="true" />
             AI总控
           </button>
+          <button
+            type="button"
+            onClick={() => setMode("release")}
+            className={[
+              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
+              mode === "release" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+            ].join(" ")}
+          >
+            <Rocket className="h-4 w-4" aria-hidden="true" />
+            发布中心
+          </button>
         </div>
       ) : null}
 
       {mode === "knowledge"
         ? <IngestKnowledgeOSDashboard onBack={() => setMode("chat")} />
+        : mode === "release"
+          ? <IngestReleaseConsole onBack={() => setMode("chat")} />
         : mode === "chat"
           ? <IngestChatGPTShell {...sharedProps} />
           : <IngestEXEShell {...sharedProps} />}

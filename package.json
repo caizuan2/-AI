@@ -68,6 +68,10 @@
     "ci:admin-ingest:exe": "powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps1",
     "ci:admin-ingest:write-manifest": "node scripts/ci/write-release-manifest.mjs",
     "ci:admin-ingest:verify-sync": "node scripts/ci/verify-web-apk-exe-sync.mjs",
+    "ci:release-info": "node scripts/release/resolve-version.mjs",
+    "ci:release-manifest": "node scripts/release/write-release-manifest.mjs",
+    "ci:release-sync": "node scripts/release/verify-release-sync.mjs",
+    "ci:release-console:dry-run": "node scripts/release/resolve-version.mjs && node scripts/release/write-release-manifest.mjs --dry-run && node scripts/release/verify-release-sync.mjs --dry-run",
     "admin-ingest:smoke:web": "node scripts/admin-ingest-smoke.mjs",
     "admin-ingest:smoke:exe": "node scripts/admin-ingest-exe-smoke.mjs",
     "admin-ingest:smoke": "npm run admin-ingest:smoke:web && npm run admin-ingest:smoke:exe"

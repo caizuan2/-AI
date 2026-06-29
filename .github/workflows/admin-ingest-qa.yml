@@ -1,0 +1,57 @@
+name: Admin Ingest QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: QA environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      baseUrl:
+        description: Base URL, for example http://47.238.0.23
+        required: true
+        default: http://47.238.0.23
+        type: string
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      baseUrl:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    name: HTTP QA checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check admin-ingest routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="${{ inputs.baseUrl }}"
+          echo "QA_ENV=${{ inputs.environment }}"
+          curl -fsSI "$BASE_URL/admin-ingest?app=ingest-admin&platform=web" | tee admin-ingest.headers
+          curl -fsSI "$BASE_URL/api/public/expert-market" | tee expert-market.headers
+          curl -fsS "$BASE_URL/api/public/expert-market" | head -c 300
+          echo
+          echo "ADMIN_INGEST_QA_OK=true"
+
+      - name: Upload QA headers
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-qa-headers
+          path: |
+            admin-ingest.headers
+            expert-market.headers
+          if-no-files-found: warn
