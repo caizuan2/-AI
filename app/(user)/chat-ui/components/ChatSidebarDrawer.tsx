@@ -67,20 +67,6 @@ interface ChatSidebarDrawerProps {
   ) => void;
 }
 
-const mockConversationTitles = [
-  "AI 内容获客系统设计框架与路径",
-  "企业科技化转型与授信获取",
-  "替换图片二维码",
-  "飞书表格新增列表方法",
-  "npm 介绍",
-  "settings.json 介绍",
-  "技术介绍",
-  "企业孵化成本明细",
-  "腾讯智影官网链接",
-  "企业孵化失败案例拆解",
-  "权限开通方法"
-];
-
 const iconColors = [
   "bg-pink-100 text-pink-500",
   "bg-violet-100 text-violet-500",
@@ -103,26 +89,16 @@ type SidebarItem = {
 };
 
 function buildSidebarItems(conversations: ChatConversation[]): SidebarItem[] {
-  if (conversations.length > 0) {
-    return conversations.map((conversation, index) => {
-      const title = sanitizeVisibleText(conversation.title || "") || `小董AI对话 ${index + 1}`;
+  return conversations.map((conversation, index) => {
+    const title = sanitizeVisibleText(conversation.title || "") || `小董AI对话 ${index + 1}`;
 
-      return {
-        id: conversation.id,
-        title,
-        updatedAt: conversation.updated_at,
-        mode: conversation.mode
-      };
-    });
-  }
-
-  return mockConversationTitles.map((title, index) => ({
-    id: `mock-${index}`,
-    title,
-    updatedAt: new Date(Date.now() - index * 1000 * 60 * 60).toISOString(),
-    mode: "fast",
-    mock: true
-  }));
+    return {
+      id: conversation.id,
+      title,
+      updatedAt: conversation.updated_at,
+      mode: conversation.mode
+    };
+  });
 }
 
 function BrandMark() {
@@ -513,7 +489,7 @@ export function ChatSidebarDrawer({
               </div>
             ) : filteredItems.length === 0 ? (
               <div className="px-2 py-8 text-center text-sm text-slate-400">
-                {query.trim() ? "暂无匹配会话" : "没有找到相关对话"}
+                {query.trim() ? "暂无匹配会话" : "暂无历史会话"}
               </div>
             ) : (
               <div className="space-y-2">
