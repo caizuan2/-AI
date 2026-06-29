@@ -31,7 +31,6 @@ const userAppPrefixes = [
   "/unlock",
   "/api/user",
   "/api/chat",
-  "/api/ai/chat",
   "/api/auth",
   "/api/license/redeem",
   "/api/activate"

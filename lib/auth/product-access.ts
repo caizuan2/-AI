@@ -3,7 +3,7 @@ export type ProductAccess = "user_app" | "ingest_admin" | "super_admin" | "publi
 export const PRODUCT_ACCESS_HEADER = "x-aikb-product";
 
 const userAppPagePrefixes = ["/app", "/chat-ui", "/user", "/unlock"];
-const userAppApiPrefixes = ["/api/auth", "/api/user", "/api/chat", "/api/ai/chat"];
+const userAppApiPrefixes = ["/api/auth", "/api/user", "/api/chat"];
 const ingestPagePrefixes = ["/ingest", "/admin-ingest"];
 const ingestApiPrefixes = ["/api/ingest", "/api/admin/ingest", "/api/admin/kb/ingest", "/api/core/ingest"];
 const superAdminPagePrefixes = ["/super-admin"];

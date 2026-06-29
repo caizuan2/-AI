@@ -918,19 +918,49 @@ export function IngestModeToggle() {
     });
   }
 
-  function handleAccountSettingAction(action: "password" | "switch") {
-    const message = action === "password"
-      ? "修改密码功能将在账号系统接入后启用。"
-      : "切换账号将在登录系统接入后启用。";
+  async function redirectToIngestLogin() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include"
+      });
+    } catch (error) {
+      console.warn("[admin-ingest:account:logout]", error);
+    }
+
+    window.location.assign("/ingest/login?app=ingest-admin&next=/admin-ingest");
+  }
+
+  function handleAccountSettingAction(action: "password" | "switch" | "logout") {
+    if (action === "password") {
+      const message = "修改密码功能将在账号系统接入后启用。";
+
+      setNoticeMessage(message);
+      showActionToast({
+        type: "info",
+        title: message
+      });
+      return;
+    }
+
+    const message = action === "switch" ? "正在切换账号..." : "正在退出登录...";
 
     setNoticeMessage(message);
     showActionToast({
       type: "info",
       title: message
     });
+    void redirectToIngestLogin();
   }
 
   function handleRailChange(nextKey: IngestRailKey) {
+    if (nextKey === "settings" && openPanel === "settings") {
+      setOpenPanel(null);
+      setActiveRailKey("chat");
+      setNoticeMessage("");
+      return;
+    }
+
     setActiveRailKey(nextKey);
     setErrorMessage("");
     setOpenPanel(nextKey === "notifications" || nextKey === "settings" ? nextKey : null);
@@ -951,7 +981,7 @@ export function IngestModeToggle() {
       memory: `记忆 / 知识沉淀区已打开，最近保存知识：${draft.title}。`,
       lab: "实验功能区已打开：AI 修正 / OCR / 网址抓取将在下一阶段增强。",
       notifications: "通知中心已打开：最近投喂、保存、授权状态会在这里汇总。",
-      settings: `当前 Agent 设置：${activeAgent.name} · ${activeAgent.role}。`
+      settings: "账号设置已打开。"
     };
 
     setNoticeMessage(railMessages[nextKey]);
@@ -2438,7 +2468,10 @@ export function IngestModeToggle() {
         onAccountAction={handleAccountSettingAction}
         onCheckGptStatus={() => void handleCheckGptStatus("check")}
         onReconnectGpt={() => void handleCheckGptStatus("reconnect")}
-        onClose={() => setOpenPanel(null)}
+        onClose={() => {
+          setOpenPanel(null);
+          setActiveRailKey("chat");
+        }}
       />
       <IngestAgentDetailPanel
         open={isAgentDetailOpen}

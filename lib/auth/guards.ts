@@ -55,6 +55,43 @@ export async function requireUserAppAccess(request?: Request) {
   };
 }
 
+export async function requireAiChatAccess(request?: Request, targetType = "ai_chat") {
+  const user = await requireUser();
+  const profile = await getUserAccessProfile(user);
+  const allowed = hasUserClientAccess(profile) || hasIngestAccess(profile);
+
+  if (!allowed) {
+    await writeAuditLog({
+      userId: user.id,
+      role: profile.role,
+      action: "RBAC_ACCESS_DENIED",
+      targetType,
+      targetId: null,
+      request,
+      metadata: {
+        requiredAccess: ["user_app", "ingest_admin"],
+        role: profile.role,
+        roles: profile.roles,
+        baseRole: profile.baseRole,
+        licenseType: profile.licenseType,
+        productType: profile.productType,
+        cardType: profile.cardType,
+        appType: profile.appType,
+        permissions: profile.permissions,
+        source: "require_ai_chat_access"
+      }
+    });
+
+    throw new ForbiddenError("当前账号不能访问 AI 对话入口。");
+  }
+
+  return {
+    ...user,
+    role: profile.role,
+    roles: profile.roles
+  };
+}
+
 export async function requireIngestAdminAccess(request?: Request) {
   const user = await requireUser();
   const profile = await getUserAccessProfile(user);
