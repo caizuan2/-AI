@@ -59,7 +59,7 @@ function readJson(path, fallback) {
     }
   }
 
-  return JSON.parse(readFileSync(target, "utf8"));
+  return JSON.parse(readFileSync(target, "utf8").replace(/^\uFEFF/, ""));
 }
 
 const releaseHead = process.env.RELEASE_HEAD || git(["rev-parse", "HEAD"]);
