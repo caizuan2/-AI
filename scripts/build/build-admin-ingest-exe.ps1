@@ -11,6 +11,26 @@ $ElectronIngestConfig = Join-Path $Root "electron/admin-ingest/electron-builder.
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $TauriConfig = Join-Path $Root "src-tauri/tauri.conf.json"
 
+function Invoke-CheckedCommand {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Command,
+    [Parameter(Mandatory = $true)][string]$FailureReason
+  )
+
+  $Output = & $Command 2>&1
+  $ExitCode = $LASTEXITCODE
+  $Output | ForEach-Object { Write-Host $_ }
+
+  if ($ExitCode -ne 0) {
+    $OutputText = ($Output | Out-String)
+    if ($OutputText -match "ETIMEDOUT|ECONNRESET|ENOTFOUND|connect|timeout|Timeout") {
+      throw "EXE_DEPENDENCY_DOWNLOAD_TIMEOUT"
+    }
+
+    throw $FailureReason
+  }
+}
+
 function Write-ExeManifest {
   param(
     [Parameter(Mandatory = $true)][bool]$Available,
@@ -80,6 +100,7 @@ try {
   }
 
   node scripts/ci/verify-release-head.mjs --expected $ReleaseHead --label exe
+  $BuildStartedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-5)
 
   if (-not $UsesElectron -and -not $UsesFlutterWindows -and -not $UsesTauri) {
     Write-Host "EXE_BUILD_AVAILABLE=false"
@@ -99,27 +120,28 @@ try {
   $env:BUILD_TAG = $ReleaseTag
 
   if ($UsesElectron) {
-    npm install --include=dev
-    npm run admin-ingest:desktop:build
+    Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
+    Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command { npm run admin-ingest:desktop:build }
   } elseif ($UsesFlutterWindows) {
     Push-Location (Join-Path $Root "flutter_app")
     try {
-      flutter --version
-      flutter pub get
-      flutter build windows --release --dart-define=APP_TYPE=ingest-admin --dart-define=WEB_URL=$($ReleaseInfo.webUrl) --dart-define=BUILD_COMMIT=$ReleaseHead --dart-define=BUILD_TAG=$ReleaseTag
+      Invoke-CheckedCommand -FailureReason "EXE_FLUTTER_VERSION_FAILED" -Command { flutter --version }
+      Invoke-CheckedCommand -FailureReason "EXE_FLUTTER_PUB_GET_FAILED" -Command { flutter pub get }
+      Invoke-CheckedCommand -FailureReason "EXE_FLUTTER_BUILD_FAILED" -Command { flutter build windows --release --dart-define=APP_TYPE=ingest-admin --dart-define=WEB_URL=$($ReleaseInfo.webUrl) --dart-define=BUILD_COMMIT=$ReleaseHead --dart-define=BUILD_TAG=$ReleaseTag }
     } finally {
       Pop-Location
     }
   } elseif ($UsesTauri) {
-    npm install --include=dev
-    npm run tauri build
+    Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
+    Invoke-CheckedCommand -FailureReason "EXE_TAURI_BUILD_FAILED" -Command { npm run tauri build }
   }
 
   $Exe = Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
     Where-Object {
       $_.FullName -match "\\(dist-app|build|target)\\|/dist-app/|/build/|/target/" -and
       $_.FullName -notmatch "\\node_modules\\|/node_modules/" -and
-      $_.FullName -notmatch "\\resources\\elevate\.exe$"
+      $_.FullName -notmatch "\\resources\\elevate\.exe$" -and
+      $_.LastWriteTimeUtc -ge $BuildStartedAtUtc
     } |
     Sort-Object LastWriteTimeUtc -Descending |
     Select-Object -First 1
