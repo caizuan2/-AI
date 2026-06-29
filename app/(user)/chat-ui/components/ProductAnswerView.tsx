@@ -25,6 +25,9 @@ import type {
 interface ProductAnswerViewProps {
   answer: FinalizedAnswerView | null;
   sources?: ChatSource[] | null;
+  hitCount?: number | null;
+  hasRagHit?: boolean | null;
+  evidenceSummary?: string | null;
   confidence?: RagConfidence | null;
   streaming?: boolean;
   className?: string;
