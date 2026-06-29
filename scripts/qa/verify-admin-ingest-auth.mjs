@@ -24,7 +24,7 @@ function readArg(name, fallback = "") {
 }
 
 function normalizeBaseUrl(value) {
-  return (value || "http://localhost:3063").replace(/\/+$/, "");
+  return (value || "http://localhost:3021").replace(/\/+$/, "");
 }
 
 function resolveLoginIdentifier(value) {
@@ -206,6 +206,7 @@ if (import.meta.url === pathToFileURL(process.argv[1]).href) {
       console.log("AUTH_QA_OK");
       console.log(`loginStatus: ${result.loginStatus}`);
       console.log(`setCookie: ${result.setCookie}`);
+      console.log(`setCookiePresent: ${result.setCookie === "present"}`);
       console.log(`authMeAuthenticated: ${result.authMeAuthenticated}`);
       console.log(`hasIngestAccess: ${result.hasIngestAccess}`);
       console.log(`role: ${result.role}`);

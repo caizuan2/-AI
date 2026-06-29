@@ -1,6 +1,6 @@
 import { getStore } from "@netlify/blobs";
 import { apiError } from "@/lib/api-response";
-import { requireRole } from "@/lib/auth/guards";
+import { requireAiChatAccess } from "@/lib/auth/guards";
 import { AppError, ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
 
 export const runtime = "nodejs";
@@ -49,17 +49,10 @@ function getContentType(value: unknown) {
 }
 
 export async function GET(request: Request) {
-  let actor: Awaited<ReturnType<typeof requireRole>>;
+  let actor: Awaited<ReturnType<typeof requireAiChatAccess>>;
 
   try {
-    actor = await requireRole("user", {
-      request,
-      requireLicense: true,
-      requiredAppType: "user_app",
-      product: "user_app",
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "ai_chat_attachment_download"
-    });
+    actor = await requireAiChatAccess(request, "ai_chat_attachment_download");
   } catch (error) {
     return apiError(error);
   }

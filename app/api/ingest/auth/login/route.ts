@@ -6,6 +6,7 @@ import { normalizePhone, validatePhone } from "@/lib/auth/phone";
 import { verifyPassword } from "@/lib/auth/password";
 import { ForbiddenError, UnauthorizedError, ValidationError } from "@/lib/errors";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
+import { getHighestRole, type AppRole } from "@/lib/rbac/roles";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -84,12 +85,33 @@ export async function POST(request: Request) {
     };
 
     await setIngestPortalCookie(appUser, request);
+    const authUser = await toIngestAuthUser(appUser);
+    const roles = authUser.roles as AppRole[];
+    const role = roles.length > 0 ? getHighestRole(roles) : null;
+    const hasIngestAccess = authUser.licenseActivated === true
+      && roles.some((candidateRole) =>
+        candidateRole === "kb_admin" ||
+        candidateRole === "ingest_admin" ||
+        candidateRole === "enterprise_admin" ||
+        candidateRole === "super_admin"
+      );
 
     return apiSuccess({
       success: true,
+      authenticated: true,
       sessionToken: session.token,
-      licenseActivated: appUser.licenseActivated,
-      user: await toIngestAuthUser(appUser)
+      licenseActivated: hasIngestAccess,
+      hasIngestAccess,
+      role,
+      roles,
+      redirectTarget: hasIngestAccess
+        ? "/admin-ingest?app=ingest-admin&platform=web"
+        : "/ingest/activate",
+      user: {
+        ...authUser,
+        licenseActivated: hasIngestAccess,
+        hasIngestAccess
+      }
     });
   } catch (error) {
     return apiError(error);

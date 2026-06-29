@@ -3,7 +3,7 @@ import { isPlainObject } from "@/lib/api/responses";
 import { handleAiChatAsk } from "@/lib/ai-chat/ask";
 import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
 import { generateRagAnswer } from "@/lib/ai/rag-answer";
-import { requireRole } from "@/lib/auth/guards";
+import { requireAiChatAccess } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
@@ -35,17 +35,10 @@ function getSearchQuery(body: Record<string, unknown>) {
 }
 
 export async function POST(request: Request) {
-  let actor: Awaited<ReturnType<typeof requireRole>>;
+  let actor: Awaited<ReturnType<typeof requireAiChatAccess>>;
 
   try {
-    actor = await requireRole("user", {
-      request,
-      requireLicense: true,
-      requiredAppType: "user_app",
-      product: "user_app",
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "ai_chat_ask"
-    });
+    actor = await requireAiChatAccess(request, "ai_chat_ask");
   } catch (error) {
     return apiError(error);
   }
