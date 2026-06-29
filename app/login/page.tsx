@@ -69,8 +69,9 @@ function LoginForm() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
+  const activated = searchParams.get("activated") === "1";
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -189,6 +190,12 @@ function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      {activated ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          激活成功，请重新登录进入小董AI用户端。
+        </div>
+      ) : null}
+
       <label className="block">
         <span className="text-sm font-medium text-ink">手机号</span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
