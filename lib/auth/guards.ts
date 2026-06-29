@@ -2,18 +2,13 @@ import "server-only";
 
 import { requireUser } from "@/lib/auth";
 import { getUserAccessProfile, hasIngestAccess, hasUserClientAccess } from "@/lib/auth/access-control";
-import { checkUserLicense } from "@/lib/auth/license";
 import { writeAuditLog } from "@/lib/audit-log";
 import { ForbiddenError, LicenseRequiredError } from "@/lib/errors";
 export { requireAuth, requireKbAdmin, requireRole, requireSuperAdmin } from "@/lib/auth/rbac";
 import { requireSuperAdmin } from "@/lib/auth/rbac";
 
 export async function requireLicensedUser() {
-  const user = await requireUser();
-
-  await checkUserLicense(user.id, "user_app");
-
-  return user;
+  return requireUserAppAccess();
 }
 
 export async function requireUserAppAccess(request?: Request) {
@@ -47,8 +42,6 @@ export async function requireUserAppAccess(request?: Request) {
 
     throw new ForbiddenError("当前账号不能访问用户端入口。");
   }
-
-  await checkUserLicense(user.id, "user_app");
 
   return {
     ...user,

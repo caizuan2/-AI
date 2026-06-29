@@ -46,8 +46,13 @@ function getPostLoginPath(input: {
     roles: input.roles,
     isSuperAdmin: input.isSuperAdmin
   });
+  const normalizedNextPath = input.nextPath?.split("?")[0] || "";
 
-  if (input.nextPath && isPathAllowedForEntryRole(input.nextPath, role)) {
+  if (
+    input.nextPath &&
+    !(normalizedNextPath === "/unlock" && input.licenseActivated) &&
+    isPathAllowedForEntryRole(input.nextPath, role)
+  ) {
     return input.nextPath;
   }
 

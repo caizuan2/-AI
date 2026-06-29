@@ -429,7 +429,7 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
   }
 
   if (requiredAppType === "user_app") {
-    if (role !== "user" || (licenseAppType && licenseAppType !== "user_app")) {
+    if (role !== "user" || licenseAppType !== "user_app") {
       await recordLicenseAuditLog({
         userId,
         action: "license.mismatch",
