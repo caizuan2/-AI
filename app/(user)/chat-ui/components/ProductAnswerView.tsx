@@ -130,13 +130,14 @@ function FoldSection({
 export function ProductAnswerView({
   answer,
   sources,
+  hasRagHit,
   confidence: _confidence,
   streaming = false,
   className
 }: ProductAnswerViewProps) {
   const [selectedModeKey, setSelectedModeKey] = React.useState<SalesAnswerModeKey>("closing");
   void _confidence;
-  const display = answer ? buildProductAnswerDisplay(answer, sources) : null;
+  const display = answer ? buildProductAnswerDisplay(answer, sources, Boolean(hasRagHit)) : null;
 
   React.useEffect(() => {
     if (display?.defaultMode) {
