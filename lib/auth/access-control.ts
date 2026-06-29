@@ -87,7 +87,9 @@ function readMetadataAppType(metadata: unknown): NormalizedProductAccess {
     return null;
   }
 
-  const value = (metadata as { appType?: unknown; product?: unknown; cardType?: unknown; licenseType?: unknown }).appType ??
+  const value = (metadata as { appType?: unknown }).appType ??
+    (metadata as { requestedAppType?: unknown }).requestedAppType ??
+    (metadata as { licenseAppType?: unknown }).licenseAppType ??
     (metadata as { product?: unknown }).product ??
     (metadata as { cardType?: unknown }).cardType ??
     (metadata as { licenseType?: unknown }).licenseType;
