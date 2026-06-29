@@ -12,10 +12,18 @@ import {
   resolveReleaseEnvironment
 } from "@/lib/enterprise/release-manifest-reader";
 import { checkReleaseHealth } from "@/lib/enterprise/release-health-check";
+import { readReleaseAuditLog } from "@/lib/enterprise/release-audit-log";
+import {
+  getGithubActionsState,
+  getLatestWorkflowRun,
+  getWorkflowUrl,
+  listWorkflows
+} from "@/lib/enterprise/release-github-actions-client";
 import type {
   ReleaseConsoleSummary,
   ReleaseEnvironment,
   ReleaseEnvironmentState,
+  ReleaseGithubState,
   ReleaseManifestResponse,
   ReleasePermissions,
   ReleaseRollbackState,
@@ -27,6 +35,7 @@ import type {
 
 const WORKFLOWS = [
   ["admin-ingest-release.yml", "总发布编排"],
+  ["admin-ingest-build-web.yml", "Web 云端构建"],
   ["admin-ingest-deploy-web.yml", "Web 构建 / 部署"],
   ["admin-ingest-build-apk.yml", "APK 构建"],
   ["admin-ingest-build-exe.yml", "EXE 构建"],
@@ -62,9 +71,12 @@ export function buildReleasePermissions(actor: RbacUser | null): ReleasePermissi
     return {
       role,
       canView: true,
+      canPublish: true,
+      canRollback: true,
+      canViewSecrets: false,
       canCopyRollbackCommand: true,
-      canExecuteRollback: false,
-      note: "super_admin 可查看全部发布信息；本控制台仍不执行生产回滚。"
+      canExecuteRollback: true,
+      note: "super_admin 可查看全部发布信息，并可触发 GitHub Actions 发布 / 回滚 workflow；不会直接执行 SSH 或 reset。"
     };
   }
 
@@ -72,9 +84,12 @@ export function buildReleasePermissions(actor: RbacUser | null): ReleasePermissi
     return {
       role,
       canView: true,
+      canPublish: true,
+      canRollback: false,
+      canViewSecrets: false,
       canCopyRollbackCommand: true,
       canExecuteRollback: false,
-      note: "ingest_admin 可查看发布状态并复制回滚指令，不可直接执行生产回滚。"
+      note: "ingest_admin 可查看发布状态，可触发 dev / staging 发布；不可触发生产回滚。"
     };
   }
 
@@ -82,6 +97,9 @@ export function buildReleasePermissions(actor: RbacUser | null): ReleasePermissi
     return {
       role,
       canView: true,
+      canPublish: false,
+      canRollback: false,
+      canViewSecrets: false,
       canCopyRollbackCommand: false,
       canExecuteRollback: false,
       note: "kb_admin 只读发布状态。"
@@ -91,24 +109,98 @@ export function buildReleasePermissions(actor: RbacUser | null): ReleasePermissi
   return {
     role,
     canView: false,
+    canPublish: false,
+    canRollback: false,
+    canViewSecrets: false,
     canCopyRollbackCommand: false,
     canExecuteRollback: false,
     note: "当前账号不可访问发布中心。"
   };
 }
 
-function workflowStates(): ReleaseWorkflowState[] {
-  return WORKFLOWS.map(([file, name]) => {
+function workflowStatusFromRun(input: {
+  exists: boolean;
+  status?: string | null;
+  conclusion?: string | null;
+}): ReleaseStatus {
+  if (!input.exists) {
+    return "error";
+  }
+
+  if (!input.status && !input.conclusion) {
+    return "unknown";
+  }
+
+  if (input.status && ["queued", "in_progress", "requested", "waiting", "pending"].includes(input.status)) {
+    return "warning";
+  }
+
+  if (input.conclusion === "success") {
+    return "success";
+  }
+
+  if (input.conclusion && ["failure", "timed_out", "cancelled", "startup_failure", "action_required"].includes(input.conclusion)) {
+    return "error";
+  }
+
+  return "unknown";
+}
+
+export async function buildReleaseWorkflowStates(): Promise<{
+  github: ReleaseGithubState;
+  workflows: ReleaseWorkflowState[];
+  diagnostics: string[];
+}> {
+  const github = getGithubActionsState();
+  const githubWorkflows = await listWorkflows();
+  const workflowFiles = new Set(
+    githubWorkflows.workflows
+      .map((workflow) => readString((workflow as Record<string, unknown>).path)?.replace(/^\.github\/workflows\//, ""))
+      .filter((file): file is string => Boolean(file))
+  );
+  const diagnostics = [
+    github.available ? "githubActions:configured" : `githubActions:${github.reason ?? "unavailable"}`
+  ];
+
+  const workflows = await Promise.all(WORKFLOWS.map(async ([file, name]) => {
     const exists = existsSync(resolve(process.cwd(), ".github/workflows", file));
+    const latestRun = github.available ? await getLatestWorkflowRun(file) : null;
+    const run = latestRun?.run ?? null;
+    const githubWorkflowExists = github.available ? workflowFiles.has(file) : false;
 
     return {
       file,
       name,
       exists,
-      recentStatus: exists ? "unknown" : "error",
-      triggerHint: exists ? "GitHub Actions 支持 workflow_dispatch 手动触发。" : "workflow 文件不存在。"
+      recentStatus: workflowStatusFromRun({
+        exists,
+        status: run?.status,
+        conclusion: run?.conclusion
+      }),
+      triggerHint: exists
+        ? github.available
+          ? "GitHub Actions 可读取；支持 workflow_dispatch 手动触发。"
+          : "GitHub Actions Token 未配置，当前仅显示本地 workflow 文件状态。"
+        : "workflow 文件不存在。",
+      runId: run?.runId ?? null,
+      branch: run?.branch ?? null,
+      tag: run?.tag ?? null,
+      commit: run?.commit ?? null,
+      conclusion: run?.conclusion ?? run?.status ?? null,
+      startedAt: run?.startedAt ?? null,
+      updatedAt: run?.updatedAt ?? null,
+      htmlUrl: run?.htmlUrl ?? null,
+      workflowUrl: getWorkflowUrl(file),
+      canDispatch: Boolean(exists && (!github.available || githubWorkflowExists)),
+      reason: github.available ? latestRun?.reason ?? null : github.reason
     };
-  });
+  }));
+
+  return {
+    github,
+    workflows,
+    diagnostics
+  };
 }
 
 function releaseTags() {
@@ -151,6 +243,8 @@ function environmentStates(input: {
       apiHealth: input.environment === "dev" ? input.prodHealth : "unknown",
       deployStatus: "unknown",
       currentHead: input.environment === "dev" ? input.releaseHead : null,
+      releaseTag: null,
+      systemLinked: "unknown",
       lastDeployTime: null,
       note: "本地 QA 环境"
     },
@@ -161,6 +255,8 @@ function environmentStates(input: {
       apiHealth: "unknown",
       deployStatus: "unknown",
       currentHead: null,
+      releaseTag: null,
+      systemLinked: "unknown",
       lastDeployTime: null,
       note: "未配置"
     },
@@ -171,6 +267,8 @@ function environmentStates(input: {
       apiHealth: input.environment === "prod" ? input.prodHealth : "unknown",
       deployStatus: input.environment === "prod" ? "unknown" : "unknown",
       currentHead: input.environment === "prod" ? input.releaseHead : null,
+      releaseTag: null,
+      systemLinked: input.environment === "prod" ? input.prodHealth : "unknown",
       lastDeployTime: input.deployedAt,
       note: "阿里云生产环境"
     }
@@ -187,6 +285,8 @@ export async function buildReleaseConsoleSummary(input: {
   const currentHead = git(["rev-parse", "HEAD"]);
   const releaseHead = readString(manifest?.releaseHead) ?? readString(manifest?.commit) ?? currentHead;
   const releaseTag = readString(manifest?.releaseTag) ?? readString(manifest?.tag);
+  const version = readString(manifest?.version) ?? readString(publicLatest?.version);
+  const buildNumber = readString(manifest?.buildNumber) ?? readString(publicLatest?.buildNumber);
   const environment = resolveReleaseEnvironment(readString(manifest?.environment));
   const buildId = readBuildId() ?? readString(manifest?.buildId);
   const web = normalizeReleaseArtifact("web", readObject(manifest?.web), releaseHead);
@@ -197,18 +297,22 @@ export async function buildReleaseConsoleSummary(input: {
   const baseUrl = environment === "prod" ? "http://47.238.0.23" : origin;
   const health = await checkReleaseHealth(baseUrl, cookieHeader);
   const healthStatus = health.some((item) => item.ok) ? "success" : "unknown";
+  const systemLinked = health.some((item) => item.key === "expert-market" && item.ok) ? "success" : healthStatus;
   const webMatches = Boolean(releaseHead && web.available && web.head === releaseHead);
   const apkMatches = apk.available ? apk.head === releaseHead : null;
   const exeMatches = exe.available ? exe.head === releaseHead : null;
   const webApkExeSync = Boolean(webMatches && (apkMatches !== false) && (exeMatches !== false));
   const deployedAt = readString(manifest?.buildTime) ?? readString(publicLatest?.generatedAt);
+  const workflowState = await buildReleaseWorkflowStates();
 
   return {
     ok: true,
     releaseHead,
     releaseTag,
+    version,
+    buildNumber,
     buildId,
-    systemLinked: "unknown",
+    systemLinked,
     environment,
     latestStatus: web.available ? "success" : "warning",
     deployedBy: readString(manifest?.deployedBy) ?? "unknown",
@@ -223,7 +327,7 @@ export async function buildReleaseConsoleSummary(input: {
       exeMatches,
       webApkExeSync
     },
-    workflows: workflowStates(),
+    workflows: workflowState.workflows,
     environments: environmentStates({
       environment,
       releaseHead,
@@ -233,10 +337,13 @@ export async function buildReleaseConsoleSummary(input: {
     health,
     rollback: rollbackState(),
     permissions: buildReleasePermissions(input.actor),
+    github: workflowState.github,
+    audit: readReleaseAuditLog(),
     diagnostics: [
       manifest ? "releaseManifest:found" : "releaseManifest:missing",
       publicLatest ? "publicLatest:found" : "publicLatest:missing",
-      buildId ? "buildId:found" : "buildId:missing"
+      buildId ? "buildId:found" : "buildId:missing",
+      ...workflowState.diagnostics
     ]
   };
 }
@@ -281,11 +388,8 @@ export function buildRollbackPlan(targetTag: string): RollbackPlanResponse {
     ok: true,
     targetTag: safeTarget,
     commands: [
-      "git checkout main",
-      `git reset --hard ${safeTarget}`,
-      "npm install --include=dev",
-      "npm run build",
-      "pm2 restart ai-knowledge-main"
+      `gh workflow run admin-ingest-rollback.yml --ref main -f rollbackRef=${safeTarget} -f environment=prod -f confirmText=CONFIRM_ROLLBACK -f deploy=false`,
+      "在 GitHub Actions 中确认 rollback workflow 日志，再按发布流程进行人工部署确认。"
     ],
     warning: "回滚会影响线上版本，请确认 release tag 后手动执行。本 API 只生成命令草稿，不执行回滚。"
   };

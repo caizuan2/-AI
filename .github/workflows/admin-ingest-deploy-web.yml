@@ -40,6 +40,8 @@ permissions:
 env:
   RELEASE_ENV: ${{ inputs.environment || 'prod' }}
   RELEASE_HEAD: ${{ github.sha }}
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
 
 jobs:
   build-web:
@@ -84,7 +86,26 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Check deploy secrets
+        id: deploy_secrets
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALIYUN_HOST:-}" ] || [ -z "${ALIYUN_USER:-}" ] || [ -z "${ALIYUN_SSH_KEY:-}" ] || [ -z "${ALIYUN_APP_DIR:-}" ]; then
+            echo "DEPLOY_SKIPPED_MISSING_SECRETS=true"
+            echo "deploy_ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "DEPLOY_SKIPPED_MISSING_SECRETS=false"
+          echo "deploy_ready=true" >> "$GITHUB_OUTPUT"
+
       - name: Configure SSH key
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready == 'true' }}
         shell: bash
         env:
           ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
@@ -95,6 +116,7 @@ jobs:
           chmod 600 ~/.ssh/aliyun_admin_ingest
 
       - name: Deploy remote release
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready == 'true' }}
         shell: bash
         env:
           ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
@@ -115,6 +137,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
           npm install --include=dev
           npx prisma generate
+          npx prisma validate
           npm run typecheck
           npm run lint
           npm run build
@@ -124,6 +147,10 @@ jobs:
           curl -fsS -I "http://127.0.0.1:3021/api/public/expert-market"
           echo "DEPLOYMENT_DONE=true"
           REMOTE
+
+      - name: Deployment skipped
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready != 'true' }}
+        run: echo "DEPLOY_SKIPPED_MISSING_SECRETS=true"
 
   qa:
     name: Web health checks

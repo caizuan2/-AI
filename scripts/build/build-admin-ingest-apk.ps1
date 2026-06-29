@@ -79,7 +79,7 @@ function Write-ApkManifest {
 
 Push-Location $Root
 try {
-  $ReleaseInfo = node scripts/ci/resolve-admin-ingest-release-info.mjs | ConvertFrom-Json
+  $ReleaseInfo = node scripts/release/resolve-version.mjs --environment $env:RELEASE_ENV | ConvertFrom-Json
   $ReleaseHead = $env:RELEASE_HEAD
   if (-not $ReleaseHead) {
     $ReleaseHead = $ReleaseInfo.commit
@@ -93,14 +93,20 @@ try {
   $UsesFlutter = Test-Path $FlutterPubspec
 
   if ($DryRun) {
+    $EntryType = if ($UsesCapacitor) { "Capacitor" } elseif ($UsesFlutter) { "Flutter" } else { "none" }
     Write-Host "APK_BUILD_DRY_RUN=true"
     Write-Host "APP=admin-ingest"
     Write-Host "RELEASE_HEAD=$ReleaseHead"
     Write-Host "RELEASE_TAG=$ReleaseTag"
     Write-Host "APK_BUILD_AVAILABLE=$($UsesCapacitor -or $UsesFlutter)"
+    Write-Host "APK_ENTRY_TYPE=$EntryType"
     Write-Host "CAPACITOR_ADMIN_AVAILABLE=$UsesCapacitor"
     Write-Host "FLUTTER_AVAILABLE=$UsesFlutter"
+    Write-Host "APP_TYPE=ingest-admin"
     Write-Host "WEB_URL=$($ReleaseInfo.webUrl)"
+    Write-Host "BUILD_COMMIT=$ReleaseHead"
+    Write-Host "BUILD_TAG=$ReleaseTag"
+    Write-Host "BUILD_ENV=$($ReleaseInfo.environment)"
     exit 0
   }
 
@@ -109,8 +115,8 @@ try {
 
   if (-not $UsesCapacitor -and -not $UsesFlutter) {
     Write-Host "APK_BUILD_AVAILABLE=false"
-    Write-Host "APK_BUILD_REASON=APK_BUILD_ENTRY_NOT_FOUND"
-    Write-ApkManifest -Available $false -Reason "APK_BUILD_ENTRY_NOT_FOUND" -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
+    Write-Host "APK_BUILD_REASON=APK_ENTRY_NOT_FOUND"
+    Write-ApkManifest -Available $false -Reason "APK_ENTRY_NOT_FOUND" -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
     if ($FailOnMissingApk) {
       exit 1
     }
@@ -131,6 +137,7 @@ try {
   $env:NEXT_PUBLIC_ADMIN_APP_URL = $ReleaseInfo.webUrl
   $env:BUILD_COMMIT = $ReleaseHead
   $env:BUILD_TAG = $ReleaseTag
+  $env:BUILD_ENV = $ReleaseInfo.environment
 
   if ($UsesCapacitor) {
     Invoke-CheckedCommand -FailureReason "APK_CAPACITOR_BUILD_FAILED" -Command { powershell -ExecutionPolicy Bypass -File $ExistingAdminApkScript }
@@ -170,7 +177,10 @@ try {
   Write-ApkManifest -Available $false -Reason $Reason -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
   Write-Host "APK_BUILD_AVAILABLE=false"
   Write-Host "APK_BUILD_REASON=$Reason"
-  throw
+  if ($FailOnMissingApk) {
+    throw
+  }
+  exit 0
 } finally {
   Pop-Location
 }

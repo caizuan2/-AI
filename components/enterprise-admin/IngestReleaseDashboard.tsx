@@ -58,6 +58,7 @@ export function IngestReleaseDashboard({ data }: { data: ReleaseConsoleSummary }
       <MetricCard label="当前环境" value={data.environment} status={data.latestStatus} />
       <MetricCard label="Release HEAD" value={shortHash(data.releaseHead)} status={data.sync.webApkExeSync} />
       <MetricCard label="Release Tag" value={data.releaseTag ?? "unknown"} />
+      <MetricCard label="版本 / Build" value={`${data.version ?? "unknown"} / ${data.buildNumber ?? "unknown"}`} />
       <MetricCard label="BUILD_ID" value={data.buildId ?? "unknown"} />
       <MetricCard label="Web 版本" value={shortHash(data.web.head)} status={data.web.available} />
       <MetricCard label="PM2 状态" value="unknown" status="unknown" />
