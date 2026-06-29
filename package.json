@@ -72,6 +72,10 @@
     "ci:release-manifest": "node scripts/release/write-release-manifest.mjs",
     "ci:release-sync": "node scripts/release/verify-release-sync.mjs",
     "ci:release-console:dry-run": "node scripts/release/resolve-version.mjs && node scripts/release/write-release-manifest.mjs --dry-run && node scripts/release/verify-release-sync.mjs --dry-run",
+    "ci:admin-ingest:web:dry-run": "powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-web.ps1 -DryRun",
+    "ci:admin-ingest:apk:dry-run": "powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-apk.ps1 -DryRun",
+    "ci:admin-ingest:exe:dry-run": "powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps1 -DryRun",
+    "ci:admin-ingest:dry-run": "npm run ci:release-console:dry-run && npm run ci:admin-ingest:web:dry-run && npm run ci:admin-ingest:apk:dry-run && npm run ci:admin-ingest:exe:dry-run",
     "admin-ingest:smoke:web": "node scripts/admin-ingest-smoke.mjs",
     "admin-ingest:smoke:exe": "node scripts/admin-ingest-exe-smoke.mjs",
     "admin-ingest:smoke": "npm run admin-ingest:smoke:web && npm run admin-ingest:smoke:exe"

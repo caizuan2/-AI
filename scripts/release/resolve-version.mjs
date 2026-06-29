@@ -47,7 +47,6 @@ function utcStamp(date = new Date()) {
     date.getUTCFullYear(),
     pad(date.getUTCMonth() + 1),
     pad(date.getUTCDate()),
-    "-",
     pad(date.getUTCHours()),
     pad(date.getUTCMinutes()),
     pad(date.getUTCSeconds())

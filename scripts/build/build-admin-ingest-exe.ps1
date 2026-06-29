@@ -78,7 +78,7 @@ function Write-ExeManifest {
 
 Push-Location $Root
 try {
-  $ReleaseInfo = node scripts/ci/resolve-admin-ingest-release-info.mjs | ConvertFrom-Json
+  $ReleaseInfo = node scripts/release/resolve-version.mjs --environment $env:RELEASE_ENV | ConvertFrom-Json
   $ReleaseHead = $env:RELEASE_HEAD
   if (-not $ReleaseHead) {
     $ReleaseHead = $ReleaseInfo.commit
@@ -93,15 +93,21 @@ try {
   $UsesTauri = Test-Path $TauriConfig
 
   if ($DryRun) {
+    $EntryType = if ($UsesElectron) { "Electron" } elseif ($UsesFlutterWindows) { "Flutter Windows" } elseif ($UsesTauri) { "Tauri" } else { "none" }
     Write-Host "EXE_BUILD_DRY_RUN=true"
     Write-Host "APP=admin-ingest"
     Write-Host "RELEASE_HEAD=$ReleaseHead"
     Write-Host "RELEASE_TAG=$ReleaseTag"
     Write-Host "EXE_BUILD_AVAILABLE=$($UsesElectron -or $UsesFlutterWindows -or $UsesTauri)"
+    Write-Host "EXE_ENTRY_TYPE=$EntryType"
     Write-Host "ELECTRON_AVAILABLE=$UsesElectron"
     Write-Host "FLUTTER_WINDOWS_AVAILABLE=$UsesFlutterWindows"
     Write-Host "TAURI_AVAILABLE=$UsesTauri"
+    Write-Host "APP_TYPE=ingest-admin"
     Write-Host "WEB_URL=$($ReleaseInfo.webUrl)"
+    Write-Host "BUILD_COMMIT=$ReleaseHead"
+    Write-Host "BUILD_TAG=$ReleaseTag"
+    Write-Host "BUILD_ENV=$($ReleaseInfo.environment)"
     exit 0
   }
 
@@ -110,8 +116,8 @@ try {
 
   if (-not $UsesElectron -and -not $UsesFlutterWindows -and -not $UsesTauri) {
     Write-Host "EXE_BUILD_AVAILABLE=false"
-    Write-Host "EXE_BUILD_REASON=EXE_BUILD_ENTRY_NOT_FOUND"
-    Write-ExeManifest -Available $false -Reason "EXE_BUILD_ENTRY_NOT_FOUND" -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
+    Write-Host "EXE_BUILD_REASON=EXE_ENTRY_NOT_FOUND"
+    Write-ExeManifest -Available $false -Reason "EXE_ENTRY_NOT_FOUND" -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
     if ($FailOnMissingExe) {
       exit 1
     }
@@ -124,6 +130,7 @@ try {
   $env:ADMIN_APP_URL = $ReleaseInfo.webUrl
   $env:BUILD_COMMIT = $ReleaseHead
   $env:BUILD_TAG = $ReleaseTag
+  $env:BUILD_ENV = $ReleaseInfo.environment
 
   if ($UsesElectron) {
     Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
@@ -169,7 +176,10 @@ try {
   Write-ExeManifest -Available $false -Reason $Reason -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
   Write-Host "EXE_BUILD_AVAILABLE=false"
   Write-Host "EXE_BUILD_REASON=$Reason"
-  throw
+  if ($FailOnMissingExe) {
+    throw
+  }
+  exit 0
 } finally {
   Pop-Location
 }

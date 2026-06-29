@@ -3,7 +3,9 @@
 import { ArrowLeft, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReleaseConsoleSummary } from "@/lib/enterprise/release-console-types";
+import { IngestReleaseActionsPanel } from "@/components/enterprise-admin/IngestReleaseActionsPanel";
 import { IngestReleaseArtifactPanel } from "@/components/enterprise-admin/IngestReleaseArtifactPanel";
+import { IngestReleaseAuditPanel } from "@/components/enterprise-admin/IngestReleaseAuditPanel";
 import { IngestReleaseDashboard, ReleaseStatusBadge } from "@/components/enterprise-admin/IngestReleaseDashboard";
 import { IngestReleaseEnvironmentPanel } from "@/components/enterprise-admin/IngestReleaseEnvironmentPanel";
 import { IngestReleaseHealthPanel } from "@/components/enterprise-admin/IngestReleaseHealthPanel";
@@ -58,8 +60,8 @@ export function IngestReleaseConsole({ onBack }: { onBack: () => void }) {
             </button>
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-[#8b8b86]">Release Console</p>
-              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#202020]">发布控制台</h1>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#777]">统一管理 Web / APK / EXE 发布、构建产物、环境状态与回滚。</p>
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-[#202020]">发布平台控制台</h1>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#777]">统一管理 Web / APK / EXE 发布、GitHub Actions、版本清单、多环境、健康检查与回滚。</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -84,6 +86,7 @@ export function IngestReleaseConsole({ onBack }: { onBack: () => void }) {
         ) : data ? (
           <div className="space-y-5">
             <IngestReleaseDashboard data={data} />
+            <IngestReleaseActionsPanel data={data} onActionComplete={() => void loadSummary()} />
             <IngestReleaseArtifactPanel data={data} />
             <div className="grid gap-5 xl:grid-cols-2">
               <IngestReleaseWorkflowPanel data={data} />
@@ -93,6 +96,7 @@ export function IngestReleaseConsole({ onBack }: { onBack: () => void }) {
               <IngestReleaseHealthPanel data={data} />
               <IngestReleaseRollbackPanel data={data} />
             </div>
+            <IngestReleaseAuditPanel data={data} />
             <section className="rounded-[26px] border border-[#ededeb] bg-white p-5 text-xs leading-6 text-[#666] shadow-sm">
               <p className="font-semibold text-[#202020]">发布权限</p>
               <p className="mt-1">{data.permissions.note}</p>

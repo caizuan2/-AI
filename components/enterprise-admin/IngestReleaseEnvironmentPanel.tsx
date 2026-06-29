@@ -16,6 +16,8 @@ export function IngestReleaseEnvironmentPanel({ data }: { data: ReleaseConsoleSu
               <ReleaseStatusBadge status={environment.apiHealth} />
             </div>
             <p className="mt-3 text-xs text-[#777]">HEAD：<span className="font-mono">{shortHash(environment.currentHead)}</span></p>
+            <p className="mt-1 text-xs text-[#777]">Tag：<span className="font-mono">{environment.releaseTag ?? data.releaseTag ?? "unknown"}</span></p>
+            <p className="mt-1 text-xs text-[#777]">SYSTEM_LINKED：{environment.systemLinked ?? "unknown"}</p>
             <p className="mt-1 text-xs text-[#777]">部署：{environment.deployStatus}</p>
             <p className="mt-1 text-xs text-[#777]">时间：{environment.lastDeployTime ?? "unknown"}</p>
             {environment.webUrl ? (

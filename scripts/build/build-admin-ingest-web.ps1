@@ -26,7 +26,7 @@ function Invoke-ProjectCommand {
 
 Push-Location $Root
 try {
-  $ReleaseInfo = node scripts/ci/resolve-admin-ingest-release-info.mjs | ConvertFrom-Json
+  $ReleaseInfo = node scripts/release/resolve-version.mjs --environment $env:RELEASE_ENV | ConvertFrom-Json
   $ReleaseHead = $env:RELEASE_HEAD
   if (-not $ReleaseHead) {
     $ReleaseHead = $ReleaseInfo.commit

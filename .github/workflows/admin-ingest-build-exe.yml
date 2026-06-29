@@ -25,6 +25,9 @@ on:
       strict:
         required: true
         type: boolean
+  push:
+    tags:
+      - "release/admin-ingest-*"
 
 permissions:
   contents: read
@@ -32,6 +35,8 @@ permissions:
 env:
   RELEASE_ENV: ${{ inputs.environment || 'prod' }}
   RELEASE_HEAD: ${{ github.sha }}
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
   ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
 
@@ -63,8 +68,12 @@ jobs:
       - name: Build EXE and write manifest
         id: build_exe
         shell: pwsh
-        continue-on-error: true
-        run: ./scripts/build/build-admin-ingest-exe.ps1
+        run: |
+          $argsList = @()
+          if ("${{ inputs.strict || false }}" -eq "true") {
+            $argsList += "-FailOnMissingExe"
+          }
+          ./scripts/build/build-admin-ingest-exe.ps1 @argsList
 
       - name: Upload EXE artifacts
         uses: actions/upload-artifact@v4
@@ -79,6 +88,10 @@ jobs:
             src-tauri/target/release/bundle/**/*.exe
           if-no-files-found: warn
 
-      - name: Enforce strict EXE
-        if: ${{ inputs.strict == true && steps.build_exe.outcome == 'failure' }}
-        run: exit 1
+      - name: Print EXE manifest
+        if: always()
+        shell: bash
+        run: |
+          if [ -f artifacts/admin-ingest/exe/manifest.json ]; then
+            cat artifacts/admin-ingest/exe/manifest.json
+          fi

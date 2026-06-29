@@ -40,6 +40,10 @@ powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps
 
 4. Create a release tag using the project release process.
 5. Run `Admin Ingest Enterprise Release`.
+   - `buildWeb=true` builds the Web package on GitHub Actions.
+   - `buildApk=true` builds the APK on GitHub Actions; local Android SDK is not required.
+   - `buildExe=true` builds the EXE on GitHub Actions; local Electron dependency download stability is not required.
+   - `deployWeb=false` keeps the run as build/verify only.
 6. Confirm the unified release manifest:
    - Web artifact is available.
    - APK artifact is available or has a clear unavailable reason.
@@ -106,9 +110,18 @@ Required top-level fields:
 Unavailable APK/EXE artifacts are acceptable only when the manifest includes a clear `reason`, such as:
 
 - `ANDROID_SDK_NOT_FOUND`
-- `APK_BUILD_ENTRY_NOT_FOUND`
+- `APK_ENTRY_NOT_FOUND`
 - `EXE_DEPENDENCY_DOWNLOAD_TIMEOUT`
-- `EXE_BUILD_ENTRY_NOT_FOUND`
+- `EXE_ENTRY_NOT_FOUND`
+
+Available APK/EXE artifacts must include:
+
+- `head`
+- `path`
+- `size`
+- `sha256`
+
+The release is invalid when any available artifact `head` differs from `releaseHead`.
 
 ## Rollback Checklist
 
@@ -116,9 +129,10 @@ Use rollback only when production validation fails after a release.
 
 1. Identify the last known good `release/admin-ingest-*` tag or `backup/admin-ingest-*` branch.
 2. Run the `Admin Ingest Rollback` workflow.
-3. Enter `CONFIRM_ROLLBACK`.
-4. Confirm the remote `ROLLBACK_DONE=true` output.
-5. Re-check:
+3. First run with `deploy=false` to review the rollback plan.
+4. Only for real execution, set `deploy=true` and enter `CONFIRM_ROLLBACK`.
+5. Confirm the remote `ROLLBACK_DONE=true` output.
+6. Re-check:
    - Web page returns 200 or expected auth redirect.
    - Expert market public API returns 200.
    - PM2 process is online.
