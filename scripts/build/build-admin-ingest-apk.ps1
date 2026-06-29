@@ -18,8 +18,14 @@ function Invoke-CheckedCommand {
     [Parameter(Mandatory = $true)][string]$FailureReason
   )
 
-  $Output = & $Command 2>&1
-  $ExitCode = $LASTEXITCODE
+  $PreviousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $Output = & $Command 2>&1
+    $ExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $PreviousErrorActionPreference
+  }
   $Output | ForEach-Object { Write-Host $_ }
 
   if ($ExitCode -ne 0) {
