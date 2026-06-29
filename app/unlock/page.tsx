@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { UnlockPanel } from "@/app/unlock/unlock-panel";
 import { requireUser } from "@/lib/auth";
+import { getEntryPathFromAccessProfile, getUserAccessProfile } from "@/lib/auth/access-control";
 import { UnauthorizedError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -10,13 +11,15 @@ export default async function UnlockPage() {
     const user = await requireUser();
 
     if (user.licenseActivated) {
-      redirect("/");
+      const profile = await getUserAccessProfile(user);
+
+      redirect(getEntryPathFromAccessProfile(profile));
     }
 
     return <UnlockPanel user={{ phone: user.phone, name: user.name }} />;
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      redirect("/login?redirectTo=/unlock");
+      redirect("/login?next=/unlock");
     }
 
     throw error;
