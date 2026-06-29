@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { buildGithubUrls, resolveGithubRepo } from "./resolve-github-repo.mjs";
 
 const DEFAULT_WEB_URLS = {
   dev: "http://localhost:3063/admin-ingest?app=ingest-admin&platform=web",
@@ -53,7 +54,7 @@ function utcStamp(date = new Date()) {
   ].join("");
 }
 
-function resolveTag(commit) {
+function resolveTag(commit, version, buildNumber) {
   if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME) {
     return process.env.GITHUB_REF_NAME;
   }
@@ -68,7 +69,7 @@ function resolveTag(commit) {
     .map((value) => value.trim())
     .filter(Boolean);
 
-  return process.env.RELEASE_TAG || pointedTags[0] || `manual-${commit.slice(0, 8)}`;
+  return process.env.RELEASE_TAG || pointedTags[0] || `release/admin-ingest-${version}-${buildNumber}-${commit.slice(0, 8)}`;
 }
 
 const environment = normalizeEnvironment(
@@ -86,11 +87,13 @@ const branch =
   process.env.GITHUB_REF_TYPE === "branch" && process.env.GITHUB_REF_NAME
     ? process.env.GITHUB_REF_NAME
     : git(["branch", "--show-current"], "detached");
-const tag = resolveTag(commit);
 const buildNumber = process.env.BUILD_NUMBER || process.env.GITHUB_RUN_NUMBER || utcStamp();
 const shortCommit = commit.slice(0, 8);
 const webUrl = process.env.ADMIN_INGEST_WEB_URL || DEFAULT_WEB_URLS[environment];
 const version = packageJson.version || "0.0.0";
+const tag = resolveTag(commit, version, buildNumber);
+const github = buildGithubUrls(resolveGithubRepo());
+const encodedTag = encodeURIComponent(tag);
 
 const releaseInfo = {
   app: "admin-ingest",
@@ -103,6 +106,17 @@ const releaseInfo = {
   buildNumber: String(buildNumber),
   buildTime: new Date().toISOString(),
   webUrl,
+  github,
+  githubOwner: github.owner,
+  githubRepo: github.repo,
+  repository: github.repository,
+  releaseUrl: `${github.repoUrl}/releases/tag/${encodedTag}`,
+  apkAssetName: "admin-ingest.apk",
+  exeAssetName: "admin-ingest.exe",
+  apkDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/admin-ingest.apk`,
+  exeDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/admin-ingest.exe`,
+  latestApkUrl: github.latestApkUrl,
+  latestExeUrl: github.latestExeUrl,
   artifactPrefix: `admin-ingest-${version}-${buildNumber}-${shortCommit}`,
   rollback: {
     previousHead: process.env.ROLLBACK_PREVIOUS_HEAD || null,

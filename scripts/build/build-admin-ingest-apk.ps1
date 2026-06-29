@@ -7,6 +7,8 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "../..")
 $ManifestDir = Join-Path $Root "artifacts/admin-ingest/apk"
 $ManifestPath = Join-Path $ManifestDir "manifest.json"
+$ReleaseAssetName = "admin-ingest.apk"
+$ReleaseAssetPath = Join-Path $ManifestDir $ReleaseAssetName
 $ExistingAdminApkScript = Join-Path $Root "scripts/build-admin-android-apk.ps1"
 $AndroidDir = Join-Path $Root "android"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
@@ -53,6 +55,13 @@ function Write-ApkManifest {
   $Sha256 = $null
   $LastWriteTime = $null
   if ($Available -and $Path -and (Test-Path $Path)) {
+    New-Item -ItemType Directory -Force -Path $ManifestDir | Out-Null
+    $ResolvedSource = (Resolve-Path -LiteralPath $Path).Path
+    $ResolvedAsset = if (Test-Path $ReleaseAssetPath) { (Resolve-Path -LiteralPath $ReleaseAssetPath).Path } else { $ReleaseAssetPath }
+    if ($ResolvedSource -ne $ResolvedAsset) {
+      Copy-Item -LiteralPath $Path -Destination $ReleaseAssetPath -Force
+      $Path = $ReleaseAssetPath
+    }
     $Item = Get-Item -LiteralPath $Path
     $Size = $Item.Length
     $Sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -69,6 +78,9 @@ function Write-ApkManifest {
     tag = $ReleaseTag
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
+    assetName = $ReleaseAssetName
+    downloadUrl = $ReleaseInfo.apkDownloadUrl
+    latestDownloadUrl = $ReleaseInfo.latestApkUrl
     size = $Size
     sha256 = $Sha256
     lastWriteTime = $LastWriteTime

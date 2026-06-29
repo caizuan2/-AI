@@ -4,16 +4,28 @@ import type { ReleaseArtifact, ReleaseConsoleSummary } from "@/lib/enterprise/re
 import { formatBytes, ReleaseStatusBadge, shortHash } from "@/components/enterprise-admin/IngestReleaseDashboard";
 
 function ArtifactRow({ artifact }: { artifact: ReleaseArtifact }) {
+  const downloadUrl = artifact.available ? artifact.downloadUrl ?? artifact.url ?? null : null;
   return (
     <tr className="border-t border-[#f0f0ee]">
       <td className="px-3 py-3 font-semibold text-[#202020]">{artifact.platform}</td>
       <td className="px-3 py-3"><ReleaseStatusBadge status={artifact.available} label={artifact.available ? "available" : "blocked"} /></td>
       <td className="px-3 py-3 font-mono text-xs text-[#555]">{shortHash(artifact.head)}</td>
-      <td className="max-w-[220px] truncate px-3 py-3 text-[#555]" title={artifact.path ?? artifact.url ?? ""}>{artifact.path ?? artifact.url ?? "暂无产物"}</td>
+      <td className="max-w-[220px] truncate px-3 py-3 text-[#555]" title={artifact.assetName ?? artifact.path ?? artifact.url ?? ""}>{artifact.assetName ?? artifact.path ?? artifact.url ?? "暂无产物"}</td>
       <td className="px-3 py-3 text-[#555]">{formatBytes(artifact.size)}</td>
       <td className="max-w-[160px] truncate px-3 py-3 font-mono text-xs text-[#555]" title={artifact.sha256 ?? ""}>{artifact.sha256 ?? "unknown"}</td>
       <td className="px-3 py-3 text-[#777]">{artifact.buildTime ?? "unknown"}</td>
-      <td className="px-3 py-3 text-[#9a6500]">{artifact.reason ?? "-"}</td>
+      <td className="px-3 py-3 text-[#9a6500]">
+        {downloadUrl ? (
+          <a
+            className="inline-flex rounded-full bg-[#202020] px-3 py-1 text-[11px] font-semibold text-white hover:bg-[#3a3a38]"
+            href={downloadUrl}
+            rel="noreferrer"
+            target="_blank"
+          >
+            下载
+          </a>
+        ) : artifact.reason ?? "-"}
+      </td>
     </tr>
   );
 }
@@ -45,7 +57,7 @@ export function IngestReleaseArtifactPanel({ data }: { data: ReleaseConsoleSumma
               <th className="px-3 py-2">size</th>
               <th className="px-3 py-2">sha256</th>
               <th className="px-3 py-2">buildTime</th>
-              <th className="px-3 py-2">reason</th>
+              <th className="px-3 py-2">download / reason</th>
             </tr>
           </thead>
           <tbody>

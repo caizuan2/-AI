@@ -7,6 +7,8 @@ $ErrorActionPreference = "Stop"
 $Root = Resolve-Path (Join-Path $PSScriptRoot "../..")
 $ManifestDir = Join-Path $Root "artifacts/admin-ingest/exe"
 $ManifestPath = Join-Path $ManifestDir "manifest.json"
+$ReleaseAssetName = "admin-ingest.exe"
+$ReleaseAssetPath = Join-Path $ManifestDir $ReleaseAssetName
 $ElectronIngestConfig = Join-Path $Root "electron/admin-ingest/electron-builder.yml"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $TauriConfig = Join-Path $Root "src-tauri/tauri.conf.json"
@@ -52,6 +54,13 @@ function Write-ExeManifest {
   $Sha256 = $null
   $LastWriteTime = $null
   if ($Available -and $Path -and (Test-Path $Path)) {
+    New-Item -ItemType Directory -Force -Path $ManifestDir | Out-Null
+    $ResolvedSource = (Resolve-Path -LiteralPath $Path).Path
+    $ResolvedAsset = if (Test-Path $ReleaseAssetPath) { (Resolve-Path -LiteralPath $ReleaseAssetPath).Path } else { $ReleaseAssetPath }
+    if ($ResolvedSource -ne $ResolvedAsset) {
+      Copy-Item -LiteralPath $Path -Destination $ReleaseAssetPath -Force
+      $Path = $ReleaseAssetPath
+    }
     $Item = Get-Item -LiteralPath $Path
     $Size = $Item.Length
     $Sha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -68,6 +77,9 @@ function Write-ExeManifest {
     tag = $ReleaseTag
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
+    assetName = $ReleaseAssetName
+    downloadUrl = $ReleaseInfo.exeDownloadUrl
+    latestDownloadUrl = $ReleaseInfo.latestExeUrl
     size = $Size
     sha256 = $Sha256
     lastWriteTime = $LastWriteTime

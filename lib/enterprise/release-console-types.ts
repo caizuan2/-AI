@@ -9,6 +9,9 @@ export type ReleaseArtifact = {
   head: string | null;
   path: string | null;
   url?: string | null;
+  downloadUrl?: string | null;
+  latestDownloadUrl?: string | null;
+  assetName?: string | null;
   buildId?: string | null;
   size?: number | null;
   sha256?: string | null;

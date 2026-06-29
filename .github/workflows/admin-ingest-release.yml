@@ -42,7 +42,7 @@ on:
       - "release/admin-ingest-*"
 
 permissions:
-  contents: read
+  contents: write
   actions: read
 
 concurrency:
@@ -158,18 +158,59 @@ jobs:
           name: admin-ingest-exe
           path: artifacts/admin-ingest/exe
 
+      - name: Normalize APK and EXE release assets
+        run: node scripts/release/prepare-release-assets.mjs
+
       - name: Write unified release manifest
         run: node scripts/release/write-release-manifest.mjs
 
+      - name: Write release notes
+        run: node scripts/release/write-release-notes.mjs
+
       - name: Verify artifact sync
         run: node scripts/release/verify-release-sync.mjs
+
+      - name: Prepare GitHub Release asset list
+        id: release_files
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "files<<EOF"
+            echo "artifacts/admin-ingest/release-manifest.json"
+            echo "artifacts/admin-ingest/release-notes.md"
+            if [ -f "artifacts/admin-ingest/apk/admin-ingest.apk" ]; then
+              echo "artifacts/admin-ingest/apk/admin-ingest.apk"
+            fi
+            if [ -f "artifacts/admin-ingest/exe/admin-ingest.exe" ]; then
+              echo "artifacts/admin-ingest/exe/admin-ingest.exe"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish GitHub Release assets
+        if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: Admin Ingest ${{ env.RELEASE_TAG }}
+          body_path: artifacts/admin-ingest/release-notes.md
+          files: ${{ steps.release_files.outputs.files }}
+          fail_on_unmatched_files: true
+          make_latest: true
+
+      - name: Verify GitHub Release assets
+        if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
+        run: node scripts/release/verify-github-release-assets.mjs
 
       - name: Upload release manifest
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: admin-ingest-release-manifest
-          path: artifacts/admin-ingest/release-manifest.json
+          path: |
+            artifacts/admin-ingest/release-manifest.json
+            artifacts/admin-ingest/release-notes.md
           if-no-files-found: error
 
       - name: Release sync summary
