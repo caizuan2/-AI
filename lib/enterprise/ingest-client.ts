@@ -36,6 +36,7 @@ import {
   normalizeIngestResult,
   normalizeIngestSuccessPayload
 } from "@/lib/enterprise/ingest-response-normalizer";
+import { normalizeJsonToIngestStreamEvent } from "@/lib/enterprise/ingest-stream-normalizer";
 import { GPTOSRendererV3, processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import { enrichDraftWithKnowledgeFactoryV5 } from "@/lib/enterprise/knowledge-factory-v5";
 import {
@@ -967,6 +968,10 @@ export async function sendCoreIngest(input: {
   autonomous?: AutonomousTaskRequest;
   platform?: IngestPlatform;
   streaming?: IngestStreamingOptions;
+  requestId?: string;
+  conversationId?: string;
+  knowledgeBaseId?: string | null;
+  contextSummary?: string;
 }) {
   const platform = input.platform ?? "web";
   const normalizedModelSelection = normalizeIngestModelSelection({
@@ -997,32 +1002,41 @@ export async function sendCoreIngest(input: {
     recentTrainingRecords: input.recentTrainingRecords ?? []
   });
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
-  const health = await checkGptHealthStatus({
-    provider: modelProvider,
-    selectedModelLabel,
-    preferredModel
-  });
-  const healthState = normalizeIngestResult(health.ok ? 200 : 503, health);
+  const requestId = input.requestId ?? runtimeResult.requestId;
 
-  if (healthState.type === "auth_failure") {
-    console.warn("[admin-ingest:auth-access:health-warning]", {
-      status: healthState.status,
-      errorCode: healthState.errorCode,
-      provider: health.provider,
-      actualModel: health.actualModel ?? health.model,
-      requestId: runtimeResult.requestId,
-      message: healthState.message
+  try {
+    const health = await checkGptHealthStatus({
+      provider: modelProvider,
+      selectedModelLabel,
+      preferredModel
     });
-  }
+    const healthState = normalizeIngestResult(health.ok ? 200 : 503, health);
 
-  if (healthState.type === "model_health_failure") {
-    console.warn("[admin-ingest:model-health:warning]", {
-      status: healthState.status,
-      errorCode: healthState.errorCode,
-      provider: health.provider,
-      actualModel: health.actualModel ?? health.model,
-      requestId: runtimeResult.requestId,
-      message: healthState.message
+    if (healthState.type === "auth_failure") {
+      console.warn("[admin-ingest:auth-access:health-warning]", {
+        status: healthState.status,
+        errorCode: healthState.errorCode,
+        provider: health.provider,
+        actualModel: health.actualModel ?? health.model,
+        requestId,
+        message: healthState.message
+      });
+    }
+
+    if (healthState.type === "model_health_failure") {
+      console.warn("[admin-ingest:model-health:warning]", {
+        status: healthState.status,
+        errorCode: healthState.errorCode,
+        provider: health.provider,
+        actualModel: health.actualModel ?? health.model,
+        requestId,
+        message: healthState.message
+      });
+    }
+  } catch (error) {
+    console.warn("[admin-ingest:model-health:non-blocking]", {
+      requestId,
+      message: error instanceof Error ? error.message : String(error ?? "")
     });
   }
 
@@ -1031,12 +1045,17 @@ export async function sendCoreIngest(input: {
       method: "POST",
       credentials: "include",
       signal: input.streaming?.signal,
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-request-id": requestId
+      },
       body: JSON.stringify({
         input: input.text,
         source: "admin_ingest",
         sourceApp: "admin_ingest",
         ...agentKnowledgeScope,
+        conversationId: input.conversationId,
+        knowledgeBaseId: input.knowledgeBaseId ?? agentKnowledgeScope.knowledgeBaseId,
         knowledgeVersion: "v1",
         expertId: input.agent.expertId ?? null,
         agentName: input.agent.name,
@@ -1059,10 +1078,13 @@ export async function sendCoreIngest(input: {
         selectedModelLabel,
         modelDisplayName: selectedModelLabel,
         recentMessages: input.recentMessages ?? [],
+        contextSummary: input.contextSummary,
         previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
         recentTrainingRecords: input.recentTrainingRecords ?? [],
         runtimeContext: {
-          requestId: runtimeResult.requestId,
+          requestId,
+          conversationId: input.conversationId,
+          contextSummary: input.contextSummary,
           retrievalMode: runtimeResult.diagnostics.retrievalMode,
           retrieval: runtimeResult.retrieval,
           commercialDecision: runtimeResult.decision,
@@ -1082,7 +1104,7 @@ export async function sendCoreIngest(input: {
         status: ingestResult.status,
         errorCode: ingestResult.errorCode,
         message: ingestResult.message,
-        requestId: runtimeResult.requestId
+        requestId
       });
       throw new Error(`${ingestResult.errorCode ?? "AUTH_REQUIRED"}: ${ingestResult.message}`);
     }
@@ -1095,7 +1117,7 @@ export async function sendCoreIngest(input: {
         message: ingestResult.message,
         provider: ingestResult.provider,
         actualModel: ingestResult.actualModel,
-        requestId: runtimeResult.requestId
+        requestId
       });
       throw new Error(`${ingestResult.errorCode ?? "MODEL_HEALTH_FAILURE"}: ${ingestResult.message}`);
     }
@@ -1108,7 +1130,7 @@ export async function sendCoreIngest(input: {
         message: payload.message,
         provider: payload.provider,
         model: payload.model,
-        requestId: runtimeResult.requestId
+        requestId
       });
       throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
     }
@@ -1122,7 +1144,7 @@ export async function sendCoreIngest(input: {
         message: normalizedError.message,
         provider: normalizedError.provider,
         actualModel: normalizedError.actualModel,
-        requestId: runtimeResult.requestId
+        requestId
       });
       throw new Error(getFriendlyIngestError(response, payload));
     }
@@ -1141,7 +1163,7 @@ export async function sendCoreIngest(input: {
       provider: normalizedSuccess?.provider ?? data.provider,
       actualModel: normalizedSuccess?.actualModel ?? data.actualModel ?? data.model,
       contentLength: visibleReply.length,
-      requestId: runtimeResult.requestId
+      requestId
     });
 
     const styledReply = applyExpressionLayer(visibleReply, selectedModelLabel, "admin_ingest_model_reply");
@@ -1159,6 +1181,11 @@ export async function sendCoreIngest(input: {
       decision: runtimeResult.decision
     });
     await streamStyledOutput(styledReply, input.streaming);
+    const streamEvent = normalizeJsonToIngestStreamEvent({
+      requestId,
+      conversationId: input.conversationId,
+      text: styledReply
+    });
     const normalizedData = {
       ...data,
       replyMarkdown: styledReply,
@@ -1214,6 +1241,13 @@ export async function sendCoreIngest(input: {
       modelMode: draft.modelMode,
       visibleReply: styledReply,
       replyMarkdown: draft.replyMarkdown,
+      requestId,
+      conversationId: input.conversationId,
+      ok: true,
+      status: response.status,
+      replyText: styledReply,
+      retryable: false,
+      streamEvent,
       runtimeOrchestrator: normalizedData.runtimeOrchestrator,
       knowledgeLoop: draft.knowledgeLoop,
       evolution: draft.evolution,
