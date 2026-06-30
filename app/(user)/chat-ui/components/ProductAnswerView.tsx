@@ -4,15 +4,14 @@ import * as React from "react";
 import {
   ArrowRight,
   Brain,
-  ChevronDown,
   Check,
   Copy,
-  Loader2,
-  Quote
+  Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   buildProductAnswerDisplay,
+  type AnalysisSectionDisplay,
   type SalesAnswerModeKey
 } from "../lib/answer-display";
 import { safeCopyTextDetailed } from "../lib/clipboard";
@@ -102,28 +101,30 @@ function CopyMiniButton({ text, label = "复制" }: { text: string; label?: stri
   );
 }
 
-function FoldSection({
-  title,
-  icon,
-  children
-}: {
-  title: string;
-  icon: React.ReactNode;
-  children: React.ReactNode;
-}) {
+function DetailedAnalysisBlock({ sections }: { sections: AnalysisSectionDisplay[] }) {
+  if (sections.length === 0) {
+    return null;
+  }
+
   return (
-    <details className="group rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-600">
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-        <span className="inline-flex items-center gap-2 font-semibold text-slate-800">
-          {icon}
-          {title}
-        </span>
-        <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
-      </summary>
-      <div className="mt-3 border-t border-slate-100 pt-3 leading-7">
-        {children}
+    <section className="rounded-2xl border border-slate-200 bg-white/90 px-4 py-4 text-sm text-slate-700">
+      <div className="mb-3 inline-flex items-center gap-2 font-semibold text-slate-900">
+        <Brain className="h-4 w-4 text-blue-600" aria-hidden="true" />
+        详细分析
       </div>
-    </details>
+      <div className="space-y-3">
+        {sections.map((section) => (
+          <div key={section.title} className="rounded-xl bg-slate-50 px-3 py-3">
+            <p className="font-semibold text-slate-900">{section.title}</p>
+            <div className="mt-1.5 space-y-1 leading-6">
+              {section.lines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -175,10 +176,14 @@ export function ProductAnswerView({
   const copyAnswerText = [
     "小董AI处理建议",
     "",
-    `判断：${display.decision}`,
-    "",
     "行动建议：",
     ...display.actionSuggestions.map((suggestion, index) => `${index + 1}. ${suggestion}`),
+    "",
+    "详细分析：",
+    ...display.analysisSections.flatMap((section) => [
+      section.title,
+      ...section.lines
+    ]),
     "",
     `【${activeMode.label}】`,
     activeMode.text,
@@ -202,11 +207,6 @@ export function ProductAnswerView({
       </header>
 
       <div className="mt-4 space-y-3 text-[15px] leading-7 text-slate-800">
-        <section className="rounded-2xl bg-blue-50 px-4 py-3 ring-1 ring-blue-100">
-          <p className="text-xs font-semibold text-blue-700">判断</p>
-          <p className="mt-1 text-sm font-semibold leading-6 text-slate-950">{display.decision}</p>
-        </section>
-
         <section className="rounded-2xl bg-slate-50 px-4 py-3">
           <p className="mb-2 text-sm font-semibold text-slate-800">建议你这样做</p>
           <ul className="space-y-1.5 text-sm leading-6 text-slate-700">
@@ -218,6 +218,8 @@ export function ProductAnswerView({
             ))}
           </ul>
         </section>
+
+        <DetailedAnalysisBlock sections={display.analysisSections} />
 
         <section className="rounded-2xl bg-emerald-50 px-4 py-4 text-emerald-950 ring-1 ring-emerald-100">
           <div className="mb-3 flex flex-wrap gap-2">
@@ -247,42 +249,15 @@ export function ProductAnswerView({
             <CopyMiniButton text={activeMode.text} label={activeMode.copyLabel} />
           </div>
           <p className="whitespace-pre-line text-sm leading-7">{activeMode.text}</p>
-        </section>
 
-        <p className="flex items-start gap-2 text-sm leading-7 text-slate-700">
-          <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
-          <span>
-            <span className="font-semibold text-slate-900">下一步：</span>
-            {display.nextAction}
-          </span>
-        </p>
-
-        <FoldSection
-          title="展开详细分析"
-          icon={<Brain className="h-4 w-4 text-blue-600" aria-hidden="true" />}
-        >
-          <p className="whitespace-pre-line">{display.analysis}</p>
-        </FoldSection>
-
-        <FoldSection
-          title="展开完整话术"
-          icon={<Copy className="h-4 w-4 text-blue-600" aria-hidden="true" />}
-        >
-          <div className="mb-3 flex justify-end">
-            <CopyMiniButton text={display.fullScriptText} label="复制完整话术" />
-          </div>
-          <p className="whitespace-pre-line">{display.fullScriptText}</p>
-        </FoldSection>
-
-        <FoldSection
-          title="展开引用依据"
-          icon={<Quote className="h-4 w-4 text-blue-600" aria-hidden="true" />}
-        >
-          <p>{display.evidenceSummary}</p>
-          <p className="mt-2 rounded-xl bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-            {display.sourceDetail}
+          <p className="mt-3 flex items-start gap-2 border-t border-emerald-100 pt-3 text-sm leading-7 text-emerald-900">
+            <ArrowRight className="mt-1 h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+            <span>
+              <span className="font-semibold">下一步：</span>
+              {display.nextAction}
+            </span>
           </p>
-        </FoldSection>
+        </section>
       </div>
     </article>
   );
