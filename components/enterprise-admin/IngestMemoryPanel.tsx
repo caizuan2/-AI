@@ -66,6 +66,54 @@ type MessageWithMemoryV2 = IngestChatMessage & {
   };
 };
 
+type MemoryIndexStatus = {
+  ok?: boolean;
+  draftCount?: number;
+  publishableCount?: number;
+  publishedCount?: number;
+  totalPublished?: number;
+  indexedCount?: number;
+  totalIndexed?: number;
+  lastBuiltAt?: number;
+  builtAt?: number;
+  source?: string;
+  warnings?: string[];
+  skippedReasons?: Record<string, number>;
+};
+
+type MemoryPublishResult = {
+  publishedCount: number;
+  skippedCount: number;
+  totalPublished: number;
+  publishedIds?: string[];
+  skipped?: Array<{
+    draftId: string;
+    title: string;
+    reason: string;
+    missingFields?: string[];
+    canFixByScopeNormalizer?: boolean;
+  }>;
+  warnings?: string[];
+};
+
+type RuntimeMemoryTestResult = {
+  memoryApplied?: boolean;
+  usedMemoryIds?: string[];
+  memoryTrace?: Array<{
+    memoryId: string;
+    score: number;
+    reason: string;
+    matchedTokens?: string[];
+  }>;
+  memories?: Array<{
+    memoryId: string;
+    title: string;
+    score: number;
+    reason: string;
+  }>;
+  warnings?: string[];
+};
+
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json() as T & { success?: boolean; ok?: boolean; message?: string };
 
@@ -93,8 +141,14 @@ export function IngestMemoryPanel({
   const [isExtracting, setIsExtracting] = useState(false);
   const [isRecalling, setIsRecalling] = useState(false);
   const [isDetectingConflict, setIsDetectingConflict] = useState(false);
+  const [isPublishing, setIsPublishing] = useState(false);
+  const [isRebuildingIndex, setIsRebuildingIndex] = useState(false);
+  const [isTestingRuntime, setIsTestingRuntime] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [indexStatus, setIndexStatus] = useState<MemoryIndexStatus | null>(null);
+  const [publishResult, setPublishResult] = useState<MemoryPublishResult | null>(null);
+  const [runtimeTestResult, setRuntimeTestResult] = useState<RuntimeMemoryTestResult | null>(null);
   const knowledgeBaseId = activeAgent.knowledgeBaseId ?? undefined;
   const query = useMemo(() => new URLSearchParams({
     agentId: activeAgent.id,
@@ -118,9 +172,22 @@ export function IngestMemoryPanel({
     }
   }, [query]);
 
+  const loadIndexStatus = useCallback(async () => {
+    try {
+      const data = await readJson<MemoryIndexStatus>(await fetch("/api/admin/ingest-memory/index/status", {
+        credentials: "include"
+      }));
+
+      setIndexStatus(data);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "训练记忆索引状态加载失败。");
+    }
+  }, []);
+
   useEffect(() => {
     void loadSummary();
-  }, [loadSummary, refreshKey]);
+    void loadIndexStatus();
+  }, [loadIndexStatus, loadSummary, refreshKey]);
 
   async function handleExtract() {
     if (!activeConversationId) {
@@ -303,6 +370,93 @@ export function IngestMemoryPanel({
     }
   }
 
+  async function handlePublishSavedMemories() {
+    setIsPublishing(true);
+    setError("");
+
+    try {
+      const data = await readJson<MemoryPublishResult>(await fetch("/api/admin/ingest-memory/publish", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ publishAllSaved: true })
+      }));
+
+      setPublishResult(data);
+      await loadIndexStatus();
+      onToast?.({
+        type: data.publishedCount > 0 ? "success" : "info",
+        title: data.publishedCount > 0 ? "训练记忆已发布" : "暂无新增发布记忆",
+        description: data.publishedCount > 0
+          ? `新增 ${data.publishedCount} 条，累计 ${data.totalPublished} 条。`
+          : data.warnings?.[0] ?? `跳过 ${data.skippedCount} 条。`
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "发布训练记忆失败。");
+    } finally {
+      setIsPublishing(false);
+    }
+  }
+
+  async function handleRebuildMemoryIndex() {
+    setIsRebuildingIndex(true);
+    setError("");
+
+    try {
+      const data = await readJson<MemoryIndexStatus>(await fetch("/api/admin/ingest-memory/index/rebuild", {
+        method: "POST",
+        credentials: "include"
+      }));
+
+      setIndexStatus(data);
+      onToast?.({
+        type: "success",
+        title: "训练记忆索引已重建",
+        description: `当前可检索索引 ${data.indexedCount ?? 0} 条。`
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "重建训练记忆索引失败。");
+    } finally {
+      setIsRebuildingIndex(false);
+    }
+  }
+
+  async function handleTestRuntimeMemoryHit() {
+    setIsTestingRuntime(true);
+    setError("");
+
+    try {
+      const data = await readJson<RuntimeMemoryTestResult>(await fetch("/api/runtime/memory/search", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query: "33循环和77循环怎么选",
+          knowledgeBaseId: "kb-kks-slim",
+          agentId: "expert-kks",
+          namespace: "kb-kks-slim",
+          tenantId: "default",
+          limit: 5
+        })
+      }));
+
+      setRuntimeTestResult(data);
+      onToast?.({
+        type: data.memoryApplied ? "success" : "info",
+        title: data.memoryApplied ? "运行时记忆已命中" : "运行时暂未命中",
+        description: data.usedMemoryIds?.length ? `命中 ${data.usedMemoryIds.length} 条。` : data.warnings?.[0] ?? "当前没有 KKS/33/77 可用索引。"
+      });
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "运行时命中测试失败。");
+    } finally {
+      setIsTestingRuntime(false);
+    }
+  }
+
   async function handleCopy(item: IngestMemoryItem) {
     const text = `# ${item.title}\n\n${item.content}`;
 
@@ -360,11 +514,41 @@ export function IngestMemoryPanel({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void loadSummary()}
+              onClick={() => {
+                void loadSummary();
+                void loadIndexStatus();
+              }}
               className="inline-flex items-center gap-2 rounded-full border border-[#e1dbcf] bg-white px-4 py-2 text-sm font-semibold text-[#4b463f] shadow-sm transition hover:bg-[#f8f6f0]"
             >
               <RefreshCcw className="h-4 w-4" aria-hidden="true" />
               刷新
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePublishSavedMemories()}
+              disabled={isPublishing}
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+              {isPublishing ? "发布中..." : "发布已保存记忆"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleRebuildMemoryIndex()}
+              disabled={isRebuildingIndex}
+              className="inline-flex items-center gap-2 rounded-full border border-[#d8e1f3] bg-white px-4 py-2 text-sm font-semibold text-[#315078] shadow-sm transition hover:bg-[#f3f7ff] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <RefreshCcw className={isRebuildingIndex ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
+              {isRebuildingIndex ? "重建中..." : "重建索引"}
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleTestRuntimeMemoryHit()}
+              disabled={isTestingRuntime}
+              className="inline-flex items-center gap-2 rounded-full border border-[#e4ded3] bg-white px-4 py-2 text-sm font-semibold text-[#4b463f] shadow-sm transition hover:bg-[#f8f6f0] disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Sparkles className={isTestingRuntime ? "h-4 w-4 animate-spin" : "h-4 w-4"} aria-hidden="true" />
+              {isTestingRuntime ? "测试中..." : "测试运行时命中"}
             </button>
             <button
               type="button"
@@ -378,20 +562,64 @@ export function IngestMemoryPanel({
           </div>
         </div>
 
-        <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <div className="mt-6 grid gap-4 md:grid-cols-3 xl:grid-cols-5">
           <div className="rounded-[22px] border border-[#e8e4dc] bg-white p-5 shadow-sm">
             <p className="text-xs text-[#8a8378]">训练记忆</p>
             <p className="mt-2 text-3xl font-semibold text-[#27231d]">{summary.memoryCount}</p>
           </div>
           <div className="rounded-[22px] border border-[#e8e4dc] bg-white p-5 shadow-sm">
             <p className="text-xs text-[#8a8378]">草稿候选</p>
-            <p className="mt-2 text-3xl font-semibold text-[#27231d]">{summary.draftCount}</p>
+            <p className="mt-2 text-3xl font-semibold text-[#27231d]">{indexStatus?.draftCount ?? summary.draftCount}</p>
+            <p className="mt-1 text-xs text-[#8a8378]">可发布 {indexStatus?.publishableCount ?? 0} 条</p>
           </div>
           <div className="rounded-[22px] border border-[#e8e4dc] bg-white p-5 shadow-sm">
             <p className="text-xs text-[#8a8378]">当前 Agent</p>
             <p className="mt-2 truncate text-lg font-semibold text-[#27231d]">{activeAgent.name}</p>
           </div>
+          <div className="rounded-[22px] border border-emerald-100 bg-emerald-50/60 p-5 shadow-sm">
+            <p className="text-xs text-emerald-700">已发布记忆</p>
+            <p className="mt-2 text-3xl font-semibold text-emerald-900">{indexStatus?.totalPublished ?? indexStatus?.publishedCount ?? 0}</p>
+          </div>
+          <div className="rounded-[22px] border border-[#dbe5f5] bg-[#f7fbff] p-5 shadow-sm">
+            <p className="text-xs text-[#5c6d87]">运行时索引</p>
+            <p className="mt-2 text-3xl font-semibold text-[#203b5a]">{indexStatus?.totalIndexed ?? indexStatus?.indexedCount ?? 0}</p>
+          </div>
         </div>
+
+        {(publishResult?.skipped?.length || runtimeTestResult || indexStatus?.warnings?.length) ? (
+          <div className="mt-5 grid gap-3 lg:grid-cols-2">
+            {publishResult?.skipped?.length ? (
+              <div className="rounded-2xl border border-[#eee4d4] bg-white px-4 py-3 text-xs text-[#75695a] shadow-sm">
+                <p className="font-semibold text-[#2c2924]">发布跳过原因</p>
+                <div className="mt-2 space-y-2">
+                  {publishResult.skipped.slice(0, 6).map((item) => (
+                    <div key={item.draftId} className="leading-5">
+                      <span className="font-medium text-[#3a352e]">{item.title || item.draftId}</span>
+                      <span>：{item.reason}</span>
+                      {item.canFixByScopeNormalizer ? <span className="ml-2 text-emerald-700">可自动补全范围并发布</span> : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {runtimeTestResult ? (
+              <div className="rounded-2xl border border-[#dde8f3] bg-white px-4 py-3 text-xs text-[#596879] shadow-sm">
+                <p className="font-semibold text-[#203044]">运行时命中测试</p>
+                <p className="mt-2">memoryApplied：{runtimeTestResult.memoryApplied ? "true" : "false"}</p>
+                <p className="mt-1">usedMemoryIds：{runtimeTestResult.usedMemoryIds?.join(", ") || "无"}</p>
+                {runtimeTestResult.memoryTrace?.[0] ? (
+                  <p className="mt-1">reason：{runtimeTestResult.memoryTrace[0].reason}</p>
+                ) : null}
+                {runtimeTestResult.warnings?.length ? <p className="mt-1 text-amber-700">{runtimeTestResult.warnings[0]}</p> : null}
+              </div>
+            ) : null}
+            {indexStatus?.warnings?.length ? (
+              <div className="rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-xs text-amber-800 shadow-sm">
+                {indexStatus.warnings.join(" / ")}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         {error ? (
           <div className="mt-5 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm text-amber-700">

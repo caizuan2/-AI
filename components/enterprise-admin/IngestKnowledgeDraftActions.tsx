@@ -93,7 +93,7 @@ export function IngestKnowledgeDraftActions({
     if (isSaved) {
       setSaveState("saved");
       setSaveError(null);
-      setLastSaveResult("已保存到知识库");
+      setLastSaveResult("已保存到知识库，可在训练记忆中发布到运行时索引。");
       return;
     }
 
@@ -127,7 +127,7 @@ export function IngestKnowledgeDraftActions({
     }
 
     if (saveState === "saved") {
-      setLastSaveResult("已保存到知识库");
+      setLastSaveResult("已保存到知识库，可在训练记忆中发布到运行时索引。");
       setSaveError(null);
       return;
     }
@@ -159,7 +159,7 @@ export function IngestKnowledgeDraftActions({
 
       setSaveState("saved");
       setSaveError(null);
-      setLastSaveResult("已保存到知识库");
+      setLastSaveResult("已保存到知识库，可在训练记忆中发布到运行时索引。");
     } catch (error) {
       setSaveState("error");
       setLastSaveResult(null);
