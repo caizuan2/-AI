@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { GaugeCircle, MessageSquareText, Rocket } from "lucide-react";
+import { Brain, GaugeCircle, MessageSquareText, Rocket } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
@@ -16,6 +16,7 @@ import {
   type IngestSettingsState
 } from "@/components/enterprise-admin/IngestSettingsPanel";
 import { IngestKnowledgeOSDashboard } from "@/components/enterprise-admin/IngestKnowledgeOSDashboard";
+import { IngestMemoryPanel } from "@/components/enterprise-admin/IngestMemoryPanel";
 import { IngestReleaseConsole } from "@/components/enterprise-admin/IngestReleaseConsole";
 import {
   checkLicenseStatus,
@@ -77,9 +78,44 @@ import {
   shouldRestoreToastFromHistory,
   shouldSuppressFallbackToast
 } from "@/lib/enterprise/ingest-ui-state";
+import {
+  ensureConversationState,
+  markRequestActive,
+  type IngestConversationMessage,
+  type IngestConversationState
+} from "@/lib/enterprise/ingest-conversation-state";
+import {
+  appendAssistantPlaceholder,
+  appendUserMessage,
+  completeAssistantMessage,
+  failAssistantMessage,
+  updateAssistantMessage
+} from "@/lib/enterprise/ingest-message-reducer";
+import { buildIngestContextPayload } from "@/lib/enterprise/ingest-context-builder";
+import {
+  createIngestRequestAttemptId,
+  createIngestRequestId,
+  getRetryDelayMs,
+  isRetryableIngestError,
+  shouldIgnoreRequestError,
+  shouldIgnoreRequestResult,
+  shouldResetLoading
+} from "@/lib/enterprise/ingest-request-controller";
+import {
+  canStartRequest,
+  completeRequest,
+  createIngestQueueState,
+  enqueueRequest,
+  failRequest,
+  getNextQueuedRequest,
+  isDuplicateSendAttempt,
+  recordSendAttempt,
+  startRequest,
+  type IngestRequestQueueState
+} from "@/lib/enterprise/ingest-request-queue";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 
-type IngestMode = "chat" | "workbench" | "knowledge" | "release";
+type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
 type IngestActionResult = Awaited<ReturnType<typeof sendCoreIngest>>;
 type OpenPanel = "notifications" | "settings" | null;
@@ -93,6 +129,34 @@ type IngestActionToast = {
   title: string;
   description?: string;
   type?: "success" | "warning" | "info";
+};
+type MemoryPromptPreview = {
+  success?: boolean;
+  ok?: boolean;
+  retrievedMemories?: Array<{
+    memory: { id: string; title?: string };
+    score?: number;
+    reason?: string;
+    matchedFields?: string[];
+  }>;
+  memoryContextText?: string;
+  agentLearningInstruction?: string;
+  appliedPolicies?: string[];
+  finalPromptPreview?: string;
+  usedMemoryIds?: string[];
+  debug?: {
+    memoryParticipated?: boolean;
+    usedMemoryIds?: string[];
+    recalledMemoryIds?: string[];
+    injectedCharLength?: number;
+    appliedPolicies?: string[];
+    warnings?: string[];
+  };
+  warnings?: string[];
+};
+type MemoryV2Trace = {
+  promptPreview: MemoryPromptPreview | null;
+  warnings: string[];
 };
 type SpeechRecognitionLike = {
   continuous: boolean;
@@ -153,18 +217,6 @@ const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
 const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
-
-function createIngestRequestId() {
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return crypto.randomUUID();
-    }
-  } catch {
-    // Browser crypto can be unavailable in older embedded shells.
-  }
-
-  return `admin-ingest-gpt-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
 
 function readLocalArray<T>(key: string): T[] {
   try {
@@ -318,6 +370,43 @@ function getPersistableMessages(messages: IngestChatMessage[]) {
   return messages
     .filter((message) => !isEmptyHistoryMessage(message))
     .map(markMessageCompleted);
+}
+
+function toConversationStateMessages(
+  messages: IngestChatMessage[],
+  conversationId: string,
+  agent: IngestChatAgent
+): IngestConversationMessage[] {
+  return getPersistableMessages(messages)
+    .filter((message) => {
+      const content = message.content.trim();
+
+      return Boolean(content) && content !== "暂无历史内容";
+    })
+    .map((message, index) => {
+      const createdAt = Date.now() - ((messages.length - index) * 1000);
+
+      return {
+        id: message.id,
+        role: message.role,
+        content: message.content,
+        status: message.status === "failed" ? "failed" : "completed",
+        requestId: typeof message.gptProof?.responseId === "string" ? message.gptProof.responseId : undefined,
+        conversationId: message.conversationId ?? conversationId,
+        agentId: message.agentId ?? agent.id,
+        knowledgeBaseId: agent.knowledgeBaseId ?? undefined,
+        createdAt,
+        updatedAt: createdAt,
+        meta: {
+          model: message.model,
+          provider: message.provider
+        }
+      };
+    });
+}
+
+function toPreviousKnowledgeDrafts(draft: IngestKnowledgeDraft) {
+  return hasConversationDraft(draft) ? [draft] : [];
 }
 
 function createEmptyHistoryMessages({
@@ -544,8 +633,12 @@ export function IngestModeToggle() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
+  const conversationStateByIdRef = useRef<Record<string, IngestConversationState>>({});
+  const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
+  const abortControllerByConversationRef = useRef<Record<string, AbortController>>({});
   const activeIngestRequestIdRef = useRef("");
   const ingestSuccessLockRef = useRef(false);
   const lastSuccessfulIngestAtRef = useRef(0);
@@ -985,6 +1078,10 @@ export function IngestModeToggle() {
       settings: "账号设置已打开。"
     };
 
+    if (nextKey === "memory") {
+      setMode("memory");
+    }
+
     setNoticeMessage(railMessages[nextKey]);
   }
 
@@ -1354,6 +1451,110 @@ export function IngestModeToggle() {
       : conversation));
   }
 
+  async function triggerMemoryExtraction(input: {
+    conversationId: string;
+    agentId: string;
+    knowledgeBaseId?: string;
+    messages: IngestConversationMessage[];
+    latestAssistantReply: string;
+    userInstruction: string;
+    saveIntent?: boolean;
+  }) {
+    try {
+      const response = await fetch("/api/admin/ingest-memory/extract", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          conversationId: input.conversationId,
+          agentId: input.agentId,
+          knowledgeBaseId: input.knowledgeBaseId,
+          messages: input.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content
+          })),
+          latestAssistantReply: input.latestAssistantReply,
+          userInstruction: input.userInstruction,
+          saveIntent: input.saveIntent
+        })
+      });
+
+      if (!response.ok) {
+        console.warn("[admin-ingest-memory:extract:ignored]", {
+          status: response.status,
+          conversationId: input.conversationId
+        });
+        return;
+      }
+
+      setMemoryRefreshKey((current) => current + 1);
+    } catch (error) {
+      console.warn("[admin-ingest-memory:extract:ignored]", {
+        message: error instanceof Error ? error.message : String(error ?? ""),
+        conversationId: input.conversationId
+      });
+    }
+  }
+
+  async function prepareMemoryV2Context(input: {
+    query: string;
+    conversationId: string;
+    agentId: string;
+    knowledgeBaseId?: string;
+    messages: IngestConversationMessage[];
+  }): Promise<MemoryV2Trace> {
+    const warnings: string[] = [];
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 2200);
+
+    try {
+      const response = await fetch("/api/admin/ingest-memory/prompt-preview", {
+        method: "POST",
+        credentials: "include",
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          query: input.query,
+          conversationId: input.conversationId,
+          agentId: input.agentId,
+          knowledgeBaseId: input.knowledgeBaseId,
+          messages: input.messages.map((message) => ({
+            id: message.id,
+            role: message.role,
+            content: message.content
+          }))
+        })
+      });
+      const data = await response.json() as MemoryPromptPreview & { message?: string };
+
+      if (!response.ok || data.success === false || data.ok === false) {
+        warnings.push(data.message || "MEMORY_V2_PREVIEW_FAILED");
+        return { promptPreview: null, warnings };
+      }
+
+      return {
+        promptPreview: data,
+        warnings: data.warnings ?? []
+      };
+    } catch (error) {
+      warnings.push(error instanceof Error ? error.message : "MEMORY_V2_PREVIEW_ERROR");
+      console.warn("[admin-ingest-memory:v2:preview:ignored]", {
+        message: error instanceof Error ? error.message : String(error ?? "")
+      });
+      return {
+        promptPreview: null,
+        warnings
+      };
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
   async function handleSend(textOverride?: string): Promise<IngestActionResult | null> {
     const value = (textOverride ?? input).trim();
     const currentModelLabel = selectedModelLabel;
@@ -1392,11 +1593,91 @@ export function IngestModeToggle() {
     }
 
     const conversationId = ensureConversationForSend(activeAgent);
-    const userMessageId = `user-${Date.now()}`;
+    const sendAttemptAt = Date.now();
+    const hasActiveConversationRequest = Boolean(conversationStateByIdRef.current[conversationId]?.activeRequestId)
+      || !canStartRequest(requestQueueRef.current, conversationId);
+
+    if (hasActiveConversationRequest) {
+      if (isDuplicateSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt)) {
+        setNoticeMessage("上一条还在生成，已忽略重复点击。");
+        setErrorMessage("");
+        return null;
+      }
+
+      requestQueueRef.current = enqueueRequest(recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt), {
+        conversationId,
+        prompt: effectiveInput,
+        createdAt: sendAttemptAt
+      });
+      setInput(effectiveInput);
+      setNoticeMessage("上一条还在生成，请稍候。已保留最后一条输入，生成完成后可继续发送。");
+      setErrorMessage("");
+      return null;
+    }
+
+    requestQueueRef.current = recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt);
+    const contextSourceMessages = messages.length > 0 ? messages : conversationMessagesById[conversationId] ?? [];
     const requestId = createIngestRequestId();
-    const isCurrentRequest = () => activeIngestRequestIdRef.current === requestId;
+    const abortController = new AbortController();
+    let conversationState = ensureConversationState(conversationStateByIdRef.current[conversationId], {
+      conversationId,
+      agentId: activeAgent.id,
+      knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+      messages: toConversationStateMessages(contextSourceMessages, conversationId, activeAgent)
+    });
+
+    conversationState = appendUserMessage(conversationState, {
+      id: `user-${Date.now()}`,
+      content: effectiveInput,
+      requestId,
+      meta: {
+        model: currentModelLabel,
+        provider: "admin_ingest"
+      }
+    });
+    const userMessageId = conversationState.messages
+      .filter((message) => message.role === "user" && message.requestId === requestId)
+      .slice(-1)[0]?.id ?? `user-${Date.now()}`;
+    conversationState = appendAssistantPlaceholder(conversationState, {
+      requestId,
+      meta: {
+        model: currentModelLabel,
+        provider: selectedModelOption.provider
+      }
+    });
+    conversationState = markRequestActive(conversationState, requestId);
+    conversationStateByIdRef.current[conversationId] = conversationState;
+    const memoryV2Trace = await prepareMemoryV2Context({
+      query: effectiveInput,
+      conversationId,
+      agentId: activeAgent.id,
+      knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+      messages: conversationState.messages
+    });
+    const memoryV2Preview = memoryV2Trace.promptPreview;
+    const contextPayload = buildIngestContextPayload({
+      conversationId,
+      agentId: activeAgent.id,
+      knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+      messages: conversationState.messages,
+      prompt: effectiveInput,
+      maxMessages: 12,
+      memoryContextText: memoryV2Preview?.memoryContextText,
+      usedMemoryIds: memoryV2Preview?.usedMemoryIds,
+      agentLearningInstruction: memoryV2Preview?.agentLearningInstruction
+    });
+    const recentMessages = contextPayload.messages.map((message) => ({
+      ...message,
+      model: null,
+      provider: null
+    }));
+    const previousKnowledgeDrafts = toPreviousKnowledgeDrafts(draft);
+    const isCurrentRequest = () => activeIngestRequestIdRef.current === requestId
+      && !shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId);
 
     activeIngestRequestIdRef.current = requestId;
+    requestQueueRef.current = startRequest(requestQueueRef.current, conversationId, requestId);
+    abortControllerByConversationRef.current[conversationId] = abortController;
     ingestSuccessLockRef.current = false;
     markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
@@ -1405,7 +1686,7 @@ export function IngestModeToggle() {
     setGptFallbackToast(null);
     setActionToast(null);
     setMessages((current) => [
-      ...current,
+      ...current.map(markMessageCompleted),
       {
         id: userMessageId,
         role: "user",
@@ -1459,45 +1740,114 @@ export function IngestModeToggle() {
           : message));
       }
 
-      const result = await sendCoreIngest({
-        text: effectiveInput,
-        agent: activeAgent,
-        category: activeAgent.role,
-        model: selectedModelOption.label,
-        modelProvider: selectedModelOption.provider,
-        gptTier: selectedModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
-        gptTierLabel: selectedModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
-        gptVersion: selectedModelOption.provider === "openai" ? selectedGptModel.version : undefined,
-        selectedModelLabel: selectedModelOption.label,
-        tenantId,
-        userId,
-        attachments: outgoingAttachments,
-        recentMessages: messages.slice(-10).map((message) => ({
-          role: message.role,
-          content: message.content,
-          model: message.model ?? null,
-          provider: message.provider ?? null
-        })),
-        previousKnowledgeDrafts: draft.jobId ? [draft] : [],
-        recentTrainingRecords: records.slice(0, 6).map((record) => ({
-          input: record.input,
-          resultTitle: record.resultTitle,
-          category: record.category,
-          saveStatus: record.saveStatus
-        })),
-        autonomous: {
-          enabled: autonomousEnabled,
-          mode: autonomousEnabled ? "execute_safe" : "plan_only"
-        },
-        platform: platformContext.platform
-      });
+      let attempt = 0;
+      let result: IngestActionResult;
+
+      while (true) {
+        try {
+          result = await sendCoreIngest({
+            text: effectiveInput,
+            agent: activeAgent,
+            category: activeAgent.role,
+            model: selectedModelOption.label,
+            modelProvider: selectedModelOption.provider,
+            gptTier: selectedModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
+            gptTierLabel: selectedModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
+            gptVersion: selectedModelOption.provider === "openai" ? selectedGptModel.version : undefined,
+            selectedModelLabel: selectedModelOption.label,
+            tenantId,
+            userId,
+            attachments: outgoingAttachments,
+            recentMessages,
+            contextSummary: contextPayload.contextSummary,
+            previousKnowledgeDrafts,
+            recentTrainingRecords: records.slice(0, 6).map((record) => ({
+              input: record.input,
+              resultTitle: record.resultTitle,
+              category: record.category,
+              saveStatus: record.saveStatus
+            })),
+            autonomous: {
+              enabled: autonomousEnabled,
+              mode: autonomousEnabled ? "execute_safe" : "plan_only"
+            },
+            platform: platformContext.platform,
+            streaming: {
+              signal: abortController.signal
+            },
+            requestId,
+            conversationId: contextPayload.conversationId,
+            knowledgeBaseId: contextPayload.knowledgeBaseId
+          });
+          break;
+        } catch (retryError) {
+          const canRetry = attempt < 1
+            && !abortController.signal.aborted
+            && isCurrentRequest()
+            && isRetryableIngestError(retryError);
+
+          if (!canRetry) {
+            throw retryError;
+          }
+
+          attempt += 1;
+          const retryDelayMs = getRetryDelayMs(attempt);
+
+          console.warn("[admin-ingest:gpt:retry]", {
+            requestId,
+            requestAttemptId: createIngestRequestAttemptId(requestId, attempt),
+            conversationId,
+            retryDelayMs
+          });
+          await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
+        }
+      }
 
       if (!isCurrentRequest()) {
         return null;
       }
 
+      if (shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId)) {
+        return null;
+      }
+
       const nextRecords = mergeTrainingRecords(result.records, records);
       const successAt = Date.now();
+      const assistantContent = result.replyMarkdown || (result.preview
+        ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
+        : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`);
+      let nextConversationState = updateAssistantMessage(conversationStateByIdRef.current[conversationId], {
+        requestId,
+        content: assistantContent,
+        meta: {
+          provider: result.provider,
+          model: result.model ?? currentModelLabel,
+          memoryV2: {
+            usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
+            recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
+            memoryParticipated: memoryV2Preview?.debug?.memoryParticipated ?? Boolean(memoryV2Preview?.usedMemoryIds?.length),
+            appliedPolicies: memoryV2Preview?.appliedPolicies ?? [],
+            warnings: [...memoryV2Trace.warnings, ...(memoryV2Preview?.warnings ?? [])]
+          }
+        }
+      });
+      nextConversationState = completeAssistantMessage(nextConversationState, {
+        requestId,
+        content: assistantContent,
+        meta: {
+          provider: result.provider,
+          model: result.model ?? currentModelLabel,
+          draftTitle: result.draft.title,
+          memoryV2: {
+            usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
+            recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
+            memoryParticipated: memoryV2Preview?.debug?.memoryParticipated ?? Boolean(memoryV2Preview?.usedMemoryIds?.length),
+            appliedPolicies: memoryV2Preview?.appliedPolicies ?? [],
+            warnings: [...memoryV2Trace.warnings, ...(memoryV2Preview?.warnings ?? [])]
+          }
+        }
+      });
+      conversationStateByIdRef.current[conversationId] = nextConversationState;
 
       ingestSuccessLockRef.current = true;
       lastSuccessfulIngestAtRef.current = successAt;
@@ -1512,13 +1862,11 @@ export function IngestModeToggle() {
       setErrorMessage("");
       setNoticeMessage(`${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
       setMessages((current) => [
-        ...current,
+        ...current.map(markMessageCompleted),
         {
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
-          content: result.replyMarkdown || (result.preview
-            ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
-            : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`),
+          content: assistantContent,
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
           source: "admin_ingest",
           platform: platformContext.platform,
@@ -1535,12 +1883,29 @@ export function IngestModeToggle() {
           saveSuggestion: result.saveSuggestion,
           gptProof: result.gptProof,
           gptOS: result.draft.gptOS,
+          ...({
+            memoryV2: {
+              usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
+              recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
+              memoryParticipated: memoryV2Preview?.debug?.memoryParticipated ?? Boolean(memoryV2Preview?.usedMemoryIds?.length),
+              appliedPolicies: memoryV2Preview?.appliedPolicies ?? [],
+              warnings: [...memoryV2Trace.warnings, ...(memoryV2Preview?.warnings ?? [])]
+            }
+          } as Partial<IngestChatMessage> & {
+            memoryV2: {
+              usedMemoryIds: string[];
+              recalledMemoryIds: string[];
+              memoryParticipated: boolean;
+              appliedPolicies: string[];
+              warnings: string[];
+            };
+          }),
           isRestored: false,
           isHistorical: false,
-          isStreaming: true,
-          isGenerating: true,
-          typing: true,
-          status: "streaming"
+          isStreaming: false,
+          isGenerating: false,
+          typing: false,
+          status: "completed"
         }
       ]);
       successRendered = true;
@@ -1557,19 +1922,31 @@ export function IngestModeToggle() {
           ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
           : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`
       });
+      void triggerMemoryExtraction({
+        conversationId,
+        agentId: activeAgent.id,
+        knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+        messages: nextConversationState.messages,
+        latestAssistantReply: assistantContent,
+        userInstruction: effectiveInput
+      });
 
       return {
         ...result,
         records: nextRecords
       };
     } catch (error) {
-      if (!isCurrentRequest()) {
+      if (shouldIgnoreRequestError(conversationStateByIdRef.current[conversationId], requestId) || !isCurrentRequest()) {
         return null;
       }
 
       const stateDomain = getStateDomain(error);
       const errorCode = error instanceof Error ? error.name : undefined;
       const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
+      conversationStateByIdRef.current[conversationId] = failAssistantMessage(conversationStateByIdRef.current[conversationId], {
+        requestId,
+        message: rawErrorMessage
+      });
       const shouldSuppress = shouldSuppressFallbackToast({
         reason: rawErrorMessage,
         stateDomain,
@@ -1681,8 +2058,25 @@ export function IngestModeToggle() {
       setErrorMessage(message);
       return null;
     } finally {
-      if (isCurrentRequest()) {
+      if (successRendered) {
+        requestQueueRef.current = completeRequest(requestQueueRef.current, conversationId, requestId);
+      } else {
+        requestQueueRef.current = failRequest(requestQueueRef.current, conversationId, requestId);
+      }
+      if (abortControllerByConversationRef.current[conversationId] === abortController) {
+        delete abortControllerByConversationRef.current[conversationId];
+      }
+      const queuedRequest = getNextQueuedRequest(requestQueueRef.current, conversationId);
+
+      if (queuedRequest) {
+        setInput((current) => current || queuedRequest.prompt);
+      }
+
+      if (activeIngestRequestIdRef.current === requestId || shouldResetLoading(conversationStateByIdRef.current[conversationId], requestId)) {
         setIsParsing(false);
+        if (activeIngestRequestIdRef.current === requestId) {
+          activeIngestRequestIdRef.current = "";
+        }
       }
     }
   }
@@ -2431,6 +2825,20 @@ export function IngestModeToggle() {
           </button>
           <button
             type="button"
+            onClick={() => {
+              setMode("memory");
+              setActiveRailKey("memory");
+            }}
+            className={[
+              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
+              mode === "memory" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+            ].join(" ")}
+          >
+            <Brain className="h-4 w-4" aria-hidden="true" />
+            训练记忆
+          </button>
+          <button
+            type="button"
             onClick={() => setMode("release")}
             className={[
               "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
@@ -2447,6 +2855,20 @@ export function IngestModeToggle() {
         ? <IngestKnowledgeOSDashboard onBack={() => setMode("chat")} />
         : mode === "release"
           ? <IngestReleaseConsole onBack={() => setMode("chat")} />
+        : mode === "memory"
+          ? (
+            <IngestMemoryPanel
+              activeAgent={activeAgent}
+              activeConversationId={activeConversationId}
+              messages={messages}
+              refreshKey={memoryRefreshKey}
+              onBack={() => {
+                setMode("chat");
+                setActiveRailKey("chat");
+              }}
+              onToast={showActionToast}
+            />
+          )
         : mode === "chat"
           ? <IngestChatGPTShell {...sharedProps} />
           : <IngestEXEShell {...sharedProps} />}
