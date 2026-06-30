@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 export const adminIngestKnowledgeSourceTypes = [
   "admin_chat",
@@ -59,6 +60,19 @@ export function resolveAgentKnowledgeScope(input: {
   const agentId = normalizeScopeId(input.agentId, DEFAULT_KNOWLEDGE_AGENT_ID);
   const knowledgeBaseId = normalizeScopeId(input.knowledgeBaseId, `kb:${agentId}`);
   const namespace = normalizeScopeId(input.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+  const publicScope = resolvePublicExpertScope({
+    agentId,
+    knowledgeBaseId,
+    namespace
+  });
+
+  if (publicScope) {
+    return {
+      agentId: publicScope.agentId,
+      knowledgeBaseId: publicScope.knowledgeBaseId,
+      namespace: publicScope.namespace
+    };
+  }
 
   return {
     agentId,

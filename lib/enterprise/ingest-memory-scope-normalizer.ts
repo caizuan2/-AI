@@ -1,4 +1,5 @@
 import type { IngestMemoryItem } from "@/lib/enterprise/ingest-memory-types";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 export type NormalizedMemoryScope = {
   knowledgeBaseId: string;
@@ -201,6 +202,32 @@ export function normalizeMemoryScope(input: MemoryScopeNormalizerInput): MemoryS
   if (!tenantId) {
     tenantId = "default";
     appliedFallbacks.push("tenantId<-default");
+  }
+
+  const publicScope = resolvePublicExpertScope({
+    agentId,
+    expertId,
+    knowledgeBaseId,
+    kbId,
+    namespace,
+    tenantId
+  });
+
+  if (publicScope) {
+    if (knowledgeBaseId !== publicScope.knowledgeBaseId) {
+      appliedFallbacks.push("publicScope:knowledgeBaseId");
+    }
+
+    if (agentId !== publicScope.agentId) {
+      appliedFallbacks.push("publicScope:agentId");
+    }
+
+    knowledgeBaseId = publicScope.knowledgeBaseId;
+    kbId = publicScope.kbId;
+    agentId = publicScope.agentId;
+    expertId = publicScope.expertId;
+    namespace = publicScope.namespace;
+    tenantId = publicScope.tenantId;
   }
 
   const missingFields = [
