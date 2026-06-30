@@ -3,6 +3,7 @@ import "server-only";
 import type { MemoryIndexEntry, MemoryIndexState, PublishedMemoryItem } from "./ingest-memory-index-types";
 import { readMemoryIndexState, writeMemoryIndexState } from "./ingest-memory-shared-store";
 import { loadPublishedMemories } from "./ingest-memory-publisher";
+import { resolvePublicExpertScope } from "./public-expert-scope";
 
 const INDEX_SOURCE = "admin-ingest-memory-index-builder-v1";
 
@@ -100,27 +101,39 @@ export function tokenizeMemoryForIndex(text: string): string[] {
 }
 
 function buildEntry(memory: PublishedMemoryItem): MemoryIndexEntry {
-  const searchText = buildSearchText(memory);
+  const publicScope = resolvePublicExpertScope(memory);
+  const scopedMemory: PublishedMemoryItem = publicScope
+    ? {
+        ...memory,
+        knowledgeBaseId: publicScope.knowledgeBaseId,
+        kbId: publicScope.kbId,
+        agentId: publicScope.agentId,
+        expertId: publicScope.expertId,
+        namespace: publicScope.namespace,
+        tenantId: publicScope.tenantId
+      }
+    : memory;
+  const searchText = buildSearchText(scopedMemory);
 
   return {
-    memoryId: memory.id,
-    sourceDraftId: memory.sourceDraftId,
-    title: memory.title,
-    summary: memory.summary,
-    contentPreview: readString(memory.content).slice(0, 260),
-    tags: memory.tags || [],
-    status: memory.status,
-    visibility: memory.visibility,
-    knowledgeBaseId: memory.knowledgeBaseId,
-    kbId: memory.kbId || memory.knowledgeBaseId,
-    agentId: memory.agentId,
-    expertId: memory.expertId || memory.agentId,
-    namespace: memory.namespace,
-    tenantId: memory.tenantId,
-    sourceApp: memory.sourceApp,
+    memoryId: scopedMemory.id,
+    sourceDraftId: scopedMemory.sourceDraftId,
+    title: scopedMemory.title,
+    summary: scopedMemory.summary,
+    contentPreview: readString(scopedMemory.content).slice(0, 260),
+    tags: scopedMemory.tags || [],
+    status: scopedMemory.status,
+    visibility: scopedMemory.visibility,
+    knowledgeBaseId: scopedMemory.knowledgeBaseId,
+    kbId: scopedMemory.kbId || scopedMemory.knowledgeBaseId,
+    agentId: scopedMemory.agentId,
+    expertId: scopedMemory.expertId || scopedMemory.agentId,
+    namespace: scopedMemory.namespace,
+    tenantId: scopedMemory.tenantId,
+    sourceApp: scopedMemory.sourceApp,
     tokens: tokenizeMemoryForIndex(searchText),
     searchText,
-    updatedAt: memory.updatedAt,
+    updatedAt: scopedMemory.updatedAt,
   };
 }
 

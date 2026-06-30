@@ -7,6 +7,7 @@ import type {
 } from "./ingest-memory-index-types";
 import { loadMemoryIndex, tokenizeMemoryForIndex } from "./ingest-memory-index-builder";
 import { loadPublishedMemories } from "./ingest-memory-publisher";
+import { resolvePublicExpertScope, publicExpertScopeAliasesFor } from "./public-expert-scope";
 
 type RuntimeMemorySearchResult = {
   ok: true;
@@ -43,6 +44,18 @@ function scopeEquals(inputValue: string, entryValue?: string): boolean {
   return Boolean(inputValue && normalizedEntry && inputValue === normalizedEntry);
 }
 
+function hasAliasOverlap(left: unknown, right: unknown): boolean {
+  const leftAliases = publicExpertScopeAliasesFor(left).map(normalizeScopeValue).filter(Boolean);
+  const rightAliases = publicExpertScopeAliasesFor(right).map(normalizeScopeValue).filter(Boolean);
+
+  if (leftAliases.length === 0 || rightAliases.length === 0) {
+    return false;
+  }
+
+  const rightSet = new Set(rightAliases);
+  return leftAliases.some((alias) => rightSet.has(alias));
+}
+
 function optionalScopeMatches(inputValue: string, entryValue?: string): boolean {
   const normalizedEntry = normalizeScopeValue(entryValue);
   if (!inputValue || inputValue === "default") {
@@ -73,18 +86,28 @@ function namespaceMatches(inputValue: string, entryValue: string, sameKb: boolea
 }
 
 function entryScopeMatch(entry: MemoryIndexEntry, input: RuntimeMemorySearchInput): ScopeMatchResult {
-  const requestedKb = normalizeScopeValue(input.knowledgeBaseId || input.kbId);
-  const requestedAgent = normalizeScopeValue(input.agentId || input.expertId);
+  const requestedPublicScope = resolvePublicExpertScope(input);
+  const entryPublicScope = resolvePublicExpertScope(entry);
+  const requestedKb = normalizeScopeValue(requestedPublicScope?.knowledgeBaseId || input.knowledgeBaseId || input.kbId);
+  const requestedAgent = normalizeScopeValue(requestedPublicScope?.agentId || input.agentId || input.expertId);
   const requestedTenant = normalizeScopeValue(input.tenantId) || "default";
-  const requestedNamespace = normalizeScopeValue(input.namespace) || "default";
-  const entryNamespace = normalizeScopeValue(entry.namespace);
+  const requestedNamespace = normalizeScopeValue(requestedPublicScope?.namespace || input.namespace) || "default";
+  const entryKb = entryPublicScope?.knowledgeBaseId || entry.knowledgeBaseId || entry.kbId;
+  const entryAgent = entryPublicScope?.agentId || entry.agentId || entry.expertId;
+  const entryNamespace = normalizeScopeValue(entryPublicScope?.namespace || entry.namespace);
 
   const sameKb =
+    scopeEquals(requestedKb, entryKb) ||
     scopeEquals(requestedKb, entry.knowledgeBaseId) ||
-    scopeEquals(requestedKb, entry.kbId);
+    scopeEquals(requestedKb, entry.kbId) ||
+    hasAliasOverlap(requestedKb, entry.knowledgeBaseId) ||
+    hasAliasOverlap(requestedKb, entry.kbId);
   const sameAgent =
+    scopeEquals(requestedAgent, entryAgent) ||
     scopeEquals(requestedAgent, entry.agentId) ||
-    scopeEquals(requestedAgent, entry.expertId);
+    scopeEquals(requestedAgent, entry.expertId) ||
+    hasAliasOverlap(requestedAgent, entry.agentId) ||
+    hasAliasOverlap(requestedAgent, entry.expertId);
   const sameNamespace = namespaceMatches(requestedNamespace, entryNamespace, sameKb);
   const sameTenant = optionalScopeMatches(requestedTenant, entry.tenantId);
 
