@@ -9,6 +9,7 @@ import {
   Loader2
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AnswerSourcesPanel } from "@/components/user/AnswerSourcesPanel";
 import {
   buildProductAnswerDisplay,
   type AnalysisSectionDisplay,
@@ -222,6 +223,9 @@ export function ProductAnswerView({
         <DetailedAnalysisBlock sections={display.analysisSections} />
 
         <section className="rounded-2xl bg-emerald-50 px-4 py-4 text-emerald-950 ring-1 ring-emerald-100">
+          <div className="mb-3 inline-flex rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-emerald-800 ring-1 ring-emerald-100">
+            复制给客户
+          </div>
           <div className="mb-3 flex flex-wrap gap-2">
             {display.salesModes.map((mode) => {
               const selected = mode.key === activeMode.key;
@@ -258,6 +262,8 @@ export function ProductAnswerView({
             </span>
           </p>
         </section>
+
+        <AnswerSourcesPanel sources={sources} />
       </div>
     </article>
   );

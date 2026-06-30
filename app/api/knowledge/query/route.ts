@@ -14,6 +14,7 @@ import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { getRequestIdFromHeaders, logger, toSafeErrorLog } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { retrieveKnowledge } from "@/lib/rag/retriever";
+import { routeKnowledgeQueryToRuntimeV2 } from "@/lib/knowledge-runtime/runtime-v2-router";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
   RAG_MAX_CONTEXT_CHUNKS,
@@ -99,6 +100,18 @@ interface KnowledgeQuerySource {
 interface KnowledgeQueryResponse {
   answer: string;
   sources: KnowledgeQuerySource[];
+  customerCopy?: string;
+  nextStep?: string;
+  traceId?: string;
+  runtimeVersion?: "v2";
+  runtime_sources?: unknown[];
+  runtime_output?: unknown;
+  confidence?: number;
+  memoryApplied?: boolean;
+  usedMemoryIds?: string[];
+  memoryTrace?: unknown[];
+  memoryWarnings?: string[];
+  appliedAgentPolicies?: string[];
   messageId?: string;
   agentId?: string | null;
   knowledgeBaseId?: string | null;
@@ -295,6 +308,45 @@ function buildFeedbackMetadata(input: {
   };
 }
 
+async function withRuntimeV2Response(input: {
+  response: KnowledgeQueryResponse;
+  userId: string;
+  query: string;
+  agentScope: ReturnType<typeof resolveAgentKnowledgeScope>;
+}) {
+  const runtimeOutput = await routeKnowledgeQueryToRuntimeV2(input.response, {
+    query: input.query,
+    userId: input.userId,
+    conversationId: input.response.messageId,
+    agentId: input.agentScope.agentId,
+    expertId: input.agentScope.agentId,
+    knowledgeBaseId: input.agentScope.knowledgeBaseId,
+    kbId: input.agentScope.knowledgeBaseId,
+    namespace: input.agentScope.namespace,
+    tenantId: "default",
+    appType: "user_app",
+    channel: "knowledge-query",
+    platform: "web",
+    outputMode: "auto"
+  });
+
+  return {
+    ...input.response,
+    customerCopy: runtimeOutput.customerCopy,
+    nextStep: runtimeOutput.nextStep,
+    traceId: runtimeOutput.traceId,
+    runtimeVersion: runtimeOutput.runtimeVersion,
+    runtime_sources: runtimeOutput.sources,
+    runtime_output: runtimeOutput,
+    confidence: runtimeOutput.confidence,
+    memoryApplied: runtimeOutput.memoryApplied,
+    usedMemoryIds: runtimeOutput.usedMemoryIds,
+    memoryTrace: runtimeOutput.memoryTrace,
+    memoryWarnings: runtimeOutput.memoryWarnings,
+    appliedAgentPolicies: runtimeOutput.appliedAgentPolicies
+  } satisfies KnowledgeQueryResponse;
+}
+
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
   const startedAt = Date.now();
@@ -372,13 +424,18 @@ export async function POST(request: Request) {
     const cached = await getAiCacheValue<KnowledgeQueryResponse>(cacheKey, requestId);
 
     if (cached) {
-      return apiSuccess<KnowledgeQueryResponse>({
-        ...cached,
-        answer: cleanUserFacingRagAnswer(cached.answer),
-        cached: true,
-        requestId,
-        latencyMs: Date.now() - startedAt
-      });
+      return apiSuccess<KnowledgeQueryResponse>(await withRuntimeV2Response({
+        response: {
+          ...cached,
+          answer: cleanUserFacingRagAnswer(cached.answer),
+          cached: true,
+          requestId,
+          latencyMs: Date.now() - startedAt
+        },
+        userId: user.id,
+        query: input.query,
+        agentScope
+      }));
     }
 
     const retrieval = await retrieveKnowledge({
@@ -420,7 +477,12 @@ export async function POST(request: Request) {
         latencyMs: Date.now() - startedAt
       };
 
-      return apiSuccess<KnowledgeQueryResponse>(response);
+      return apiSuccess<KnowledgeQueryResponse>(await withRuntimeV2Response({
+        response,
+        userId: user.id,
+        query: input.query,
+        agentScope
+      }));
     }
 
     if (!hasUsableChatProvider(effectiveProvider)) {
@@ -523,9 +585,16 @@ export async function POST(request: Request) {
         error: toSafeErrorLog(error)
       });
     });
-    await setAiCacheValue(cacheKey, response, { requestId });
+    const runtimeResponse = await withRuntimeV2Response({
+      response,
+      userId: user.id,
+      query: input.query,
+      agentScope
+    });
 
-    return apiSuccess<KnowledgeQueryResponse>(response);
+    await setAiCacheValue(cacheKey, runtimeResponse, { requestId });
+
+    return apiSuccess<KnowledgeQueryResponse>(runtimeResponse);
   } catch (error) {
     const appError = error instanceof AIError ? error : error;
 

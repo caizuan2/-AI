@@ -57,6 +57,7 @@ export interface ChatMessageView {
   attachments?: ChatAttachmentDraft[] | null;
   sources?: ChatSource[] | null;
   confidence?: RagConfidence | null;
+  customerCopy?: string | null;
   customer_answer?: string | null;
   finalized_answer?: FinalizedAnswerView | null;
   provider_status?: ProviderStatus | null;
@@ -229,9 +230,14 @@ export interface AskChatResponse {
   conversation_id: string;
   message_id: string;
   mode: ChatMode;
+  customerCopy?: string | null;
   customer_answer?: string | null;
   finalized_answer?: FinalizedAnswerView | null;
+  nextStep?: string | null;
+  traceId?: string | null;
   sources: ChatSource[];
+  runtime_sources?: unknown[] | null;
+  runtime_output?: unknown;
   confidence: RagConfidence;
   provider_status?: ProviderStatus;
 }

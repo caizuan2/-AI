@@ -408,25 +408,41 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
   }
 
   if (event.data) {
+    const runtimeOutput = event.data.runtime_output && typeof event.data.runtime_output === "object" && !Array.isArray(event.data.runtime_output)
+      ? event.data.runtime_output as Record<string, unknown>
+      : {};
+    const runtimeCustomerCopy = typeof runtimeOutput.customerCopy === "string" ? runtimeOutput.customerCopy : null;
+    const runtimeTraceId = typeof runtimeOutput.traceId === "string" ? runtimeOutput.traceId : null;
+    const runtimeNextStep = typeof runtimeOutput.nextStep === "string" ? runtimeOutput.nextStep : null;
+
     if (event.data.finalized_answer) {
+      const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? event.data.finalized_answer.customerReply;
+
       return {
         ...event.data,
         answer: formatFinalizedAnswerForDisplay(event.data.finalized_answer),
-        customer_answer: event.data.finalized_answer.customerReply
+        customerCopy,
+        customer_answer: customerCopy,
+        nextStep: event.data.nextStep ?? runtimeNextStep ?? event.data.finalized_answer.nextAction,
+        traceId: event.data.traceId ?? runtimeTraceId
       };
     }
 
     const finalizedAnswer = finalizeUserAnswer({
       rawAnswer: event.data.answer,
-      customerAnswer: event.data.customer_answer ?? undefined,
+      customerAnswer: event.data.customerCopy ?? runtimeCustomerCopy ?? event.data.customer_answer ?? undefined,
       sources: event.data.sources
     });
+    const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? finalizedAnswer.customerReply;
 
     return {
       ...event.data,
       answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
-      customer_answer: finalizedAnswer.customerReply,
-      finalized_answer: finalizedAnswer
+      customerCopy,
+      customer_answer: customerCopy,
+      finalized_answer: finalizedAnswer,
+      nextStep: event.data.nextStep ?? runtimeNextStep ?? finalizedAnswer.nextAction,
+      traceId: event.data.traceId ?? runtimeTraceId
     };
   }
 
