@@ -21,6 +21,11 @@ export interface SalesAnswerModeDisplay {
   text: string;
 }
 
+export interface AnalysisSectionDisplay {
+  title: string;
+  lines: string[];
+}
+
 export interface ProductAnswerDisplay {
   conclusion: string;
   decision: string;
@@ -31,6 +36,7 @@ export interface ProductAnswerDisplay {
   defaultMode: SalesAnswerModeKey;
   nextAction: string;
   analysis: string;
+  analysisSections: AnalysisSectionDisplay[];
   evidenceSummary: string;
   sourceDetail: string;
   fullScriptText: string;
@@ -366,6 +372,8 @@ function getSalesRawText(answer: unknown) {
 
 function inferSalesTopic(answer: unknown) {
   const raw = getSalesRawText(answer);
+  const titleTopic = normalizeAnswerText(getString(asRecord(answer).title))
+    .replace(/[？?。！!]+$/g, "");
   const quoted = raw.match(/[「“"]([^」”"]{2,28})[」”"]/);
   const quotedTopic = normalizeAnswerText(quoted?.[1] ?? "")
     .replace(/^关于/, "")
@@ -385,6 +393,10 @@ function inferSalesTopic(answer: unknown) {
 
   if (quotedTopic) {
     return quotedTopic;
+  }
+
+  if (titleTopic && titleTopic.length <= 28 && !/小董AI|处理建议|回答|客户问题/.test(titleTopic)) {
+    return titleTopic;
   }
 
   if (/客户/.test(raw)) {
@@ -539,7 +551,7 @@ export function buildActionSuggestions(answer: unknown) {
 
 export function buildExplainMode(answer: unknown) {
   const scenario = inferSalesScenario(answer);
-  const topic = getScenarioName(answer);
+  const topic = scenario === "general" ? inferSalesTopic(answer) : getScenarioName(answer);
   const lines = scenario === "kks"
     ? [
       "KKS使用不适合一开始直接套固定方案。",
@@ -559,9 +571,9 @@ export function buildExplainMode(answer: unknown) {
           "先找出真实顾虑，再决定下一句怎么接。"
         ]
         : [
-          `${topic}要先判断客户真正卡在哪里。`,
-          "先把问题拆清楚，再给出简洁建议。",
-          "这样比直接给结论更稳。"
+          `关于${topic}，不要一上来给固定答案。`,
+          "先听清对方问的是思路、场景还是下一步动作。",
+          "再用一个问题把范围缩小，这样更容易接下去。"
         ];
 
   return normalizeModeLines(lines, 4, 36)
@@ -627,6 +639,7 @@ function getClosingQuestion(answer: unknown) {
 
 export function buildClosingScriptMode(answer: unknown) {
   const scenario = inferSalesScenario(answer);
+  const topic = inferSalesTopic(answer);
   const opener = scenario === "price"
     ? "可以的，价格这块我先不直接劝您定。"
     : scenario === "consider"
@@ -648,7 +661,9 @@ export function buildClosingScriptMode(answer: unknown) {
 
   return ensureCustomerTone([
     opener,
-    getClosingQuestion(answer),
+    scenario === "general"
+      ? `关于${topic}，我先确认一下：您现在想弄清思路、步骤，还是具体执行？`
+      : getClosingQuestion(answer),
     "确认后我再帮您整理一个简单方案。",
     "您看我先这样帮您梳理可以吗？"
   ].join("\n"));
@@ -839,6 +854,131 @@ function buildAnalysis(answer: unknown, conclusion: string, suggestions: string[
   return normalizeAnswerText(visibleAnalysis || "当前建议基于客户问题和小董AI大脑🧠资料整理，建议结合实际客户语境微调后再发送。");
 }
 
+function getAnalysisSeedLines(analysis: string, customerReply: CustomerReplyDisplay) {
+  const replyKey = normalizedSimilarityKey(customerReply.previewText);
+
+  return uniqueLines(splitReadableParagraphs(analysis)
+    .map((line) => removeAnalysisTone(line)
+      .replace(/(?:您好|可以的|理解的|没问题)[，,]?\s*/g, "")
+      .replace(/您先回复我.*$/g, "")
+      .replace(/复制(?:答案|客户话术|成交话术)?/g, "")
+      .trim())
+    .filter(Boolean)
+    .filter((line) => !customerForbiddenPattern.test(line))
+    .filter((line) => !/可直接发给客户|可推动下一步|适合自己理解|成交话术|客户对话|完整话术|话术模式/.test(line))
+    .filter((line) => {
+      const key = normalizedSimilarityKey(line);
+
+      return key && !replyKey.includes(key.slice(0, 22));
+    })
+    .map((line) => truncateReadable(line, 64)))
+    .slice(0, 4);
+}
+
+function compactAnalysisSection(title: string, lines: string[]) {
+  const visibleLines = uniqueLines(lines
+    .map((line) => truncateReadable(line, 64))
+    .filter(Boolean))
+    .slice(0, 4);
+
+  return {
+    title,
+    lines: visibleLines.length >= 2
+      ? visibleLines
+      : [...visibleLines, "先把问题拆清楚，再决定下一句怎么接。"].slice(0, 3)
+  };
+}
+
+function buildAnalysisSections(
+  answer: unknown,
+  analysis: string,
+  decision: string,
+  actionSuggestions: string[],
+  customerReply: CustomerReplyDisplay
+): AnalysisSectionDisplay[] {
+  const scenario = inferSalesScenario(answer);
+  const topic = inferSalesTopic(answer);
+  const seeds = getAnalysisSeedLines(analysis, customerReply);
+
+  if (scenario === "kks") {
+    return [
+      compactAnalysisSection("1. 先确认KKS使用目标", [
+        seeds[0] || "客户问KKS怎么使用时，不适合直接套固定方案。",
+        "先问清客户想改善什么、当前基础如何。",
+        "这样后面的安排会更贴近真实情况。"
+      ]),
+      compactAnalysisSection("2. 再给出轻量使用方向", [
+        seeds[1] || "把使用建议拆成周期、配合方式和注意点。",
+        "先讲清楚大方向，不急着承诺效果。",
+        "客户更容易理解，也更容易继续沟通。"
+      ]),
+      compactAnalysisSection("3. 最后引导客户补充情况", [
+        seeds[2] || "用一个问题让客户说出目标和当前状态。",
+        "拿到信息后，再继续整理更具体的方案。",
+        "这样比直接推方案更稳妥。"
+      ])
+    ];
+  }
+
+  if (scenario === "price") {
+    return [
+      compactAnalysisSection("1. 先接住价格顾虑", [
+        seeds[0] || "客户说太贵时，通常不是单纯拒绝。",
+        "先承认对方的顾虑，不要马上反驳价格。",
+        "这样能降低客户的防备感。"
+      ]),
+      compactAnalysisSection("2. 再确认顾虑来源", [
+        seeds[1] || "要分清是预算压力，还是对效果没把握。",
+        "不同原因对应不同回复方式。",
+        "先问清楚，后面才不会说偏。"
+      ]),
+      compactAnalysisSection("3. 最后转到价值判断", [
+        seeds[2] || "把重点从价格拉回客户真正想解决的问题。",
+        "用轻量下一步让客户继续表达。",
+        "不要强推成交，先推进判断。"
+      ])
+    ];
+  }
+
+  if (scenario === "consider") {
+    return [
+      compactAnalysisSection("1. 先接住客户犹豫", [
+        seeds[0] || "客户说考虑考虑，多数是在给自己保留空间。",
+        "这时继续催促容易让对方后退。",
+        "先让客户感觉自己可以慢慢判断。"
+      ]),
+      compactAnalysisSection("2. 再找出真正卡点", [
+        seeds[1] || "继续追问时要聚焦一个顾虑点。",
+        "常见卡点是价格、效果、时间或信任。",
+        "问得越具体，后面越容易接。"
+      ]),
+      compactAnalysisSection("3. 最后给低压力下一步", [
+        seeds[2] || "不要要求客户马上决定。",
+        "请客户先说最担心的一点。",
+        "再根据回应继续解释或给方案。"
+      ])
+    ];
+  }
+
+  return [
+    compactAnalysisSection(`1. 先界定“${topic}”的真实含义`, [
+      seeds[0] || `对方问“${topic}”时，先不要直接给一套完整答案。`,
+      "先确认他想问的是思路、场景，还是具体执行动作。",
+      "这样可以避免答得很满，但没有接住真实问题。"
+    ]),
+    compactAnalysisSection("2. 再给出轻量下一步", [
+      seeds[1] || "把问题拆成一个容易回复的小问题。",
+      actionSuggestions[0] || "先让对方补充当前情况。",
+      "客户愿意继续说，后面才好给更准的建议。"
+    ]),
+    compactAnalysisSection("3. 最后引导继续沟通", [
+      seeds[2] || "最后用低压力表达收住话题。",
+      decision,
+      "不要急着下结论，先把下一轮对话接起来。"
+    ])
+  ];
+}
+
 export function extractFullAnalysis(answer: unknown) {
   const conclusion = compressConclusion(answer);
   const suggestions = compressSuggestions(answer);
@@ -964,6 +1104,7 @@ export function buildSalesAnswerDisplay(
   };
   const nextAction = truncateReadable(getSalesNextAction(answer), 60);
   const analysis = buildAnalysis(answer, decision, actionSuggestions, customerReply);
+  const analysisSections = buildAnalysisSections(answer, analysis, decision, actionSuggestions, customerReply);
   const evidenceSummary = normalizeAnswerText(answer.evidenceSummary)
     || getCleanEvidenceSummary(Boolean(sources?.length) || hasRagHit);
   const sourceDetail = getSourceDetail(sources, hasRagHit);
@@ -973,20 +1114,19 @@ export function buildSalesAnswerDisplay(
   const fullAnswerText = [
     "小董AI处理建议",
     "",
-    `判断：${decision}`,
-    "",
     "行动建议：",
     ...actionSuggestions.map((suggestion, index) => `${index + 1}. ${suggestion}`),
     "",
-    "话术模式：",
+    "详细分析：",
+    ...analysisSections.flatMap((section) => [
+      section.title,
+      ...section.lines
+    ]),
+    "",
+    "可直接发给客户：",
     fullScriptText,
     "",
-    `下一步：${nextAction}`,
-    "",
-    "详细分析：",
-    analysis,
-    "",
-    evidenceSummary
+    `下一步：${nextAction}`
   ].filter(Boolean).join("\n");
 
   return {
@@ -999,6 +1139,7 @@ export function buildSalesAnswerDisplay(
     defaultMode,
     nextAction,
     analysis,
+    analysisSections,
     evidenceSummary,
     sourceDetail,
     fullScriptText,
