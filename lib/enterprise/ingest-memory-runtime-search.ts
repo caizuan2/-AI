@@ -170,7 +170,10 @@ export async function searchRuntimeMemories(input: RuntimeMemorySearchInput): Pr
     };
   }
 
-  const index = await loadMemoryIndex();
+  const [index, publishedMemories] = await Promise.all([
+    loadMemoryIndex(),
+    loadPublishedMemories(),
+  ]);
   if (index.entries.length === 0) {
     return {
       ok: true,
@@ -184,13 +187,23 @@ export async function searchRuntimeMemories(input: RuntimeMemorySearchInput): Pr
 
   const queryTokens = tokenizeMemoryForIndex(query);
   const limit = Math.max(1, Math.min(input.limit ?? 5, 10));
+  const publishedById = new Map(publishedMemories.map((memory) => [memory.id, memory]));
   const matched = index.entries
     .map((entry) => ({ entry, scopeMatch: entryScopeMatch(entry, input) }))
     .filter((item) => item.scopeMatch.matches)
     .map((item) => scoreEntry(item.entry, queryTokens, item.scopeMatch))
     .filter((item): item is RuntimeMemorySearchResultItem => Boolean(item))
     .sort((left, right) => right.score - left.score)
-    .slice(0, limit);
+    .slice(0, limit)
+    .map((item) => {
+      const published = publishedById.get(item.memoryId);
+
+      return {
+        ...item,
+        content: published?.content || item.contentPreview,
+        summary: published?.summary || item.summary,
+      };
+    });
 
   if (matched.length === 0) {
     warnings.push("当前 scope 下没有可用 Memory 命中。");

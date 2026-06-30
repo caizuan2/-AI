@@ -30,6 +30,8 @@ import {
 } from "@/lib/ai-chat/response-finalizer";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
 import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
+import { searchRuntimeMemories } from "@/lib/enterprise/ingest-memory-runtime-search";
+import type { RuntimeMemorySearchResultItem } from "@/lib/enterprise/ingest-memory-index-types";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { AppError, NotFoundError, ValidationError, toAppError } from "@/lib/errors";
@@ -223,6 +225,113 @@ function calculateFallbackGroundingScore(chunks: RetrievedRagChunk[], fallbackUs
 
   const average = chunks.reduce((sum, chunk) => sum + chunk.relevance_score, 0) / chunks.length;
   return clamp01(average * (fallbackUsed ? 0.45 : 0.6));
+}
+
+function toRuntimeMemoryChunk(
+  item: RuntimeMemorySearchResultItem,
+  index: number,
+  scope: {
+    knowledgeBaseId?: string | null;
+    agentId?: string | null;
+    namespace?: string | null;
+    tenantId?: string | null;
+  }
+): RetrievedRagChunk {
+  const score = clamp01(item.score);
+  const content = trimString(item.content) || item.contentPreview;
+
+  return {
+    chunkId: `runtime-memory:${item.memoryId}`,
+    fileId: null,
+    knowledgeItemId: item.memoryId,
+    knowledgeBaseId: item.knowledgeBaseId ?? item.kbId ?? scope.knowledgeBaseId ?? null,
+    agentId: item.agentId ?? item.expertId ?? scope.agentId ?? null,
+    tenantId: item.tenantId ?? scope.tenantId ?? null,
+    namespace: item.namespace ?? scope.namespace ?? item.knowledgeBaseId ?? item.kbId ?? null,
+    sourceApp: item.sourceApp,
+    includeShared: true,
+    includePublished: true,
+    title: item.title || "投喂训练记忆",
+    content,
+    summary: item.summary ?? null,
+    category: "runtime_memory",
+    tags: item.matchedTokens,
+    sourceType: "runtime_memory",
+    sourceTitle: item.title || "投喂训练记忆",
+    sourceUrl: null,
+    score,
+    relevance_score: score,
+    qualityScore: score,
+    feedbackScore: 0,
+    behaviorScore: 0,
+    behaviorEventCount: 0,
+    behaviorReasons: item.reason ? [item.reason] : [],
+    usageScore: 0,
+    freshnessScore: score,
+    optimizationScore: score,
+    stabilityScore: score,
+    confidenceWeight: score,
+    trustWeight: score,
+    volatilityPenalty: 0,
+    stableOptimizationScore: score,
+    trendScore: score,
+    trendLabel: "runtime_memory",
+    trendConfidence: score,
+    staleRisk: 0,
+    fastRising: false,
+    staleHighScore: false,
+    decliningTrend: false,
+    evergreen: true,
+    trendReason: "runtime memory hit",
+    trendShadowMode: false,
+    lifecycleStage: "published",
+    lifecycleScore: score,
+    lifecycleConfidence: score,
+    lifecycleReason: "published runtime memory",
+    lifecycleSuggestion: "",
+    shouldBoost: true,
+    shouldDecay: false,
+    shouldReview: false,
+    shouldArchiveCandidate: false,
+    policyDecision: "allow",
+    policyScore: score,
+    policyRiskLevel: "low",
+    policyConfidence: score,
+    policySuggestion: "",
+    sampleCount: 1,
+    suspectedGaming: false,
+    optimizationReason: "runtime memory bridge",
+    optimizationSuggestion: "",
+    duplicateLikely: false,
+    coldKnowledge: false,
+    conflictLikely: false,
+    staleVersion: false,
+    knowledgeVersion: null,
+    lowQuality: false,
+    highValue: score >= 0.5,
+    chunk_rank: index + 1,
+    createdAt: null,
+  };
+}
+
+function mergeRuntimeMemoryChunks(runtimeChunks: RetrievedRagChunk[], dbChunks: RetrievedRagChunk[], topK: number) {
+  const seen = new Set<string>();
+  const merged: RetrievedRagChunk[] = [];
+
+  for (const chunk of [...runtimeChunks, ...dbChunks]) {
+    const key = chunk.chunkId || chunk.knowledgeItemId;
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    merged.push({
+      ...chunk,
+      chunk_rank: merged.length + 1,
+    });
+  }
+
+  return merged.slice(0, Math.max(1, topK));
 }
 
 function isStructuredAnswer(answer: string) {
@@ -794,6 +903,7 @@ export async function handleAiChatAsk(
   });
   const directTenantId = trimString(input.tenant_id);
   const scopedTenantId = selectedKnowledgeScope?.tenantId ?? (directTenantId || actor.tenantId || null);
+  const explicitRuntimeNamespace = (selectedKnowledgeScope?.namespace ?? trimString(input.namespace)) || undefined;
   const hasExplicitAgentScope = Boolean(
     selectedKnowledgeScope
     || trimString(input.agentId ?? input.expert_id)
@@ -855,7 +965,7 @@ export async function handleAiChatAsk(
   });
 
   const topK = osContext.rag.topK;
-  const chunks = await retrieveRelevantChunks(question, {
+  const dbChunks = await retrieveRelevantChunks(question, {
     userId: actor.id,
     tenantId: scopedTenantId,
     appType: "user_app",
@@ -867,6 +977,37 @@ export async function handleAiChatAsk(
     knowledgeScope: selectedKnowledgeScope,
     db
   });
+  const runtimeMemoryResult = hasExplicitAgentScope
+    ? await searchRuntimeMemories({
+        query: question,
+        knowledgeBaseId: agentScope.knowledgeBaseId,
+        agentId: agentScope.agentId,
+        namespace: explicitRuntimeNamespace,
+        tenantId: scopedTenantId ?? undefined,
+        limit: topK,
+      }).catch((error) => ({
+        ok: true as const,
+        memoryApplied: false,
+        memories: [],
+        memoryTrace: [],
+        usedMemoryIds: [],
+        warnings: [error instanceof Error ? error.message : "runtime memory search failed"],
+      }))
+    : {
+        ok: true as const,
+        memoryApplied: false,
+        memories: [],
+        memoryTrace: [],
+        usedMemoryIds: [],
+        warnings: ["缺少 agent scope，跳过 runtime memory 检索。"],
+      };
+  const runtimeMemoryChunks = runtimeMemoryResult.memories.map((item, index) => toRuntimeMemoryChunk(item, index, {
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    agentId: agentScope.agentId,
+    namespace: explicitRuntimeNamespace ?? agentScope.namespace,
+    tenantId: scopedTenantId,
+  }));
+  const chunks = mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
   const contexts = buildRagContext(chunks);
   const sources = chunks.map(toSource);
   const confidence = calculateConfidence(chunks);
@@ -907,7 +1048,12 @@ export async function handleAiChatAsk(
     mode,
     topK,
     sourceCount: sources.length,
-    confidence
+    confidence,
+    runtimeMemory: {
+      applied: runtimeMemoryResult.memoryApplied,
+      usedMemoryIds: runtimeMemoryResult.usedMemoryIds,
+      warnings: runtimeMemoryResult.warnings
+    }
   });
 
   let answer = NO_KNOWLEDGE_ANSWER;
@@ -1151,6 +1297,12 @@ export async function handleAiChatAsk(
     modelUsed: modelUsed ?? null,
     fallbackUsed: visibleFallbackUsed,
     providerErrorCode: providerErrorCode ?? null,
+    runtimeMemory: {
+      applied: runtimeMemoryResult.memoryApplied,
+      usedMemoryIds: runtimeMemoryResult.usedMemoryIds,
+      trace: runtimeMemoryResult.memoryTrace,
+      warnings: runtimeMemoryResult.warnings
+    },
     modelFeedbackEvent: visibleModelFeedbackEvent,
     relevanceScore,
     answerGroundingScore: visibleAnswerGroundingScore,

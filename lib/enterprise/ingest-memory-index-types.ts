@@ -80,6 +80,7 @@ export type RuntimeMemorySearchResultItem = {
   memoryId: string;
   title: string;
   summary?: string;
+  content?: string;
   contentPreview: string;
   score: number;
   reason: string;
