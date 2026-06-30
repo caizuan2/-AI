@@ -34,6 +34,12 @@ function getSearchQuery(body: Record<string, unknown>) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function getOptionalString(body: Record<string, unknown>, key: string) {
+  const value = body[key];
+
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export async function POST(request: Request) {
   let actor: Awaited<ReturnType<typeof requireAiChatAccess>>;
 
@@ -130,7 +136,24 @@ export async function POST(request: Request) {
           : undefined
       });
 
-      await streamResult(result);
+      await streamResult({
+        ...result,
+        runtime_input: {
+          query: getSearchQuery(body),
+          userId: actor.id,
+          conversationId: getOptionalString(body, "conversationId") ?? getOptionalString(body, "conversation_id"),
+          agentId: getOptionalString(body, "agentId") ?? getOptionalString(body, "agent_id"),
+          expertId: getOptionalString(body, "expertId") ?? getOptionalString(body, "expert_id"),
+          knowledgeBaseId: getOptionalString(body, "knowledgeBaseId") ?? getOptionalString(body, "knowledge_base_id"),
+          kbId: getOptionalString(body, "kbId") ?? getOptionalString(body, "kb_id"),
+          namespace: getOptionalString(body, "namespace"),
+          tenantId: getOptionalString(body, "tenantId") ?? getOptionalString(body, "tenant_id"),
+          outputMode: getOptionalString(body, "outputMode") ?? getOptionalString(body, "mode"),
+          appType: "user_app",
+          channel: "chat-ui",
+          platform: getOptionalString(body, "platform") ?? "web"
+        }
+      });
     }
   });
 }

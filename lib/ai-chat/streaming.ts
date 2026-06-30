@@ -4,6 +4,7 @@ import {
   formatFinalizedAnswerForDisplay,
   type FinalizedAnswer
 } from "@/lib/ai-chat/response-finalizer";
+import { routeUserChatToRuntimeV2 } from "@/lib/knowledge-runtime/runtime-v2-router";
 
 export type AiChatStreamEvent =
   | {
@@ -85,9 +86,21 @@ export interface StreamableAiChatResult {
   conversation_id: string;
   message_id: string;
   mode: string;
+  customerCopy?: string | null;
   customer_answer?: string | null;
   finalized_answer?: unknown;
+  nextStep?: string | null;
+  traceId?: string | null;
   sources?: unknown[] | null;
+  runtime_sources?: unknown[] | null;
+  runtime_output?: unknown;
+  runtime_input?: unknown;
+  runtimeVersion?: string | null;
+  memoryApplied?: boolean | null;
+  usedMemoryIds?: string[] | null;
+  memoryTrace?: unknown[] | null;
+  memoryWarnings?: string[] | null;
+  appliedAgentPolicies?: string[] | null;
   confidence?: string | null;
   provider_status?: string | null;
   [key: string]: unknown;
@@ -158,7 +171,7 @@ export async function streamAiChatResult(
   emit: (event: AiChatStreamEvent) => Promise<void>,
   signal?: AbortSignal
 ) {
-  const finalResult = ensureFinalizedStreamResult(result);
+  const finalResult = await ensureFinalizedStreamResult(result);
 
   await emit({
     type: "thinking",
@@ -180,6 +193,27 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readRuntimePlatform(value: unknown): "web" | "exe" | "apk" {
+  return value === "exe" || value === "apk" ? value : "web";
+}
+
+function readRuntimeOutputMode(
+  value: unknown,
+): "auto" | "analysis" | "explain" | "faq" | "sop" | "customer_reply" | "sales_closing" | "sales_followup" {
+  if (
+    value === "analysis" ||
+    value === "explain" ||
+    value === "faq" ||
+    value === "sop" ||
+    value === "customer_reply" ||
+    value === "sales_closing" ||
+    value === "sales_followup"
+  ) {
+    return value;
+  }
+  return "auto";
 }
 
 function readNumber(value: unknown) {
@@ -232,7 +266,7 @@ function getFinalizedAnswer(value: unknown): FinalizedAnswer | null {
     : null;
 }
 
-function ensureFinalizedStreamResult(result: StreamableAiChatResult): StreamableAiChatResult {
+async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Promise<StreamableAiChatResult> {
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
     rawAnswer: result.answer,
     customerAnswer: result.customer_answer ?? undefined,
@@ -240,14 +274,54 @@ function ensureFinalizedStreamResult(result: StreamableAiChatResult): Streamable
   });
   const metadata = isRecord(result.metadata) ? result.metadata : {};
   const debug = isRecord(metadata.debug) ? metadata.debug : {};
-
-  return {
+  const normalizedResult = {
     ...result,
     answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
     customer_answer: finalizedAnswer.customerReply,
-    finalized_answer: finalizedAnswer,
+    finalized_answer: finalizedAnswer
+  };
+  const runtimeInput = isRecord(result.runtime_input) ? result.runtime_input : {};
+  const runtimeOutput = await routeUserChatToRuntimeV2(normalizedResult, {
+    query: readString(runtimeInput.query) || readString(result.message) || readString(result.question) || result.answer,
+    userId: readString(runtimeInput.userId) || readString(result.userId),
+    conversationId: result.conversation_id,
+    agentId: readString(runtimeInput.agentId) || readString(result.agentId) || readString(result.expert_id),
+    expertId: readString(runtimeInput.expertId) || readString(result.expert_id) || readString(result.agentId),
+    knowledgeBaseId: readString(runtimeInput.knowledgeBaseId) || readString(result.knowledgeBaseId) || readString(result.kb_id),
+    kbId: readString(runtimeInput.kbId) || readString(result.kb_id) || readString(result.knowledgeBaseId),
+    namespace: readString(runtimeInput.namespace) || readString(result.namespace),
+    tenantId: readString(runtimeInput.tenantId) || readString(result.tenantId) || readString(result.tenant_id),
+    appType: "user_app",
+    channel: "chat-ui",
+    platform: readRuntimePlatform(runtimeInput.platform),
+    outputMode: readRuntimeOutputMode(runtimeInput.outputMode)
+  });
+
+  return {
+    ...normalizedResult,
+    customerCopy: runtimeOutput.customerCopy,
+    nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
+    traceId: runtimeOutput.traceId,
+    runtimeVersion: runtimeOutput.runtimeVersion,
+    runtime_sources: runtimeOutput.sources,
+    runtime_output: runtimeOutput,
+    memoryApplied: runtimeOutput.memoryApplied,
+    usedMemoryIds: runtimeOutput.usedMemoryIds,
+    memoryTrace: runtimeOutput.memoryTrace,
+    memoryWarnings: runtimeOutput.memoryWarnings,
+    appliedAgentPolicies: runtimeOutput.appliedAgentPolicies,
     metadata: {
       ...metadata,
+      customerCopy: runtimeOutput.customerCopy,
+      traceId: runtimeOutput.traceId,
+      nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
+      runtimeVersion: runtimeOutput.runtimeVersion,
+      memoryApplied: runtimeOutput.memoryApplied,
+      usedMemoryIds: runtimeOutput.usedMemoryIds,
+      memoryTrace: runtimeOutput.memoryTrace,
+      memoryWarnings: runtimeOutput.memoryWarnings,
+      appliedAgentPolicies: runtimeOutput.appliedAgentPolicies,
+      runtimeOutput,
       debug: {
         ...debug,
         rawInternalAnswerHidden: true,

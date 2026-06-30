@@ -67,9 +67,11 @@ export function GET(request: Request) {
     });
   } catch {
     return jsonResponse({
-      ok: false,
-      success: false,
-      message: "专家库暂不可用",
+      ok: true,
+      success: true,
+      degraded: true,
+      reason: "PUBLIC_EXPERT_MARKET_FALLBACK",
+      message: "专家库暂不可用，已返回公共兜底空列表。",
       sections: [],
       experts: [],
       items: [],

@@ -1511,6 +1511,7 @@ export function ChatShell() {
                 id: streamResult.message_id,
                 role: "assistant",
                 content: streamResult.answer,
+                customerCopy: streamResult.customerCopy ?? streamResult.customer_answer ?? null,
                 customer_answer: streamResult.customer_answer ?? null,
                 finalized_answer: streamResult.finalized_answer ?? null,
                 provider_status: streamResult.provider_status ?? null,
@@ -1519,6 +1520,11 @@ export function ChatShell() {
                 metadata: {
                   ...currentMetadata,
                   finalizedAnswer: streamResult.finalized_answer ?? currentMetadata.finalizedAnswer,
+                  customerCopy: streamResult.customerCopy ?? streamResult.customer_answer ?? currentMetadata.customerCopy,
+                  nextStep: streamResult.nextStep ?? currentMetadata.nextStep,
+                  traceId: streamResult.traceId ?? currentMetadata.traceId,
+                  runtimeOutput: streamResult.runtime_output ?? currentMetadata.runtimeOutput,
+                  runtimeSources: streamResult.runtime_sources ?? currentMetadata.runtimeSources,
                   userQuery: text,
                   responseId: streamResult.message_id,
                   behaviorFeedbackSeed: {

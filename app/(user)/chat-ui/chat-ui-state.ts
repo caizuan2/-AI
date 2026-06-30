@@ -514,10 +514,19 @@ export function appendAskResult(
       id: result.message_id,
       role: "assistant",
       content: result.answer,
+      customerCopy: result.customerCopy ?? result.customer_answer ?? null,
       customer_answer: result.customer_answer ?? null,
+      finalized_answer: result.finalized_answer ?? null,
       provider_status: result.provider_status ?? null,
       sources: result.sources,
       confidence: result.confidence,
+      metadata: {
+        customerCopy: result.customerCopy ?? result.customer_answer ?? null,
+        nextStep: result.nextStep ?? null,
+        traceId: result.traceId ?? null,
+        runtimeOutput: result.runtime_output ?? null,
+        runtimeSources: result.runtime_sources ?? null
+      },
       created_at: new Date().toISOString()
     }
   ];
