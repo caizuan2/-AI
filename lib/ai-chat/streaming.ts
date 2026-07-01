@@ -251,7 +251,17 @@ function getSourceRecords(result: StreamableAiChatResult) {
 function getFinalizerSources(result: StreamableAiChatResult) {
   return getSourceRecords(result).map((source) => ({
     title: readString(source.title) || readString(source.file_name) || readString(source.source) || null,
-    score: readNumber(source.relevance_score) ?? readNumber(source.score)
+    score: readNumber(source.relevance_score) ?? readNumber(source.score),
+    snippet: readString(source.snippet) || readString(source.content_preview) || readString(source.contentPreview) || null,
+    safeSnippet: readString(source.safeSnippet) || null,
+    contentPreview: readString(source.contentPreview) || readString(source.content_preview) || null,
+    sourceApp: readString(source.sourceApp) || readString(source.source_app) || null,
+    knowledgeBaseId: readString(source.knowledgeBaseId) || readString(source.knowledge_base_id) || readString(source.kb_id) || null,
+    kbId: readString(source.kbId) || readString(source.kb_id) || readString(source.knowledgeBaseId) || null,
+    agentId: readString(source.agentId) || readString(source.agent_id) || readString(source.expert_id) || null,
+    expertId: readString(source.expertId) || readString(source.expert_id) || readString(source.agentId) || null,
+    namespace: readString(source.namespace) || null,
+    tenantId: readString(source.tenantId) || readString(source.tenant_id) || null,
   }));
 }
 
@@ -267,10 +277,16 @@ function getFinalizedAnswer(value: unknown): FinalizedAnswer | null {
 }
 
 async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Promise<StreamableAiChatResult> {
+  const runtimeInput = isRecord(result.runtime_input) ? result.runtime_input : {};
+  const userMessage =
+    readString(runtimeInput.query) ||
+    readString(result.message) ||
+    readString(result.question);
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
     rawAnswer: result.answer,
     customerAnswer: result.customer_answer ?? undefined,
-    sources: getFinalizerSources(result)
+    sources: getFinalizerSources(result),
+    userMessage,
   });
   const metadata = isRecord(result.metadata) ? result.metadata : {};
   const debug = isRecord(metadata.debug) ? metadata.debug : {};
@@ -280,7 +296,6 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     customer_answer: finalizedAnswer.customerReply,
     finalized_answer: finalizedAnswer
   };
-  const runtimeInput = isRecord(result.runtime_input) ? result.runtime_input : {};
   const runtimeOutput = await routeUserChatToRuntimeV2(normalizedResult, {
     query: readString(runtimeInput.query) || readString(result.message) || readString(result.question) || result.answer,
     userId: readString(runtimeInput.userId) || readString(result.userId),
@@ -296,10 +311,63 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     platform: readRuntimePlatform(runtimeInput.platform),
     outputMode: readRuntimeOutputMode(runtimeInput.outputMode)
   });
+  const runtimeFinalizedAnswer: FinalizedAnswer = {
+    ...finalizedAnswer,
+    freeformAnswer: runtimeOutput.answer || finalizedAnswer.freeformAnswer,
+    customerReply: runtimeOutput.customerCopy || finalizedAnswer.customerReply,
+    nextAction: runtimeOutput.nextStep || finalizedAnswer.nextAction,
+    salesIntent: runtimeOutput.salesIntent,
+    customerStage: runtimeOutput.customerStage,
+    salesStrategy: runtimeOutput.salesStrategy,
+    nextActionDetail: runtimeOutput.nextAction,
+    dealSignals: runtimeOutput.dealSignals,
+    salesLoopPlan: runtimeOutput.salesLoopPlan,
+    nextQuestion: runtimeOutput.nextQuestion,
+    followupSequence: runtimeOutput.followupSequence,
+    branchReplies: runtimeOutput.branchReplies,
+    stopRules: runtimeOutput.stopRules,
+    stageReason: runtimeOutput.stageReason ?? runtimeOutput.salesLoopPlan?.stageReason,
+    salesLoopV2: runtimeOutput.salesLoopV2,
+    dealProbability: runtimeOutput.dealProbability,
+    silenceRisk: runtimeOutput.silenceRisk,
+    abScripts: runtimeOutput.abScripts,
+    multiTurnPath: runtimeOutput.multiTurnPath,
+    followupTiming: runtimeOutput.followupTiming,
+    stopPush: runtimeOutput.stopPush,
+    recommendedAction: runtimeOutput.recommendedAction,
+    salesLearningV3: runtimeOutput.salesLearningV3,
+    customerSegment: runtimeOutput.customerSegment,
+    conversionScore: runtimeOutput.conversionScore,
+    bestScriptRecommendation: runtimeOutput.bestScriptRecommendation,
+    nextBestActionV3: runtimeOutput.nextBestActionV3,
+    learningSignals: runtimeOutput.learningSignals,
+    optimizationReason: runtimeOutput.optimizationReason,
+    isolationScope: runtimeOutput.isolationScope,
+    salesGrowthV4: runtimeOutput.salesGrowthV4,
+    scriptScoreboardV4: runtimeOutput.scriptScoreboardV4,
+    segmentPlaybookV4: runtimeOutput.segmentPlaybookV4,
+    optimizedRecommendationV4: runtimeOutput.optimizedRecommendationV4,
+    customerPathOptimizationV4: runtimeOutput.customerPathOptimizationV4,
+    growthMetricsV4: runtimeOutput.growthMetricsV4,
+    growthWarningsV4: runtimeOutput.growthWarningsV4,
+    salesEvolutionV5: runtimeOutput.salesEvolutionV5,
+    strategyCandidates: runtimeOutput.strategyCandidates,
+    promotedStrategies: runtimeOutput.promotedStrategies,
+    reducedStrategies: runtimeOutput.reducedStrategies,
+    retiredStrategies: runtimeOutput.retiredStrategies,
+    roiSignals: runtimeOutput.roiSignals,
+    conversionTrend: runtimeOutput.conversionTrend,
+    evolvedPath: runtimeOutput.evolvedPath,
+    autonomousRecommendation: runtimeOutput.autonomousRecommendation,
+    complianceWarnings: runtimeOutput.complianceWarnings,
+  };
 
   return {
     ...normalizedResult,
+    answer: formatFinalizedAnswerForDisplay(runtimeFinalizedAnswer),
     customerCopy: runtimeOutput.customerCopy,
+    customer_answer: runtimeOutput.customerCopy,
+    finalized_answer: runtimeFinalizedAnswer,
     nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
     traceId: runtimeOutput.traceId,
     runtimeVersion: runtimeOutput.runtimeVersion,
@@ -310,6 +378,30 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     memoryTrace: runtimeOutput.memoryTrace,
     memoryWarnings: runtimeOutput.memoryWarnings,
     appliedAgentPolicies: runtimeOutput.appliedAgentPolicies,
+    salesLearningV3: runtimeOutput.salesLearningV3,
+    customerSegment: runtimeOutput.customerSegment,
+    conversionScore: runtimeOutput.conversionScore,
+    bestScriptRecommendation: runtimeOutput.bestScriptRecommendation,
+    nextBestActionV3: runtimeOutput.nextBestActionV3,
+    learningSignals: runtimeOutput.learningSignals,
+    optimizationReason: runtimeOutput.optimizationReason,
+    isolationScope: runtimeOutput.isolationScope,
+    salesGrowthV4: runtimeOutput.salesGrowthV4,
+    scriptScoreboardV4: runtimeOutput.scriptScoreboardV4,
+    segmentPlaybookV4: runtimeOutput.segmentPlaybookV4,
+    optimizedRecommendationV4: runtimeOutput.optimizedRecommendationV4,
+    customerPathOptimizationV4: runtimeOutput.customerPathOptimizationV4,
+    growthMetricsV4: runtimeOutput.growthMetricsV4,
+    growthWarningsV4: runtimeOutput.growthWarningsV4,
+    salesEvolutionV5: runtimeOutput.salesEvolutionV5,
+    strategyCandidates: runtimeOutput.strategyCandidates,
+    promotedStrategies: runtimeOutput.promotedStrategies,
+    reducedStrategies: runtimeOutput.reducedStrategies,
+    retiredStrategies: runtimeOutput.retiredStrategies,
+    roiSignals: runtimeOutput.roiSignals,
+    conversionTrend: runtimeOutput.conversionTrend,
+    evolvedPath: runtimeOutput.evolvedPath,
+    autonomousRecommendation: runtimeOutput.autonomousRecommendation,
     metadata: {
       ...metadata,
       customerCopy: runtimeOutput.customerCopy,
@@ -321,6 +413,30 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
       memoryTrace: runtimeOutput.memoryTrace,
       memoryWarnings: runtimeOutput.memoryWarnings,
       appliedAgentPolicies: runtimeOutput.appliedAgentPolicies,
+      salesLearningV3: runtimeOutput.salesLearningV3,
+      customerSegment: runtimeOutput.customerSegment,
+      conversionScore: runtimeOutput.conversionScore,
+      bestScriptRecommendation: runtimeOutput.bestScriptRecommendation,
+      nextBestActionV3: runtimeOutput.nextBestActionV3,
+      learningSignals: runtimeOutput.learningSignals,
+      optimizationReason: runtimeOutput.optimizationReason,
+      isolationScope: runtimeOutput.isolationScope,
+      salesGrowthV4: runtimeOutput.salesGrowthV4,
+      scriptScoreboardV4: runtimeOutput.scriptScoreboardV4,
+      segmentPlaybookV4: runtimeOutput.segmentPlaybookV4,
+      optimizedRecommendationV4: runtimeOutput.optimizedRecommendationV4,
+      customerPathOptimizationV4: runtimeOutput.customerPathOptimizationV4,
+      growthMetricsV4: runtimeOutput.growthMetricsV4,
+      growthWarningsV4: runtimeOutput.growthWarningsV4,
+      salesEvolutionV5: runtimeOutput.salesEvolutionV5,
+      strategyCandidates: runtimeOutput.strategyCandidates,
+      promotedStrategies: runtimeOutput.promotedStrategies,
+      reducedStrategies: runtimeOutput.reducedStrategies,
+      retiredStrategies: runtimeOutput.retiredStrategies,
+      roiSignals: runtimeOutput.roiSignals,
+      conversionTrend: runtimeOutput.conversionTrend,
+      evolvedPath: runtimeOutput.evolvedPath,
+      autonomousRecommendation: runtimeOutput.autonomousRecommendation,
       runtimeOutput,
       debug: {
         ...debug,

@@ -26,6 +26,7 @@ import type {
   ChangePasswordResponse,
   ConversationsResponse,
   CurrentUserResponse,
+  FinalizedAnswerView,
   HistoryResponse,
   ChatQuickActionItem
 } from "./types";
@@ -408,31 +409,137 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
   }
 
   if (event.data) {
+    const dataRecord = event.data as unknown as Record<string, unknown>;
     const runtimeOutput = event.data.runtime_output && typeof event.data.runtime_output === "object" && !Array.isArray(event.data.runtime_output)
       ? event.data.runtime_output as Record<string, unknown>
+      : {};
+    const runtimeInput = dataRecord.runtime_input && typeof dataRecord.runtime_input === "object" && !Array.isArray(dataRecord.runtime_input)
+      ? dataRecord.runtime_input as Record<string, unknown>
       : {};
     const runtimeCustomerCopy = typeof runtimeOutput.customerCopy === "string" ? runtimeOutput.customerCopy : null;
     const runtimeTraceId = typeof runtimeOutput.traceId === "string" ? runtimeOutput.traceId : null;
     const runtimeNextStep = typeof runtimeOutput.nextStep === "string" ? runtimeOutput.nextStep : null;
+    const userMessage =
+      typeof runtimeInput.query === "string" ? runtimeInput.query :
+      typeof dataRecord.message === "string" ? dataRecord.message :
+      typeof dataRecord.question === "string" ? dataRecord.question :
+      undefined;
+    const readAnswerField = <K extends keyof FinalizedAnswerView>(key: K): FinalizedAnswerView[K] | undefined =>
+      (event.data?.finalized_answer?.[key] ?? runtimeOutput[key] ?? dataRecord[key]) as FinalizedAnswerView[K] | undefined;
 
     if (event.data.finalized_answer) {
-      const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? event.data.finalized_answer.customerReply;
+      const finalizedAnswer: FinalizedAnswerView = {
+        ...event.data.finalized_answer,
+        dealSignals: (event.data.finalized_answer.dealSignals ?? runtimeOutput.dealSignals) as FinalizedAnswerView["dealSignals"],
+        salesLoopPlan: (event.data.finalized_answer.salesLoopPlan ?? runtimeOutput.salesLoopPlan) as FinalizedAnswerView["salesLoopPlan"],
+        nextQuestion: (event.data.finalized_answer.nextQuestion ?? runtimeOutput.nextQuestion) as FinalizedAnswerView["nextQuestion"],
+        followupSequence: (event.data.finalized_answer.followupSequence ?? runtimeOutput.followupSequence) as FinalizedAnswerView["followupSequence"],
+        branchReplies: (event.data.finalized_answer.branchReplies ?? runtimeOutput.branchReplies) as FinalizedAnswerView["branchReplies"],
+        stopRules: (event.data.finalized_answer.stopRules ?? runtimeOutput.stopRules) as FinalizedAnswerView["stopRules"],
+        stageReason: (event.data.finalized_answer.stageReason ?? runtimeOutput.stageReason) as FinalizedAnswerView["stageReason"],
+        salesLoopV2: (event.data.finalized_answer.salesLoopV2 ?? runtimeOutput.salesLoopV2) as FinalizedAnswerView["salesLoopV2"],
+        dealProbability: (event.data.finalized_answer.dealProbability ?? runtimeOutput.dealProbability) as FinalizedAnswerView["dealProbability"],
+        silenceRisk: (event.data.finalized_answer.silenceRisk ?? runtimeOutput.silenceRisk) as FinalizedAnswerView["silenceRisk"],
+        abScripts: (event.data.finalized_answer.abScripts ?? runtimeOutput.abScripts) as FinalizedAnswerView["abScripts"],
+        multiTurnPath: (event.data.finalized_answer.multiTurnPath ?? runtimeOutput.multiTurnPath) as FinalizedAnswerView["multiTurnPath"],
+        followupTiming: (event.data.finalized_answer.followupTiming ?? runtimeOutput.followupTiming) as FinalizedAnswerView["followupTiming"],
+        stopPush: (event.data.finalized_answer.stopPush ?? runtimeOutput.stopPush) as FinalizedAnswerView["stopPush"],
+        recommendedAction: (event.data.finalized_answer.recommendedAction ?? runtimeOutput.recommendedAction) as FinalizedAnswerView["recommendedAction"],
+        salesLearningV3: readAnswerField("salesLearningV3"),
+        customerSegment: readAnswerField("customerSegment"),
+        conversionScore: readAnswerField("conversionScore"),
+        bestScriptRecommendation: readAnswerField("bestScriptRecommendation"),
+        nextBestActionV3: readAnswerField("nextBestActionV3"),
+        learningSignals: readAnswerField("learningSignals"),
+        optimizationReason: readAnswerField("optimizationReason"),
+        isolationScope: readAnswerField("isolationScope"),
+        salesGrowthV4: readAnswerField("salesGrowthV4"),
+        scriptScoreboardV4: readAnswerField("scriptScoreboardV4"),
+        segmentPlaybookV4: readAnswerField("segmentPlaybookV4"),
+        optimizedRecommendationV4: readAnswerField("optimizedRecommendationV4"),
+        customerPathOptimizationV4: readAnswerField("customerPathOptimizationV4"),
+        growthMetricsV4: readAnswerField("growthMetricsV4"),
+        growthWarningsV4: readAnswerField("growthWarningsV4"),
+        salesEvolutionV5: readAnswerField("salesEvolutionV5"),
+        strategyCandidates: readAnswerField("strategyCandidates"),
+        promotedStrategies: readAnswerField("promotedStrategies"),
+        reducedStrategies: readAnswerField("reducedStrategies"),
+        retiredStrategies: readAnswerField("retiredStrategies"),
+        roiSignals: readAnswerField("roiSignals"),
+        conversionTrend: readAnswerField("conversionTrend"),
+        evolvedPath: readAnswerField("evolvedPath"),
+        autonomousRecommendation: readAnswerField("autonomousRecommendation"),
+      };
+      const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? finalizedAnswer.customerReply;
 
       return {
         ...event.data,
-        answer: formatFinalizedAnswerForDisplay(event.data.finalized_answer),
+        answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
         customerCopy,
         customer_answer: customerCopy,
-        nextStep: event.data.nextStep ?? runtimeNextStep ?? event.data.finalized_answer.nextAction,
-        traceId: event.data.traceId ?? runtimeTraceId
+        finalized_answer: finalizedAnswer,
+        nextStep: event.data.nextStep ?? runtimeNextStep ?? finalizedAnswer.nextAction,
+        traceId: event.data.traceId ?? runtimeTraceId,
+        salesLearningV3: finalizedAnswer.salesLearningV3,
+        customerSegment: finalizedAnswer.customerSegment,
+        conversionScore: finalizedAnswer.conversionScore,
+        bestScriptRecommendation: finalizedAnswer.bestScriptRecommendation,
+        nextBestActionV3: finalizedAnswer.nextBestActionV3,
+        learningSignals: finalizedAnswer.learningSignals,
+        optimizationReason: finalizedAnswer.optimizationReason,
+        isolationScope: finalizedAnswer.isolationScope,
+        salesGrowthV4: finalizedAnswer.salesGrowthV4,
+        scriptScoreboardV4: finalizedAnswer.scriptScoreboardV4,
+        segmentPlaybookV4: finalizedAnswer.segmentPlaybookV4,
+        optimizedRecommendationV4: finalizedAnswer.optimizedRecommendationV4,
+        customerPathOptimizationV4: finalizedAnswer.customerPathOptimizationV4,
+        growthMetricsV4: finalizedAnswer.growthMetricsV4,
+        growthWarningsV4: finalizedAnswer.growthWarningsV4,
+        salesEvolutionV5: finalizedAnswer.salesEvolutionV5,
+        strategyCandidates: finalizedAnswer.strategyCandidates,
+        promotedStrategies: finalizedAnswer.promotedStrategies,
+        reducedStrategies: finalizedAnswer.reducedStrategies,
+        retiredStrategies: finalizedAnswer.retiredStrategies,
+        roiSignals: finalizedAnswer.roiSignals,
+        conversionTrend: finalizedAnswer.conversionTrend,
+        evolvedPath: finalizedAnswer.evolvedPath,
+        autonomousRecommendation: finalizedAnswer.autonomousRecommendation,
       };
     }
 
-    const finalizedAnswer = finalizeUserAnswer({
+    const fallbackFinalizedAnswer = finalizeUserAnswer({
       rawAnswer: event.data.answer,
       customerAnswer: event.data.customerCopy ?? runtimeCustomerCopy ?? event.data.customer_answer ?? undefined,
-      sources: event.data.sources
+      sources: event.data.sources,
+      userMessage,
     });
+    const finalizedAnswer: FinalizedAnswerView = {
+      ...fallbackFinalizedAnswer,
+      salesLearningV3: readAnswerField("salesLearningV3") ?? fallbackFinalizedAnswer.salesLearningV3,
+      customerSegment: readAnswerField("customerSegment") ?? fallbackFinalizedAnswer.customerSegment,
+      conversionScore: readAnswerField("conversionScore") ?? fallbackFinalizedAnswer.conversionScore,
+      bestScriptRecommendation: readAnswerField("bestScriptRecommendation") ?? fallbackFinalizedAnswer.bestScriptRecommendation,
+      nextBestActionV3: readAnswerField("nextBestActionV3") ?? fallbackFinalizedAnswer.nextBestActionV3,
+      learningSignals: readAnswerField("learningSignals") ?? fallbackFinalizedAnswer.learningSignals,
+      optimizationReason: readAnswerField("optimizationReason") ?? fallbackFinalizedAnswer.optimizationReason,
+      isolationScope: readAnswerField("isolationScope") ?? fallbackFinalizedAnswer.isolationScope,
+      salesGrowthV4: readAnswerField("salesGrowthV4") ?? fallbackFinalizedAnswer.salesGrowthV4,
+      scriptScoreboardV4: readAnswerField("scriptScoreboardV4") ?? fallbackFinalizedAnswer.scriptScoreboardV4,
+      segmentPlaybookV4: readAnswerField("segmentPlaybookV4") ?? fallbackFinalizedAnswer.segmentPlaybookV4,
+      optimizedRecommendationV4: readAnswerField("optimizedRecommendationV4") ?? fallbackFinalizedAnswer.optimizedRecommendationV4,
+      customerPathOptimizationV4: readAnswerField("customerPathOptimizationV4") ?? fallbackFinalizedAnswer.customerPathOptimizationV4,
+      growthMetricsV4: readAnswerField("growthMetricsV4") ?? fallbackFinalizedAnswer.growthMetricsV4,
+      growthWarningsV4: readAnswerField("growthWarningsV4") ?? fallbackFinalizedAnswer.growthWarningsV4,
+      salesEvolutionV5: readAnswerField("salesEvolutionV5") ?? fallbackFinalizedAnswer.salesEvolutionV5,
+      strategyCandidates: readAnswerField("strategyCandidates") ?? fallbackFinalizedAnswer.strategyCandidates,
+      promotedStrategies: readAnswerField("promotedStrategies") ?? fallbackFinalizedAnswer.promotedStrategies,
+      reducedStrategies: readAnswerField("reducedStrategies") ?? fallbackFinalizedAnswer.reducedStrategies,
+      retiredStrategies: readAnswerField("retiredStrategies") ?? fallbackFinalizedAnswer.retiredStrategies,
+      roiSignals: readAnswerField("roiSignals") ?? fallbackFinalizedAnswer.roiSignals,
+      conversionTrend: readAnswerField("conversionTrend") ?? fallbackFinalizedAnswer.conversionTrend,
+      evolvedPath: readAnswerField("evolvedPath") ?? fallbackFinalizedAnswer.evolvedPath,
+      autonomousRecommendation: readAnswerField("autonomousRecommendation") ?? fallbackFinalizedAnswer.autonomousRecommendation,
+    };
     const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? finalizedAnswer.customerReply;
 
     return {
@@ -442,7 +549,31 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       customer_answer: customerCopy,
       finalized_answer: finalizedAnswer,
       nextStep: event.data.nextStep ?? runtimeNextStep ?? finalizedAnswer.nextAction,
-      traceId: event.data.traceId ?? runtimeTraceId
+      traceId: event.data.traceId ?? runtimeTraceId,
+      salesLearningV3: finalizedAnswer.salesLearningV3,
+      customerSegment: finalizedAnswer.customerSegment,
+      conversionScore: finalizedAnswer.conversionScore,
+      bestScriptRecommendation: finalizedAnswer.bestScriptRecommendation,
+      nextBestActionV3: finalizedAnswer.nextBestActionV3,
+      learningSignals: finalizedAnswer.learningSignals,
+      optimizationReason: finalizedAnswer.optimizationReason,
+      isolationScope: finalizedAnswer.isolationScope,
+      salesGrowthV4: finalizedAnswer.salesGrowthV4,
+      scriptScoreboardV4: finalizedAnswer.scriptScoreboardV4,
+      segmentPlaybookV4: finalizedAnswer.segmentPlaybookV4,
+      optimizedRecommendationV4: finalizedAnswer.optimizedRecommendationV4,
+      customerPathOptimizationV4: finalizedAnswer.customerPathOptimizationV4,
+      growthMetricsV4: finalizedAnswer.growthMetricsV4,
+      growthWarningsV4: finalizedAnswer.growthWarningsV4,
+      salesEvolutionV5: finalizedAnswer.salesEvolutionV5,
+      strategyCandidates: finalizedAnswer.strategyCandidates,
+      promotedStrategies: finalizedAnswer.promotedStrategies,
+      reducedStrategies: finalizedAnswer.reducedStrategies,
+      retiredStrategies: finalizedAnswer.retiredStrategies,
+      roiSignals: finalizedAnswer.roiSignals,
+      conversionTrend: finalizedAnswer.conversionTrend,
+      evolvedPath: finalizedAnswer.evolvedPath,
+      autonomousRecommendation: finalizedAnswer.autonomousRecommendation,
     };
   }
 
@@ -457,6 +588,30 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
     mode: "fast",
     customer_answer: finalizedAnswer.customerReply,
     finalized_answer: finalizedAnswer,
+    salesLearningV3: finalizedAnswer.salesLearningV3,
+    customerSegment: finalizedAnswer.customerSegment,
+    conversionScore: finalizedAnswer.conversionScore,
+    bestScriptRecommendation: finalizedAnswer.bestScriptRecommendation,
+    nextBestActionV3: finalizedAnswer.nextBestActionV3,
+    learningSignals: finalizedAnswer.learningSignals,
+    optimizationReason: finalizedAnswer.optimizationReason,
+    isolationScope: finalizedAnswer.isolationScope,
+    salesGrowthV4: finalizedAnswer.salesGrowthV4,
+    scriptScoreboardV4: finalizedAnswer.scriptScoreboardV4,
+    segmentPlaybookV4: finalizedAnswer.segmentPlaybookV4,
+    optimizedRecommendationV4: finalizedAnswer.optimizedRecommendationV4,
+    customerPathOptimizationV4: finalizedAnswer.customerPathOptimizationV4,
+    growthMetricsV4: finalizedAnswer.growthMetricsV4,
+    growthWarningsV4: finalizedAnswer.growthWarningsV4,
+    salesEvolutionV5: finalizedAnswer.salesEvolutionV5,
+    strategyCandidates: finalizedAnswer.strategyCandidates,
+    promotedStrategies: finalizedAnswer.promotedStrategies,
+    reducedStrategies: finalizedAnswer.reducedStrategies,
+    retiredStrategies: finalizedAnswer.retiredStrategies,
+    roiSignals: finalizedAnswer.roiSignals,
+    conversionTrend: finalizedAnswer.conversionTrend,
+    evolvedPath: finalizedAnswer.evolvedPath,
+    autonomousRecommendation: finalizedAnswer.autonomousRecommendation,
     sources: [],
     confidence: "low",
     provider_status: "ok"

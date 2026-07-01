@@ -10,6 +10,11 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AnswerSourcesPanel } from "@/components/user/AnswerSourcesPanel";
+import { HighValueAnswerView } from "@/components/user/HighValueAnswerView";
+import { SalesGrowthPanel } from "@/components/user/SalesGrowthPanel";
+import { SalesNextStepCard } from "@/components/user/SalesNextStepCard";
+import { recordRuntimeV4FeedbackEvent } from "@/lib/knowledge-runtime/runtime-v4-feedback-event-store";
+import type { RuntimeV4FeedbackEvent } from "@/lib/knowledge-runtime/runtime-v4-growth-types";
 import {
   buildProductAnswerDisplay,
   type AnalysisSectionDisplay,
@@ -33,7 +38,15 @@ interface ProductAnswerViewProps {
   className?: string;
 }
 
-function CopyMiniButton({ text, label = "复制" }: { text: string; label?: string }) {
+function CopyMiniButton({
+  text,
+  label = "复制",
+  onCopySignal,
+}: {
+  text: string;
+  label?: string;
+  onCopySignal?: () => void;
+}) {
   const [copied, setCopied] = React.useState(false);
   const [selectedForManualCopy, setSelectedForManualCopy] = React.useState(false);
   const [copyFailed, setCopyFailed] = React.useState(false);
@@ -50,6 +63,7 @@ function CopyMiniButton({ text, label = "复制" }: { text: string; label?: stri
     const result = await safeCopyTextDetailed(text, { selectTarget: selectionRef.current });
 
     if (result.copied) {
+      onCopySignal?.();
       setCopyFailed(false);
       setSelectedForManualCopy(false);
       setCopied(true);
@@ -58,6 +72,7 @@ function CopyMiniButton({ text, label = "复制" }: { text: string; label?: stri
     }
 
     if (result.selected) {
+      onCopySignal?.();
       setCopied(false);
       setCopyFailed(false);
       setManualCopyMessage(result.message);
@@ -174,9 +189,24 @@ export function ProductAnswerView({
   const activeMode = display.salesModes.find((mode) => mode.key === selectedModeKey)
     ?? display.salesModes.find((mode) => mode.key === display.defaultMode)
     ?? display.salesModes[0];
+  const growthScope = answer.isolationScope ?? answer.salesLearningV3?.isolationScope ?? null;
+  const customerSegment = answer.customerSegment ?? answer.salesLearningV3?.customerSegment;
+  const primaryDealSignal = (answer.dealSignals ?? answer.salesLoopPlan?.dealSignals)?.[0]?.key;
+  const recordV4Signal = (event: RuntimeV4FeedbackEvent, reason: string) => {
+    recordRuntimeV4FeedbackEvent({
+      scope: growthScope,
+      event,
+      customerSegment,
+      dealSignal: primaryDealSignal,
+      meta: { reason },
+    });
+  };
   const copyAnswerText = [
     "小董AI处理建议",
     "",
+    display.freeformAnswer ? "主答案：" : "",
+    display.freeformAnswer,
+    display.freeformAnswer ? "" : "",
     "行动建议：",
     ...display.actionSuggestions.map((suggestion, index) => `${index + 1}. ${suggestion}`),
     "",
@@ -185,6 +215,8 @@ export function ProductAnswerView({
       section.title,
       ...section.lines
     ]),
+    "",
+    answer.nextActionDetail ? `推进策略：${answer.nextActionDetail}` : "",
     "",
     `【${activeMode.label}】`,
     activeMode.text,
@@ -204,10 +236,21 @@ export function ProductAnswerView({
             <p className="mt-1 text-xs text-slate-400">正在逐步生成回复。</p>
           ) : null}
         </div>
-        <CopyMiniButton text={copyAnswerText} label="复制答案" />
+        <CopyMiniButton
+          text={copyAnswerText}
+          label="复制答案"
+          onCopySignal={() => recordV4Signal("save_response", "用户复制了完整回答。")}
+        />
       </header>
 
       <div className="mt-4 space-y-3 text-[15px] leading-7 text-slate-800">
+        {display.freeformAnswer ? (
+          <HighValueAnswerView
+            content={display.freeformAnswer}
+            className="rounded-2xl border border-slate-200 bg-white px-4 py-4"
+          />
+        ) : null}
+
         <section className="rounded-2xl bg-slate-50 px-4 py-3">
           <p className="mb-2 text-sm font-semibold text-slate-800">建议你这样做</p>
           <ul className="space-y-1.5 text-sm leading-6 text-slate-700">
@@ -219,6 +262,34 @@ export function ProductAnswerView({
             ))}
           </ul>
         </section>
+
+        <SalesNextStepCard
+          salesIntent={answer.salesIntent}
+          customerStage={answer.customerStage}
+          salesStrategy={answer.salesStrategy}
+          nextAction={answer.nextActionDetail || display.nextAction}
+          complianceWarnings={answer.complianceWarnings}
+        />
+
+        <SalesGrowthPanel
+          customerStage={answer.customerStage}
+          stageReason={answer.stageReason ?? answer.salesLoopPlan?.stageReason}
+          dealSignals={answer.dealSignals ?? answer.salesLoopPlan?.dealSignals}
+          nextQuestion={answer.nextQuestion ?? answer.salesLoopPlan?.nextQuestion}
+          followupSequence={answer.followupSequence ?? answer.salesLoopPlan?.followupSequence}
+          stopRules={answer.stopRules ?? answer.salesLoopPlan?.stopRules}
+          salesLoopV2={answer.salesLoopV2}
+          dealProbability={answer.dealProbability}
+          silenceRisk={answer.silenceRisk}
+          abScripts={answer.abScripts}
+          multiTurnPath={answer.multiTurnPath}
+          followupTiming={answer.followupTiming}
+          stopPush={answer.stopPush}
+          recommendedAction={answer.recommendedAction}
+          salesLearningV3={answer.salesLearningV3}
+          salesGrowthV4={answer.salesGrowthV4}
+          salesEvolutionV5={answer.salesEvolutionV5}
+        />
 
         <DetailedAnalysisBlock sections={display.analysisSections} />
 
@@ -250,7 +321,11 @@ export function ProductAnswerView({
 
           <div className="mb-2 flex items-center justify-between gap-3">
             <p className="text-sm font-semibold text-emerald-900">{activeMode.title}</p>
-            <CopyMiniButton text={activeMode.text} label={activeMode.copyLabel} />
+            <CopyMiniButton
+              text={activeMode.text}
+              label={activeMode.copyLabel}
+              onCopySignal={() => recordV4Signal("copy_customer_copy", `用户复制了${activeMode.label}话术。`)}
+            />
           </div>
           <p className="whitespace-pre-line text-sm leading-7">{activeMode.text}</p>
 

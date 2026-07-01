@@ -1,4 +1,20 @@
 import type { ChatModeCandidate, ChatModeKey, ChatModeSource } from "./lib/intent-mode-router";
+import type {
+  RuntimeV2ABScripts,
+  RuntimeV2BranchReply,
+  RuntimeV2DealProbability,
+  RuntimeV2DealSignal,
+  RuntimeV2FollowupTiming,
+  RuntimeV2FollowUpStep,
+  RuntimeV2MultiTurnSalesPath,
+  RuntimeV2SalesLoopPlan,
+  RuntimeV2SalesLoopV2,
+  RuntimeV2SilenceRisk,
+  RuntimeV2StopPushPolicy,
+} from "@/lib/knowledge-runtime/runtime-v2-sales-loop-types";
+import type { RuntimeV3GrowthOutput } from "@/lib/knowledge-runtime/runtime-v3-sales-learning-types";
+import type { RuntimeV4GrowthFlywheelOutput } from "@/lib/knowledge-runtime/runtime-v4-growth-types";
+import type { RuntimeV5EvolutionOutput } from "@/lib/knowledge-runtime/runtime-v5-strategy-types";
 
 export type ChatMode = "fast" | "expert";
 export type RagConfidence = "high" | "medium" | "low";
@@ -66,8 +82,24 @@ export interface ChatMessageView {
   pending?: boolean;
 }
 
+export type SalesLoopDealSignalView = RuntimeV2DealSignal;
+export type SalesLoopFollowUpStepView = RuntimeV2FollowUpStep;
+export type SalesLoopBranchReplyView = RuntimeV2BranchReply;
+export type SalesLoopPlanView = RuntimeV2SalesLoopPlan;
+export type SalesLoopV2View = RuntimeV2SalesLoopV2;
+export type DealProbabilityView = RuntimeV2DealProbability;
+export type SilenceRiskView = RuntimeV2SilenceRisk;
+export type ABScriptsView = RuntimeV2ABScripts;
+export type MultiTurnSalesPathView = RuntimeV2MultiTurnSalesPath;
+export type FollowupTimingView = RuntimeV2FollowupTiming;
+export type StopPushPolicyView = RuntimeV2StopPushPolicy;
+export type SalesLearningV3View = RuntimeV3GrowthOutput;
+export type SalesGrowthV4View = RuntimeV4GrowthFlywheelOutput;
+export type SalesEvolutionV5View = RuntimeV5EvolutionOutput;
+
 export interface FinalizedAnswerView {
   title: string;
+  freeformAnswer?: string;
   problemUnderstanding: string;
   keyConclusion: string;
   suggestedSteps: string[];
@@ -75,6 +107,50 @@ export interface FinalizedAnswerView {
   nextAction: string;
   evidenceSummary?: string;
   confidenceLabel?: "高" | "中" | "低";
+  salesIntent?: string;
+  customerStage?: string;
+  salesStrategy?: string;
+  nextActionDetail?: string;
+  dealSignals?: SalesLoopDealSignalView[];
+  salesLoopPlan?: SalesLoopPlanView;
+  nextQuestion?: string;
+  followupSequence?: SalesLoopFollowUpStepView[];
+  branchReplies?: SalesLoopBranchReplyView[];
+  stopRules?: string[];
+  stageReason?: string;
+  salesLoopV2?: SalesLoopV2View;
+  dealProbability?: DealProbabilityView;
+  silenceRisk?: SilenceRiskView;
+  abScripts?: ABScriptsView;
+  multiTurnPath?: MultiTurnSalesPathView;
+  followupTiming?: FollowupTimingView;
+  stopPush?: StopPushPolicyView;
+  recommendedAction?: string;
+  salesLearningV3?: SalesLearningV3View;
+  customerSegment?: SalesLearningV3View["customerSegment"];
+  conversionScore?: SalesLearningV3View["conversionScore"];
+  bestScriptRecommendation?: SalesLearningV3View["bestScriptRecommendation"];
+  nextBestActionV3?: SalesLearningV3View["nextBestAction"];
+  learningSignals?: SalesLearningV3View["learningSignals"];
+  optimizationReason?: string;
+  isolationScope?: SalesLearningV3View["isolationScope"];
+  salesGrowthV4?: SalesGrowthV4View;
+  scriptScoreboardV4?: SalesGrowthV4View["scriptScoreboard"];
+  segmentPlaybookV4?: SalesGrowthV4View["segmentPlaybook"];
+  optimizedRecommendationV4?: SalesGrowthV4View["optimizedRecommendation"];
+  customerPathOptimizationV4?: SalesGrowthV4View["customerPathOptimization"];
+  growthMetricsV4?: SalesGrowthV4View["metricsSummary"];
+  growthWarningsV4?: SalesGrowthV4View["warnings"];
+  salesEvolutionV5?: SalesEvolutionV5View;
+  strategyCandidates?: SalesEvolutionV5View["strategyCandidates"];
+  promotedStrategies?: SalesEvolutionV5View["promotedStrategies"];
+  reducedStrategies?: SalesEvolutionV5View["reducedStrategies"];
+  retiredStrategies?: SalesEvolutionV5View["retiredStrategies"];
+  roiSignals?: SalesEvolutionV5View["roiSignals"];
+  conversionTrend?: SalesEvolutionV5View["conversionTrend"];
+  evolvedPath?: SalesEvolutionV5View["evolvedPath"];
+  autonomousRecommendation?: SalesEvolutionV5View["autonomousRecommendation"];
+  complianceWarnings?: string[];
   debug?: {
     removedInternalLabels: string[];
     originalLength: number;
@@ -238,6 +314,30 @@ export interface AskChatResponse {
   sources: ChatSource[];
   runtime_sources?: unknown[] | null;
   runtime_output?: unknown;
+  salesLearningV3?: SalesLearningV3View | null;
+  customerSegment?: SalesLearningV3View["customerSegment"] | null;
+  conversionScore?: SalesLearningV3View["conversionScore"] | null;
+  bestScriptRecommendation?: SalesLearningV3View["bestScriptRecommendation"] | null;
+  nextBestActionV3?: SalesLearningV3View["nextBestAction"] | null;
+  learningSignals?: SalesLearningV3View["learningSignals"] | null;
+  optimizationReason?: string | null;
+  isolationScope?: SalesLearningV3View["isolationScope"] | null;
+  salesGrowthV4?: SalesGrowthV4View | null;
+  scriptScoreboardV4?: SalesGrowthV4View["scriptScoreboard"] | null;
+  segmentPlaybookV4?: SalesGrowthV4View["segmentPlaybook"] | null;
+  optimizedRecommendationV4?: SalesGrowthV4View["optimizedRecommendation"] | null;
+  customerPathOptimizationV4?: SalesGrowthV4View["customerPathOptimization"] | null;
+  growthMetricsV4?: SalesGrowthV4View["metricsSummary"] | null;
+  growthWarningsV4?: SalesGrowthV4View["warnings"] | null;
+  salesEvolutionV5?: SalesEvolutionV5View | null;
+  strategyCandidates?: SalesEvolutionV5View["strategyCandidates"] | null;
+  promotedStrategies?: SalesEvolutionV5View["promotedStrategies"] | null;
+  reducedStrategies?: SalesEvolutionV5View["reducedStrategies"] | null;
+  retiredStrategies?: SalesEvolutionV5View["retiredStrategies"] | null;
+  roiSignals?: SalesEvolutionV5View["roiSignals"] | null;
+  conversionTrend?: SalesEvolutionV5View["conversionTrend"] | null;
+  evolvedPath?: SalesEvolutionV5View["evolvedPath"] | null;
+  autonomousRecommendation?: SalesEvolutionV5View["autonomousRecommendation"] | null;
   confidence: RagConfidence;
   provider_status?: ProviderStatus;
 }
