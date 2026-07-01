@@ -11,6 +11,7 @@ import { unwrapApiResponse } from "@/lib/api/client";
 import {
   getEntryPathForRole,
   getEntryRoleFromRoles,
+  getProductFromPath,
   isPathAllowedForEntryRole,
   type EntryRole
 } from "@/lib/auth/product";
@@ -47,6 +48,7 @@ function getPostLoginPath(input: {
     isSuperAdmin: input.isSuperAdmin
   });
   const normalizedNextPath = input.nextPath?.split("?")[0] || "";
+  const nextProduct = normalizedNextPath ? getProductFromPath(normalizedNextPath) : "public";
 
   if (
     input.nextPath &&
@@ -56,11 +58,31 @@ function getPostLoginPath(input: {
     return input.nextPath;
   }
 
-  if (input.entryPath) {
+  if (role !== "user" && (!input.nextPath || nextProduct === "user_app")) {
+    return "/no-access";
+  }
+
+  if (input.entryPath && isPathAllowedForEntryRole(input.entryPath, role)) {
     return input.entryPath;
   }
 
   return getEntryPathForRole(role, Boolean(input.licenseActivated));
+}
+
+function shouldStayOnUserLogin(input: {
+  nextPath?: string;
+  isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+}) {
+  const role = input.role ?? getEntryRoleFromRoles({
+    roles: input.roles,
+    isSuperAdmin: input.isSuperAdmin
+  });
+  const normalizedNextPath = input.nextPath?.split("?")[0] || "";
+  const nextProduct = normalizedNextPath ? getProductFromPath(normalizedNextPath) : "user_app";
+
+  return role !== "user" && nextProduct === "user_app";
 }
 
 function LoginForm() {
@@ -112,14 +134,30 @@ function LoginForm() {
             data?: MeResponse;
           } | null;
           const nextPath = getSafeNextPath();
+          const currentUser = payload?.data?.user;
+
+          if (!currentUser) {
+            setCheckingSession(false);
+            return;
+          }
+
+          if (shouldStayOnUserLogin({
+            nextPath,
+            isSuperAdmin: currentUser.isSuperAdmin,
+            role: currentUser.role,
+            roles: currentUser.roles
+          })) {
+            setCheckingSession(false);
+            return;
+          }
 
           router.replace(getPostLoginPath({
             nextPath,
-            licenseActivated: payload?.data?.user.licenseActivated,
-            isSuperAdmin: payload?.data?.user.isSuperAdmin,
-            role: payload?.data?.user.role,
-            roles: payload?.data?.user.roles,
-            entryPath: payload?.data?.user.entryPath
+            licenseActivated: currentUser.licenseActivated,
+            isSuperAdmin: currentUser.isSuperAdmin,
+            role: currentUser.role,
+            roles: currentUser.roles,
+            entryPath: currentUser.entryPath
           }));
           return;
         }

@@ -255,7 +255,7 @@ async function getLatestLicenseType(userId: string): Promise<NormalizedProductAc
     return null;
   }
 
-  const auditLog = await prisma.auditLog.findFirst({
+  const auditLogs = await prisma.auditLog.findMany({
     where: {
       targetType: "license_key",
       targetId: license.id
@@ -265,10 +265,19 @@ async function getLatestLicenseType(userId: string): Promise<NormalizedProductAc
     },
     select: {
       metadata: true
-    }
+    },
+    take: 10
   });
 
-  return readMetadataAppType(auditLog?.metadata);
+  for (const auditLog of auditLogs) {
+    const appType = readMetadataAppType(auditLog.metadata);
+
+    if (appType) {
+      return appType;
+    }
+  }
+
+  return null;
 }
 
 async function getBaseRole(userId: string) {
