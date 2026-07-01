@@ -1,10 +1,7 @@
-import type { RuntimeV2Input, RuntimeV2Memory, RuntimeV2OutputMode } from "./runtime-v2-types";
+import type { RuntimeV2Input, RuntimeV2Memory, RuntimeV2OutputMode, RuntimeV2Source } from "./runtime-v2-types";
+import { extractRuntimeV2CustomerScript } from "./runtime-v2-customer-script-extractor";
 
 const MAX_CUSTOMER_COPY_LENGTH = 700;
-
-function clean(value: unknown): string {
-  return typeof value === "string" ? value.replace(/\r\n/g, "\n").trim() : "";
-}
 
 function compact(value: string): string {
   const next = value.replace(/\n{3,}/g, "\n\n").trim();
@@ -22,42 +19,21 @@ function prefixForMode(mode: RuntimeV2OutputMode): string {
   return "可以这样回复：";
 }
 
-function readCustomerCopyCandidate(rawValue: unknown): string {
-  const raw = rawValue as Record<string, unknown> | null;
-  const candidates = raw
-    ? [
-        raw.customerCopy,
-        raw.customer_copy,
-        raw.customerAnswer,
-        raw.customer_answer,
-        raw.finalAnswer,
-        raw.final_answer,
-        raw.answer,
-      ]
-    : [rawValue];
-
-  for (const candidate of candidates) {
-    const text = clean(candidate);
-    if (text) return compact(text);
-  }
-
-  return "";
-}
-
 export function buildRuntimeV2CustomerCopy(rawValue: unknown, input: RuntimeV2Input): string {
-  const copy = readCustomerCopyCandidate(rawValue);
+  const copy = extractRuntimeV2CustomerScript(rawValue, input);
 
   if (copy) return copy;
 
-  return `${prefixForMode(input.outputMode)}我先确认一下您的具体情况，再给您一个更稳妥的方案。`;
+  return `${prefixForMode(input.outputMode)}请先把当前目标、基础情况和最卡住的一点告诉我，我再给您更贴合实际的建议。`;
 }
 
 export function buildRuntimeV2MemoryAwareCustomerCopy(
   rawValue: unknown,
   input: RuntimeV2Input,
   memories: RuntimeV2Memory[] = [],
+  sources: RuntimeV2Source[] = [],
 ): string {
-  const copy = readCustomerCopyCandidate(rawValue);
+  const copy = extractRuntimeV2CustomerScript(rawValue, input, { memories, sources });
 
   if (copy) {
     return copy;

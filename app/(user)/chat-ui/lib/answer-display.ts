@@ -27,6 +27,7 @@ export interface AnalysisSectionDisplay {
 }
 
 export interface ProductAnswerDisplay {
+  freeformAnswer: string;
   conclusion: string;
   decision: string;
   suggestions: string[];
@@ -165,6 +166,18 @@ export function normalizeAnswerText(text: unknown) {
     .replace(/[ \t]+/g, " ")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/\s+([，。；：！？])/g, "$1")
+    .trim();
+}
+
+function normalizeFreeformAnswerText(text: unknown) {
+  const value = typeof text === "string" ? text : "";
+
+  if (!value) {
+    return "";
+  }
+
+  return sanitizeVisibleText(stripInternalDebugText(value))
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -1059,6 +1072,8 @@ export function buildSalesAnswerDisplay(
     return null;
   }
 
+  const freeformAnswer = normalizeFreeformAnswerText(answer.freeformAnswer)
+    || normalizeFreeformAnswerText(asRecord(answer).answer);
   const decision = compressDecision(answer);
   const dedupedSuggestions = buildActionSuggestions(answer)
     .filter((suggestion) => normalizedSimilarityKey(suggestion) !== normalizedSimilarityKey(decision))
@@ -1114,6 +1129,9 @@ export function buildSalesAnswerDisplay(
   const fullAnswerText = [
     "小董AI处理建议",
     "",
+    freeformAnswer ? "主答案：" : "",
+    freeformAnswer,
+    freeformAnswer ? "" : "",
     "行动建议：",
     ...actionSuggestions.map((suggestion, index) => `${index + 1}. ${suggestion}`),
     "",
@@ -1130,6 +1148,7 @@ export function buildSalesAnswerDisplay(
   ].filter(Boolean).join("\n");
 
   return {
+    freeformAnswer,
     conclusion: decision,
     decision,
     suggestions: actionSuggestions,
