@@ -31,10 +31,24 @@ interface ProductAnswerViewProps {
 
 const MAX_STEP_LENGTH = 35;
 
+const LOST_HISTORY_ANSWER_PATTERNS = [
+  "这条历史消息没有保留可直接展示的最终正文",
+  "这条历史消息没有保留可展示的最终正文",
+  "历史消息没有保留可直接展示的最终正文"
+];
+
+function isLostHistoryAnswerText(value: string) {
+  const normalized = value.replace(/\s+/g, "");
+
+  return LOST_HISTORY_ANSWER_PATTERNS.some((pattern) =>
+    normalized.includes(pattern.replace(/\s+/g, ""))
+  );
+}
+
 function cleanVisibleText(value: unknown, fallback = "") {
   const text = sanitizeVisibleText(typeof value === "string" ? value : "");
 
-  return text || fallback;
+  return text && !isLostHistoryAnswerText(text) ? text : fallback;
 }
 
 function compactVisibleText(value: string, maxLength = MAX_STEP_LENGTH) {
