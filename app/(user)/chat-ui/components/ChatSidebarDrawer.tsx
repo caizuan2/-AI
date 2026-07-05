@@ -12,6 +12,7 @@ import {
   PencilLine,
   Pin,
   PinOff,
+  RefreshCw,
   ScanLine,
   Search,
   Settings,
@@ -44,6 +45,7 @@ interface ChatSidebarDrawerProps {
   activeConversationId: string | null;
   open: boolean;
   loading: boolean;
+  loadError?: string | null;
   currentUser?: CurrentChatUser | null;
   userName?: string;
   userDescription?: string;
@@ -51,6 +53,7 @@ interface ChatSidebarDrawerProps {
   onClose: () => void;
   onNewChat: () => void;
   onSelect: (conversationId: string) => void;
+  onRetryLoad?: () => void | Promise<void>;
   onScan?: () => void;
   onScanFileSelected?: (file: File) => void;
   onMessages?: () => void;
@@ -156,6 +159,7 @@ export function ChatSidebarDrawer({
   activeConversationId,
   open,
   loading,
+  loadError = null,
   currentUser = null,
   userName = "当前用户",
   userDescription = "",
@@ -163,6 +167,7 @@ export function ChatSidebarDrawer({
   onClose,
   onNewChat,
   onSelect,
+  onRetryLoad,
   onScan,
   onScanFileSelected,
   onMessages,
@@ -487,15 +492,48 @@ export function ChatSidebarDrawer({
                   <div key={index} className="h-10 animate-pulse rounded-xl bg-slate-100" />
                 ))}
               </div>
+            ) : loadError && items.length === 0 ? (
+              <div className="mx-2 mt-2 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-5 text-center text-sm text-amber-700">
+                <p>{loadError}</p>
+                {onRetryLoad ? (
+                  <button
+                    type="button"
+                    onClick={() => void onRetryLoad()}
+                    className="focus-ring mx-auto mt-3 inline-flex items-center gap-1.5 rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                    重试
+                  </button>
+                ) : null}
+              </div>
             ) : filteredItems.length === 0 ? (
               <div className="px-2 py-8 text-center text-sm text-slate-400">
                 {query.trim() ? "暂无匹配会话" : "暂无历史会话"}
               </div>
             ) : (
-              <div className="space-y-2">
-                {renderConversationSection("已置顶", pinnedItems)}
-                {renderConversationSection("最近", recentItems, pinnedItems.length)}
-              </div>
+              <>
+                {loadError ? (
+                  <div className="mx-2 mb-2 rounded-2xl border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 flex-1">{loadError}</span>
+                      {onRetryLoad ? (
+                        <button
+                          type="button"
+                          onClick={() => void onRetryLoad()}
+                          className="focus-ring inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-amber-200 bg-white text-amber-700 hover:bg-amber-100"
+                          aria-label="重试加载历史会话"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                <div className="space-y-2">
+                  {renderConversationSection("已置顶", pinnedItems)}
+                  {renderConversationSection("最近", recentItems, pinnedItems.length)}
+                </div>
+              </>
             )}
           </div>
 
