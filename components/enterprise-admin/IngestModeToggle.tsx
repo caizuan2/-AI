@@ -114,6 +114,7 @@ import {
   type IngestRequestQueueState
 } from "@/lib/enterprise/ingest-request-queue";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -2477,6 +2478,10 @@ export function IngestModeToggle() {
     }
 
     const now = new Date().toISOString();
+    const publicScope = resolvePublicExpertScope({
+      agentId: expert.id,
+      expertId: expert.id
+    });
     const nextAgent: IngestChatAgent = {
       id: `expert-agent-${expert.id}`,
       expertId: expert.id,
@@ -2488,6 +2493,8 @@ export function IngestModeToggle() {
       tone: expert.tone,
       tenantId,
       userId,
+      knowledgeBaseId: publicScope?.knowledgeBaseId ?? null,
+      namespace: publicScope?.namespace ?? null,
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget],
       createdAt: now,

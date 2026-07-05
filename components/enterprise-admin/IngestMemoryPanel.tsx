@@ -174,7 +174,7 @@ export function IngestMemoryPanel({
 
   const loadIndexStatus = useCallback(async () => {
     try {
-      const data = await readJson<MemoryIndexStatus>(await fetch("/api/admin/ingest-memory/index/status", {
+      const data = await readJson<MemoryIndexStatus>(await fetch(`/api/admin/ingest-memory/index/status?${query}`, {
         credentials: "include"
       }));
 
@@ -182,7 +182,7 @@ export function IngestMemoryPanel({
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "训练记忆索引状态加载失败。");
     }
-  }, []);
+  }, [query]);
 
   useEffect(() => {
     void loadSummary();
