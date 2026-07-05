@@ -267,6 +267,8 @@ export function ChatShell() {
   const [loading, setLoading] = React.useState(false);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(true);
+  const [conversationLoadError, setConversationLoadError] = React.useState<string | null>(null);
+  const [historyLoadError, setHistoryLoadError] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = React.useState<ChatActionFeedback>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -346,13 +348,15 @@ export function ChatShell() {
 
   const loadConversations = React.useCallback(async () => {
     setConversationLoading(true);
+    setConversationLoadError(null);
 
     try {
       const result = await fetchConversations();
 
       setConversations(result.conversations);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "会话列表加载失败。");
+      console.warn("[chat-ui] conversation list load failed", requestError);
+      setConversationLoadError("历史会话暂时无法加载，请稍后重试。");
     } finally {
       setConversationLoading(false);
     }
@@ -586,6 +590,8 @@ export function ChatShell() {
     setLoading(false);
     setHistoryLoading(false);
     setConversationLoading(false);
+    setConversationLoadError(null);
+    setHistoryLoadError(null);
     setError(null);
     setActionFeedback(null);
     setLinkDialog(null);
@@ -607,6 +613,7 @@ export function ChatShell() {
 
     historyRequestIdRef.current = requestId;
     setError(null);
+    setHistoryLoadError(null);
     setActionFeedback(null);
     setHistoryLoading(true);
     setConversationId(nextConversationId);
@@ -628,7 +635,7 @@ export function ChatShell() {
         return;
       }
 
-      setError("历史记录加载失败，请稍后重试");
+      setHistoryLoadError("历史记录暂时无法加载，请稍后重试。");
       setMessages([]);
     } finally {
       if (historyRequestIdRef.current === requestId) {
@@ -649,6 +656,7 @@ export function ChatShell() {
     setInput(nextState.input);
     setInputAttachments([]);
     setManualChatMode(null);
+    setHistoryLoadError(null);
     setError(nextState.error);
     setActionFeedback(null);
     closeSidebarAfterNavigation();
@@ -1671,6 +1679,7 @@ export function ChatShell() {
           activeConversationId={conversationId}
           open={sidebarOpen}
           loading={conversationLoading}
+          loadError={conversationLoadError}
           currentUser={currentUser}
           userName={currentUserName}
           userDescription={currentUserAccount}
@@ -1679,6 +1688,7 @@ export function ChatShell() {
           onClose={closeSidebarManually}
           onNewChat={handleNewChat}
           onSelect={handleSelectConversation}
+          onRetryLoad={loadConversations}
           onScan={handleScan}
           onScanFileSelected={handleScanFileSelected}
           onMessages={handleMessages}
@@ -1733,6 +1743,10 @@ export function ChatShell() {
             {historyLoading ? (
               <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
                 正在加载历史记录...
+              </div>
+            ) : historyLoadError ? (
+              <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
+                {historyLoadError}
               </div>
             ) : conversationId && messages.length === 0 ? (
               <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
