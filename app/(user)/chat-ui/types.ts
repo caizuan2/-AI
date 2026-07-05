@@ -101,8 +101,9 @@ export type SalesEvolutionV5View = RuntimeV5EvolutionOutput;
 
 export interface FinalizedAnswerView {
   title: string;
-  rawContent?: string;
-  rawText?: string;
+  rawContent?: string | null;
+  rawText?: string | null;
+  rawAnswer?: string | null;
   text?: string;
   answer?: string;
   content?: string;

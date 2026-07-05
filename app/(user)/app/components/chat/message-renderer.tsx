@@ -91,7 +91,27 @@ function getRecordArray(value: unknown) {
 }
 
 function getString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const text = value.trim();
+
+  return isLostHistoryAnswerText(text) ? "" : text;
+}
+
+const LOST_HISTORY_ANSWER_PATTERNS = [
+  "这条历史消息没有保留可直接展示的最终正文",
+  "这条历史消息没有保留可展示的最终正文",
+  "历史消息没有保留可直接展示的最终正文"
+];
+
+function isLostHistoryAnswerText(value: string) {
+  const normalized = value.replace(/\s+/g, "");
+
+  return LOST_HISTORY_ANSWER_PATTERNS.some((pattern) =>
+    normalized.includes(pattern.replace(/\s+/g, ""))
+  );
 }
 
 function getNumber(value: unknown) {
@@ -351,7 +371,43 @@ function formatMessageTime(value: string) {
 
 function getFinalizedAnswer(message: ChatMessageView): FinalizedAnswerView | null {
   if (message.finalized_answer) {
-    return message.finalized_answer;
+    const rawAnswer = getRecoverableAnswerText(message);
+    const sanitizedAnswer = {
+      ...message.finalized_answer,
+      title: getString(message.finalized_answer.title),
+      problemUnderstanding: getString(message.finalized_answer.problemUnderstanding),
+      keyConclusion: getString(message.finalized_answer.keyConclusion),
+      customerReply: getString(message.finalized_answer.customerReply),
+      nextAction: getString(message.finalized_answer.nextAction),
+      evidenceSummary: getString(message.finalized_answer.evidenceSummary),
+      rawContent: rawAnswer || getString(message.finalized_answer.rawContent),
+      rawText: rawAnswer || getString(message.finalized_answer.rawText)
+    } as FinalizedAnswerView;
+
+    if (!rawAnswer) {
+      return sanitizedAnswer;
+    }
+
+    const hasStructuredAnswer = Boolean(
+      sanitizedAnswer.title ||
+      sanitizedAnswer.problemUnderstanding ||
+      sanitizedAnswer.keyConclusion ||
+      sanitizedAnswer.customerReply ||
+      sanitizedAnswer.nextAction
+    );
+
+    if (!hasStructuredAnswer) {
+      return finalizeUserAnswer({
+        rawAnswer,
+        customerAnswer: sanitizeDisplayText(message.customer_answer ?? ""),
+        sources: (message.sources ?? []).map((source) => ({
+          title: source.title,
+          score: source.score
+        }))
+      });
+    }
+
+    return sanitizedAnswer;
   }
 
   const metadataFinalizedAnswer = getRecord(message.metadata?.finalizedAnswer);

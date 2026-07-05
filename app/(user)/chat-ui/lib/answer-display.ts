@@ -90,6 +90,19 @@ const inlineReplacements: Array<[RegExp, string]> = [
 const customerForbiddenPattern = /根据知识库|知识库资料|系统判断|资料显示|当前系统|sourceApp|chunk|kb_id|expert_id|tenant_id|debug|fallback/i;
 const closingPushPattern = /我先|确认|下一步|方案|您看|回复我|帮您整理/;
 const questionPattern = /[？?]/;
+const lostHistoryAnswerPatterns = [
+  "这条历史消息没有保留可直接展示的最终正文",
+  "这条历史消息没有保留可展示的最终正文",
+  "历史消息没有保留可直接展示的最终正文"
+];
+
+function isLostHistoryAnswerText(value: string) {
+  const normalized = value.replace(/\s+/g, "");
+
+  return lostHistoryAnswerPatterns.some((pattern) =>
+    normalized.includes(pattern.replace(/\s+/g, ""))
+  );
+}
 
 function asRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -201,7 +214,9 @@ const legacyHeadingOnlyPattern =
   /^(?:\s*(?:#{1,6}\s*)?(?:\[(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)\]|【(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)】)\s*)+$/i;
 
 export function normalizeRawAssistantText(text: unknown) {
-  return normalizeFreeformAnswerText(text);
+  const normalized = normalizeFreeformAnswerText(text);
+
+  return isLostHistoryAnswerText(normalized) ? "" : normalized;
 }
 
 export function isLegacyStructuredAnswer(text: string) {
