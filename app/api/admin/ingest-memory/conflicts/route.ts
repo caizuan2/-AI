@@ -39,7 +39,7 @@ function readMemory(value: unknown): IngestMemoryItem {
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_conflicts"
     });
@@ -50,7 +50,9 @@ export async function POST(request: Request) {
       ? body.existingMemories.filter((item): item is IngestMemoryItem => Boolean(item && typeof item === "object"))
       : await listMemoryDrafts({
         agentId: typeof body.agentId === "string" ? body.agentId : newMemory.agentId,
-        knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : newMemory.knowledgeBaseId
+        knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : newMemory.knowledgeBaseId,
+        ownerAdminId: actor.id,
+        ownerUserId: actor.id
       });
     const result = detectMemoryConflicts({
       newMemory,

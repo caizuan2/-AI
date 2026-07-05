@@ -26,7 +26,7 @@ function jsonError(error: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "ingest-memory",
     });
@@ -35,6 +35,8 @@ export async function POST(request: NextRequest) {
     const result = await publishMemoryDrafts({
       draftIds: Array.isArray(body?.draftIds) ? body.draftIds : undefined,
       publishAllSaved: body?.publishAllSaved !== false,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id,
     });
 
     return NextResponse.json({

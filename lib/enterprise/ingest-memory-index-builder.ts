@@ -128,6 +128,8 @@ function buildEntry(memory: PublishedMemoryItem): MemoryIndexEntry {
     kbId: scopedMemory.kbId || scopedMemory.knowledgeBaseId,
     agentId: scopedMemory.agentId,
     expertId: scopedMemory.expertId || scopedMemory.agentId,
+    ownerAdminId: scopedMemory.ownerAdminId,
+    ownerUserId: scopedMemory.ownerUserId,
     namespace: scopedMemory.namespace,
     tenantId: scopedMemory.tenantId,
     sourceApp: scopedMemory.sourceApp,

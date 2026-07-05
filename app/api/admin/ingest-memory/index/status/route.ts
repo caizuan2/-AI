@@ -6,6 +6,7 @@ import { listMemoryDrafts } from "@/lib/enterprise/ingest-memory-store";
 import { diagnoseMemoryDrafts } from "@/lib/enterprise/ingest-memory-publish-diagnostics";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 import { publicExpertScopeValuesOverlap } from "@/lib/enterprise/public-expert-scope";
+import { recordMatchesOwnerScope } from "@/lib/enterprise/ingest-memory-owner-scope";
 import { AppError } from "@/lib/errors";
 import type { MemoryIndexEntry, PublishedMemoryItem } from "@/lib/enterprise/ingest-memory-index-types";
 
@@ -95,7 +96,7 @@ function indexEntryMatchesScope(entry: MemoryIndexEntry, input: {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "ingest-memory-index",
     });
@@ -109,11 +110,21 @@ export async function GET(request: NextRequest) {
       listPublishedMemories(),
       listMemoryDrafts({
         ...(agentId ? { agentId } : {}),
-        ...(knowledgeBaseId ? { knowledgeBaseId } : {})
+        ...(knowledgeBaseId ? { knowledgeBaseId } : {}),
+        ownerAdminId: actor.id,
+        ownerUserId: actor.id
       })
     ]);
-    const scopedMemories = memories.filter((memory) => publishedMemoryMatchesScope(memory, scopeInput));
-    const scopedEntries = index.entries.filter((entry) => indexEntryMatchesScope(entry, scopeInput));
+    const ownerScope = {
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
+    };
+    const scopedMemories = memories
+      .filter((memory) => publishedMemoryMatchesScope(memory, scopeInput))
+      .filter((memory) => recordMatchesOwnerScope(memory, ownerScope));
+    const scopedEntries = index.entries
+      .filter((entry) => indexEntryMatchesScope(entry, scopeInput))
+      .filter((entry) => recordMatchesOwnerScope(entry, ownerScope));
     const diagnostics = diagnoseMemoryDrafts(drafts);
 
     return NextResponse.json({

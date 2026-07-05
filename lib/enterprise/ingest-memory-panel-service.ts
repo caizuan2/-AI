@@ -36,6 +36,8 @@ export async function persistMemoryExtraction(input: {
     id: `learn-${input.source.conversationId}-${Date.now()}`,
     agentId: learningState.agentId,
     knowledgeBaseId: learningState.knowledgeBaseId,
+    ownerAdminId: input.source.ownerAdminId,
+    ownerUserId: input.source.ownerUserId,
     conversationId: input.source.conversationId,
     summary: input.extraction.learningSummary ?? "本轮形成训练记忆摘要。",
     topics: learningState.learnedTopics,
@@ -56,6 +58,9 @@ export async function persistMemoryExtraction(input: {
 export async function buildAgentLearningState(input: {
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
+  includeLegacyUnowned?: boolean;
 } = {}): Promise<IngestAgentLearningState | null> {
   const events = await loadAgentLearningEvents(input);
   const first = events[0];
@@ -67,6 +72,8 @@ export async function buildAgentLearningState(input: {
   return {
     agentId: first.agentId,
     knowledgeBaseId: first.knowledgeBaseId,
+    ownerAdminId: first.ownerAdminId,
+    ownerUserId: first.ownerUserId,
     learnedTopics: Array.from(new Set(events.flatMap((event) => event.topics))).slice(0, 12),
     preferredAnswerStyle: "根据近期投喂，优先保持自然短段落、可执行话术和风险边界提示。",
     riskBoundaries: Array.from(new Set(events.flatMap((event) => event.riskBoundaries))).slice(0, 8),
@@ -78,6 +85,9 @@ export async function buildAgentLearningState(input: {
 export async function buildMemoryPanelSummary(input: {
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
+  includeLegacyUnowned?: boolean;
 } = {}): Promise<IngestMemoryPanelSummary> {
   const drafts = await listMemoryDrafts(input);
   const agentLearning = await buildAgentLearningState(input);
@@ -97,6 +107,8 @@ export async function buildMemoryPanelSummary(input: {
 
   return {
     ok: true,
+    ownerAdminId: input.ownerAdminId ?? input.ownerUserId,
+    includesLegacyUnowned: Boolean(input.ownerAdminId || input.ownerUserId),
     memoryCount: drafts.length,
     draftCount: drafts.filter((draft) => draft.status === "draft").length,
     recentTopics,

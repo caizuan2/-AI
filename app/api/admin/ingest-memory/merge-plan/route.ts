@@ -24,7 +24,7 @@ function jsonError(error: unknown) {
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_merge_plan"
     });
@@ -39,7 +39,9 @@ export async function POST(request: Request) {
 
     const drafts = await listMemoryDrafts({
       agentId: typeof body.agentId === "string" ? body.agentId : undefined,
-      knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : undefined
+      knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : undefined,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
     });
     const items = drafts.filter((draft) => sourceIds.includes(draft.id));
     const plan = createMemoryMergePlan({ items });

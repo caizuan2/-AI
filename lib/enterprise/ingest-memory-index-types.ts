@@ -16,6 +16,8 @@ export type PublishedMemoryItem = {
   kbId?: string;
   agentId?: string;
   expertId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   namespace?: string;
   tenantId?: string;
   confidence?: number;
@@ -41,6 +43,8 @@ export type MemoryIndexEntry = {
   kbId?: string;
   agentId?: string;
   expertId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   namespace?: string;
   tenantId?: string;
   sourceApp: "admin_ingest";
