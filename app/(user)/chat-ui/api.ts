@@ -5,9 +5,12 @@ import {
   type KnowledgeFeedbackInput
 } from "@/lib/enterprise/feedback/feedback-collector";
 import {
-  finalizeUserAnswer,
-  formatFinalizedAnswerForDisplay
+  finalizeUserAnswer
 } from "@/lib/ai-chat/response-finalizer";
+import {
+  getFinalizedRawAnswerText,
+  pickSingleRawAssistantText
+} from "./lib/answer-display";
 import {
   buildChatModeDecisionFromCandidate,
   CHAT_MODE_CONFIGS,
@@ -426,6 +429,18 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       undefined;
     const readAnswerField = <K extends keyof FinalizedAnswerView>(key: K): FinalizedAnswerView[K] | undefined =>
       (event.data?.finalized_answer?.[key] ?? runtimeOutput[key] ?? dataRecord[key]) as FinalizedAnswerView[K] | undefined;
+    const resolveRawAnswer = (finalizedAnswer: FinalizedAnswerView) => pickSingleRawAssistantText([
+      dataRecord.rawContent,
+      dataRecord.rawText,
+      dataRecord.rawAnswer,
+      runtimeOutput.rawContent,
+      runtimeOutput.rawText,
+      runtimeOutput.rawAnswer,
+      event.data?.answer,
+      event.content,
+      getFinalizedRawAnswerText(finalizedAnswer),
+      runtimeOutput.answer
+    ]);
 
     if (event.data.finalized_answer) {
       const finalizedAnswer: FinalizedAnswerView = {
@@ -471,10 +486,13 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
         autonomousRecommendation: readAnswerField("autonomousRecommendation"),
       };
       const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? finalizedAnswer.customerReply;
+      const rawAnswer = resolveRawAnswer(finalizedAnswer);
 
       return {
         ...event.data,
-        answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+        answer: rawAnswer || event.data.answer,
+        rawContent: rawAnswer || event.data.rawContent || null,
+        rawText: rawAnswer || event.data.rawText || null,
         customerCopy,
         customer_answer: customerCopy,
         finalized_answer: finalizedAnswer,
@@ -541,10 +559,13 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       autonomousRecommendation: readAnswerField("autonomousRecommendation") ?? fallbackFinalizedAnswer.autonomousRecommendation,
     };
     const customerCopy = event.data.customerCopy ?? runtimeCustomerCopy ?? finalizedAnswer.customerReply;
+    const rawAnswer = resolveRawAnswer(finalizedAnswer);
 
     return {
       ...event.data,
-      answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+      answer: rawAnswer || event.data.answer,
+      rawContent: rawAnswer || event.data.rawContent || null,
+      rawText: rawAnswer || event.data.rawText || null,
       customerCopy,
       customer_answer: customerCopy,
       finalized_answer: finalizedAnswer,
@@ -580,9 +601,15 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
   const finalizedAnswer = finalizeUserAnswer({
     rawAnswer: event.content
   });
+  const rawAnswer = pickSingleRawAssistantText([
+    event.content,
+    getFinalizedRawAnswerText(finalizedAnswer)
+  ]);
 
   return {
-    answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+    answer: rawAnswer || event.content,
+    rawContent: rawAnswer || null,
+    rawText: rawAnswer || null,
     conversation_id: "",
     message_id: `stream-final-${Date.now()}`,
     mode: "fast",

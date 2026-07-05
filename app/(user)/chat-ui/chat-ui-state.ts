@@ -514,6 +514,8 @@ export function appendAskResult(
       id: result.message_id,
       role: "assistant",
       content: result.answer,
+      rawContent: result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
+      rawText: result.rawText ?? result.rawAnswer ?? null,
       customerCopy: result.customerCopy ?? result.customer_answer ?? null,
       customer_answer: result.customer_answer ?? null,
       finalized_answer: result.finalized_answer ?? null,
@@ -524,6 +526,8 @@ export function appendAskResult(
         customerCopy: result.customerCopy ?? result.customer_answer ?? null,
         nextStep: result.nextStep ?? null,
         traceId: result.traceId ?? null,
+        rawContent: result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
+        rawText: result.rawText ?? result.rawAnswer ?? null,
         runtimeOutput: result.runtime_output ?? null,
         runtimeSources: result.runtime_sources ?? null
       },

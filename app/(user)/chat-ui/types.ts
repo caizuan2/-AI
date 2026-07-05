@@ -70,6 +70,8 @@ export interface ChatMessageView {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  rawContent?: string | null;
+  rawText?: string | null;
   attachments?: ChatAttachmentDraft[] | null;
   sources?: ChatSource[] | null;
   confidence?: RagConfidence | null;
@@ -99,6 +101,11 @@ export type SalesEvolutionV5View = RuntimeV5EvolutionOutput;
 
 export interface FinalizedAnswerView {
   title: string;
+  rawContent?: string;
+  rawText?: string;
+  text?: string;
+  answer?: string;
+  content?: string;
   freeformAnswer?: string;
   problemUnderstanding: string;
   keyConclusion: string;
@@ -303,6 +310,9 @@ export interface AskChatRequest {
 
 export interface AskChatResponse {
   answer: string;
+  rawContent?: string | null;
+  rawText?: string | null;
+  rawAnswer?: string | null;
   conversation_id: string;
   message_id: string;
   mode: ChatMode;

@@ -34,7 +34,7 @@ import {
   sanitizeDisplayText,
   type RichAnswerSection
 } from "@/app/(user)/chat-ui/lib/answer-format";
-import { ProductAnswerView } from "@/app/(user)/chat-ui/components/ProductAnswerView";
+import { getUserRawAnswerText } from "@/app/(user)/chat-ui/lib/answer-display";
 import type {
   ChatMessageView,
   FinalizedAnswerView,
@@ -1264,14 +1264,55 @@ function RagSources({
   );
 }
 
+function RawAssistantAnswer({
+  text,
+  streaming
+}: {
+  text: string;
+  streaming: boolean;
+}) {
+  if (!text && streaming) {
+    return (
+      <section className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-blue-900">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <Sparkles className="h-4 w-4 animate-pulse" aria-hidden="true" />
+          正在生成回复
+        </div>
+      </section>
+    );
+  }
+
+  if (!text) {
+    return (
+      <section className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">
+        这条历史消息没有保留可直接展示的最终正文。
+      </section>
+    );
+  }
+
+  return (
+    <article className="space-y-3 text-[15px] leading-7 text-slate-900">
+      <div className="flex justify-end">
+        <CopyTextPill text={text} label="复制答案" />
+      </div>
+      <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-2 prose-ol:my-2 prose-ul:my-2 prose-li:my-1 prose-pre:rounded-2xl prose-pre:bg-slate-100 prose-pre:text-slate-900">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
+          {text}
+        </ReactMarkdown>
+      </div>
+    </article>
+  );
+}
+
 export function ChatMessageRenderer({ message, streaming = false }: ChatMessageRendererProps) {
   const isStreaming = streaming || Boolean(message.pending);
-  const finalizedAnswer = getFinalizedAnswer(message);
-  const finalAnswer = getFinalAnswer(finalizedAnswer);
+  const rawAnswer = getUserRawAnswerText(message);
+  const finalizedAnswer = isDevDebug ? getFinalizedAnswer(message) : message.finalized_answer ?? null;
+  const finalAnswer = isDevDebug ? getFinalAnswer(finalizedAnswer) : "";
   const businessSchemaGuard = getRecord(
     message.metadata?.businessSchemaGuard ?? message.metadata?.business_schema_guard
   );
-  const sections = hasDisplayContent(message)
+  const sections = isDevDebug && hasDisplayContent(message)
     ? buildRichAnswerSections({
       answer: finalAnswer,
       customerAnswer: finalizedAnswer?.customerReply ?? "",
@@ -1279,7 +1320,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
     })
     : [];
   const messageTime = formatMessageTime(message.created_at);
-  const ragHitState = getRagHitState(message, finalizedAnswer);
+  const ragHitState = isDevDebug ? getRagHitState(message, finalizedAnswer) : null;
 
   return (
     <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm">
@@ -1294,15 +1335,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
       </header>
 
       <div className="mt-1 space-y-4">
-        <ProductAnswerView
-          answer={finalizedAnswer}
-          sources={ragHitState.sources}
-          hitCount={ragHitState.hitCount}
-          hasRagHit={ragHitState.hasRagHit}
-          evidenceSummary={ragHitState.evidenceSummary}
-          confidence={message.confidence}
-          streaming={isStreaming}
-        />
+        <RawAssistantAnswer text={rawAnswer} streaming={isStreaming} />
 
         {isDevDebug ? (
           <details className="group rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
@@ -1336,7 +1369,7 @@ export function ChatMessageRenderer({ message, streaming = false }: ChatMessageR
               ) : null}
               <ThinkingPanel message={message} streaming={isStreaming} />
               <RagVisualizationPanel message={message} />
-              <RagSources sources={ragHitState.sources} confidence={message.confidence} />
+              <RagSources sources={ragHitState?.sources ?? []} confidence={message.confidence} />
               <CommercialExecutionPanel message={message} />
               <BusinessExecutionPanel message={message} />
               <AutoSalesAgentPanel message={message} />
