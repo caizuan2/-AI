@@ -40,6 +40,18 @@ function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function cleanScopeText(...values: unknown[]) {
+  for (const value of values) {
+    const text = cleanText(value).slice(0, 120);
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
 function getRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -148,8 +160,11 @@ function normalizeAskSelectedKnowledgeBases(value: unknown): SelectedKnowledgeBa
     }
 
     const record = item as Record<string, unknown>;
-    const kbId = cleanText(record.kb_id).slice(0, 120);
-    const title = cleanText(record.title).slice(0, 120);
+    const kbId = cleanScopeText(record.kb_id, record.kbId, record.knowledgeBaseId);
+    const expertId = cleanScopeText(record.expert_id, record.expertId, record.agentId);
+    const tenantId = cleanScopeText(record.tenant_id, record.tenantId);
+    const namespace = cleanScopeText(record.namespace, record.tenant_id, record.tenantId);
+    const title = cleanScopeText(record.title, record.name);
 
     if (!kbId || !title || seen.has(kbId)) {
       continue;
@@ -158,9 +173,16 @@ function normalizeAskSelectedKnowledgeBases(value: unknown): SelectedKnowledgeBa
     seen.add(kbId);
     items.push({
       kb_id: kbId,
-      expert_id: cleanText(record.expert_id).slice(0, 120) || undefined,
-      tenant_id: cleanText(record.tenant_id).slice(0, 120) || undefined,
+      kbId,
+      knowledgeBaseId: kbId,
+      expert_id: expertId || undefined,
+      expertId: expertId || undefined,
+      agentId: expertId || undefined,
+      tenant_id: tenantId || undefined,
+      tenantId: tenantId || undefined,
+      namespace: namespace || "default",
       title,
+      name: title,
       expertName: cleanText(record.expertName).slice(0, 120) || undefined,
       category: cleanText(record.category).slice(0, 80) || undefined,
       description: cleanText(record.description).slice(0, 240) || undefined,
@@ -194,8 +216,11 @@ function normalizeAskActiveKnowledgeBase(
     return selectedActive;
   }
 
-  const kbId = cleanText(activeKnowledgeBase.kb_id).slice(0, 120);
-  const title = cleanText(activeKnowledgeBase.title).slice(0, 120);
+  const kbId = cleanScopeText(activeKnowledgeBase.kb_id, activeKnowledgeBase.kbId, activeKnowledgeBase.knowledgeBaseId);
+  const expertId = cleanScopeText(activeKnowledgeBase.expert_id, activeKnowledgeBase.expertId, activeKnowledgeBase.agentId);
+  const tenantId = cleanScopeText(activeKnowledgeBase.tenant_id, activeKnowledgeBase.tenantId);
+  const namespace = cleanScopeText(activeKnowledgeBase.namespace, activeKnowledgeBase.tenant_id, activeKnowledgeBase.tenantId);
+  const title = cleanScopeText(activeKnowledgeBase.title, activeKnowledgeBase.name);
 
   if (!kbId || !title) {
     return selectedActive;
@@ -203,9 +228,16 @@ function normalizeAskActiveKnowledgeBase(
 
   return {
     kb_id: kbId,
-    expert_id: cleanText(activeKnowledgeBase.expert_id).slice(0, 120) || undefined,
-    tenant_id: cleanText(activeKnowledgeBase.tenant_id).slice(0, 120) || undefined,
+    kbId,
+    knowledgeBaseId: kbId,
+    expert_id: expertId || undefined,
+    expertId: expertId || undefined,
+    agentId: expertId || undefined,
+    tenant_id: tenantId || undefined,
+    tenantId: tenantId || undefined,
+    namespace: namespace || "default",
     title,
+    name: title,
     expertName: cleanText(activeKnowledgeBase.expertName).slice(0, 120) || undefined,
     category: cleanText(activeKnowledgeBase.category).slice(0, 80) || undefined,
     description: cleanText(activeKnowledgeBase.description).slice(0, 240) || undefined,
@@ -438,6 +470,10 @@ export function createAskRequestPayload(input: AskChatRequest) {
   const conversionFeedback = input.conversion_feedback ?? getConversionFeedbackPayload(input.business_execution);
   const selectedKnowledgeBases = normalizeAskSelectedKnowledgeBases(input.selectedKnowledgeBases);
   const activeKnowledgeBase = normalizeAskActiveKnowledgeBase(selectedKnowledgeBases, input.activeKnowledgeBase);
+  const knowledgeBaseId = cleanScopeText(activeKnowledgeBase?.knowledgeBaseId, activeKnowledgeBase?.kbId, activeKnowledgeBase?.kb_id, input.knowledgeBaseId, input.kb_id);
+  const agentId = cleanScopeText(activeKnowledgeBase?.agentId, activeKnowledgeBase?.expertId, activeKnowledgeBase?.expert_id, input.agentId, input.expert_id);
+  const tenantId = cleanScopeText(activeKnowledgeBase?.tenantId, activeKnowledgeBase?.tenant_id, input.tenant_id);
+  const namespace = cleanScopeText(activeKnowledgeBase?.namespace, input.namespace, tenantId);
 
   return {
     question: text,
@@ -461,9 +497,15 @@ export function createAskRequestPayload(input: AskChatRequest) {
     ...(conversionFeedback ? { conversion_feedback: conversionFeedback } : {}),
     selectedKnowledgeBases,
     activeKnowledgeBase,
-    kb_id: activeKnowledgeBase?.kb_id ?? input.kb_id ?? null,
-    expert_id: activeKnowledgeBase?.expert_id ?? input.expert_id ?? null,
-    tenant_id: activeKnowledgeBase?.tenant_id ?? input.tenant_id ?? null
+    kb_id: knowledgeBaseId || null,
+    kbId: knowledgeBaseId || null,
+    knowledgeBaseId: knowledgeBaseId || null,
+    expert_id: agentId || null,
+    expertId: agentId || null,
+    agentId: agentId || null,
+    tenant_id: tenantId || null,
+    tenantId: tenantId || null,
+    namespace: namespace || null
   };
 }
 
