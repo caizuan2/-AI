@@ -42,6 +42,8 @@ export interface ChatMessageView {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  rawContent?: string | null;
+  rawText?: string | null;
   attachments?: ChatAttachmentDraft[] | null;
   sources?: ChatSource[] | null;
   confidence?: RagConfidence | null;
@@ -55,6 +57,9 @@ export interface ChatMessageView {
 
 export interface FinalizedAnswerView {
   title: string;
+  rawContent?: string | null;
+  rawText?: string | null;
+  rawAnswer?: string | null;
   problemUnderstanding: string;
   keyConclusion: string;
   suggestedSteps: string[];
@@ -208,6 +213,9 @@ export interface AskChatRequest {
 
 export interface AskChatResponse {
   answer: string;
+  rawContent?: string | null;
+  rawText?: string | null;
+  rawAnswer?: string | null;
   conversation_id: string;
   message_id: string;
   mode: ChatMode;

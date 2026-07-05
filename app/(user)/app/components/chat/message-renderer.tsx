@@ -104,6 +104,58 @@ function getStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(getString).filter(Boolean) : [];
 }
 
+function getNestedString(record: Record<string, unknown>, path: string[]) {
+  let current: unknown = record;
+
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return "";
+    }
+
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return getString(current);
+}
+
+function getRecoverableAnswerText(message: ChatMessageView) {
+  const messageRecord = message as unknown as Record<string, unknown>;
+  const metadata = getRecord(message.metadata);
+  const directFinalizedAnswer = getRecord(message.finalized_answer);
+  const metadataFinalizedAnswer = getRecord(metadata.finalizedAnswer);
+
+  return [
+    message.content,
+    messageRecord.rawContent,
+    messageRecord.rawText,
+    metadata.rawContent,
+    metadata.rawText,
+    metadata.rawAnswer,
+    metadata.rawAnswerBeforeFinalizer,
+    metadata.rawCustomerAnswerBeforeFinalizer,
+    metadata.answer,
+    getNestedString(metadata, ["runtimeOutput", "replyMarkdown"]),
+    getNestedString(metadata, ["runtimeOutput", "answer"]),
+    getNestedString(metadata, ["runtimeOutput", "rawContent"]),
+    getNestedString(metadata, ["runtimeOutput", "rawText"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "replyMarkdown"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "answer"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "content"]),
+    directFinalizedAnswer.rawContent,
+    directFinalizedAnswer.rawText,
+    directFinalizedAnswer.text,
+    directFinalizedAnswer.answer,
+    directFinalizedAnswer.content,
+    directFinalizedAnswer.freeformAnswer,
+    metadataFinalizedAnswer.rawContent,
+    metadataFinalizedAnswer.rawText,
+    metadataFinalizedAnswer.text,
+    metadataFinalizedAnswer.answer,
+    metadataFinalizedAnswer.content,
+    metadataFinalizedAnswer.freeformAnswer,
+  ].map((value) => sanitizeDisplayText(getString(value))).find(Boolean) ?? "";
+}
+
 function toConversionFeedbackAction(value: unknown): ConversionFeedbackEvent["action_clicked"] {
   const action = getString(value);
 
@@ -169,7 +221,17 @@ function formatMessageTime(value: string) {
 
 function getFinalizedAnswer(message: ChatMessageView): FinalizedAnswerView | null {
   if (message.finalized_answer) {
-    return message.finalized_answer;
+    const rawAnswer = getRecoverableAnswerText(message);
+
+    if (!rawAnswer) {
+      return message.finalized_answer;
+    }
+
+    return {
+      ...message.finalized_answer,
+      rawContent: rawAnswer,
+      rawText: rawAnswer
+    } as FinalizedAnswerView;
   }
 
   const metadataFinalizedAnswer = getRecord(message.metadata?.finalizedAnswer);
