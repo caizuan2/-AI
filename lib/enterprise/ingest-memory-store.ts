@@ -4,6 +4,10 @@ import type {
   IngestMemoryStatus
 } from "@/lib/enterprise/ingest-memory-types";
 import { publicExpertScopeValuesOverlap } from "@/lib/enterprise/public-expert-scope";
+import {
+  getAdminIngestMemoryCandidateFilePaths,
+  getAdminIngestMemoryDir
+} from "@/lib/enterprise/ingest-memory-shared-store";
 
 type PersistedMemoryState = {
   source: "admin-ingest-memory-layer-v1";
@@ -120,7 +124,7 @@ function normalizeState(input: Partial<PersistedMemoryState> | null | undefined)
 async function getMemoryFilePath() {
   const path = await import("node:path");
 
-  return path.join(process.cwd(), "artifacts", "admin-ingest", "memory", "memory-drafts.json");
+  return path.join(await getAdminIngestMemoryDir(), "memory-drafts.json");
 }
 
 async function readFromFile(): Promise<PersistedMemoryState | null> {
@@ -130,10 +134,28 @@ async function readFromFile(): Promise<PersistedMemoryState | null> {
 
   try {
     const fs = await import("node:fs/promises");
-    const filePath = await getMemoryFilePath();
-    const raw = await fs.readFile(filePath, "utf8");
+    const filePaths = await getAdminIngestMemoryCandidateFilePaths("memory-drafts.json");
+    let fallbackState: PersistedMemoryState | null = null;
 
-    return normalizeState(JSON.parse(raw) as Partial<PersistedMemoryState>);
+    for (const filePath of filePaths) {
+      try {
+        const raw = await fs.readFile(filePath, "utf8");
+        const state = normalizeState(JSON.parse(raw) as Partial<PersistedMemoryState>);
+
+        if (!fallbackState) {
+          fallbackState = state;
+        }
+
+        if (state.drafts.length > 0 || state.agentLearningEvents.length > 0) {
+          fallbackState = state;
+          break;
+        }
+      } catch {
+        // Keep scanning other candidate files.
+      }
+    }
+
+    return fallbackState;
   } catch {
     return null;
   }
