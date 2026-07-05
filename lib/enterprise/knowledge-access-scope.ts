@@ -2,7 +2,7 @@ import "server-only";
 
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
+import { publicExpertScopeAliasesFor, resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 export const adminIngestKnowledgeSourceTypes = [
   "admin_chat",
@@ -37,6 +37,21 @@ function normalizeNullableString(value: string | null | undefined) {
   const text = typeof value === "string" ? value.trim() : "";
 
   return text || null;
+}
+
+function scopeAliasValues(value: string | null | undefined) {
+  const aliases = publicExpertScopeAliasesFor(value).map((item) => normalizeNullableString(item)).filter(Boolean) as string[];
+
+  return Array.from(new Set(aliases));
+}
+
+function metadataEqualsAny(path: string, values: string[]): Prisma.KnowledgeChunkWhereInput[] {
+  return values.map((value) => ({
+    metadata: {
+      path: [path],
+      equals: value
+    }
+  }));
 }
 
 export const DEFAULT_KNOWLEDGE_AGENT_ID = "chief";
@@ -127,26 +142,17 @@ function sharedTenantGuard(scope: ResolvedKnowledgeAccessScope): Prisma.Knowledg
 }
 
 function knowledgeChunkScopeWhere(scope: ResolvedKnowledgeAccessScope): Prisma.KnowledgeChunkWhereInput {
+  const knowledgeBaseIds = scopeAliasValues(scope.knowledgeBaseId);
+  const namespaces = scopeAliasValues(scope.namespace);
+  const agentIds = scopeAliasValues(scope.agentId);
+
   return {
     OR: [
-      {
-        metadata: {
-          path: ["knowledgeBaseId"],
-          equals: scope.knowledgeBaseId
-        }
-      },
-      {
-        metadata: {
-          path: ["namespace"],
-          equals: scope.namespace
-        }
-      },
-      {
-        metadata: {
-          path: ["agentId"],
-          equals: scope.agentId
-        }
-      }
+      ...metadataEqualsAny("knowledgeBaseId", knowledgeBaseIds),
+      ...metadataEqualsAny("kbId", knowledgeBaseIds),
+      ...metadataEqualsAny("namespace", namespaces),
+      ...metadataEqualsAny("agentId", agentIds),
+      ...metadataEqualsAny("expertId", agentIds)
     ]
   };
 }
@@ -264,6 +270,9 @@ export function buildKnowledgeChunkAccessWhere(scope: ResolvedKnowledgeAccessSco
 }
 
 export function buildKnowledgeAccessSql(scope: ResolvedKnowledgeAccessScope) {
+  const knowledgeBaseIds = scopeAliasValues(scope.knowledgeBaseId);
+  const namespaces = scopeAliasValues(scope.namespace);
+  const agentIds = scopeAliasValues(scope.agentId);
   const tenantGuard = scope.tenantId
     ? Prisma.sql`ki."tenant_id" = ${scope.tenantId}`
     : Prisma.sql`ki."tenant_id" IS NULL`;
@@ -284,9 +293,11 @@ export function buildKnowledgeAccessSql(scope: ResolvedKnowledgeAccessScope) {
   `;
   const agentKnowledgeScope = Prisma.sql`
     (
-      kc."metadata"->>'knowledgeBaseId' = ${scope.knowledgeBaseId}
-      OR kc."metadata"->>'namespace' = ${scope.namespace}
-      OR kc."metadata"->>'agentId' = ${scope.agentId}
+      kc."metadata"->>'knowledgeBaseId' IN (${Prisma.join(knowledgeBaseIds)})
+      OR kc."metadata"->>'kbId' IN (${Prisma.join(knowledgeBaseIds)})
+      OR kc."metadata"->>'namespace' IN (${Prisma.join(namespaces)})
+      OR kc."metadata"->>'agentId' IN (${Prisma.join(agentIds)})
+      OR kc."metadata"->>'expertId' IN (${Prisma.join(agentIds)})
     )
   `;
   const filters = [ownKnowledge];

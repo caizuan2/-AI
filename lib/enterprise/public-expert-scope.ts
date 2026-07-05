@@ -25,7 +25,19 @@ const PUBLIC_EXPERT_SCOPE_SEEDS: PublicExpertScopeSeed[] = [
     agentId: "expert-career"
   },
   {
-    aliases: ["expert-slim-kks", "expert-kks", "kb-kks-slim"],
+    aliases: [
+      "expert-slim-kks",
+      "expert-kks",
+      "kb-kks-slim",
+      "expert-agent-expert-slim-kks",
+      "agent-expert-slim-kks",
+      "kb:expert-agent-expert-slim-kks",
+      "agent:expert-agent-expert-slim-kks:kb:kb:expert-agent-expert-slim-kks",
+      "瘦身kks专业师",
+      "瘦身KKS专业师",
+      "kks",
+      "slim-kks"
+    ],
     knowledgeBaseId: "kb-kks-slim",
     agentId: "expert-kks"
   },
@@ -121,4 +133,16 @@ export function publicExpertScopeAliasesFor(value: unknown): string[] {
   );
 
   return seed ? seed.aliases : [key];
+}
+
+export function publicExpertScopeValuesOverlap(left: unknown, right: unknown): boolean {
+  const leftAliases = publicExpertScopeAliasesFor(left).map(normalize).filter(Boolean);
+  const rightAliases = publicExpertScopeAliasesFor(right).map(normalize).filter(Boolean);
+
+  if (leftAliases.length === 0 || rightAliases.length === 0) {
+    return false;
+  }
+
+  const rightSet = new Set(rightAliases);
+  return leftAliases.some((alias) => rightSet.has(alias));
 }

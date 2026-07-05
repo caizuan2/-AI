@@ -3,6 +3,7 @@ import type {
   IngestMemoryItem,
   IngestMemoryStatus
 } from "@/lib/enterprise/ingest-memory-types";
+import { publicExpertScopeValuesOverlap } from "@/lib/enterprise/public-expert-scope";
 
 type PersistedMemoryState = {
   source: "admin-ingest-memory-layer-v1";
@@ -17,6 +18,84 @@ type MemoryGlobal = typeof globalThis & {
 };
 
 const globalMemory = globalThis as MemoryGlobal;
+
+function readScopeString(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeScopeString(value: unknown): string {
+  return readScopeString(value).toLowerCase();
+}
+
+function metaString(record: { meta?: Record<string, unknown> }, key: string): string {
+  return readScopeString(record.meta?.[key]);
+}
+
+function scopeValueMatches(requested: string | undefined, values: unknown[]): boolean {
+  const normalizedRequested = normalizeScopeString(requested);
+
+  if (!normalizedRequested) {
+    return true;
+  }
+
+  return values.some((value) => {
+    const normalizedValue = normalizeScopeString(value);
+
+    return Boolean(
+      normalizedValue &&
+      (normalizedValue === normalizedRequested || publicExpertScopeValuesOverlap(normalizedRequested, normalizedValue))
+    );
+  });
+}
+
+function scopedRecordMatches(input: {
+  agentId?: string;
+  knowledgeBaseId?: string;
+}, candidate: {
+  agentValues: unknown[];
+  knowledgeBaseValues: unknown[];
+}) {
+  const hasAgentScope = Boolean(readScopeString(input.agentId));
+  const hasKnowledgeBaseScope = Boolean(readScopeString(input.knowledgeBaseId));
+  const agentMatches = scopeValueMatches(input.agentId, candidate.agentValues);
+  const knowledgeBaseMatches = scopeValueMatches(input.knowledgeBaseId, candidate.knowledgeBaseValues);
+
+  if (hasAgentScope && hasKnowledgeBaseScope) {
+    return agentMatches || knowledgeBaseMatches;
+  }
+
+  return agentMatches && knowledgeBaseMatches;
+}
+
+function memoryDraftMatchesScope(draft: IngestMemoryItem, input: {
+  agentId?: string;
+  knowledgeBaseId?: string;
+}) {
+  return scopedRecordMatches(input, {
+    agentValues: [
+      draft.agentId,
+      metaString(draft, "agentId"),
+      metaString(draft, "expertId"),
+      metaString(draft, "sourceAgent")
+    ],
+    knowledgeBaseValues: [
+      draft.knowledgeBaseId,
+      metaString(draft, "knowledgeBaseId"),
+      metaString(draft, "kbId"),
+      metaString(draft, "namespace")
+    ]
+  });
+}
+
+function learningEventMatchesScope(event: IngestAgentLearningEvent, input: {
+  agentId?: string;
+  knowledgeBaseId?: string;
+}) {
+  return scopedRecordMatches(input, {
+    agentValues: [event.agentId],
+    knowledgeBaseValues: [event.knowledgeBaseId]
+  });
+}
 
 function createEmptyState(): PersistedMemoryState {
   return {
@@ -112,8 +191,7 @@ export async function listMemoryDrafts(input: {
   const drafts = await loadMemoryDrafts();
 
   return drafts
-    .filter((draft) => !input.agentId || draft.agentId === input.agentId)
-    .filter((draft) => !input.knowledgeBaseId || draft.knowledgeBaseId === input.knowledgeBaseId)
+    .filter((draft) => memoryDraftMatchesScope(draft, input))
     .filter((draft) => !input.status || draft.status === input.status)
     .sort((left, right) => (right.updatedAt ?? right.createdAt) - (left.updatedAt ?? left.createdAt));
 }
@@ -166,7 +244,6 @@ export async function loadAgentLearningEvents(input: {
   const state = await loadState();
 
   return state.agentLearningEvents
-    .filter((event) => !input.agentId || event.agentId === input.agentId)
-    .filter((event) => !input.knowledgeBaseId || event.knowledgeBaseId === input.knowledgeBaseId)
+    .filter((event) => learningEventMatchesScope(event, input))
     .sort((left, right) => right.createdAt - left.createdAt);
 }
