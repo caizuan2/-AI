@@ -236,6 +236,28 @@ function inferAccessFromRoles(roles: readonly AppRole[], baseRole: AppRole | nul
   return null;
 }
 
+function isLegacyActivatedUserApp(
+  user: Pick<AppUser, "licenseActivated">,
+  roles: readonly AppRole[],
+  baseRole: AppRole | null,
+  inferredAccess: NormalizedProductAccess
+) {
+  if (!isLicenseActivated(user.licenseActivated) || inferredAccess !== null) {
+    return false;
+  }
+
+  const roleSignals = [baseRole, ...roles].filter((value): value is AppRole => Boolean(value));
+
+  if (
+    hasSignal(roleSignals, "ingest_admin", ingestTokens) ||
+    hasSignal(roleSignals, "super_admin", superAdminTokens)
+  ) {
+    return false;
+  }
+
+  return roleSignals.some((value) => normalizeAccessValue(value) === "user");
+}
+
 async function getLatestLicenseType(userId: string): Promise<NormalizedProductAccess> {
   const license = await prisma.licenseKey.findFirst({
     where: {
@@ -300,7 +322,9 @@ export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | 
     getLatestLicenseType(user.id)
   ]);
   const role = getHighestRole(roles);
-  const inferredAccess = licenseAccess ?? inferAccessFromRoles(roles, baseRole);
+  const roleInferredAccess = inferAccessFromRoles(roles, baseRole);
+  const legacyUserAppAccess = isLegacyActivatedUserApp(user, roles, baseRole, roleInferredAccess);
+  const inferredAccess = licenseAccess ?? roleInferredAccess ?? (legacyUserAppAccess ? "user_app" : null);
   const externalLicenseType = toExternalLicenseType(inferredAccess);
   const hasRedeemedProductLicense = licenseAccess !== null;
 
