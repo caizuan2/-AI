@@ -91,6 +91,7 @@ import {
   type IngestTrainingRecord
 } from "@/lib/enterprise/mock-chat";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
 import type { GptOSRouteResult } from "@/lib/enterprise/gpt-os-agent-router";
 import type { AutonomousTaskResult } from "@/lib/enterprise/gpt-os-autonomous-executor";
@@ -678,6 +679,21 @@ function buildFeedbackAgentScope(agent: IngestChatAgent) {
   const agentId = normalizeFeedbackScopeId(agent.id, "chief");
   const knowledgeBaseId = normalizeFeedbackScopeId(agent.knowledgeBaseId, `kb:${agentId}`);
   const namespace = normalizeFeedbackScopeId(agent.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+  const publicScope = resolvePublicExpertScope({
+    agentId,
+    expertId: agent.expertId,
+    knowledgeBaseId,
+    namespace,
+    tenantId: agent.tenantId
+  });
+
+  if (publicScope) {
+    return {
+      agentId: publicScope.agentId,
+      knowledgeBaseId: publicScope.knowledgeBaseId,
+      namespace: publicScope.namespace
+    };
+  }
 
   return {
     agentId,

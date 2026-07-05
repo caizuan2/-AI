@@ -92,8 +92,8 @@ function inferScopePreset(draft: IngestMemoryItem): ScopePreset | null {
     return {
       knowledgeBaseId: "kb-business-coach",
       kbId: "kb-business-coach",
-      agentId: "expert-business",
-      expertId: "expert-business",
+      agentId: "expert-career",
+      expertId: "expert-career",
       namespace: "kb-business-coach",
       tenantId: "default",
       reason: "matched-business-coach-keywords"
@@ -116,8 +116,8 @@ function inferScopePreset(draft: IngestMemoryItem): ScopePreset | null {
     return {
       knowledgeBaseId: "kb-business-coach",
       kbId: "kb-business-coach",
-      agentId: "expert-business",
-      expertId: "expert-business",
+      agentId: "expert-career",
+      expertId: "expert-career",
       namespace: "kb-business-coach",
       tenantId: "default",
       reason: "matched-business-agent-id"

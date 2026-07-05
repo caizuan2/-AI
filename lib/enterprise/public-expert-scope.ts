@@ -15,13 +15,22 @@ type PublicExpertScopeSeed = {
 
 const PUBLIC_EXPERT_SCOPE_SEEDS: PublicExpertScopeSeed[] = [
   {
-    aliases: ["expert-health", "kb-health-expert"],
+    aliases: ["expert-health", "kb-health-expert", "大健康专家", "大健康", "health-expert"],
     knowledgeBaseId: "kb-health-expert",
     agentId: "expert-health"
   },
   {
-    aliases: ["expert-career", "kb-career-mentor"],
-    knowledgeBaseId: "kb-career-mentor",
+    aliases: [
+      "expert-career",
+      "expert-business",
+      "kb-business-coach",
+      "kb-career-mentor",
+      "讲事业导师",
+      "事业导师",
+      "business-coach",
+      "career-mentor"
+    ],
+    knowledgeBaseId: "kb-business-coach",
     agentId: "expert-career"
   },
   {
@@ -94,6 +103,84 @@ function toScope(seed: PublicExpertScopeSeed, tenantId?: string | null): PublicE
   };
 }
 
+function dedupe(values: string[]): string[] {
+  return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
+}
+
+function deriveExpertIdFromKey(value: string): string {
+  const key = normalize(value)
+    .replace(/^kb:/, "")
+    .replace(/^agent:/, "")
+    .split(":")[0];
+
+  if (!key) {
+    return "";
+  }
+
+  if (key.startsWith("expert-agent-expert-")) {
+    return `expert-${key.slice("expert-agent-expert-".length)}`;
+  }
+
+  if (key.startsWith("agent-expert-")) {
+    return key.slice("agent-".length);
+  }
+
+  if (key.startsWith("expert-")) {
+    return key;
+  }
+
+  if (key.startsWith("kb-")) {
+    return `expert-${key.slice("kb-".length)}`;
+  }
+
+  return "";
+}
+
+function buildGenericExpertScopeSeed(expertId: string): PublicExpertScopeSeed | null {
+  const normalizedExpertId = deriveExpertIdFromKey(expertId);
+
+  if (!normalizedExpertId) {
+    return null;
+  }
+
+  const slug = normalizedExpertId.replace(/^expert-/, "");
+  const knowledgeBaseId = `kb-${slug}`;
+
+  return {
+    aliases: dedupe([
+      normalizedExpertId,
+      knowledgeBaseId,
+      `expert-agent-${normalizedExpertId}`,
+      `agent-${normalizedExpertId}`,
+      `kb:${normalizedExpertId}`,
+      `agent:${normalizedExpertId}:kb:${knowledgeBaseId}`,
+      `agent:expert-agent-${normalizedExpertId}:kb:${knowledgeBaseId}`
+    ]),
+    knowledgeBaseId,
+    agentId: normalizedExpertId
+  };
+}
+
+function findSeedForKeys(keys: string[]): PublicExpertScopeSeed | null {
+  const explicitSeed = PUBLIC_EXPERT_SCOPE_SEEDS.find((item) =>
+    keys.some((key) => item.aliases.some((alias) => key === alias.toLowerCase()))
+  );
+
+  if (explicitSeed) {
+    return explicitSeed;
+  }
+
+  for (const key of keys) {
+    const genericSeed = buildGenericExpertScopeSeed(key);
+
+    if (genericSeed) {
+      return genericSeed;
+    }
+  }
+
+  return null;
+}
+
 export function resolvePublicExpertScope(input: {
   agentId?: unknown;
   expertId?: unknown;
@@ -114,9 +201,7 @@ export function resolvePublicExpertScope(input: {
     return null;
   }
 
-  const seed = PUBLIC_EXPERT_SCOPE_SEEDS.find((item) =>
-    keys.some((key) => item.aliases.some((alias) => key === alias.toLowerCase()))
-  );
+  const seed = findSeedForKeys(keys);
 
   return seed ? toScope(seed, clean(input.tenantId)) : null;
 }
@@ -128,9 +213,7 @@ export function publicExpertScopeAliasesFor(value: unknown): string[] {
     return [];
   }
 
-  const seed = PUBLIC_EXPERT_SCOPE_SEEDS.find((item) =>
-    item.aliases.some((alias) => alias.toLowerCase() === key)
-  );
+  const seed = findSeedForKeys([key]);
 
   return seed ? seed.aliases : [key];
 }
