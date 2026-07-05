@@ -16,8 +16,47 @@ import type { RagConfidence } from "@/lib/rag/search";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const CHAT_PROVIDER_PRIORITY: ChatProviderName[] = ["deepseek", "qwen", "openai"];
+
+function isChatProviderName(value: unknown): value is ChatProviderName {
+  return value === "deepseek" || value === "qwen" || value === "openai";
+}
+
+function getFirstUsableProvider(value: string | null | undefined): ChatProviderName | null {
+  if (isChatProviderName(value) && hasUsableChatProvider(value)) {
+    return value;
+  }
+
+  return CHAT_PROVIDER_PRIORITY.find((candidate) => hasUsableChatProvider(candidate)) ?? null;
+}
+
 function normalizeProvider(value: string | null | undefined): ChatProviderName {
-  return value === "openai" ? "openai" : "openai";
+  return getFirstUsableProvider(value) ?? "openai";
+}
+
+function normalizeProviderChain(
+  primary: string | null | undefined,
+  providerChain: readonly unknown[] | undefined,
+  fallbackProvider: ChatProviderName | null,
+): ChatProviderName[] {
+  const providers: ChatProviderName[] = [];
+  const pushProvider = (candidate: unknown) => {
+    if (!isChatProviderName(candidate) || providers.includes(candidate) || !hasUsableChatProvider(candidate)) {
+      return;
+    }
+    providers.push(candidate);
+  };
+
+  pushProvider(primary);
+  for (const candidate of providerChain ?? []) {
+    pushProvider(candidate);
+  }
+  pushProvider(fallbackProvider);
+  for (const candidate of CHAT_PROVIDER_PRIORITY) {
+    pushProvider(candidate);
+  }
+
+  return providers;
 }
 
 function confidenceToNumber(confidence: RagConfidence) {
@@ -81,11 +120,8 @@ export async function POST(request: Request) {
       });
 
       const settings = await getOrCreateUserSettings(actor.id);
-      const provider = normalizeProvider(settings.preferredProvider);
-      const providerConfigured = hasUsableChatProvider("deepseek")
-        || hasUsableChatProvider("qwen")
-        || hasUsableChatProvider("openai")
-        || hasUsableChatProvider(provider);
+      const configuredProvider = getFirstUsableProvider(settings.preferredProvider);
+      const providerConfigured = configuredProvider !== null;
 
       await emit({
         type: "thinking",
@@ -109,17 +145,19 @@ export async function POST(request: Request) {
               enableDeepThinking,
               confidence,
               actualModel,
-              provider,
+              provider: requestedProvider,
               providerFallbackChain,
               businessExecutionContext,
               agentId,
               knowledgeBaseId,
               namespace
             }) => {
+              const answerProvider = getFirstUsableProvider(requestedProvider) ?? configuredProvider ?? normalizeProvider(requestedProvider);
+              const answerProviderChain = normalizeProviderChain(answerProvider, providerFallbackChain, configuredProvider);
               const ragAnswer = await generateRagAnswer(question, contexts, {
                 userId: actor.id,
-                provider,
-                providerChain: providerFallbackChain,
+                provider: answerProvider,
+                providerChain: answerProviderChain,
                 model: actualModel,
                 agentId,
                 knowledgeBaseId,
