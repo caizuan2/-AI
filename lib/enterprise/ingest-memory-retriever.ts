@@ -43,12 +43,16 @@ function isUsableMemory(memory: IngestMemoryItem) {
 function synthesizeLearningMemory(input: {
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   query: string;
   messages?: IngestMemoryConversationMessage[];
 }): Promise<IngestMemoryItem | null> {
   return buildAgentLearningState({
     agentId: input.agentId,
-    knowledgeBaseId: input.knowledgeBaseId
+    knowledgeBaseId: input.knowledgeBaseId,
+    ownerAdminId: input.ownerAdminId,
+    ownerUserId: input.ownerUserId
   }).then((learning) => {
     if (!learning) {
       return null;
@@ -73,6 +77,8 @@ function synthesizeLearningMemory(input: {
       summary: learning.preferredAnswerStyle,
       agentId: learning.agentId,
       knowledgeBaseId: learning.knowledgeBaseId,
+      ownerAdminId: learning.ownerAdminId,
+      ownerUserId: learning.ownerUserId,
       tags: ["Agent学习", "回答偏好"],
       category: "Agent学习",
       confidence: 0.82,
@@ -91,6 +97,8 @@ export async function retrieveRelevantMemories(input: {
   conversationId?: string;
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   messages?: IngestMemoryConversationMessage[];
   limit?: number;
   minScore?: number;
@@ -110,9 +118,16 @@ export async function retrieveRelevantMemories(input: {
   const [scopedDrafts, globalDrafts, learningMemory] = await Promise.all([
     listMemoryDrafts({
       agentId: input.agentId,
-      knowledgeBaseId: input.knowledgeBaseId
+      knowledgeBaseId: input.knowledgeBaseId,
+      ownerAdminId: input.ownerAdminId,
+      ownerUserId: input.ownerUserId
     }),
-    listMemoryDrafts(),
+    input.ownerAdminId || input.ownerUserId
+      ? listMemoryDrafts({
+          ownerAdminId: input.ownerAdminId,
+          ownerUserId: input.ownerUserId
+        })
+      : listMemoryDrafts(),
     synthesizeLearningMemory(input)
   ]);
   const queryText = buildQueryText({ query, messages: input.messages });

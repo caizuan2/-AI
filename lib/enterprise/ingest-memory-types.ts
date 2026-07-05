@@ -22,6 +22,8 @@ export type IngestMemoryItem = {
   sourceMessageIds?: string[];
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   tags?: string[];
   category?: string;
   confidence: number;
@@ -57,6 +59,8 @@ export type IngestDraftMergePlan = {
 export type IngestAgentLearningState = {
   agentId: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   learnedTopics: string[];
   preferredAnswerStyle?: string;
   riskBoundaries?: string[];
@@ -74,6 +78,8 @@ export type IngestMemoryExtractionInput = {
   conversationId: string;
   agentId?: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   messages: IngestMemoryConversationMessage[];
   latestAssistantReply?: string;
   userInstruction?: string;
@@ -84,6 +90,8 @@ export type IngestAgentLearningEvent = {
   id: string;
   agentId: string;
   knowledgeBaseId?: string;
+  ownerAdminId?: string;
+  ownerUserId?: string;
   conversationId?: string;
   summary: string;
   topics: string[];
@@ -95,6 +103,8 @@ export type IngestAgentLearningEvent = {
 
 export type IngestMemoryPanelSummary = {
   ok: boolean;
+  ownerAdminId?: string;
+  includesLegacyUnowned?: boolean;
   memoryCount: number;
   draftCount: number;
   recentTopics: string[];

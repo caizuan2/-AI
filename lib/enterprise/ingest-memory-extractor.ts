@@ -162,6 +162,8 @@ export function extractMemoriesFromConversation(input: IngestMemoryExtractionInp
       sourceMessageIds: recentMessages.map((message) => message.id).filter((id): id is string => Boolean(id)),
       agentId: input.agentId,
       knowledgeBaseId: input.knowledgeBaseId,
+      ownerAdminId: input.ownerAdminId,
+      ownerUserId: input.ownerUserId,
       tags,
       category: rule.category,
       confidence,
@@ -169,6 +171,8 @@ export function extractMemoriesFromConversation(input: IngestMemoryExtractionInp
       createdAt: now,
       meta: {
         source: "admin-ingest-memory-layer-v1",
+        ownerAdminId: input.ownerAdminId,
+        ownerUserId: input.ownerUserId,
         ruleScore: rule.score
       }
     };

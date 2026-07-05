@@ -8,8 +8,9 @@ import {
 import type { PublishedMemoryItem, PublishedMemoryState } from "./ingest-memory-index-types";
 import { readPublishedMemoryState, writePublishedMemoryState } from "./ingest-memory-shared-store";
 import type { NormalizedMemoryScope } from "./ingest-memory-scope-normalizer";
+import type { IngestMemoryOwnerScope } from "./ingest-memory-owner-scope";
 
-type PublishMemoryDraftsInput = {
+type PublishMemoryDraftsInput = IngestMemoryOwnerScope & {
   draftIds?: string[];
   drafts?: IngestMemoryItem[];
   publishAllSaved?: boolean;
@@ -171,6 +172,8 @@ export function normalizeDraftToPublishedMemory(draft: IngestMemoryItem, scope: 
     kbId,
     agentId,
     expertId,
+    ownerAdminId: draft.ownerAdminId,
+    ownerUserId: draft.ownerUserId,
     namespace,
     tenantId,
     sourceApp: "admin_ingest",
@@ -180,6 +183,8 @@ export function normalizeDraftToPublishedMemory(draft: IngestMemoryItem, scope: 
     meta: {
       ...(draft.meta || {}),
       originalStatus: draft.status,
+      ownerAdminId: draft.ownerAdminId,
+      ownerUserId: draft.ownerUserId,
       publishedBy: PUBLISH_SOURCE,
       publishReason,
       contentHash: createContentKey({
@@ -212,7 +217,11 @@ export function normalizeDraftToPublishedMemory(draft: IngestMemoryItem, scope: 
 }
 
 export async function publishMemoryDrafts(input: PublishMemoryDraftsInput = {}): Promise<PublishResult> {
-  const allDrafts = input.drafts ?? (await listMemoryDrafts());
+  const allDrafts = input.drafts ?? (await listMemoryDrafts({
+    ownerAdminId: input.ownerAdminId,
+    ownerUserId: input.ownerUserId,
+    includeLegacyUnowned: input.includeLegacyUnowned
+  }));
   const draftIdSet = input.draftIds?.length ? new Set(input.draftIds) : null;
   const targetDrafts = draftIdSet ? allDrafts.filter((draft) => draftIdSet.has(draft.id)) : allDrafts;
   const state = await readPublishedMemoryState();

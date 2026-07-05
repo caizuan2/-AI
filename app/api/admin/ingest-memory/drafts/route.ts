@@ -26,7 +26,7 @@ function jsonError(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_drafts"
     });
@@ -34,7 +34,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const drafts = await listMemoryDrafts({
       agentId: url.searchParams.get("agentId") || undefined,
-      knowledgeBaseId: url.searchParams.get("knowledgeBaseId") || undefined
+      knowledgeBaseId: url.searchParams.get("knowledgeBaseId") || undefined,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
     });
 
     return NextResponse.json({
@@ -49,7 +51,7 @@ export async function GET(request: Request) {
 
 export async function PATCH(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_draft_status"
     });
@@ -63,7 +65,10 @@ export async function PATCH(request: Request) {
       throw new ValidationError("id 和 status 不能为空。");
     }
 
-    const draft = await updateMemoryDraftStatus(id, status);
+    const draft = await updateMemoryDraftStatus(id, status, {
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
+    });
 
     return NextResponse.json({
       success: true,

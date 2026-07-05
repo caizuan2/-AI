@@ -53,12 +53,16 @@ function readBody(input: unknown) {
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_extract"
     });
 
-    const source = readBody(await request.json());
+    const source = {
+      ...readBody(await request.json()),
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
+    };
     const extraction = extractMemoriesFromConversation(source);
     const persisted = await persistMemoryExtraction({
       extraction,

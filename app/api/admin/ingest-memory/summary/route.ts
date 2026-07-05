@@ -23,7 +23,7 @@ function jsonError(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_summary"
     });
@@ -31,7 +31,9 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const summary = await buildMemoryPanelSummary({
       agentId: url.searchParams.get("agentId") || undefined,
-      knowledgeBaseId: url.searchParams.get("knowledgeBaseId") || undefined
+      knowledgeBaseId: url.searchParams.get("knowledgeBaseId") || undefined,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
     });
 
     return NextResponse.json({

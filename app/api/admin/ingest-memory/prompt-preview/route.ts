@@ -34,7 +34,7 @@ function readMessages(value: unknown): IngestMemoryConversationMessage[] {
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_prompt_preview"
     });
@@ -49,11 +49,18 @@ export async function POST(request: Request) {
       conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
       agentId,
       knowledgeBaseId,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id,
       messages,
       limit: 5,
       minScore: typeof body.minScore === "number" ? body.minScore : 0.25
     });
-    const agentLearningState = await buildAgentLearningState({ agentId, knowledgeBaseId });
+    const agentLearningState = await buildAgentLearningState({
+      agentId,
+      knowledgeBaseId,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id
+    });
     const memoryPrompt = buildMemoryPromptContext({
       query,
       retrievedMemories: retrieval.memories,

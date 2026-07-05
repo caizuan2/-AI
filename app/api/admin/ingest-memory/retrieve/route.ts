@@ -30,7 +30,7 @@ function readMessages(value: unknown): IngestMemoryConversationMessage[] {
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_retrieve"
     });
@@ -41,6 +41,8 @@ export async function POST(request: Request) {
       conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
       agentId: typeof body.agentId === "string" ? body.agentId : undefined,
       knowledgeBaseId: typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : undefined,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id,
       messages: readMessages(body.messages),
       limit: typeof body.limit === "number" ? body.limit : undefined,
       minScore: typeof body.minScore === "number" ? body.minScore : undefined
@@ -57,7 +59,7 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_retrieve"
     });
@@ -68,6 +70,8 @@ export async function GET(request: Request) {
       conversationId: url.searchParams.get("conversationId") || undefined,
       agentId: url.searchParams.get("agentId") || undefined,
       knowledgeBaseId: url.searchParams.get("knowledgeBaseId") || undefined,
+      ownerAdminId: actor.id,
+      ownerUserId: actor.id,
       limit: Number(url.searchParams.get("limit") || 5),
       minScore: Number(url.searchParams.get("minScore") || 0.25)
     });
