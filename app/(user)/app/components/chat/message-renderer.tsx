@@ -104,6 +104,72 @@ function getStringArray(value: unknown) {
   return Array.isArray(value) ? value.map(getString).filter(Boolean) : [];
 }
 
+function getNestedString(record: Record<string, unknown>, path: string[]) {
+  let current: unknown = record;
+
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return "";
+    }
+
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return getString(current);
+}
+
+function getRecoverableAnswerText(message: ChatMessageView) {
+  const messageRecord = message as unknown as Record<string, unknown>;
+  const metadata = getRecord(message.metadata);
+  const directFinalizedAnswer = getRecord(message.finalized_answer);
+  const metadataFinalizedAnswer = getRecord(metadata.finalizedAnswer);
+
+  return [
+    message.content,
+    messageRecord.rawContent,
+    messageRecord.rawText,
+    metadata.rawContent,
+    metadata.rawText,
+    metadata.rawAnswer,
+    metadata.rawAnswerBeforeFinalizer,
+    metadata.rawCustomerAnswerBeforeFinalizer,
+    metadata.answer,
+    getNestedString(metadata, ["runtimeOutput", "replyMarkdown"]),
+    getNestedString(metadata, ["runtimeOutput", "answer"]),
+    getNestedString(metadata, ["runtimeOutput", "rawContent"]),
+    getNestedString(metadata, ["runtimeOutput", "rawText"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "replyMarkdown"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "answer"]),
+    getNestedString(metadata, ["aiRuntime", "finalOutput", "content"]),
+    directFinalizedAnswer.rawContent,
+    directFinalizedAnswer.rawText,
+    directFinalizedAnswer.text,
+    directFinalizedAnswer.answer,
+    directFinalizedAnswer.content,
+    directFinalizedAnswer.freeformAnswer,
+    metadataFinalizedAnswer.rawContent,
+    metadataFinalizedAnswer.rawText,
+    metadataFinalizedAnswer.text,
+    metadataFinalizedAnswer.answer,
+    metadataFinalizedAnswer.content,
+    metadataFinalizedAnswer.freeformAnswer,
+  ].map((value) => sanitizeDisplayText(getString(value))).find(Boolean) ?? "";
+}
+
+function getRecoverableCustomerAnswerText(message: ChatMessageView) {
+  const metadata = getRecord(message.metadata);
+  const directFinalizedAnswer = getRecord(message.finalized_answer);
+  const metadataFinalizedAnswer = getRecord(metadata.finalizedAnswer);
+
+  return [
+    message.customer_answer,
+    metadata.customerAnswer,
+    metadata.customerCopy,
+    directFinalizedAnswer.customerReply,
+    metadataFinalizedAnswer.customerReply,
+  ].map((value) => sanitizeDisplayText(getString(value))).find(Boolean) ?? "";
+}
+
 function getRagVisualization(message: ChatMessageView) {
   return getRecord(message.metadata?.ragVisualization);
 }
@@ -296,8 +362,8 @@ function getFinalizedAnswer(message: ChatMessageView): FinalizedAnswerView | nul
   const nextAction = getString(metadataFinalizedAnswer.nextAction);
 
   if (!title && !problemUnderstanding && !keyConclusion && !customerReply && !nextAction) {
-    const rawAnswer = sanitizeDisplayText(message.content);
-    const rawCustomerAnswer = sanitizeDisplayText(message.customer_answer ?? "");
+    const rawAnswer = getRecoverableAnswerText(message);
+    const rawCustomerAnswer = getRecoverableCustomerAnswerText(message);
 
     if (!rawAnswer && !rawCustomerAnswer) {
       return null;

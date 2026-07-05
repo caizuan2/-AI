@@ -1683,6 +1683,65 @@ function serializeConversation(conversation: ConversationRecord) {
   };
 }
 
+function readSerializedText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function readNestedSerializedText(record: Record<string, unknown>, path: string[]) {
+  let current: unknown = record;
+
+  for (const key of path) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) {
+      return "";
+    }
+
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return readSerializedText(current);
+}
+
+function readFinalizedAnswerText(value: unknown) {
+  const record = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+
+  return [
+    record.rawContent,
+    record.rawText,
+    record.text,
+    record.answer,
+    record.content,
+    record.freeformAnswer,
+    record.customerReply,
+    record.keyConclusion,
+  ].map(readSerializedText).find(Boolean) ?? "";
+}
+
+function readSerializedMessageContent(
+  message: MessageRecord,
+  metadata: Record<string, unknown>,
+  finalizedAnswer: unknown,
+) {
+  return [
+    message.content,
+    metadata.rawContent,
+    metadata.rawText,
+    metadata.rawAnswer,
+    metadata.rawAnswerBeforeFinalizer,
+    metadata.rawCustomerAnswerBeforeFinalizer,
+    metadata.answer,
+    readNestedSerializedText(metadata, ["runtimeOutput", "replyMarkdown"]),
+    readNestedSerializedText(metadata, ["runtimeOutput", "answer"]),
+    readNestedSerializedText(metadata, ["runtimeOutput", "rawContent"]),
+    readNestedSerializedText(metadata, ["runtimeOutput", "rawText"]),
+    readNestedSerializedText(metadata, ["aiRuntime", "finalOutput", "replyMarkdown"]),
+    readNestedSerializedText(metadata, ["aiRuntime", "finalOutput", "answer"]),
+    readNestedSerializedText(metadata, ["aiRuntime", "finalOutput", "content"]),
+    readFinalizedAnswerText(finalizedAnswer),
+  ].map(readSerializedText).find(Boolean) ?? "";
+}
+
 function serializeMessage(message: MessageRecord) {
   const role = String(message.role ?? "").toLowerCase();
   const metadata = toJsonObject(message.metadata) ?? {};
@@ -1692,11 +1751,14 @@ function serializeMessage(message: MessageRecord) {
   const finalizedAnswer = metadata.finalizedAnswer && typeof metadata.finalizedAnswer === "object" && !Array.isArray(metadata.finalizedAnswer)
     ? metadata.finalizedAnswer
     : null;
+  const content = readSerializedMessageContent(message, metadata, finalizedAnswer);
 
   return {
     id: String(message.id),
     role: role || "user",
-    content: String(message.content ?? ""),
+    content,
+    rawContent: content || null,
+    rawText: content || null,
     attachments: message.attachments ?? null,
     sources: message.sources ?? null,
     customer_answer: customerAnswer,

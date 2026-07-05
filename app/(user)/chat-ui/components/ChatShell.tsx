@@ -1514,11 +1514,19 @@ export function ChatShell() {
 
             if (message.id === nextAssistantMessage.id) {
               const currentMetadata = message.metadata ?? {};
+              const resolvedAnswer =
+                streamResult.answer ||
+                streamResult.rawContent ||
+                streamResult.rawText ||
+                streamResult.rawAnswer ||
+                "";
 
               return {
                 id: streamResult.message_id,
                 role: "assistant",
-                content: streamResult.answer,
+                content: resolvedAnswer,
+                rawContent: streamResult.rawContent ?? resolvedAnswer,
+                rawText: streamResult.rawText ?? streamResult.rawAnswer ?? resolvedAnswer,
                 customerCopy: streamResult.customerCopy ?? streamResult.customer_answer ?? null,
                 customer_answer: streamResult.customer_answer ?? null,
                 finalized_answer: streamResult.finalized_answer ?? null,
@@ -1527,6 +1535,9 @@ export function ChatShell() {
                 confidence: streamResult.confidence,
                 metadata: {
                   ...currentMetadata,
+                  rawContent: streamResult.rawContent ?? currentMetadata.rawContent ?? resolvedAnswer,
+                  rawText: streamResult.rawText ?? currentMetadata.rawText ?? streamResult.rawAnswer ?? resolvedAnswer,
+                  rawAnswer: streamResult.rawAnswer ?? currentMetadata.rawAnswer ?? resolvedAnswer,
                   finalizedAnswer: streamResult.finalized_answer ?? currentMetadata.finalizedAnswer,
                   customerCopy: streamResult.customerCopy ?? streamResult.customer_answer ?? currentMetadata.customerCopy,
                   nextStep: streamResult.nextStep ?? currentMetadata.nextStep,

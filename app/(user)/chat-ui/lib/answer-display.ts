@@ -115,6 +115,20 @@ function getStringField(answer: unknown, keys: string[]) {
   return "";
 }
 
+function getNestedStringField(answer: unknown, path: string[]) {
+  let current: unknown = answer;
+
+  for (const key of path) {
+    current = asRecord(current)[key];
+
+    if (current === undefined || current === null) {
+      return "";
+    }
+  }
+
+  return normalizeRawAssistantText(current);
+}
+
 function getStringArrayField(answer: unknown, keys: string[]) {
   const record = asRecord(answer);
 
@@ -255,7 +269,16 @@ export function getUserRawAnswerText(message: ChatMessageView) {
     metadata.rawContent,
     metadata.rawAnswer,
     metadata.rawText,
+    metadata.rawAnswerBeforeFinalizer,
+    metadata.rawCustomerAnswerBeforeFinalizer,
     metadata.answer,
+    getNestedStringField(metadata, ["runtimeOutput", "replyMarkdown"]),
+    getNestedStringField(metadata, ["runtimeOutput", "answer"]),
+    getNestedStringField(metadata, ["runtimeOutput", "rawContent"]),
+    getNestedStringField(metadata, ["runtimeOutput", "rawText"]),
+    getNestedStringField(metadata, ["aiRuntime", "finalOutput", "replyMarkdown"]),
+    getNestedStringField(metadata, ["aiRuntime", "finalOutput", "answer"]),
+    getNestedStringField(metadata, ["aiRuntime", "finalOutput", "content"]),
     getFinalizedRawAnswerText(finalizedAnswer),
     getFinalizedRawAnswerText(metadataFinalizedAnswer)
   ]);
