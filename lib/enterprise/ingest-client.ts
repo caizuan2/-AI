@@ -57,6 +57,7 @@ import {
   type SavedKnowledgeLike
 } from "@/lib/enterprise/knowledge-memory-adapter";
 import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -387,6 +388,21 @@ function buildClientAgentKnowledgeScope(agent: IngestChatAgent) {
   const agentId = normalizeClientScopeId(agent.id, "chief");
   const knowledgeBaseId = normalizeClientScopeId(agent.knowledgeBaseId, `kb:${agentId}`);
   const namespace = normalizeClientScopeId(agent.namespace, `agent:${agentId}:kb:${knowledgeBaseId}`);
+  const publicScope = resolvePublicExpertScope({
+    agentId,
+    expertId: agent.expertId,
+    knowledgeBaseId,
+    namespace,
+    tenantId: agent.tenantId
+  });
+
+  if (publicScope) {
+    return {
+      agentId: publicScope.agentId,
+      knowledgeBaseId: publicScope.knowledgeBaseId,
+      namespace: publicScope.namespace
+    };
+  }
 
   return {
     agentId,
