@@ -182,14 +182,18 @@ function normalizeFreeformAnswerText(text: unknown) {
 }
 
 const legacyStructuredAnswerPattern =
-  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:DeepSeek 原文输出|一句话思路|三条现成话术|下一步动作|复制给客户|客户可复制话术|可直接复制给客户|RAG 命中结果|sources|hitCount|evidenceSummary|ProductAnswerView|V4|SOP|系统分析|诊断结果|命中文档)\s*[:：]?\s*(?:\n|$)|(?:^|\n)\s*【(?:问题判断|处理建议|可直接复制给客户的话术|下一步行动|引用依据|引用来源|业务问题分析|商业执行策略|推荐动作|标准回复话术)】/i;
+  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:DeepSeek 原文输出|一句话思路|三条现成话术|下一步动作|复制给客户|客户可复制话术|可直接复制给客户|RAG 命中结果|sources|hitCount|evidenceSummary|ProductAnswerView|V4|SOP|系统分析|诊断结果|命中文档)\s*[:：]?\s*(?:\n|$)|(?:^|\n|\s)【(?:用户意图|问题判断|处理建议|可直接复制给客户的话术|下一步行动|引用依据|引用来源|业务问题分析|商业执行策略|推荐动作|标准回复话术)】/i;
+const legacyHeadingOnlyPattern =
+  /^(?:\s*(?:#{1,6}\s*)?(?:\[(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)\]|【(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)】)\s*)+$/i;
 
 export function normalizeRawAssistantText(text: unknown) {
   return normalizeFreeformAnswerText(text);
 }
 
 export function isLegacyStructuredAnswer(text: string) {
-  return legacyStructuredAnswerPattern.test(text);
+  const normalized = normalizeRawAssistantText(text);
+
+  return legacyHeadingOnlyPattern.test(normalized) || legacyStructuredAnswerPattern.test(normalized);
 }
 
 export function stripLegacyStructuredTail(text: string) {
