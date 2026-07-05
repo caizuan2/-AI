@@ -3,7 +3,7 @@ import {
   sanitizeVisibleSources,
   sanitizeVisibleText
 } from "@/lib/ai-chat/visible-output-sanitizer";
-import type { ChatSource, FinalizedAnswerView } from "../types";
+import type { ChatMessageView, ChatSource, FinalizedAnswerView } from "../types";
 
 export interface CustomerReplyDisplay {
   previewText: string;
@@ -179,6 +179,86 @@ function normalizeFreeformAnswerText(text: unknown) {
   return sanitizeVisibleText(stripInternalDebugText(value))
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+const legacyStructuredAnswerPattern =
+  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:DeepSeek 原文输出|一句话思路|三条现成话术|下一步动作|复制给客户|客户可复制话术|可直接复制给客户|RAG 命中结果|sources|hitCount|evidenceSummary|ProductAnswerView|V4|SOP|系统分析|诊断结果|命中文档)\s*[:：]?\s*(?:\n|$)|(?:^|\n|\s)【(?:用户意图|问题判断|处理建议|可直接复制给客户的话术|下一步行动|引用依据|引用来源|业务问题分析|商业执行策略|推荐动作|标准回复话术)】/i;
+const legacyHeadingOnlyPattern =
+  /^(?:\s*(?:#{1,6}\s*)?(?:\[(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)\]|【(?:用户意图|问题判断|处理建议|业务问题分析|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)】)\s*)+$/i;
+
+export function normalizeRawAssistantText(text: unknown) {
+  return normalizeFreeformAnswerText(text);
+}
+
+export function isLegacyStructuredAnswer(text: string) {
+  const normalized = normalizeRawAssistantText(text);
+
+  return legacyHeadingOnlyPattern.test(normalized) || legacyStructuredAnswerPattern.test(normalized);
+}
+
+export function stripLegacyStructuredTail(text: string) {
+  const normalized = normalizeRawAssistantText(text);
+  const match = normalized.match(legacyStructuredAnswerPattern);
+
+  if (!match || typeof match.index !== "number" || match.index <= 0) {
+    return "";
+  }
+
+  return normalized.slice(0, match.index).trim();
+}
+
+export function pickSingleRawAssistantText(candidates: unknown[]) {
+  const normalizedCandidates = candidates
+    .map(normalizeRawAssistantText)
+    .filter(Boolean);
+
+  for (const candidate of normalizedCandidates) {
+    if (!isLegacyStructuredAnswer(candidate)) {
+      return candidate;
+    }
+  }
+
+  for (const candidate of normalizedCandidates) {
+    const stripped = stripLegacyStructuredTail(candidate);
+
+    if (stripped) {
+      return stripped;
+    }
+  }
+
+  return "";
+}
+
+export function getFinalizedRawAnswerText(answer: unknown) {
+  const record = asRecord(answer);
+
+  return pickSingleRawAssistantText([
+    record.rawContent,
+    record.rawText,
+    record.text,
+    record.answer,
+    record.content,
+    record.freeformAnswer
+  ]);
+}
+
+export function getUserRawAnswerText(message: ChatMessageView) {
+  const messageRecord = message as unknown as Record<string, unknown>;
+  const metadata = asRecord(message.metadata);
+  const finalizedAnswer = asRecord(message.finalized_answer);
+  const metadataFinalizedAnswer = asRecord(metadata.finalizedAnswer);
+
+  return pickSingleRawAssistantText([
+    message.content,
+    messageRecord.rawContent,
+    messageRecord.rawText,
+    metadata.rawContent,
+    metadata.rawAnswer,
+    metadata.rawText,
+    metadata.answer,
+    getFinalizedRawAnswerText(finalizedAnswer),
+    getFinalizedRawAnswerText(metadataFinalizedAnswer)
+  ]);
 }
 
 export function stripMarkdownNoise(text: string) {
