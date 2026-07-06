@@ -6,11 +6,20 @@ import remarkGfm from "remark-gfm";
 import {
   Brain,
   Check,
+  ChevronDown,
   Copy,
-  Loader2
+  FileText,
+  Loader2,
+  MessageSquareText,
+  Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getFinalizedRawAnswerText } from "../lib/answer-display";
+import { sanitizeVisibleSources } from "@/lib/ai-chat/visible-output-sanitizer";
+import {
+  buildProductAnswerDisplay,
+  getFinalizedRawAnswerText,
+  type SalesAnswerModeKey
+} from "../lib/answer-display";
 import { safeCopyTextDetailed } from "../lib/clipboard";
 import type {
   ChatSource,
@@ -20,6 +29,7 @@ import type {
 
 interface ProductAnswerViewProps {
   answer: FinalizedAnswerView | null;
+  userQuery?: string | null;
   sources?: ChatSource[] | null;
   hitCount?: number | null;
   hasRagHit?: boolean | null;
@@ -110,12 +120,12 @@ function CopyMiniButton({
 
 function markdownComponents() {
   return {
-    p: ({ children }: { children?: React.ReactNode }) => <p className="mb-2 last:mb-0">{children}</p>,
+    p: ({ children }: { children?: React.ReactNode }) => <p className="mb-3 last:mb-0">{children}</p>,
     ol: ({ children }: { children?: React.ReactNode }) => (
-      <ol className="mb-2 list-decimal space-y-1 pl-5 last:mb-0">{children}</ol>
+      <ol className="mb-3 list-decimal space-y-2 pl-5 last:mb-0">{children}</ol>
     ),
     ul: ({ children }: { children?: React.ReactNode }) => (
-      <ul className="mb-2 list-disc space-y-1 pl-5 last:mb-0">{children}</ul>
+      <ul className="mb-3 list-disc space-y-2 pl-5 last:mb-0">{children}</ul>
     ),
     li: ({ children }: { children?: React.ReactNode }) => <li className="pl-1">{children}</li>,
     strong: ({ children }: { children?: React.ReactNode }) => (
@@ -127,26 +137,76 @@ function markdownComponents() {
   };
 }
 
+function formatScore(score: unknown) {
+  const value = typeof score === "number" ? score : Number.NaN;
+
+  return Number.isFinite(value) ? `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%` : "";
+}
+
+function buildAnalysisMarkdown(display: NonNullable<ReturnType<typeof buildProductAnswerDisplay>>) {
+  return display.analysisSections
+    .map((section) => [
+      `### ${section.title}`,
+      ...section.lines.map((line) => line.trim()).filter(Boolean)
+    ].join("\n\n"))
+    .join("\n\n");
+}
+
 export function ProductAnswerView({
   answer,
-  sources: _sources,
+  userQuery,
+  sources,
   hitCount: _hitCount,
-  hasRagHit: _hasRagHit,
+  hasRagHit = false,
   evidenceSummary: _evidenceSummary,
   confidence: _confidence,
   streaming = false,
   className
 }: ProductAnswerViewProps) {
-  void _sources;
   void _confidence;
   void _hitCount;
-  void _hasRagHit;
   void _evidenceSummary;
-  const rawText = getFinalizedRawAnswerText(answer);
+  const answerForDisplay = React.useMemo(() => {
+    const query = userQuery?.trim();
 
-  if (!answer) {
+    if (!answer || !query) {
+      return answer;
+    }
+
+    return {
+      ...answer,
+      rawContent: [query, answer.rawContent].filter(Boolean).join("\n"),
+      rawText: [query, answer.rawText].filter(Boolean).join("\n"),
+      title: answer.title && !/^(处理建议|回答|小董AI)$/i.test(answer.title) ? answer.title : query
+    };
+  }, [answer, userQuery]);
+  const display = React.useMemo(
+    () => buildProductAnswerDisplay(answerForDisplay, sources, Boolean(hasRagHit)),
+    [answerForDisplay, hasRagHit, sources]
+  );
+  const [activeMode, setActiveMode] = React.useState<SalesAnswerModeKey>("customer_chat");
+
+  React.useEffect(() => {
+    if (display?.defaultMode) {
+      setActiveMode(display.defaultMode);
+    }
+  }, [display?.defaultMode]);
+
+  const rawText = display?.fullAnswerText || getFinalizedRawAnswerText(answerForDisplay);
+  const activeScript = display?.salesModes.find((mode) => mode.key === activeMode)
+    ?? display?.salesModes.find((mode) => mode.key === display.defaultMode)
+    ?? display?.salesModes[0];
+  const analysisMarkdown = display ? buildAnalysisMarkdown(display) : "";
+  const visibleSources = sanitizeVisibleSources(
+    (sources ?? []).map((source) => ({
+      title: source.title,
+      content: source.content_preview
+    }))
+  );
+
+  if (!display) {
     return (
-      <section className={cn("rounded-3xl border border-blue-100 bg-blue-50/70 p-5 text-blue-900", className)}>
+      <section className={cn("rounded-[18px] border border-blue-100 bg-blue-50/70 p-5 text-blue-900", className)}>
         <div className="flex items-center gap-2 text-sm font-semibold">
           <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
           正在调用小董AI大脑🧠并组织回答
@@ -165,32 +225,116 @@ export function ProductAnswerView({
   }
 
   return (
-    <article className={cn("text-slate-900", className)}>
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
-            <Brain className="h-4 w-4 text-emerald-600" aria-hidden="true" />
-            小董AI
+    <article className={cn("space-y-4 text-slate-900", className)}>
+      <header className="rounded-[18px] border border-neutral-100 bg-[#f7f7f8] px-5 py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <div className="inline-flex items-center gap-2 text-base font-semibold text-slate-950">
+              <Brain className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              小董AI处理建议
+            </div>
+            {streaming ? (
+              <p className="mt-1 text-xs text-slate-500">正在按自然对话方式整理回复。</p>
+            ) : null}
           </div>
-          {streaming ? (
-            <p className="mt-1 text-xs text-slate-400">正在逐步生成回复。</p>
-          ) : null}
+          <CopyMiniButton
+            text={rawText}
+            label="复制答案"
+          />
         </div>
-        <CopyMiniButton
-          text={rawText}
-          label="复制答案"
-        />
+
+        <section className="mt-4 rounded-2xl border border-emerald-100 bg-white px-4 py-3">
+          <div className="mb-3 inline-flex items-center gap-2 text-sm font-semibold text-slate-950">
+            <Sparkles className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+            建议你这样做
+          </div>
+          <div className="space-y-2">
+            {display.actionSuggestions.slice(0, 3).map((suggestion) => (
+              <div key={suggestion} className="flex gap-2 text-[15px] leading-7 text-slate-800">
+                <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-emerald-500" aria-hidden="true" />
+                <span>{suggestion}</span>
+              </div>
+            ))}
+          </div>
+        </section>
       </header>
 
-      <div className="mt-3 text-[15px] leading-7 text-slate-900">
-        {rawText ? (
+      <section className="rounded-[18px] border border-slate-200 bg-white px-5 py-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-950">
+          <MessageSquareText className="h-4 w-4 text-blue-600" aria-hidden="true" />
+          详细分析
+        </div>
+        <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-p:my-2 prose-li:my-1 prose-pre:hidden prose-table:hidden">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
-            {rawText}
+            {analysisMarkdown || display.analysis}
           </ReactMarkdown>
-        ) : (
-          <p className="text-sm text-slate-500">这条历史消息没有保留可直接展示的最终正文。</p>
-        )}
-      </div>
+        </div>
+      </section>
+
+      <section className="rounded-[18px] border border-emerald-100 bg-emerald-50/60 px-5 py-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-emerald-950">可直接发给客户</h3>
+            <p className="mt-1 text-xs text-emerald-700">选择不同场景的话术，复制后可按客户语气微调。</p>
+          </div>
+          {activeScript ? (
+            <CopyMiniButton text={activeScript.text} label={activeScript.copyLabel} />
+          ) : null}
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          {display.salesModes.map((mode) => (
+            <button
+              key={mode.key}
+              type="button"
+              onClick={() => setActiveMode(mode.key)}
+              className={cn(
+                "focus-ring rounded-full border px-3 py-1.5 text-xs font-semibold transition",
+                activeScript?.key === mode.key
+                  ? "border-emerald-300 bg-white text-emerald-800 shadow-sm"
+                  : "border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-white"
+              )}
+            >
+              {mode.label}
+            </button>
+          ))}
+        </div>
+
+        {activeScript ? (
+          <div className="mt-3 rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-[15px] leading-7 text-slate-800">
+            <p className="mb-2 text-xs font-semibold text-emerald-700">{activeScript.title}</p>
+            <div className="whitespace-pre-wrap">{activeScript.text}</div>
+          </div>
+        ) : null}
+      </section>
+
+      {visibleSources.length > 0 ? (
+        <details className="group rounded-[18px] border border-slate-200 bg-white px-5 py-4">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
+            <span className="inline-flex items-center gap-2">
+              <FileText className="h-4 w-4 text-blue-600" aria-hidden="true" />
+              引用来源
+            </span>
+            <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
+          </summary>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {visibleSources.map((source, index) => {
+              const originalSource = sources?.[index];
+              const score = formatScore(originalSource?.relevance_score ?? originalSource?.score);
+
+              return (
+                <div key={`${source.title}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate font-semibold text-slate-900">{source.title}</span>
+                    {score ? <span className="shrink-0 font-semibold text-blue-700">{score}</span> : null}
+                  </div>
+                  {source.summary ? <p className="mt-1">{source.summary}</p> : null}
+                </div>
+              );
+            })}
+          </div>
+        </details>
+      ) : null}
     </article>
   );
 }

@@ -207,6 +207,20 @@ export function stripLegacyStructuredTail(text: string) {
   return normalized.slice(0, match.index).trim();
 }
 
+function getReplyText(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  const record = asRecord(value);
+
+  return getString(record.fullText)
+    || getString(record.previewText)
+    || getString(record.text)
+    || getString(record.answer)
+    || getString(record.content);
+}
+
 export function pickSingleRawAssistantText(candidates: unknown[]) {
   const normalizedCandidates = candidates
     .map(normalizeRawAssistantText)
@@ -233,6 +247,12 @@ export function getFinalizedRawAnswerText(answer: unknown) {
   const record = asRecord(answer);
 
   return pickSingleRawAssistantText([
+    getReplyText(record.customerReply),
+    getReplyText(record.customer_reply),
+    record.customerAnswer,
+    record.customer_answer,
+    record.standardReply,
+    record.standard_reply,
     record.rawContent,
     record.rawText,
     record.text,
@@ -249,15 +269,23 @@ export function getUserRawAnswerText(message: ChatMessageView) {
   const metadataFinalizedAnswer = asRecord(metadata.finalizedAnswer);
 
   return pickSingleRawAssistantText([
+    getFinalizedRawAnswerText(finalizedAnswer),
+    getFinalizedRawAnswerText(metadataFinalizedAnswer),
+    message.customer_answer,
+    message.customerCopy,
+    getReplyText(metadata.customerReply),
+    getReplyText(metadata.customer_reply),
+    metadata.customerAnswer,
+    metadata.customer_answer,
+    metadata.standardReply,
+    metadata.standard_reply,
     message.content,
     messageRecord.rawContent,
     messageRecord.rawText,
     metadata.rawContent,
     metadata.rawAnswer,
     metadata.rawText,
-    metadata.answer,
-    getFinalizedRawAnswerText(finalizedAnswer),
-    getFinalizedRawAnswerText(metadataFinalizedAnswer)
+    metadata.answer
   ]);
 }
 

@@ -1,4 +1,5 @@
 import { ingestExperts, ingestExpertZones } from "@/lib/enterprise/mock-experts";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 export type PublicExpertSectionKey = "market" | "news" | "domain";
 
@@ -29,11 +30,6 @@ export type PublicExpertMarketSection = {
   items: PublicKnowledgeBaseItem[];
 };
 
-type ExpertPublicId = {
-  kb_id: string;
-  expert_id: string;
-};
-
 const PUBLIC_SECTION_MAP = {
   market: {
     key: "market",
@@ -48,45 +44,6 @@ const PUBLIC_SECTION_MAP = {
     title: "领域专区"
   }
 } as const;
-
-const PUBLIC_EXPERT_IDS: Record<string, ExpertPublicId> = {
-  "expert-health": {
-    kb_id: "kb-health-expert",
-    expert_id: "expert-health"
-  },
-  "expert-career": {
-    kb_id: "kb-career-mentor",
-    expert_id: "expert-career"
-  },
-  "expert-slim-kks": {
-    kb_id: "kb-kks-slim",
-    expert_id: "expert-kks"
-  },
-  "expert-sansheng-china": {
-    kb_id: "kb-sansheng-china",
-    expert_id: "expert-sansheng-china"
-  },
-  "expert-sansheng-assets": {
-    kb_id: "kb-sansheng-assets",
-    expert_id: "expert-sansheng-assets"
-  },
-  "expert-market-assets": {
-    kb_id: "kb-market-assets",
-    expert_id: "expert-market-assets"
-  },
-  "expert-seed-camp": {
-    kb_id: "kb-seed-camp",
-    expert_id: "expert-seed-camp"
-  },
-  "expert-leader-road": {
-    kb_id: "kb-leader-road",
-    expert_id: "expert-leader-road"
-  },
-  "expert-army": {
-    kb_id: "kb-army-growth",
-    expert_id: "expert-army"
-  }
-};
 
 function normalizeText(value: string | null | undefined) {
   return (value ?? "").trim().toLowerCase();
@@ -114,23 +71,27 @@ function toPublicItem(input: {
   sectionTitle: string;
 }): PublicKnowledgeBaseItem | null {
   const expert = ingestExperts.find((item) => item.id === input.expertId);
-  const publicIds = PUBLIC_EXPERT_IDS[input.expertId];
+  const publicScope = resolvePublicExpertScope({
+    agentId: input.expertId,
+    expertId: input.expertId,
+    tenantId: input.tenantId
+  });
 
-  if (!expert || !publicIds) {
+  if (!expert || !publicScope) {
     return null;
   }
 
   return {
-    id: publicIds.expert_id,
-    kb_id: publicIds.kb_id,
-    kbId: publicIds.kb_id,
-    knowledgeBaseId: publicIds.kb_id,
-    expert_id: publicIds.expert_id,
-    expertId: publicIds.expert_id,
-    agentId: publicIds.expert_id,
+    id: publicScope.agentId,
+    kb_id: publicScope.knowledgeBaseId,
+    kbId: publicScope.knowledgeBaseId,
+    knowledgeBaseId: publicScope.knowledgeBaseId,
+    expert_id: publicScope.expertId,
+    expertId: publicScope.expertId,
+    agentId: publicScope.agentId,
     tenant_id: input.tenantId,
     tenantId: input.tenantId,
-    namespace: publicIds.kb_id,
+    namespace: publicScope.namespace,
     name: expert.name,
     title: expert.name,
     expertName: expert.name,
@@ -154,7 +115,7 @@ export function getPublicExpertMarketSections(input: {
       const mapped = PUBLIC_SECTION_MAP[zone.id];
       const items = zone.experts
         .map((expertName) => ingestExperts.find((expert) => expert.name === expertName)?.id)
-        .filter((expertId): expertId is string => Boolean(expertId && PUBLIC_EXPERT_IDS[expertId]))
+        .filter((expertId): expertId is string => Boolean(expertId))
         .map((expertId) => toPublicItem({
           expertId,
           tenantId,
