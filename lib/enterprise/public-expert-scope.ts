@@ -30,7 +30,7 @@ const PUBLIC_EXPERT_SCOPE_SEEDS: PublicExpertScopeSeed[] = [
       "business-coach",
       "career-mentor"
     ],
-    knowledgeBaseId: "kb-business-coach",
+    knowledgeBaseId: "kb:expert-agent-expert-career",
     agentId: "expert-career"
   },
   {
@@ -162,15 +162,20 @@ function buildGenericExpertScopeSeed(expertId: string): PublicExpertScopeSeed | 
 }
 
 function findSeedForKeys(keys: string[]): PublicExpertScopeSeed | null {
+  const comparableKeys = dedupe([
+    ...keys,
+    ...keys.map(deriveExpertIdFromKey).filter(Boolean)
+  ]).map((item) => item.toLowerCase());
+
   const explicitSeed = PUBLIC_EXPERT_SCOPE_SEEDS.find((item) =>
-    keys.some((key) => item.aliases.some((alias) => key === alias.toLowerCase()))
+    comparableKeys.some((key) => item.aliases.some((alias) => key === alias.toLowerCase()))
   );
 
   if (explicitSeed) {
     return explicitSeed;
   }
 
-  for (const key of keys) {
+  for (const key of comparableKeys) {
     const genericSeed = buildGenericExpertScopeSeed(key);
 
     if (genericSeed) {

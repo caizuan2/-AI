@@ -568,8 +568,11 @@ export function ChatMessages({
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 py-6 md:px-6">
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isUser = message.role === "user";
+        const previousUserMessage = !isUser
+          ? [...messages.slice(0, index)].reverse().find((item) => item.role === "user")
+          : null;
 
         return (
           <article
@@ -585,7 +588,7 @@ export function ChatMessages({
                 userAvatarUrl={userAvatarUrl}
               />
             ) : (
-              <ChatMessageRenderer message={message} />
+              <ChatMessageRenderer message={message} userQuery={previousUserMessage?.content ?? null} />
             )}
           </article>
         );
