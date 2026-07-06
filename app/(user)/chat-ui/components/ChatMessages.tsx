@@ -7,6 +7,7 @@ import { sanitizeVisibleText } from "@/lib/ai-chat/visible-output-sanitizer";
 import { ChatMessageRenderer } from "@/app/(user)/app/components/chat/message-renderer";
 import { submitChatBehaviorFeedback, type ChatBehaviorFeedbackInput } from "../api";
 import { EmptyState } from "./EmptyState";
+import { safeCopyTextDetailed } from "../lib/clipboard";
 import {
   getCachedChatAttachmentPreviewUrl,
   getCurrentChatUserAvatarUrl,
@@ -313,45 +314,78 @@ function UserMessageActions({
   message: ChatMessageView;
   onEditUserMessage?: (content: string) => void;
 }) {
-  const [copied, setCopied] = React.useState(false);
+  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "manual" | "failed">("idle");
+  const [copyStatusMessage, setCopyStatusMessage] = React.useState("");
+  const selectionRef = React.useRef<HTMLTextAreaElement>(null);
 
   async function handleCopy() {
     const copyText = getUserMessageCopyText(message);
 
-    if (!navigator.clipboard) {
+    const result = await safeCopyTextDetailed(copyText, { selectTarget: selectionRef.current });
+
+    if (result.copied) {
+      setCopyState("copied");
+      setCopyStatusMessage(result.message);
+      window.setTimeout(() => setCopyState("idle"), 1200);
       return;
     }
 
-    await copyUserMessageToClipboard(copyText, navigator.clipboard);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    if (result.selected) {
+      setCopyState("manual");
+      setCopyStatusMessage(result.message);
+      window.setTimeout(() => setCopyState("idle"), 2400);
+      return;
+    }
+
+    setCopyState("failed");
+    setCopyStatusMessage(result.message);
+    window.setTimeout(() => setCopyState("idle"), 1800);
   }
 
   function handleEdit() {
     onEditUserMessage?.(message.content);
   }
 
+  const copyLabel = copyState === "copied"
+    ? "已复制"
+    : copyState === "manual"
+      ? "已选中"
+      : copyState === "failed"
+        ? "复制失败"
+        : "复制";
+
   return (
-    <div className="flex items-center justify-end gap-2 pr-1">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-        aria-label="复制用户消息"
-      >
-        {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-        {copied ? "已复制" : "复制"}
-      </button>
-      <button
-        type="button"
-        onClick={handleEdit}
-        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-        aria-label="编辑用户消息"
-      >
-        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-        编辑
-      </button>
-    </div>
+    <>
+      <textarea
+        ref={selectionRef}
+        value={getUserMessageCopyText(message)}
+        readOnly
+        tabIndex={-1}
+        aria-hidden="true"
+        className="fixed -left-[9999px] top-0 h-px w-px opacity-0"
+      />
+      <div className="flex items-center justify-end gap-2 pr-1">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+          aria-label="复制用户消息"
+          title={copyStatusMessage || "复制用户消息"}
+        >
+          {copyState === "copied" || copyState === "manual" ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+          {copyLabel}
+        </button>
+        <button
+          type="button"
+          onClick={handleEdit}
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+          aria-label="编辑用户消息"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          编辑
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -577,6 +611,8 @@ export function ChatMessages({
         return (
           <article
             key={message.id}
+            data-chat-message-id={message.id}
+            data-chat-message-role={message.role}
             className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
             onClickCapture={isUser ? undefined : (event) => handleAssistantClickCapture(event, message)}
           >

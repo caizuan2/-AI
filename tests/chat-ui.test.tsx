@@ -511,6 +511,11 @@ async function main() {
   assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
   assert.match(chatInputSource, /const hasText = value\.trim\(\)\.length > 0/);
   assert.match(chatInputSource, /const canSend = hasText && !loading/);
+  assert.match(chatInputSource, /textareaRef = React\.useRef<HTMLTextAreaElement/);
+  assert.match(chatInputSource, /const resizeTextarea = React\.useCallback/);
+  assert.match(chatInputSource, /wrap="soft"/);
+  assert.match(chatInputSource, /\[overflow-wrap:anywhere\]/);
+  assert.match(chatInputSource, /rounded-\[28px\]/);
   assert.match(chatInputSource, /onSubmit=\{handleSubmit\}/);
   assert.match(chatInputSource, /disabled=\{!loading && !canSend\}/);
   assert.match(chatInputSource, /enabled:bg-blue-600/);
@@ -547,6 +552,12 @@ async function main() {
   assert.match(validateAvatarFile(oversizedAvatarFile) ?? "", /2MB/);
   assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /setCurrentUser/);
   assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /avatar_url:\s*nextAvatarUrl/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /stableAvatarUrl = nextAvatarUrl === null \? null : refreshedAvatarUrl \|\| nextAvatarUrl/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /avatar_url:\s*stableAvatarUrl/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /pendingScrollToUserMessageIdRef\.current = nextUserMessage\.id/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /scrollChatMessageToTop\(targetMessageId\)/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /aria-label="滚动到底部"/);
+  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /<ArrowDown className="h-5 w-5"/);
   assert.equal(getCurrentChatUserDisplayName({
     id: "user_1",
     nickname: "蔡姑",
@@ -835,6 +846,10 @@ async function main() {
   assert.match(chatMessagesSource, /function UserMessageBlock/);
   assert.match(chatMessagesSource, /function UserMessageAvatar/);
   assert.match(chatMessagesSource, /function UserMessageActions/);
+  assert.match(chatMessagesSource, /safeCopyTextDetailed\(copyText, \{ selectTarget: selectionRef\.current \}\)/);
+  assert.match(chatMessagesSource, /copyState === "manual"/);
+  assert.doesNotMatch(chatMessagesSource, /if \(!navigator\.clipboard\)\s*\{\s*return;/);
+  assert.match(chatMessagesSource, /data-chat-message-id=\{message\.id\}/);
   assert.match(chatMessagesSource, /getCurrentChatUserAvatarUrl\(currentUser\)/);
   assert.match(chatMessagesSource, /getCurrentChatUserInitial\(currentUser\)/);
   assert.match(chatMessagesSource, /alt="当前用户头像"/);
