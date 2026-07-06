@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDown, Menu, Plus } from "lucide-react";
+import { ArrowDown, History, Menu, Plus } from "lucide-react";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { USER_APP_KIND } from "@/lib/app-version";
@@ -76,9 +76,12 @@ import type {
 } from "../types";
 
 const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
+const PROMPT_HISTORY_STORAGE_KEY_PREFIX = "chat-ui:prompt-history";
+const PROMPT_HISTORY_LIMIT = 30;
 const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
 const CHAT_SCROLL_BOTTOM_THRESHOLD = 96;
 const CHAT_MESSAGE_TOP_OFFSET = 16;
+const CHAT_MESSAGE_TOP_TOLERANCE = 8;
 
 type LinkDialogState = {
   kind: "share" | "group-chat";
@@ -136,6 +139,12 @@ function getPinnedConversationStorageKey(user: CurrentChatUser | null | undefine
   return identity ? `${PINNED_CONVERSATION_STORAGE_KEY_PREFIX}:${encodeURIComponent(identity)}` : null;
 }
 
+function getPromptHistoryStorageKey(user: CurrentChatUser | null | undefined) {
+  const identity = getChatUserStorageIdentity(user);
+
+  return identity ? `${PROMPT_HISTORY_STORAGE_KEY_PREFIX}:${encodeURIComponent(identity)}` : null;
+}
+
 function readPinnedConversationIds(storageKey: string | null) {
   if (typeof window === "undefined" || !storageKey) {
     return new Set<string>();
@@ -148,6 +157,92 @@ function readPinnedConversationIds(storageKey: string | null) {
   } catch {
     return new Set<string>();
   }
+}
+
+function readPromptHistory(storageKey: string | null) {
+  if (typeof window === "undefined" || !storageKey) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+
+    return Array.isArray(parsed)
+      ? parsed
+        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        .slice(0, PROMPT_HISTORY_LIMIT)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePromptHistory(storageKey: string | null, prompts: string[]) {
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(storageKey, JSON.stringify(prompts.slice(0, PROMPT_HISTORY_LIMIT)));
+  } catch {
+    // Prompt history is a convenience panel; storage failures should not block chatting.
+  }
+}
+
+function addPromptHistoryItem(prompts: string[], text: string) {
+  const nextPrompt = text.trim();
+
+  if (!nextPrompt) {
+    return prompts;
+  }
+
+  const duplicatedPrompt = nextPrompt.replace(/\s+/g, " ");
+  const existingPrompts = prompts.filter((prompt) => prompt.trim().replace(/\s+/g, " ") !== duplicatedPrompt);
+
+  return [nextPrompt, ...existingPrompts].slice(0, PROMPT_HISTORY_LIMIT);
+}
+
+function readStoredAvatarUrl(user: CurrentChatUser | null | undefined) {
+  if (typeof window === "undefined" || !user) {
+    return null;
+  }
+
+  try {
+    return window.localStorage.getItem(getChatUserAvatarStorageKey(user));
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAvatarUrl(user: CurrentChatUser | null | undefined, avatarUrl: string | null) {
+  if (typeof window === "undefined" || !user) {
+    return;
+  }
+
+  try {
+    const storageKey = getChatUserAvatarStorageKey(user);
+
+    if (avatarUrl) {
+      window.localStorage.setItem(storageKey, avatarUrl);
+      return;
+    }
+
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Avatar persistence is mirrored by the API; local storage is only an immediate UI fallback.
+  }
+}
+
+function mergeCurrentUserAvatar(user: CurrentChatUser, avatarUrl: string | null): CurrentChatUser {
+  return {
+    ...user,
+    avatar_url: avatarUrl,
+    avatarUrl: avatarUrl,
+    avatar: avatarUrl,
+    profile_image: avatarUrl,
+    profileImage: avatarUrl,
+    image: avatarUrl
+  };
 }
 
 function writePinnedConversationIds(ids: Set<string>, storageKey: string | null) {
@@ -219,6 +314,14 @@ function getChatMessageScrollTop(container: HTMLElement, target: HTMLElement) {
   return Math.max(0, container.scrollTop + targetRect.top - containerRect.top - CHAT_MESSAGE_TOP_OFFSET);
 }
 
+function isChatMessagePinnedToTop(container: HTMLElement, target: HTMLElement) {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+  const distance = Math.abs(targetRect.top - containerRect.top - CHAT_MESSAGE_TOP_OFFSET);
+
+  return distance <= CHAT_MESSAGE_TOP_TOLERANCE;
+}
+
 function isImageLikeAttachment(attachment: ChatAttachmentDraft) {
   return (
     attachment.type === "image" ||
@@ -266,6 +369,69 @@ function writeCachedChatModeDecision(cacheKey: string, decision: ChatModeDecisio
   }
 }
 
+function PromptHistoryRail({
+  prompts,
+  onSelect
+}: {
+  prompts: string[];
+  onSelect: (prompt: string) => void;
+}) {
+  return (
+    <aside
+      aria-label="提示词记录栏"
+      className="group absolute bottom-32 right-3 top-24 z-20 hidden lg:flex"
+    >
+      <div className="pointer-events-auto flex h-full w-8 items-center justify-center">
+        <button
+          type="button"
+          className="focus-ring flex h-20 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-400 shadow-sm shadow-slate-200/70 transition hover:text-slate-700"
+          aria-label="展开提示词记录"
+          title="提示词记录"
+        >
+          <History className="h-4 w-4" aria-hidden="true" />
+        </button>
+      </div>
+      <div className="pointer-events-auto absolute right-0 top-0 hidden max-h-[min(70vh,560px)] w-80 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-300/50 group-focus-within:block group-hover:block">
+        <div className="border-b border-slate-100 px-4 py-3">
+          <div className="text-sm font-semibold text-slate-900">提示词记录</div>
+          <div className="mt-1 text-xs text-slate-500">移动到右侧记录栏可查看，点击可回填输入框。</div>
+        </div>
+        <div className="max-h-[calc(min(70vh,560px)-72px)] space-y-2 overflow-y-auto p-3">
+          {prompts.length > 0 ? (
+            prompts.map((prompt, index) => (
+              <button
+                key={`${index}-${prompt.slice(0, 32)}`}
+                type="button"
+                onClick={() => onSelect(prompt)}
+                className="focus-ring flex w-full gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 transition hover:border-blue-100 hover:bg-blue-50 hover:text-slate-950"
+                title={prompt}
+              >
+                <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">
+                  {index + 1}
+                </span>
+                <span
+                  className="min-w-0 flex-1 overflow-hidden leading-5"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 2
+                  }}
+                >
+                  {prompt}
+                </span>
+              </button>
+            ))
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-500">
+              发送后的提示词会保存在这里。
+            </div>
+          )}
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 export function ChatShell() {
   const [mode, setMode] = React.useState<ChatMode>("fast");
   const [enableDeepThinking] = React.useState(false);
@@ -276,6 +442,7 @@ export function ChatShell() {
   const [messages, setMessages] = React.useState<ChatMessageView[]>([]);
   const [input, setInput] = React.useState("");
   const [inputAttachments, setInputAttachments] = React.useState<ChatAttachmentDraft[]>([]);
+  const [promptHistory, setPromptHistory] = React.useState<string[]>([]);
   const [manualChatMode, setManualChatMode] = React.useState<ChatModeKey | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [historyLoading, setHistoryLoading] = React.useState(false);
@@ -299,6 +466,7 @@ export function ChatShell() {
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
   const [sidebarUserToggled, setSidebarUserToggled] = React.useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = React.useState(false);
+  const [scrollFocusMessageId, setScrollFocusMessageId] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
   const activeAskAbortRef = React.useRef<AbortController | null>(null);
@@ -310,6 +478,7 @@ export function ChatShell() {
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
   const currentUserIdentity = getChatUserStorageIdentity(currentUser);
   const pinnedConversationStorageKey = getPinnedConversationStorageKey(currentUser);
+  const promptHistoryStorageKey = getPromptHistoryStorageKey(currentUser);
   const visibleConversations = React.useMemo(() => {
     const originalIndex = new Map(conversations.map((conversation, index) => [conversation.id, index]));
 
@@ -357,9 +526,13 @@ export function ChatShell() {
 
   const refreshCurrentUser = React.useCallback(async (options: { cacheBust?: boolean } = {}) => {
     const result = await fetchCurrentChatUser(options);
+    const remoteAvatarUrl = getCurrentChatUserAvatarUrl(result.user);
+    const storedAvatarUrl = readStoredAvatarUrl(result.user);
+    const nextUser = mergeCurrentUserAvatar(result.user, remoteAvatarUrl || storedAvatarUrl || null);
 
-    setCurrentUser(result.user);
-    return result.user;
+    setCurrentUser(nextUser);
+    setCurrentAvatarUrl(getCurrentChatUserAvatarUrl(nextUser));
+    return nextUser;
   }, []);
 
   const loadConversations = React.useCallback(async () => {
@@ -457,6 +630,15 @@ export function ChatShell() {
   }, [currentUser, currentUserIdentity, currentUserLoaded]);
 
   React.useEffect(() => {
+    if (!currentUserLoaded || !currentUserIdentity) {
+      setPromptHistory([]);
+      return;
+    }
+
+    setPromptHistory(readPromptHistory(promptHistoryStorageKey));
+  }, [currentUserIdentity, currentUserLoaded, promptHistoryStorageKey]);
+
+  React.useEffect(() => {
     if (!currentUser) {
       setCurrentAvatarUrl(null);
       return;
@@ -469,11 +651,7 @@ export function ChatShell() {
       return;
     }
 
-    try {
-      setCurrentAvatarUrl(window.localStorage.getItem(getChatUserAvatarStorageKey(currentUser)));
-    } catch {
-      setCurrentAvatarUrl(null);
-    }
+    setCurrentAvatarUrl(readStoredAvatarUrl(currentUser));
   }, [currentUser]);
 
   const updateScrollToBottomVisibility = React.useCallback(() => {
@@ -514,13 +692,16 @@ export function ChatShell() {
       return false;
     }
 
+    const desiredTop = getChatMessageScrollTop(scrollContainer, target);
+    const maxTop = Math.max(0, scrollContainer.scrollHeight - scrollContainer.clientHeight);
+
     scrollContainer.scrollTo({
-      top: getChatMessageScrollTop(scrollContainer, target),
+      top: Math.min(desiredTop, maxTop),
       behavior
     });
     window.requestAnimationFrame(updateScrollToBottomVisibility);
 
-    return true;
+    return desiredTop <= maxTop + CHAT_MESSAGE_TOP_TOLERANCE || isChatMessagePinnedToTop(scrollContainer, target);
   }, [updateScrollToBottomVisibility]);
 
   React.useEffect(() => {
@@ -543,9 +724,21 @@ export function ChatShell() {
   React.useEffect(() => {
     const targetMessageId = pendingScrollToUserMessageIdRef.current;
 
-    if (targetMessageId && scrollChatMessageToTop(targetMessageId)) {
-      pendingScrollToUserMessageIdRef.current = null;
-      return undefined;
+    if (targetMessageId) {
+      setScrollFocusMessageId((current) => current ?? targetMessageId);
+
+      if (scrollChatMessageToTop(targetMessageId, "auto")) {
+        pendingScrollToUserMessageIdRef.current = null;
+        return undefined;
+      }
+
+      const frame = window.requestAnimationFrame(() => {
+        if (scrollChatMessageToTop(targetMessageId, "auto")) {
+          pendingScrollToUserMessageIdRef.current = null;
+        }
+      });
+
+      return () => window.cancelAnimationFrame(frame);
     }
 
     if (pendingScrollToBottomRef.current) {
@@ -557,13 +750,25 @@ export function ChatShell() {
     const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
 
     return () => window.cancelAnimationFrame(frame);
-  }, [messages.length, scrollChatMessageToTop, scrollChatToBottom, updateScrollToBottomVisibility]);
+  }, [messages, scrollFocusMessageId, scrollChatMessageToTop, scrollChatToBottom, updateScrollToBottomVisibility]);
 
   React.useEffect(() => {
     const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
 
     return () => window.cancelAnimationFrame(frame);
   }, [loading, messages, updateScrollToBottomVisibility]);
+
+  React.useEffect(() => {
+    if (loading || !scrollFocusMessageId || pendingScrollToUserMessageIdRef.current) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setScrollFocusMessageId((current) => (current === scrollFocusMessageId ? null : current));
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [loading, scrollFocusMessageId]);
 
   React.useEffect(() => {
     if (!actionFeedback?.message) {
@@ -679,6 +884,7 @@ export function ChatShell() {
     activeAskAbortRef.current = null;
     pendingScrollToUserMessageIdRef.current = null;
     pendingScrollToBottomRef.current = false;
+    setScrollFocusMessageId(null);
     historyRequestIdRef.current += 1;
     setConversationId(null);
     setConversations([]);
@@ -709,6 +915,8 @@ export function ChatShell() {
   async function handleSelectConversation(nextConversationId: string) {
     activeAskAbortRef.current?.abort();
     activeAskAbortRef.current = null;
+    pendingScrollToUserMessageIdRef.current = null;
+    setScrollFocusMessageId(null);
     const requestId = historyRequestIdRef.current + 1;
 
     historyRequestIdRef.current = requestId;
@@ -753,6 +961,7 @@ export function ChatShell() {
     historyRequestIdRef.current += 1;
     pendingScrollToUserMessageIdRef.current = null;
     pendingScrollToBottomRef.current = false;
+    setScrollFocusMessageId(null);
     setHistoryLoading(false);
     setConversationId(nextState.conversationId);
     setMessages(nextState.messages);
@@ -1294,41 +1503,40 @@ export function ChatShell() {
 
   function handleAvatarSaved(nextAvatarUrl: string | null) {
     clearActionFeedback();
+    writeStoredAvatarUrl(currentUser, nextAvatarUrl);
     setCurrentAvatarUrl(nextAvatarUrl);
-    setCurrentUser((user) => (
-      user
-        ? {
-            ...user,
-            avatar_url: nextAvatarUrl,
-            avatarUrl: nextAvatarUrl,
-            avatar: nextAvatarUrl,
-            profile_image: nextAvatarUrl,
-            profileImage: nextAvatarUrl,
-            image: nextAvatarUrl
-          }
-        : user
-    ));
+    setCurrentUser((user) => (user ? mergeCurrentUserAvatar(user, nextAvatarUrl) : user));
     void refreshCurrentUser({ cacheBust: true })
       .then((user) => {
         const refreshedAvatarUrl = getCurrentChatUserAvatarUrl(user);
         const stableAvatarUrl = nextAvatarUrl === null ? null : refreshedAvatarUrl || nextAvatarUrl;
 
+        writeStoredAvatarUrl(user, stableAvatarUrl);
         setCurrentAvatarUrl(stableAvatarUrl);
-        setCurrentUser((current) => ({
+        setCurrentUser((current) => mergeCurrentUserAvatar({
           ...(current ?? user),
-          ...user,
-          avatar_url: stableAvatarUrl,
-          avatarUrl: stableAvatarUrl,
-          avatar: stableAvatarUrl,
-          profile_image: stableAvatarUrl,
-          profileImage: stableAvatarUrl,
-          image: stableAvatarUrl
-        }));
+          ...user
+        }, stableAvatarUrl));
       })
       .catch((requestError) => {
         console.warn("[chat-ui] refresh current user after avatar save failed", requestError);
       });
     setActionSuccess(nextAvatarUrl ? "头像已更新。" : "已恢复默认头像。", "avatar");
+  }
+
+  function rememberPromptHistory(text: string) {
+    setPromptHistory((current) => {
+      const next = addPromptHistoryItem(current, text);
+
+      writePromptHistory(promptHistoryStorageKey, next);
+      return next;
+    });
+  }
+
+  function handlePromptHistorySelect(prompt: string) {
+    setInput(prompt);
+    setManualChatMode(null);
+    showNotice("已填入输入框，可修改后发送。");
   }
 
   async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
@@ -1432,6 +1640,8 @@ export function ChatShell() {
       localAssistantMessageId = nextAssistantMessage.id;
       activeAskAbortRef.current = abortController;
       pendingScrollToUserMessageIdRef.current = nextUserMessage.id;
+      rememberPromptHistory(text);
+      setScrollFocusMessageId(nextUserMessage.id);
       setInput("");
       setInputAttachments([]);
       setManualChatMode(null);
@@ -1692,6 +1902,9 @@ export function ChatShell() {
       return true;
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        pendingScrollToUserMessageIdRef.current = null;
+        setScrollFocusMessageId(null);
+
         if (localUserMessage && localAssistantMessageId) {
           const failedMessageId = localUserMessage.id;
           const stoppedAssistantId = localAssistantMessageId;
@@ -1721,6 +1934,9 @@ export function ChatShell() {
       }
 
       if (localUserMessage) {
+        pendingScrollToUserMessageIdRef.current = null;
+        setScrollFocusMessageId(null);
+
         const failedMessageId = localUserMessage.id;
         const failedAssistantId = localAssistantMessageId;
 
@@ -1898,9 +2114,12 @@ export function ChatShell() {
                 currentUser={currentUser}
                 userName={currentUserName}
                 userAvatarUrl={currentAvatarUrl}
+                focusMessageId={scrollFocusMessageId}
               />
             )}
           </div>
+
+          <PromptHistoryRail prompts={promptHistory} onSelect={handlePromptHistorySelect} />
 
           {showScrollToBottom ? (
             <button

@@ -141,6 +141,7 @@ function SafeAvatar({
       {cleanAvatarUrl && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img
+          key={cleanAvatarUrl}
           src={cleanAvatarUrl}
           alt=""
           className={imageClassName}

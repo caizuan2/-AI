@@ -24,6 +24,7 @@ interface ChatMessagesProps {
   currentUser?: CurrentChatUser | null;
   userName?: string | null;
   userAvatarUrl?: string | null;
+  focusMessageId?: string | null;
 }
 
 function formatMessageTime(value: string) {
@@ -453,6 +454,7 @@ function UserMessageAvatar({
       <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-bold text-slate-700">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
+          key={avatarUrl}
           src={avatarUrl}
           alt="当前用户头像"
           className="h-full w-full object-cover"
@@ -484,7 +486,8 @@ export function ChatMessages({
   onEditUserMessage,
   currentUser = null,
   userName = null,
-  userAvatarUrl = null
+  userAvatarUrl = null,
+  focusMessageId = null
 }: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
   const dwellReportedRef = React.useRef(new Set<string>());
@@ -629,6 +632,14 @@ export function ChatMessages({
           </article>
         );
       })}
+
+      {focusMessageId ? (
+        <div
+          aria-hidden="true"
+          data-chat-focus-spacer={focusMessageId}
+          className="min-h-[calc(100vh-18rem)] shrink-0"
+        />
+      ) : null}
 
     </div>
   );
