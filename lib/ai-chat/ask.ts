@@ -1196,6 +1196,9 @@ export async function handleAiChatAsk(
   const primaryAction = readNestedJsonObject(businessMetadata, "primaryAction");
   const autoSalesAgentMetadata = readNestedJsonObject(businessMetadata, "autoSalesAgent") ?? null;
 
+  const providerMainAnswer = answer;
+  const providerCustomerAnswer = customerAnswer;
+
   businessSchemaGuard = guardBusinessOutputSchema({
     response: answer,
     intent: trimString(businessMetadata?.intent) || "knowledge_user",
@@ -1203,12 +1206,10 @@ export async function handleAiChatAsk(
     standardReply: customerAnswer || trimString(primaryAction?.copySuggestion) || trimString(businessMetadata?.closingScript),
     nextAction: trimString(businessMetadata?.nextBestQuestion)
   });
-  answer = businessSchemaGuard.response;
-  customerAnswer = answer;
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
-  const rawAnswerBeforeFinalizer = answer;
-  const rawCustomerAnswerBeforeFinalizer = customerAnswer;
+  const rawAnswerBeforeFinalizer = providerMainAnswer || businessSchemaGuard.response;
+  const rawCustomerAnswerBeforeFinalizer = providerCustomerAnswer || businessSchemaGuard.response;
   const finalizedAnswer = finalizeUserAnswer({
     rawAnswer: rawAnswerBeforeFinalizer,
     customerAnswer: rawCustomerAnswerBeforeFinalizer,
@@ -1218,7 +1219,10 @@ export async function handleAiChatAsk(
     userMessage: question
   });
 
-  answer = formatFinalizedAnswerForDisplay(finalizedAnswer);
+  const finalizedDisplayAnswer = formatFinalizedAnswerForDisplay(finalizedAnswer);
+  answer = providerStatus === "ok" && rawAnswerBeforeFinalizer
+    ? rawAnswerBeforeFinalizer
+    : finalizedDisplayAnswer;
   customerAnswer = finalizedAnswer.customerReply;
 
   const actualModel = modelUsed ?? osContext.route.actualModel;

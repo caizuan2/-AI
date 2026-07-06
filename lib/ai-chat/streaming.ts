@@ -282,8 +282,14 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     readString(runtimeInput.query) ||
     readString(result.message) ||
     readString(result.question);
+  const preservedMainAnswer =
+    readString(result.rawAnswerBeforeFinalizer) ||
+    readString(result.rawContent) ||
+    readString(result.rawText) ||
+    readString(result.rawAnswer) ||
+    readString(result.answer);
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
-    rawAnswer: result.answer,
+    rawAnswer: preservedMainAnswer || result.answer,
     customerAnswer: result.customer_answer ?? undefined,
     sources: getFinalizerSources(result),
     userMessage,
@@ -292,7 +298,10 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
   const debug = isRecord(metadata.debug) ? metadata.debug : {};
   const normalizedResult = {
     ...result,
-    answer: formatFinalizedAnswerForDisplay(finalizedAnswer),
+    answer: preservedMainAnswer || formatFinalizedAnswerForDisplay(finalizedAnswer),
+    rawAnswerBeforeFinalizer: preservedMainAnswer || null,
+    rawContent: preservedMainAnswer || null,
+    rawText: preservedMainAnswer || null,
     customer_answer: finalizedAnswer.customerReply,
     finalized_answer: finalizedAnswer
   };
@@ -364,7 +373,10 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
 
   return {
     ...normalizedResult,
-    answer: formatFinalizedAnswerForDisplay(runtimeFinalizedAnswer),
+    answer: preservedMainAnswer || formatFinalizedAnswerForDisplay(runtimeFinalizedAnswer),
+    rawAnswerBeforeFinalizer: preservedMainAnswer || null,
+    rawContent: preservedMainAnswer || null,
+    rawText: preservedMainAnswer || null,
     customerCopy: runtimeOutput.customerCopy,
     customer_answer: runtimeOutput.customerCopy,
     finalized_answer: runtimeFinalizedAnswer,
