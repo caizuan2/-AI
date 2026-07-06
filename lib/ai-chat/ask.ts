@@ -28,6 +28,7 @@ import {
   finalizeUserAnswer,
   formatFinalizedAnswerForDisplay
 } from "@/lib/ai-chat/response-finalizer";
+import { normalizeUserChatMarkdown } from "@/lib/ai-chat/user-chat-markdown";
 import { isConversationSoftDeleted } from "@/lib/conversation-control/metadata";
 import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
 import { searchRuntimeMemories } from "@/lib/enterprise/ingest-memory-runtime-search";
@@ -1208,8 +1209,8 @@ export async function handleAiChatAsk(
   });
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
-  const rawAnswerBeforeFinalizer = providerMainAnswer || businessSchemaGuard.response;
-  const rawCustomerAnswerBeforeFinalizer = providerCustomerAnswer || businessSchemaGuard.response;
+  const rawAnswerBeforeFinalizer = normalizeUserChatMarkdown(providerMainAnswer || businessSchemaGuard.response);
+  const rawCustomerAnswerBeforeFinalizer = normalizeUserChatMarkdown(providerCustomerAnswer || businessSchemaGuard.response);
   const finalizedAnswer = finalizeUserAnswer({
     rawAnswer: rawAnswerBeforeFinalizer,
     customerAnswer: rawCustomerAnswerBeforeFinalizer,
@@ -1227,7 +1228,7 @@ export async function handleAiChatAsk(
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
-  const outputControlledAnswer = processAIOutput(answer, {
+  const outputControlledAnswer = processAIOutput(normalizeUserChatMarkdown(answer), {
     model: actualModel,
     source: "ai_chat_ask",
     mode

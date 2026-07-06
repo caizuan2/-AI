@@ -3,6 +3,7 @@ import {
   sanitizeVisibleSources,
   sanitizeVisibleText
 } from "@/lib/ai-chat/visible-output-sanitizer";
+import { normalizeUserChatMarkdown } from "@/lib/ai-chat/user-chat-markdown";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import type { ChatMessageView, ChatSource, FinalizedAnswerView } from "../types";
 
@@ -386,7 +387,7 @@ export function getNaturalMarkdownAnswerText(answer: unknown, extraCandidates: u
       continue;
     }
 
-    return processAIOutput(naturalAnswer, {
+    return processAIOutput(normalizeUserChatMarkdown(naturalAnswer), {
       source: "user_chat_renderer",
       mode: "chatgpt_bubble"
     }).output;
@@ -419,7 +420,7 @@ export function getFinalNaturalMarkdownAnswerText(answer: unknown, extraCandidat
       continue;
     }
 
-    return processAIOutput(naturalAnswer, {
+    return processAIOutput(normalizeUserChatMarkdown(naturalAnswer), {
       source: "user_chat_renderer",
       mode: "final_answer_first"
     }).output;
