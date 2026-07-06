@@ -41,6 +41,10 @@ interface ProductAnswerViewProps {
   className?: string;
 }
 
+type NaturalAnswerSegment =
+  | { kind: "markdown"; text: string }
+  | { kind: "customerScript"; title: string; text: string };
+
 function CopyMiniButton({
   text,
   label = "复制",
@@ -120,6 +124,168 @@ function CopyMiniButton({
   );
 }
 
+function normalizeScriptHeadingText(line: string) {
+  return line
+    .trim()
+    .replace(/^>\s*/, "")
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.、]\s*/, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseCustomerScriptHeading(line: string) {
+  const normalized = normalizeScriptHeadingText(line);
+
+  if (!normalized) {
+    return null;
+  }
+
+  const labelPatterns = [
+    /^(可直接(?:复制)?(?:发给|给)客户|复制给客户|客户(?:可复制)?话术|客户回复|标准回复(?:话术)?|直接复制(?:使用)?|对外话术|外发话术|您可以这样发给客户|可以这样发给客户)\s*[：:]?\s*(.*)$/i,
+    /^(话术\s*(?:[一二三四五六七八九十\d]+)?(?:[（(][^）)]{1,24}[）)])?)\s*[：:]?\s*(.*)$/i
+  ];
+
+  for (const pattern of labelPatterns) {
+    const match = normalized.match(pattern);
+
+    if (!match) {
+      continue;
+    }
+
+    return {
+      title: match[1].replace(/[：:]$/, "").trim() || "客户话术",
+      firstLine: match[2]?.trim() ?? ""
+    };
+  }
+
+  return null;
+}
+
+function isNaturalAnswerSectionHeading(line: string) {
+  const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
+
+  if (!normalized) {
+    return false;
+  }
+
+  if (/^#{1,6}\s+/.test(line.trim())) {
+    return true;
+  }
+
+  return /^(核心结论|一句话思路|详细分析|使用前建议|使用建议|注意事项|下一步(?:动作|建议)?|补充说明|引用来源|总结|诊断|处理建议|行动建议)$/i.test(normalized);
+}
+
+function appendMarkdownSegment(segments: NaturalAnswerSegment[], text: string) {
+  const normalized = text.trim();
+
+  if (!normalized) {
+    return;
+  }
+
+  const previous = segments[segments.length - 1];
+
+  if (previous?.kind === "markdown") {
+    previous.text = `${previous.text}\n\n${normalized}`.trim();
+    return;
+  }
+
+  segments.push({ kind: "markdown", text: normalized });
+}
+
+function appendCustomerScriptSegment(segments: NaturalAnswerSegment[], title: string, text: string) {
+  const normalized = text.trim();
+
+  if (!normalized) {
+    appendMarkdownSegment(segments, title);
+    return;
+  }
+
+  segments.push({
+    kind: "customerScript",
+    title: title.trim() || "客户话术",
+    text: normalized
+  });
+}
+
+function splitMarkdownScriptHeadings(markdown: string) {
+  const segments: NaturalAnswerSegment[] = [];
+  const markdownLines: string[] = [];
+  let activeScript: { title: string; lines: string[] } | null = null;
+
+  function flushMarkdown() {
+    appendMarkdownSegment(segments, markdownLines.join("\n"));
+    markdownLines.length = 0;
+  }
+
+  function flushScript() {
+    if (!activeScript) {
+      return;
+    }
+
+    appendCustomerScriptSegment(segments, activeScript.title, activeScript.lines.join("\n"));
+    activeScript = null;
+  }
+
+  for (const line of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    const scriptHeading = parseCustomerScriptHeading(line);
+
+    if (scriptHeading) {
+      flushScript();
+      flushMarkdown();
+      activeScript = {
+        title: scriptHeading.title,
+        lines: scriptHeading.firstLine ? [scriptHeading.firstLine] : []
+      };
+      continue;
+    }
+
+    if (activeScript && isNaturalAnswerSectionHeading(line)) {
+      flushScript();
+      markdownLines.push(line);
+      continue;
+    }
+
+    if (activeScript) {
+      activeScript.lines.push(line);
+      continue;
+    }
+
+    markdownLines.push(line);
+  }
+
+  flushScript();
+  flushMarkdown();
+
+  return segments;
+}
+
+const inlineCustomerScriptPattern =
+  /(?:^|\n|[ \t])(?:[（(]\s*)?(您可以这样发给客户|可以这样发给客户|可直接发给客户|复制给客户|客户话术)(?:\s*[）)])?\s*[：:，,]?\s*[“"]([\s\S]{8,1200}?)[”"]/g;
+
+export function splitNaturalAnswerForCustomerScriptCards(text: string): NaturalAnswerSegment[] {
+  const segments: NaturalAnswerSegment[] = [];
+  let lastIndex = 0;
+  inlineCustomerScriptPattern.lastIndex = 0;
+
+  let match: RegExpExecArray | null = inlineCustomerScriptPattern.exec(text);
+
+  while (match) {
+    const index = match.index;
+
+    splitMarkdownScriptHeadings(text.slice(lastIndex, index)).forEach((segment) => segments.push(segment));
+    appendCustomerScriptSegment(segments, match[1] || "客户话术", match[2] || "");
+    lastIndex = index + match[0].length;
+    match = inlineCustomerScriptPattern.exec(text);
+  }
+
+  splitMarkdownScriptHeadings(text.slice(lastIndex)).forEach((segment) => segments.push(segment));
+
+  return segments.length > 0 ? segments : [{ kind: "markdown", text }];
+}
+
 function markdownComponents() {
   return {
     p: ({ children }: { children?: React.ReactNode }) => <p className="mb-3 last:mb-0">{children}</p>,
@@ -157,6 +323,33 @@ function markdownComponents() {
       <td className="border-b border-slate-200 px-2 py-2 align-top text-slate-700">{children}</td>
     )
   };
+}
+
+function CustomerScriptInlineCard({
+  title,
+  text,
+  index
+}: {
+  title: string;
+  text: string;
+  index: number;
+}) {
+  return (
+    <section className="not-prose my-3 rounded-2xl border border-emerald-100 bg-white px-4 py-3 shadow-sm shadow-emerald-950/5">
+      <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-900">
+          <MessageSquareText className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+          <span>{title || `客户话术 ${index + 1}`}</span>
+        </div>
+        <CopyMiniButton text={text} label="复制话术" />
+      </div>
+      <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-headings:mb-2 prose-headings:mt-3 prose-headings:text-[15px] prose-headings:font-semibold prose-p:my-2 prose-li:my-1">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
+          {text}
+        </ReactMarkdown>
+      </div>
+    </section>
+  );
 }
 
 function formatScore(score: unknown) {
@@ -205,6 +398,10 @@ export function ProductAnswerView({
     () => getFinalNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
     [answerForDisplay, rawAnswerText]
   );
+  const naturalAnswerSegments = React.useMemo(
+    () => naturalAnswerText ? splitNaturalAnswerForCustomerScriptCards(naturalAnswerText) : [],
+    [naturalAnswerText]
+  );
   const display = React.useMemo(
     () => naturalAnswerText ? null : buildProductAnswerDisplay(answerForDisplay, sources, Boolean(hasRagHit)),
     [answerForDisplay, hasRagHit, naturalAnswerText, sources]
@@ -244,10 +441,26 @@ export function ProductAnswerView({
             />
           </div>
 
-          <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
-              {naturalAnswerText}
-            </ReactMarkdown>
+          <div className="space-y-4 text-[15px] leading-7">
+            {naturalAnswerSegments.map((segment, index) => (
+              segment.kind === "customerScript" ? (
+                <CustomerScriptInlineCard
+                  key={`script-${index}`}
+                  title={segment.title}
+                  text={segment.text}
+                  index={index}
+                />
+              ) : (
+                <div
+                  key={`markdown-${index}`}
+                  className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1"
+                >
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
+                    {segment.text}
+                  </ReactMarkdown>
+                </div>
+              )
+            ))}
           </div>
         </section>
 

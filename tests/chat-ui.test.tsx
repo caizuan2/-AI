@@ -66,6 +66,10 @@ import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarD
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
 import {
+  ProductAnswerView,
+  splitNaturalAnswerForCustomerScriptCards
+} from "../app/(user)/chat-ui/components/ProductAnswerView";
+import {
   CustomerAnswerCard,
   copyCustomerAnswerToClipboard
 } from "../app/(user)/chat-ui/components/CustomerAnswerCard";
@@ -76,6 +80,43 @@ import {
 } from "../app/(user)/chat-ui/lib/answer-format";
 
 async function main() {
+  const naturalCustomerScriptAnswer = [
+    "好的，我先保留完整分析。这类场景重点不是马上替伙伴下结论，而是先让他把客户画像、当前动作和真正卡住的点说清楚。",
+    "如果一开始只给一个很泛的答案，伙伴拿去对客户沟通时会缺少抓手，所以回答里需要保留判断逻辑、提问顺序和可直接复制的沟通话术。",
+    "下面这段就是在完整正文里额外标出一段可直接给客户使用的话术，正文其他部分仍然照常展示。",
+    "",
+    "话术一（通用版）：",
+    "收到。您先把客户的基本情况说一下，我再帮您组织更稳妥的回复。比如客户现在最担心的是安全性、效果，还是使用周期，我会根据这个点来给您一段更贴合的回复。",
+    "",
+    "使用前建议：",
+    "不要直接承诺结果，先确认客户最关心的问题，再根据对方回复决定下一步怎么讲。"
+  ].join("\n");
+  const naturalScriptSegments = splitNaturalAnswerForCustomerScriptCards(naturalCustomerScriptAnswer);
+
+  assert.equal(naturalScriptSegments.some((segment) => segment.kind === "customerScript"), true);
+
+  const naturalScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: naturalCustomerScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={naturalCustomerScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(naturalScriptMarkup, /复制答案/);
+  assert.match(naturalScriptMarkup, /复制话术/);
+  assert.match(naturalScriptMarkup, /话术一（通用版）/);
+  assert.match(naturalScriptMarkup, /收到。您先把客户的基本情况说一下/);
+  assert.match(naturalScriptMarkup, /使用前建议/);
+
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
   assert.match(chatUiPageSource, /<ClientAuthGate>/);
@@ -1016,10 +1057,10 @@ async function main() {
 
   assert.match(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
   assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
-  assert.match(chatMessagesMarkup, /小董AI处理建议/);
-  assert.match(chatMessagesMarkup, /建议你这样做/);
-  assert.match(chatMessagesMarkup, /详细分析/);
-  assert.match(chatMessagesMarkup, /可直接发给客户/);
+  assert.match(chatMessagesMarkup, /小董AI/);
+  assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
+  assert.match(chatMessagesMarkup, /引用来源/);
+  assert.match(chatMessagesMarkup, /退款处理流程/);
   assert.match(chatMessagesMarkup, /复制答案/);
   assert.doesNotMatch(chatMessagesMarkup, /RAG confidence/);
   assert.doesNotMatch(chatMessagesMarkup, /chunk: chunk_1/);
