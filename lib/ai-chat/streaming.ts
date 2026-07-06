@@ -4,6 +4,7 @@ import {
   formatFinalizedAnswerForDisplay,
   type FinalizedAnswer
 } from "@/lib/ai-chat/response-finalizer";
+import { normalizeUserChatMarkdown } from "@/lib/ai-chat/user-chat-markdown";
 import { routeUserChatToRuntimeV2 } from "@/lib/knowledge-runtime/runtime-v2-router";
 
 export type AiChatStreamEvent =
@@ -282,12 +283,13 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     readString(runtimeInput.query) ||
     readString(result.message) ||
     readString(result.question);
-  const preservedMainAnswer =
+  const preservedMainAnswer = normalizeUserChatMarkdown(
     readString(result.rawAnswerBeforeFinalizer) ||
     readString(result.rawContent) ||
     readString(result.rawText) ||
     readString(result.rawAnswer) ||
-    readString(result.answer);
+    readString(result.answer)
+  );
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
     rawAnswer: preservedMainAnswer || result.answer,
     customerAnswer: result.customer_answer ?? undefined,
