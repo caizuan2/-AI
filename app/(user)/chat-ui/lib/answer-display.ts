@@ -3,6 +3,7 @@ import {
   sanitizeVisibleSources,
   sanitizeVisibleText
 } from "@/lib/ai-chat/visible-output-sanitizer";
+import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import type { ChatMessageView, ChatSource, FinalizedAnswerView } from "../types";
 
 export interface CustomerReplyDisplay {
@@ -44,6 +45,13 @@ export interface ProductAnswerDisplay {
   fullAnswerText: string;
 }
 
+export interface DirectKnowledgeAnswerInput {
+  answer: FinalizedAnswerView | null;
+  userQuery?: string | null;
+  hasRagHit?: boolean | null;
+  sources?: ChatSource[] | null;
+}
+
 const MAX_CONCLUSION_LENGTH = 60;
 const MAX_DECISION_LENGTH = 40;
 const MAX_SUGGESTION_LENGTH = 40;
@@ -53,6 +61,7 @@ const CUSTOMER_REPLY_PREVIEW_LENGTH = 180;
 const CUSTOMER_REPLY_LONG_LENGTH = 300;
 
 const internalLinePatterns = [
+  /^(?:cold_user|warm_user|hot_user|buyer_user|lost_user|knowledge_user)$/i,
   /\b(?:prompt\.[\w.-]+|model_select|model_reason|model_fallback|model_metrics)\b/i,
   /\b(?:sourceApp|source_app|chunk|chunkId|chunk_id|kb_id|kbId|expert_id|expertId|tenant_id|tenantId)\b\s*[:=：]/i,
   /\b(?:debug|fallback|rules|endpoint|content-type|status)\b\s*[:=：]/i,
@@ -63,6 +72,7 @@ const internalLinePatterns = [
 const inlineReplacements: Array<[RegExp, string]> = [
   [/AI\s*Knowledge\s*OS\s*V[6-9](?:\.\d+)?/gi, ""],
   [/\bV[6-9](?:\.\d+)?\b/gi, ""],
+  [/\b(?:cold_user|warm_user|hot_user|buyer_user|lost_user|knowledge_user)\b/gi, ""],
   [/\bprompt\.[\w.-]+\s*[:：]?\s*[^\n。；！？]*/gi, ""],
   [/\bACTION_\d+\b\s*[:：-]?\s*/gi, ""],
   [/\bACTION\b\s*[:：-]?\s*/gi, ""],
@@ -103,6 +113,20 @@ function isLostHistoryAnswerText(value: string) {
     normalized.includes(pattern.replace(/\s+/g, ""))
   );
 }
+const factualKnowledgeQueryPattern =
+  /成分|配方|含量|有哪些|是什么|说明书|怎么使用|怎么用|使用方法|使用方式|用法|步骤|功效|作用|效果|适合|禁忌|注意事项|价格|多少钱|规格|周期|流程|教程|资料|标准答案|介绍|讲一下|说一下/i;
+const salesCommunicationQueryPattern =
+  /怎么回复|如何回复|客户说|客户问|客户拒绝|帮我回|话术|发给客户|回复客户|复制给客户|考虑考虑|太贵|成交|转化|推进|跟进|促单|逼单|下单|签约|复购|异议|客户.*(?:价格|顾虑|担心|怎么办|怎么处理|如何处理)|(?:价格|顾虑|担心).*(?:客户)/i;
+const weakGenericTemplatePattern =
+  /先确认客户(?:当前)?(?:真实)?(?:目标|情况)|再给出(?:简洁且)?稳妥的说明|最后引导客户(?:回复|进入)?下一步|我先不直接给您固定方案|现在想先了解使用方式、周期安排，还是适不适合自己|确认后我再帮您整理一个简单、稳妥、方便执行的下一步|这条历史消息没有保留可直接展示的最终正文/;
+const rawAnswerLeadPattern =
+  /^(?:\s*(?:#{1,6}\s*)?(?:小董AI处理建议|小董AI|DeepSeek\s*原文输出|模型输出|主答案|最终正文|最终回复)\s*[:：]?\s*)+/i;
+const forcedSectionStartPattern =
+  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:行动建议|详细分析|可直接发给客户|可直接复制给客户|三条现成话术|下一步动作|下一步|复制给客户|客户可复制话术)\s*[:：]\s*/i;
+const legacyBusinessHeadingPattern =
+  /(?:^|\n)\s*(?:#{1,6}\s*)?(?:【(?:用户意图|业务问题分析|问题判断|处理建议|商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)】\s*)+/g;
+const legacyBusinessStopPattern =
+  /(?:^|\n)\s*(?:#{1,6}\s*)?【(?:商业执行策略|推荐动作|标准回复话术|下一步行动|引用依据|引用来源)】/i;
 
 function asRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -270,6 +294,137 @@ export function pickSingleRawAssistantText(candidates: unknown[]) {
   }
 
   return "";
+}
+
+function isWeakGenericTemplate(text: string) {
+  const normalized = normalizeRawAssistantText(text);
+
+  if (!normalized) {
+    return true;
+  }
+
+  return weakGenericTemplatePattern.test(normalized);
+}
+
+function trimBeforePattern(text: string, pattern: RegExp) {
+  const match = text.match(pattern);
+
+  if (!match || typeof match.index !== "number") {
+    return text;
+  }
+
+  return text.slice(0, match.index).trim();
+}
+
+function extractMainAnswerBlock(text: unknown) {
+  const normalized = normalizeRawAssistantText(text);
+
+  if (!normalized) {
+    return "";
+  }
+
+  const mainAnswerMatch = normalized.match(/(?:^|\n)\s*(?:主答案|最终正文|最终回复)\s*[:：]\s*([\s\S]*)/i);
+  const base = mainAnswerMatch?.[1] ? mainAnswerMatch[1] : normalized;
+  const withoutForcedSections = trimBeforePattern(
+    trimBeforePattern(base, legacyBusinessStopPattern),
+    forcedSectionStartPattern
+  );
+
+  return withoutForcedSections.trim();
+}
+
+function cleanLegacyHeadings(text: string) {
+  return normalizeRawAssistantText(text)
+    .replace(rawAnswerLeadPattern, "")
+    .replace(legacyBusinessHeadingPattern, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function hasMeaningfulNaturalAnswer(text: string) {
+  const normalized = normalizeRawAssistantText(text);
+
+  if (!normalized || legacyHeadingOnlyPattern.test(normalized)) {
+    return false;
+  }
+
+  if (isWeakGenericTemplate(normalized) && normalized.length < 220) {
+    return false;
+  }
+
+  return true;
+}
+
+function extractNaturalAnswerCandidate(text: unknown) {
+  const mainBlock = extractMainAnswerBlock(text);
+  const cleaned = cleanLegacyHeadings(mainBlock);
+
+  return hasMeaningfulNaturalAnswer(cleaned) ? cleaned : "";
+}
+
+export function getNaturalMarkdownAnswerText(answer: unknown, extraCandidates: unknown[] = []) {
+  const record = asRecord(answer);
+  const candidates = [
+    ...extraCandidates,
+    record.freeformAnswer,
+    record.rawContent,
+    record.rawText,
+    record.rawAnswer,
+    record.answer,
+    record.content,
+    record.text,
+    getReplyText(record.customerReply),
+    getReplyText(record.customer_reply),
+    record.customerAnswer,
+    record.customer_answer
+  ];
+
+  for (const candidate of candidates) {
+    const naturalAnswer = extractNaturalAnswerCandidate(candidate);
+
+    if (!naturalAnswer) {
+      continue;
+    }
+
+    return processAIOutput(naturalAnswer, {
+      source: "user_chat_renderer",
+      mode: "chatgpt_bubble"
+    }).output;
+  }
+
+  return "";
+}
+
+export function shouldUseDirectKnowledgeAnswer(input: DirectKnowledgeAnswerInput) {
+  const query = normalizeAnswerText(input.userQuery ?? "");
+  const title = normalizeAnswerText(input.answer?.title ?? "");
+  const searchText = `${query}\n${title}`;
+
+  if (salesCommunicationQueryPattern.test(searchText)) {
+    return false;
+  }
+
+  if (factualKnowledgeQueryPattern.test(searchText)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function getDirectKnowledgeAnswerText(answer: unknown, extraCandidates: unknown[] = []) {
+  const record = asRecord(answer);
+  const text = pickSingleRawAssistantText([
+    record.freeformAnswer,
+    record.rawContent,
+    record.rawText,
+    record.rawAnswer,
+    record.answer,
+    record.content,
+    record.text,
+    ...extraCandidates
+  ]);
+
+  return isWeakGenericTemplate(text) ? "" : text;
 }
 
 export function getFinalizedRawAnswerText(answer: unknown) {
