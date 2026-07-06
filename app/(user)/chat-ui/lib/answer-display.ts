@@ -338,10 +338,11 @@ export function getNaturalMarkdownAnswerText(answer: unknown, extraCandidates: u
   const record = asRecord(answer);
   const candidates = [
     ...extraCandidates,
-    record.freeformAnswer,
     record.rawContent,
     record.rawText,
     record.rawAnswer,
+    record.rawAnswerBeforeFinalizer,
+    record.freeformAnswer,
     record.answer,
     record.content,
     record.text,
@@ -370,18 +371,19 @@ export function getNaturalMarkdownAnswerText(answer: unknown, extraCandidates: u
 export function getFinalNaturalMarkdownAnswerText(answer: unknown, extraCandidates: unknown[] = []) {
   const record = asRecord(answer);
   const candidates = [
+    ...extraCandidates,
+    record.rawContent,
+    record.rawText,
+    record.rawAnswer,
+    record.rawAnswerBeforeFinalizer,
     record.freeformAnswer,
     record.answer,
     record.content,
     record.text,
-    record.rawContent,
-    record.rawText,
-    record.rawAnswer,
     getReplyText(record.customerReply),
     getReplyText(record.customer_reply),
     record.customerAnswer,
-    record.customer_answer,
-    ...extraCandidates
+    record.customer_answer
   ];
 
   for (const candidate of candidates) {
@@ -419,14 +421,15 @@ export function shouldUseDirectKnowledgeAnswer(input: DirectKnowledgeAnswerInput
 export function getDirectKnowledgeAnswerText(answer: unknown, extraCandidates: unknown[] = []) {
   const record = asRecord(answer);
   const text = pickSingleRawAssistantText([
-    record.freeformAnswer,
+    ...extraCandidates,
+    record.rawAnswerBeforeFinalizer,
     record.rawContent,
     record.rawText,
     record.rawAnswer,
+    record.freeformAnswer,
     record.answer,
     record.content,
-    record.text,
-    ...extraCandidates
+    record.text
   ]);
 
   return isWeakGenericTemplate(text) ? "" : text;
@@ -436,18 +439,20 @@ export function getFinalizedRawAnswerText(answer: unknown) {
   const record = asRecord(answer);
 
   return pickSingleRawAssistantText([
-    getReplyText(record.customerReply),
-    getReplyText(record.customer_reply),
-    record.customerAnswer,
-    record.customer_answer,
-    record.standardReply,
-    record.standard_reply,
+    record.rawAnswerBeforeFinalizer,
     record.rawContent,
     record.rawText,
+    record.rawAnswer,
+    record.freeformAnswer,
     record.text,
     record.answer,
     record.content,
-    record.freeformAnswer
+    record.standardReply,
+    record.standard_reply,
+    getReplyText(record.customerReply),
+    getReplyText(record.customer_reply),
+    record.customerAnswer,
+    record.customer_answer
   ]);
 }
 
@@ -458,8 +463,17 @@ export function getUserRawAnswerText(message: ChatMessageView) {
   const metadataFinalizedAnswer = asRecord(metadata.finalizedAnswer);
 
   return pickSingleRawAssistantText([
+    metadata.rawAnswerBeforeFinalizer,
+    messageRecord.rawAnswerBeforeFinalizer,
+    messageRecord.rawContent,
+    messageRecord.rawText,
+    metadata.rawContent,
+    metadata.rawAnswer,
+    metadata.rawText,
+    metadata.answer,
     getFinalizedRawAnswerText(finalizedAnswer),
     getFinalizedRawAnswerText(metadataFinalizedAnswer),
+    message.content,
     message.customer_answer,
     message.customerCopy,
     getReplyText(metadata.customerReply),
@@ -467,14 +481,7 @@ export function getUserRawAnswerText(message: ChatMessageView) {
     metadata.customerAnswer,
     metadata.customer_answer,
     metadata.standardReply,
-    metadata.standard_reply,
-    message.content,
-    messageRecord.rawContent,
-    messageRecord.rawText,
-    metadata.rawContent,
-    metadata.rawAnswer,
-    metadata.rawText,
-    metadata.answer
+    metadata.standard_reply
   ]);
 }
 
