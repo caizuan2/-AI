@@ -18,7 +18,7 @@ import { sanitizeVisibleSources } from "@/lib/ai-chat/visible-output-sanitizer";
 import {
   buildProductAnswerDisplay,
   getFinalizedRawAnswerText,
-  getNaturalMarkdownAnswerText,
+  getFinalNaturalMarkdownAnswerText,
   type SalesAnswerModeKey
 } from "../lib/answer-display";
 import { safeCopyTextDetailed } from "../lib/clipboard";
@@ -202,7 +202,7 @@ export function ProductAnswerView({
     };
   }, [answer, userQuery]);
   const naturalAnswerText = React.useMemo(
-    () => getNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
+    () => getFinalNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
     [answerForDisplay, rawAnswerText]
   );
   const display = React.useMemo(

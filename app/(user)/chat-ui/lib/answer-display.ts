@@ -395,6 +395,39 @@ export function getNaturalMarkdownAnswerText(answer: unknown, extraCandidates: u
   return "";
 }
 
+export function getFinalNaturalMarkdownAnswerText(answer: unknown, extraCandidates: unknown[] = []) {
+  const record = asRecord(answer);
+  const candidates = [
+    record.freeformAnswer,
+    record.answer,
+    record.content,
+    record.text,
+    record.rawContent,
+    record.rawText,
+    record.rawAnswer,
+    getReplyText(record.customerReply),
+    getReplyText(record.customer_reply),
+    record.customerAnswer,
+    record.customer_answer,
+    ...extraCandidates
+  ];
+
+  for (const candidate of candidates) {
+    const naturalAnswer = extractNaturalAnswerCandidate(candidate);
+
+    if (!naturalAnswer) {
+      continue;
+    }
+
+    return processAIOutput(naturalAnswer, {
+      source: "user_chat_renderer",
+      mode: "final_answer_first"
+    }).output;
+  }
+
+  return "";
+}
+
 export function shouldUseDirectKnowledgeAnswer(input: DirectKnowledgeAnswerInput) {
   const query = normalizeAnswerText(input.userQuery ?? "");
   const title = normalizeAnswerText(input.answer?.title ?? "");
