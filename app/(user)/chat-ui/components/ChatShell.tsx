@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Menu, Plus } from "lucide-react";
+import { ArrowDown, Menu, Plus } from "lucide-react";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { USER_APP_KIND } from "@/lib/app-version";
@@ -77,6 +77,8 @@ import type {
 
 const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
 const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
+const CHAT_SCROLL_BOTTOM_THRESHOLD = 96;
+const CHAT_MESSAGE_TOP_OFFSET = 16;
 
 type LinkDialogState = {
   kind: "share" | "group-chat";
@@ -206,6 +208,17 @@ function shouldDefaultOpenSidebar() {
   return window.innerWidth >= 1024;
 }
 
+function isChatScrollNearBottom(element: HTMLElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= CHAT_SCROLL_BOTTOM_THRESHOLD;
+}
+
+function getChatMessageScrollTop(container: HTMLElement, target: HTMLElement) {
+  const containerRect = container.getBoundingClientRect();
+  const targetRect = target.getBoundingClientRect();
+
+  return Math.max(0, container.scrollTop + targetRect.top - containerRect.top - CHAT_MESSAGE_TOP_OFFSET);
+}
+
 function isImageLikeAttachment(attachment: ChatAttachmentDraft) {
   return (
     attachment.type === "image" ||
@@ -285,11 +298,14 @@ export function ChatShell() {
   const [renameError, setRenameError] = React.useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState>(null);
   const [sidebarUserToggled, setSidebarUserToggled] = React.useState(false);
+  const [showScrollToBottom, setShowScrollToBottom] = React.useState(false);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
   const activeAskAbortRef = React.useRef<AbortController | null>(null);
   const chatModeClassifyAbortRef = React.useRef<AbortController | null>(null);
   const activeUserIdentityRef = React.useRef<string | null>(null);
+  const pendingScrollToUserMessageIdRef = React.useRef<string | null>(null);
+  const pendingScrollToBottomRef = React.useRef(false);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
   const currentUserIdentity = getChatUserStorageIdentity(currentUser);
@@ -460,12 +476,94 @@ export function ChatShell() {
     }
   }, [currentUser]);
 
-  React.useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth"
+  const updateScrollToBottomVisibility = React.useCallback(() => {
+    const scrollContainer = scrollRef.current;
+
+    setShowScrollToBottom(Boolean(
+      scrollContainer &&
+      messages.length > 0 &&
+      !isChatScrollNearBottom(scrollContainer)
+    ));
+  }, [messages.length]);
+
+  const scrollChatToBottom = React.useCallback((behavior: ScrollBehavior = "smooth") => {
+    const scrollContainer = scrollRef.current;
+
+    if (!scrollContainer) {
+      return;
+    }
+
+    scrollContainer.scrollTo({
+      top: scrollContainer.scrollHeight,
+      behavior
     });
-  }, [messages, loading]);
+    setShowScrollToBottom(false);
+  }, []);
+
+  const scrollChatMessageToTop = React.useCallback((messageId: string, behavior: ScrollBehavior = "smooth") => {
+    const scrollContainer = scrollRef.current;
+
+    if (!scrollContainer) {
+      return false;
+    }
+
+    const target = Array.from(scrollContainer.querySelectorAll<HTMLElement>("[data-chat-message-id]"))
+      .find((element) => element.dataset.chatMessageId === messageId);
+
+    if (!target) {
+      return false;
+    }
+
+    scrollContainer.scrollTo({
+      top: getChatMessageScrollTop(scrollContainer, target),
+      behavior
+    });
+    window.requestAnimationFrame(updateScrollToBottomVisibility);
+
+    return true;
+  }, [updateScrollToBottomVisibility]);
+
+  React.useEffect(() => {
+    const scrollContainer = scrollRef.current;
+
+    if (!scrollContainer) {
+      return undefined;
+    }
+
+    updateScrollToBottomVisibility();
+    scrollContainer.addEventListener("scroll", updateScrollToBottomVisibility, { passive: true });
+    window.addEventListener("resize", updateScrollToBottomVisibility);
+
+    return () => {
+      scrollContainer.removeEventListener("scroll", updateScrollToBottomVisibility);
+      window.removeEventListener("resize", updateScrollToBottomVisibility);
+    };
+  }, [updateScrollToBottomVisibility]);
+
+  React.useEffect(() => {
+    const targetMessageId = pendingScrollToUserMessageIdRef.current;
+
+    if (targetMessageId && scrollChatMessageToTop(targetMessageId)) {
+      pendingScrollToUserMessageIdRef.current = null;
+      return undefined;
+    }
+
+    if (pendingScrollToBottomRef.current) {
+      pendingScrollToBottomRef.current = false;
+      scrollChatToBottom("auto");
+      return undefined;
+    }
+
+    const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages.length, scrollChatMessageToTop, scrollChatToBottom, updateScrollToBottomVisibility]);
+
+  React.useEffect(() => {
+    const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, messages, updateScrollToBottomVisibility]);
 
   React.useEffect(() => {
     if (!actionFeedback?.message) {
@@ -579,6 +677,8 @@ export function ChatShell() {
   function clearChatSessionState(options: { clearPinned?: boolean } = {}) {
     activeAskAbortRef.current?.abort();
     activeAskAbortRef.current = null;
+    pendingScrollToUserMessageIdRef.current = null;
+    pendingScrollToBottomRef.current = false;
     historyRequestIdRef.current += 1;
     setConversationId(null);
     setConversations([]);
@@ -629,6 +729,7 @@ export function ChatShell() {
 
       setConversationId(history.conversation.id || nextConversationId);
       setMode(normalizeChatMode(history.conversation.mode));
+      pendingScrollToBottomRef.current = true;
       setMessages(Array.isArray(history.messages) ? history.messages : []);
     } catch {
       if (historyRequestIdRef.current !== requestId) {
@@ -650,6 +751,8 @@ export function ChatShell() {
     const nextState = createNewChatState();
 
     historyRequestIdRef.current += 1;
+    pendingScrollToUserMessageIdRef.current = null;
+    pendingScrollToBottomRef.current = false;
     setHistoryLoading(false);
     setConversationId(nextState.conversationId);
     setMessages(nextState.messages);
@@ -1208,7 +1311,19 @@ export function ChatShell() {
     void refreshCurrentUser({ cacheBust: true })
       .then((user) => {
         const refreshedAvatarUrl = getCurrentChatUserAvatarUrl(user);
-        setCurrentAvatarUrl(refreshedAvatarUrl || nextAvatarUrl);
+        const stableAvatarUrl = nextAvatarUrl === null ? null : refreshedAvatarUrl || nextAvatarUrl;
+
+        setCurrentAvatarUrl(stableAvatarUrl);
+        setCurrentUser((current) => ({
+          ...(current ?? user),
+          ...user,
+          avatar_url: stableAvatarUrl,
+          avatarUrl: stableAvatarUrl,
+          avatar: stableAvatarUrl,
+          profile_image: stableAvatarUrl,
+          profileImage: stableAvatarUrl,
+          image: stableAvatarUrl
+        }));
       })
       .catch((requestError) => {
         console.warn("[chat-ui] refresh current user after avatar save failed", requestError);
@@ -1316,6 +1431,7 @@ export function ChatShell() {
       localUserMessage = nextUserMessage;
       localAssistantMessageId = nextAssistantMessage.id;
       activeAskAbortRef.current = abortController;
+      pendingScrollToUserMessageIdRef.current = nextUserMessage.id;
       setInput("");
       setInputAttachments([]);
       setManualChatMode(null);
@@ -1785,6 +1901,18 @@ export function ChatShell() {
               />
             )}
           </div>
+
+          {showScrollToBottom ? (
+            <button
+              type="button"
+              onClick={() => scrollChatToBottom()}
+              className="focus-ring absolute bottom-[7.25rem] left-1/2 z-30 inline-flex h-10 w-10 -translate-x-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-lg shadow-slate-300/40 transition hover:-translate-y-0.5 hover:border-slate-300 hover:text-slate-950"
+              aria-label="滚动到底部"
+              title="滚动到底部"
+            >
+              <ArrowDown className="h-5 w-5" aria-hidden="true" />
+            </button>
+          ) : null}
 
           <ChatQuickActions
             decision={finalChatModeDecision}

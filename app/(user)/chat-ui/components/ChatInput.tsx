@@ -287,11 +287,26 @@ export function ChatInput({
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
   const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
   const valueRef = React.useRef(value);
   const hasText = value.trim().length > 0;
   const canSend = hasText && !loading;
+
+  const resizeTextarea = React.useCallback(() => {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 40), 176);
+
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 176 ? "auto" : "hidden";
+  }, []);
 
   React.useEffect(() => {
     attachmentsRef.current = attachments;
@@ -300,7 +315,8 @@ export function ChatInput({
 
   React.useEffect(() => {
     valueRef.current = value;
-  }, [value]);
+    resizeTextarea();
+  }, [resizeTextarea, value]);
 
   async function submitCurrentMessage() {
     const submitted = await onSubmit(attachments);
@@ -458,7 +474,7 @@ export function ChatInput({
         onRemove={(attachmentId) => setAttachments((current) => removeChatAttachment(current, attachmentId))}
       />
 
-      <div className="relative flex min-h-[56px] items-center gap-2 rounded-full bg-white px-3 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
+      <div className="relative flex min-h-[56px] items-end gap-2 rounded-[28px] bg-white px-3 py-1.5 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
         <div className="relative">
           <button
             type="button"
@@ -479,6 +495,7 @@ export function ChatInput({
         </div>
 
         <Textarea
+          ref={textareaRef}
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={(event) => {
@@ -488,9 +505,10 @@ export function ChatInput({
             }
           }}
           placeholder={placeholder}
-          className="max-h-28 min-h-10 flex-1 resize-none border-0 bg-transparent px-1 py-3 text-base font-medium shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="max-h-44 min-h-10 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-1 py-2.5 text-base font-medium leading-6 shadow-none [overflow-wrap:anywhere] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
           rows={1}
+          wrap="soft"
         />
 
         {knowledgeBaseSelector}
