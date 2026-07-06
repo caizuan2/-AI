@@ -429,7 +429,13 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       undefined;
     const readAnswerField = <K extends keyof FinalizedAnswerView>(key: K): FinalizedAnswerView[K] | undefined =>
       (event.data?.finalized_answer?.[key] ?? runtimeOutput[key] ?? dataRecord[key]) as FinalizedAnswerView[K] | undefined;
-    const resolveRawAnswer = (finalizedAnswer: FinalizedAnswerView) => pickSingleRawAssistantText([
+    const readRawString = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : "";
+    const rawAnswerBeforeFinalizer = readRawString(dataRecord.rawAnswerBeforeFinalizer)
+      || readRawString(runtimeOutput.rawAnswerBeforeFinalizer);
+    const rawCustomerAnswerBeforeFinalizer = readRawString(dataRecord.rawCustomerAnswerBeforeFinalizer)
+      || readRawString(runtimeOutput.rawCustomerAnswerBeforeFinalizer);
+    const resolveRawAnswer = (finalizedAnswer: FinalizedAnswerView) => rawAnswerBeforeFinalizer || pickSingleRawAssistantText([
+      rawCustomerAnswerBeforeFinalizer,
       dataRecord.rawContent,
       dataRecord.rawText,
       dataRecord.rawAnswer,
@@ -493,6 +499,8 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
         answer: rawAnswer || event.data.answer,
         rawContent: rawAnswer || event.data.rawContent || null,
         rawText: rawAnswer || event.data.rawText || null,
+        rawAnswerBeforeFinalizer: rawAnswerBeforeFinalizer || null,
+        rawCustomerAnswerBeforeFinalizer: rawCustomerAnswerBeforeFinalizer || null,
         customerCopy,
         customer_answer: customerCopy,
         finalized_answer: finalizedAnswer,
@@ -566,6 +574,8 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       answer: rawAnswer || event.data.answer,
       rawContent: rawAnswer || event.data.rawContent || null,
       rawText: rawAnswer || event.data.rawText || null,
+      rawAnswerBeforeFinalizer: rawAnswerBeforeFinalizer || null,
+      rawCustomerAnswerBeforeFinalizer: rawCustomerAnswerBeforeFinalizer || null,
       customerCopy,
       customer_answer: customerCopy,
       finalized_answer: finalizedAnswer,

@@ -18,6 +18,7 @@ import { sanitizeVisibleSources } from "@/lib/ai-chat/visible-output-sanitizer";
 import {
   buildProductAnswerDisplay,
   getFinalizedRawAnswerText,
+  getNaturalMarkdownAnswerText,
   type SalesAnswerModeKey
 } from "../lib/answer-display";
 import { safeCopyTextDetailed } from "../lib/clipboard";
@@ -31,6 +32,7 @@ interface ProductAnswerViewProps {
   answer: FinalizedAnswerView | null;
   userQuery?: string | null;
   sources?: ChatSource[] | null;
+  rawAnswerText?: string | null;
   hitCount?: number | null;
   hasRagHit?: boolean | null;
   evidenceSummary?: string | null;
@@ -131,8 +133,28 @@ function markdownComponents() {
     strong: ({ children }: { children?: React.ReactNode }) => (
       <strong className="font-semibold text-slate-950">{children}</strong>
     ),
-    code: ({ children }: { children?: React.ReactNode }) => (
-      <code className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.92em] text-slate-800">{children}</code>
+    code: ({ children, className }: { children?: React.ReactNode; className?: string }) => {
+      const isBlockCode = typeof className === "string" && className.includes("language-");
+
+      return isBlockCode
+        ? <code className={cn("font-mono text-[13px]", className)}>{children}</code>
+        : <code className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[0.92em] text-slate-800">{children}</code>;
+    },
+    pre: ({ children }: { children?: React.ReactNode }) => (
+      <pre className="my-3 overflow-x-auto rounded-lg bg-slate-100 p-3 text-[13px] leading-6 text-slate-900">
+        {children}
+      </pre>
+    ),
+    table: ({ children }: { children?: React.ReactNode }) => (
+      <div className="my-3 overflow-x-auto">
+        <table className="min-w-full border-collapse text-left text-[13px]">{children}</table>
+      </div>
+    ),
+    th: ({ children }: { children?: React.ReactNode }) => (
+      <th className="border-b border-slate-200 px-2 py-2 align-top font-semibold text-slate-950">{children}</th>
+    ),
+    td: ({ children }: { children?: React.ReactNode }) => (
+      <td className="border-b border-slate-200 px-2 py-2 align-top text-slate-700">{children}</td>
     )
   };
 }
@@ -156,6 +178,7 @@ export function ProductAnswerView({
   answer,
   userQuery,
   sources,
+  rawAnswerText,
   hitCount: _hitCount,
   hasRagHit = false,
   evidenceSummary: _evidenceSummary,
@@ -175,14 +198,16 @@ export function ProductAnswerView({
 
     return {
       ...answer,
-      rawContent: [query, answer.rawContent].filter(Boolean).join("\n"),
-      rawText: [query, answer.rawText].filter(Boolean).join("\n"),
       title: answer.title && !/^(处理建议|回答|小董AI)$/i.test(answer.title) ? answer.title : query
     };
   }, [answer, userQuery]);
+  const naturalAnswerText = React.useMemo(
+    () => getNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
+    [answerForDisplay, rawAnswerText]
+  );
   const display = React.useMemo(
-    () => buildProductAnswerDisplay(answerForDisplay, sources, Boolean(hasRagHit)),
-    [answerForDisplay, hasRagHit, sources]
+    () => naturalAnswerText ? null : buildProductAnswerDisplay(answerForDisplay, sources, Boolean(hasRagHit)),
+    [answerForDisplay, hasRagHit, naturalAnswerText, sources]
   );
   const [activeMode, setActiveMode] = React.useState<SalesAnswerModeKey>("customer_chat");
 
@@ -192,7 +217,7 @@ export function ProductAnswerView({
     }
   }, [display?.defaultMode]);
 
-  const rawText = display?.fullAnswerText || getFinalizedRawAnswerText(answerForDisplay);
+  const rawText = naturalAnswerText || display?.fullAnswerText || getFinalizedRawAnswerText(answerForDisplay);
   const activeScript = display?.salesModes.find((mode) => mode.key === activeMode)
     ?? display?.salesModes.find((mode) => mode.key === display.defaultMode)
     ?? display?.salesModes[0];
@@ -203,6 +228,59 @@ export function ProductAnswerView({
       content: source.content_preview
     }))
   );
+
+  if (naturalAnswerText) {
+    return (
+      <article className={cn("space-y-4 text-slate-900", className)}>
+        <section className="rounded-[18px] border border-neutral-100 bg-[#f7f7f8] px-5 py-4">
+          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="inline-flex items-center gap-2 text-base font-semibold text-slate-950">
+              <Brain className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+              小董AI
+            </div>
+            <CopyMiniButton
+              text={naturalAnswerText}
+              label="复制答案"
+            />
+          </div>
+
+          <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
+              {naturalAnswerText}
+            </ReactMarkdown>
+          </div>
+        </section>
+
+        {visibleSources.length > 0 ? (
+          <details className="group rounded-[18px] border border-slate-200 bg-white px-5 py-4">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
+              <span className="inline-flex items-center gap-2">
+                <FileText className="h-4 w-4 text-blue-600" aria-hidden="true" />
+                引用来源
+              </span>
+              <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
+            </summary>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {visibleSources.map((source, index) => {
+                const originalSource = sources?.[index];
+                const score = formatScore(originalSource?.relevance_score ?? originalSource?.score);
+
+                return (
+                  <div key={`${source.title}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="min-w-0 truncate font-semibold text-slate-900">{source.title}</span>
+                      {score ? <span className="shrink-0 font-semibold text-blue-700">{score}</span> : null}
+                    </div>
+                    {source.summary ? <p className="mt-1">{source.summary}</p> : null}
+                  </div>
+                );
+              })}
+            </div>
+          </details>
+        ) : null}
+      </article>
+    );
+  }
 
   if (!display) {
     return (

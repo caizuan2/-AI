@@ -313,6 +313,8 @@ export interface AskChatResponse {
   rawContent?: string | null;
   rawText?: string | null;
   rawAnswer?: string | null;
+  rawAnswerBeforeFinalizer?: string | null;
+  rawCustomerAnswerBeforeFinalizer?: string | null;
   conversation_id: string;
   message_id: string;
   mode: ChatMode;

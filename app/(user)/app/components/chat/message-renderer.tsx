@@ -1293,6 +1293,14 @@ export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, str
   const messageTime = formatMessageTime(message.created_at);
   const ragHitState = getRagHitState(message, finalizedAnswer);
   const userQuery = explicitUserQuery?.trim() || getMessageUserQuery(message);
+  const rawAnswerText = getString(message.metadata?.rawAnswerBeforeFinalizer)
+    || getString(message.metadata?.rawCustomerAnswerBeforeFinalizer)
+    || getString(message.rawContent)
+    || getString(message.rawText)
+    || getString(message.metadata?.rawContent)
+    || getString(message.metadata?.rawText)
+    || getString(message.metadata?.rawAnswer)
+    || message.content;
 
   return (
     <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm">
@@ -1310,6 +1318,7 @@ export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, str
         <ProductAnswerView
           answer={finalizedAnswer}
           userQuery={userQuery}
+          rawAnswerText={rawAnswerText}
           sources={ragHitState.sources}
           hitCount={ragHitState.hitCount}
           hasRagHit={ragHitState.hasRagHit}
