@@ -83,16 +83,9 @@ async function main() {
 
   const shellMarkup = renderToStaticMarkup(<ChatShell />);
 
-  assert.match(shellMarkup, /使用快速模式开始对话/);
-  assert.match(shellMarkup, /新对话/);
-  assert.match(shellMarkup, /内容由 AI 生成/);
+  assert.match(shellMarkup, /Hi，我是你的沟通助手/);
   assert.match(shellMarkup, /打开历史会话/);
   assert.match(shellMarkup, /新建对话/);
-  assert.match(shellMarkup, /快速/);
-  assert.match(shellMarkup, /AI 创作/);
-  assert.match(shellMarkup, /照片动起来/);
-  assert.match(shellMarkup, /视频通话/);
-  assert.match(shellMarkup, /发消息或按住说话/);
   assert.match(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
   assert.match(shellMarkup, /发送消息/);
@@ -111,14 +104,14 @@ async function main() {
   assert.match(chatShellSource, /setMessages\(Array\.isArray\(history\.messages\)/);
   assert.match(chatShellSource, /uploadChatAttachments\(attachments\)/);
   assert.ok(
-    chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChat({")
+    chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChatStream({")
   );
   assert.doesNotMatch(chatShellSource, /文件上传失败，请重新选择后再发送/);
   assert.match(chatShellSource, /inputCleared/);
   assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
-  assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
+  assert.match(chatShellSource, /historyLoadError/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -145,11 +138,7 @@ async function main() {
     />
   );
 
-  assert.doesNotMatch(quickActionsMarkup, /AI 创作/);
-  assert.match(quickActionsMarkup, /专家/);
-  assert.match(quickActionsMarkup, /深度思考/);
-  assert.match(quickActionsMarkup, /智能搜索/);
-  assert.match(quickActionsMarkup, /售后/);
+  assert.equal(quickActionsMarkup, "");
 
   const fallbackQuickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -162,10 +151,7 @@ async function main() {
     />
   );
 
-  assert.match(fallbackQuickActionsMarkup, /快速/);
-  assert.match(fallbackQuickActionsMarkup, /AI 创作/);
-  assert.match(fallbackQuickActionsMarkup, /照片动起来/);
-  assert.match(fallbackQuickActionsMarkup, /视频通话/);
+  assert.equal(fallbackQuickActionsMarkup, "");
 
   const drawerMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -188,9 +174,8 @@ async function main() {
   );
 
   assert.match(drawerMarkup, /搜索/);
-  assert.match(drawerMarkup, /AI 知识库/);
-  assert.match(drawerMarkup, /AI 内容获客系统设计框架与路径/);
-  assert.match(drawerMarkup, /企业科技化转型与授信获取/);
+  assert.match(drawerMarkup, /小董AI/);
+  assert.match(drawerMarkup, /暂无历史会话/);
   assert.match(drawerMarkup, /扫描内容/);
   assert.match(drawerMarkup, /消息/);
   assert.match(drawerMarkup, /设置/);
@@ -346,7 +331,7 @@ async function main() {
   assert.match(settingsSource, /onSwitchAccount\?\.\(\)/);
   assert.match(settingsSource, /onClick=\{onLogout\}/);
   assert.ok(settingsSource.indexOf("setSwitchAccountOpen(true)") < settingsSource.indexOf("onSwitchAccount?.()"));
-  assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/chat-ui");
+  assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/app");
   assert.equal(isChatUiAuthReady(200), true);
   assert.equal(isChatUiAuthReady(204), true);
   assert.equal(shouldRedirectChatUiAuth(401), true);
@@ -485,8 +470,8 @@ async function main() {
   assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
   assert.match(chatInputSource, /const hasText = value\.trim\(\)\.length > 0/);
   assert.match(chatInputSource, /const canSend = hasText && !loading/);
-  assert.match(chatInputSource, /onClick=\{\(\) => void submitCurrentMessage\(\)\}/);
-  assert.match(chatInputSource, /disabled=\{!canSend\}/);
+  assert.match(chatInputSource, /onSubmit=\{handleSubmit\}/);
+  assert.match(chatInputSource, /disabled=\{!loading && !canSend\}/);
   assert.match(chatInputSource, /enabled:bg-blue-600/);
   assert.match(chatInputSource, /disabled:cursor-not-allowed/);
   assert.match(chatInputSource, /<SendHorizontal className="h-4 w-4"/);
@@ -546,7 +531,7 @@ async function main() {
     "app/api/ai/chat/conversations/route.ts",
     "app/api/ai/chat/history/route.ts"
   ]) {
-    assert.match(readFileSync(routeFile, "utf8"), /requireLicense:\s*true/);
+    assert.match(readFileSync(routeFile, "utf8"), /requireAiChatAccess/);
   }
 
   const schemaText = readFileSync("prisma/schema.prisma", "utf8");
@@ -573,8 +558,8 @@ async function main() {
     <ModeToggle mode="fast" onChange={() => undefined} />
   );
 
-  assert.match(modeMarkup, /快速模式/);
-  assert.match(modeMarkup, /专家模式/);
+  assert.match(modeMarkup, /业务处理/);
+  assert.match(modeMarkup, /专家研判/);
   assert.equal(normalizeChatMode("expert"), "expert");
   assert.equal(normalizeChatMode("unknown"), "fast");
 
@@ -1031,18 +1016,13 @@ async function main() {
 
   assert.match(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
   assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
-  assert.match(chatMessagesMarkup, /现在建议你这样回复/);
-  assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
-  assert.match(chatMessagesMarkup, /核心判断/);
-  assert.match(chatMessagesMarkup, /为什么/);
-  assert.match(chatMessagesMarkup, /怎么做/);
-  assert.match(chatMessagesMarkup, /可直接复制给客户/);
-  assert.match(chatMessagesMarkup, /复制全部话术/);
-  assert.match(chatMessagesMarkup, /复制本段/);
+  assert.match(chatMessagesMarkup, /小董AI处理建议/);
+  assert.match(chatMessagesMarkup, /建议你这样做/);
+  assert.match(chatMessagesMarkup, /详细分析/);
+  assert.match(chatMessagesMarkup, /可直接发给客户/);
+  assert.match(chatMessagesMarkup, /复制答案/);
   assert.doesNotMatch(chatMessagesMarkup, /RAG confidence/);
-  assert.doesNotMatch(chatMessagesMarkup, /来源/);
   assert.doesNotMatch(chatMessagesMarkup, /chunk: chunk_1/);
-  assert.doesNotMatch(chatMessagesMarkup, /82%/);
 
   const richSections = buildRichAnswerSections({
     answer: messages[1].content,
@@ -1499,16 +1479,17 @@ async function main() {
   const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
 
   assert.match(avatarRouteText, /formData\.get\("avatar"\)\s*\?\?\s*formData\.get\("file"\)/);
-  assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
-  assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)\s*\?\?\s*formData\.get\("attachments"\)/);
-  assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(avatarRouteText, /data:\$\{mimeType\};base64/);
+  assert.match(chatAttachmentRouteText, /function getFirstUploadedFile\(formData: FormData\)/);
+  assert.match(chatAttachmentRouteText, /\["file", "files", "attachment", "attachments"\]/);
+  assert.match(chatAttachmentRouteText, /path\.join\(uploadRoot, "chat-attachments"\)/);
   assert.match(chatAttachmentRouteText, /@netlify\/blobs/);
   assert.match(chatAttachmentRouteText, /getStore/);
   assert.match(chatAttachmentRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
   assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_SITE_ID/);
   assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_TOKEN/);
   assert.match(chatAttachmentRouteText, /文件上传服务未配置：缺少 Netlify Blobs 环境变量。/);
-  assert.match(chatAttachmentRouteText, /process\.env\.NODE_ENV !== "production"/);
+  assert.match(chatAttachmentRouteText, /CHAT_ATTACHMENT_STORAGE\?\.trim\(\) !== "netlify-blobs"/);
   assert.match(chatAttachmentRouteText, /saveAttachmentToLocalPublicUploads/);
   assert.match(chatAttachmentRouteText, /saveAttachmentToNetlifyBlobs/);
   assert.match(chatAttachmentRouteText, /store\.set\(blobKey,\s*input\.arrayBuffer/);
@@ -1523,8 +1504,8 @@ async function main() {
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.ms-excel/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
-  assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*100/);
-  assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB。/);
+  assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*300/);
+  assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB/);
   assert.match(chatAttachmentRouteText, /url:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /publicUrl:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /fileUrl:\s*savedAttachment\.url/);
@@ -1534,8 +1515,7 @@ async function main() {
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.match(chatAttachmentDownloadRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
-  assert.match(chatAttachmentDownloadRouteText, /requireRole\("user"/);
-  assert.match(chatAttachmentDownloadRouteText, /targetType:\s*"ai_chat_attachment_download"/);
+  assert.match(chatAttachmentDownloadRouteText, /requireAiChatAccess\(request, "ai_chat_attachment_download"\)/);
   assert.match(chatAttachmentDownloadRouteText, /safeBlobKeyPattern/);
   assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actor\.id\)\}\/`\)/);
   assert.match(chatAttachmentDownloadRouteText, /getWithMetadata\(key/);
