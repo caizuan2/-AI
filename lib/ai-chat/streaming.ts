@@ -418,6 +418,11 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     autonomousRecommendation: runtimeOutput.autonomousRecommendation,
     metadata: {
       ...metadata,
+      rawAnswerBeforeFinalizer: preservedMainAnswer || null,
+      rawCustomerAnswerBeforeFinalizer: readString(result.rawCustomerAnswerBeforeFinalizer) || null,
+      rawContent: preservedMainAnswer || null,
+      rawText: preservedMainAnswer || null,
+      rawAnswer: preservedMainAnswer || null,
       customerCopy: runtimeOutput.customerCopy,
       traceId: runtimeOutput.traceId,
       nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
