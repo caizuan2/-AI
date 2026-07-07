@@ -58,9 +58,7 @@ import {
 } from "./ConversationActionDialog";
 import {
   addKnowledgeBaseSelection,
-  detectKnowledgeBaseScopeMismatch,
   getActiveKnowledgeBase,
-  getKnowledgeBasesForSubmit,
   readStoredKnowledgeBases,
   removeKnowledgeBaseSelection,
   setActiveKnowledgeBaseSelection,
@@ -1555,14 +1553,6 @@ export function ChatShell() {
       return false;
     }
 
-    const submittedKnowledgeBases = selectedKnowledgeBases;
-    const scopeMismatch = detectKnowledgeBaseScopeMismatch(text, submittedKnowledgeBases);
-
-    if (scopeMismatch) {
-      showNotice(scopeMismatch.message);
-      return false;
-    }
-
     setError(null);
     setActionFeedback(null);
     setLoading(true);
@@ -1609,8 +1599,8 @@ export function ChatShell() {
         buildBusinessExecutionPrompt(businessExecution),
         modePromptContext
       ].filter(Boolean).join("\n\n");
-      const selectedKnowledgeBasesForSubmit = getKnowledgeBasesForSubmit(submittedKnowledgeBases);
-      const activeKnowledgeBaseForSubmit = selectedKnowledgeBasesForSubmit[0] ?? activeKnowledgeBase;
+      const activeKnowledgeBaseForSubmit = activeKnowledgeBase;
+      const selectedKnowledgeBasesForSubmit = selectedKnowledgeBases;
       const knowledgeSelectionMetadata = {
         selectedKnowledgeBases: selectedKnowledgeBasesForSubmit,
         activeKnowledgeBase: activeKnowledgeBaseForSubmit,

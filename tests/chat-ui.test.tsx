@@ -78,11 +78,6 @@ import {
   buildRichAnswerSections,
   splitCustomerAnswerParagraphs
 } from "../app/(user)/chat-ui/lib/answer-format";
-import {
-  detectKnowledgeBaseScopeMismatch,
-  getKnowledgeBasesForSubmit,
-  normalizeSelectedKnowledgeBases
-} from "../app/(user)/chat-ui/lib/knowledge-base-selection";
 
 async function main() {
   const naturalCustomerScriptAnswer = [
@@ -695,36 +690,6 @@ async function main() {
   assert.match(modeMarkup, /专家研判/);
   assert.equal(normalizeChatMode("expert"), "expert");
   assert.equal(normalizeChatMode("unknown"), "fast");
-
-  const selectedKnowledgeBases = normalizeSelectedKnowledgeBases([
-    {
-      kb_id: "kb_health",
-      title: "大健康专家",
-      description: "适合整理健康产品资料、用户问答。",
-      active: true
-    },
-    {
-      kb_id: "kb_kks",
-      title: "瘦身KKS专业师",
-      description: "沉淀瘦身方案、注意事项、客户复购沟通。",
-      active: false
-    }
-  ]);
-  const scopeMismatch = detectKnowledgeBaseScopeMismatch(
-    "一个朋友用了各种减肥方式都没有达到自己想要的，如何给他分享脂达人的优势？",
-    selectedKnowledgeBases
-  );
-
-  assert.equal(scopeMismatch?.target.title, "瘦身KKS专业师");
-  assert.match(scopeMismatch?.message ?? "", /请切换到「瘦身KKS专业师」知识库/);
-  assert.equal(
-    detectKnowledgeBaseScopeMismatch("最近睡眠不好，想了解大健康调理建议。", selectedKnowledgeBases),
-    null
-  );
-  const submitKnowledgeBases = getKnowledgeBasesForSubmit(selectedKnowledgeBases);
-
-  assert.equal(submitKnowledgeBases.length, 1);
-  assert.equal(submitKnowledgeBases[0].title, "大健康专家");
 
   const payload = createAskRequestPayload({
     text: "  退款流程怎么处理？ ",
