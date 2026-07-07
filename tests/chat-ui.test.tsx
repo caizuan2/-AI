@@ -78,6 +78,11 @@ import {
   buildRichAnswerSections,
   splitCustomerAnswerParagraphs
 } from "../app/(user)/chat-ui/lib/answer-format";
+import {
+  detectKnowledgeBaseScopeMismatch,
+  getKnowledgeBasesForSubmit,
+  normalizeSelectedKnowledgeBases
+} from "../app/(user)/chat-ui/lib/knowledge-base-selection";
 
 async function main() {
   const naturalCustomerScriptAnswer = [
@@ -116,6 +121,54 @@ async function main() {
   assert.match(naturalScriptMarkup, /话术一（通用版）/);
   assert.match(naturalScriptMarkup, /收到。您先把客户的基本情况说一下/);
   assert.match(naturalScriptMarkup, /使用前建议/);
+
+  const implicitCustomerScriptAnswer = [
+    "好的，这个问题很典型。先共情，再指出为什么过去的方法不持久，最后用轻量邀请降低他的压力。",
+    "",
+    "直接可复制的话术（微信/私聊发送）",
+    "第一步：先共情，打开话匣子（不要一上来就推销）",
+    "",
+    "宝/兄弟，听你试了那么多种减肥方法都没达到想要的效果，我特别能理解那种感觉。节食饿得心慌，运动累得要死，要么反弹，要么坚持不下来，确实太折磨人了。",
+    "",
+    "第二步：点出本质差别，让他觉得这次可能不一样",
+    "",
+    "脂达人它的思路不是硬扛，而是先把身体内部的代谢环境调顺了，让你自然瘦。",
+    "",
+    "💡 给你的沟通要点（话术背后的策略）",
+    "1. 关键词要对味：少用“减肥”，多用“调理”“代谢”“轻松”“不反弹”。",
+    "2. 制造闭环感：一定要提到反弹，这是所有折腾过的人心里永远的痛。"
+  ].join("\n");
+  const implicitScriptSegments = splitNaturalAnswerForCustomerScriptCards(implicitCustomerScriptAnswer);
+  const implicitScriptCards = implicitScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(implicitScriptCards.length, 1);
+  assert.match(implicitScriptCards[0].text, /宝\/兄弟，听你试了那么多种减肥方法/);
+  assert.match(implicitScriptCards[0].text, /脂达人它的思路不是硬扛/);
+  assert.doesNotMatch(implicitScriptCards[0].text, /话术背后的策略/);
+  assert.equal(
+    implicitScriptSegments.some((segment) => segment.kind === "markdown" && /话术背后的策略/.test(segment.text)),
+    true
+  );
+  const implicitScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: implicitCustomerScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={implicitCustomerScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(implicitScriptMarkup, /复制话术/);
+  assert.match(implicitScriptMarkup, /直接可复制的话术（微信\/私聊发送）/);
+  assert.match(implicitScriptMarkup, /宝\/兄弟，听你试了那么多种减肥方法/);
+  assert.match(implicitScriptMarkup, /给你的沟通要点/);
 
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
@@ -642,6 +695,36 @@ async function main() {
   assert.match(modeMarkup, /专家研判/);
   assert.equal(normalizeChatMode("expert"), "expert");
   assert.equal(normalizeChatMode("unknown"), "fast");
+
+  const selectedKnowledgeBases = normalizeSelectedKnowledgeBases([
+    {
+      kb_id: "kb_health",
+      title: "大健康专家",
+      description: "适合整理健康产品资料、用户问答。",
+      active: true
+    },
+    {
+      kb_id: "kb_kks",
+      title: "瘦身KKS专业师",
+      description: "沉淀瘦身方案、注意事项、客户复购沟通。",
+      active: false
+    }
+  ]);
+  const scopeMismatch = detectKnowledgeBaseScopeMismatch(
+    "一个朋友用了各种减肥方式都没有达到自己想要的，如何给他分享脂达人的优势？",
+    selectedKnowledgeBases
+  );
+
+  assert.equal(scopeMismatch?.target.title, "瘦身KKS专业师");
+  assert.match(scopeMismatch?.message ?? "", /请切换到「瘦身KKS专业师」知识库/);
+  assert.equal(
+    detectKnowledgeBaseScopeMismatch("最近睡眠不好，想了解大健康调理建议。", selectedKnowledgeBases),
+    null
+  );
+  const submitKnowledgeBases = getKnowledgeBasesForSubmit(selectedKnowledgeBases);
+
+  assert.equal(submitKnowledgeBases.length, 1);
+  assert.equal(submitKnowledgeBases[0].title, "大健康专家");
 
   const payload = createAskRequestPayload({
     text: "  退款流程怎么处理？ ",
