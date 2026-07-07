@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Copy, KeyRound, Loader2, ShieldOff } from "lucide-react";
+import { Check, Copy, KeyRound, Loader2, Search, ShieldOff } from "lucide-react";
 import {
   disableSuperAdminLicense,
   fetchSuperAdminLicenses,
@@ -63,12 +63,63 @@ function StatusBadge({ status }: { status: SuperAdminLicenseRecord["status"] }) 
   );
 }
 
+async function copyTextToClipboard(value: string) {
+  const text = value.trim();
+
+  if (!text) {
+    return false;
+  }
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // HTTP IP access can reject Clipboard API; fall back to the legacy selection path below.
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  textarea.style.opacity = "0";
+
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  textarea.setSelectionRange(0, textarea.value.length);
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 function AppTypeBadge({ appType }: { appType: SuperAdminLicenseAppType }) {
   return (
     <span className="inline-flex rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-600">
       {appTypeLabels[appType]}
     </span>
   );
+}
+
+function getLicenseSearchText(license: SuperAdminLicenseRecord) {
+  return [
+    license.displayKey,
+    license.redeemedByUserLabel,
+    license.redeemedByUserId,
+    license.tenantId,
+    license.note,
+    statusLabels[license.status],
+    planLabels[license.plan]
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLocaleLowerCase("zh-CN");
 }
 
 function SummaryCards({ data }: { data: SuperAdminLicenseDashboardData }) {
@@ -230,10 +281,24 @@ function GeneratePanel({
 }
 
 function GeneratedKeys({ generated }: { generated: SuperAdminGeneratedLicense[] }) {
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied" | "failed">("idle");
   const text = useMemo(() => generated.map((item) => item.key).join("\n"), [generated]);
 
   if (generated.length === 0) {
     return null;
+  }
+
+  async function handleCopy() {
+    const copied = await copyTextToClipboard(text);
+    setCopyStatus(copied ? "copied" : "failed");
+
+    window.setTimeout(() => {
+      setCopyStatus("idle");
+    }, 1600);
+
+    if (!copied) {
+      window.prompt("复制卡密", text);
+    }
   }
 
   return (
@@ -245,13 +310,18 @@ function GeneratedKeys({ generated }: { generated: SuperAdminGeneratedLicense[] 
         </div>
         <button
           type="button"
-          onClick={() => navigator.clipboard.writeText(text)}
+          onClick={handleCopy}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-emerald-300 bg-white px-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-100"
         >
-          <Copy className="h-4 w-4" />
-          复制
+          {copyStatus === "copied" ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {copyStatus === "copied" ? "已复制" : copyStatus === "failed" ? "手动复制" : "复制"}
         </button>
       </div>
+      {copyStatus === "copied" ? (
+        <p className="mt-3 text-sm font-medium text-emerald-800">已复制本批明文卡密。</p>
+      ) : copyStatus === "failed" ? (
+        <p className="mt-3 text-sm font-medium text-amber-700">自动复制失败，请在弹窗中手动复制。</p>
+      ) : null}
       <pre className="mt-4 max-h-72 overflow-auto rounded-lg border border-emerald-200 bg-white p-4 text-sm leading-7 text-slate-800">
         {text}
       </pre>
@@ -272,15 +342,58 @@ function LicenseTable({
   disablingId: string | null;
   onDisable: (id: string) => Promise<void>;
 }) {
+  const [draftQuery, setDraftQuery] = useState("");
+  const [activeQuery, setActiveQuery] = useState("");
+  const normalizedQuery = activeQuery.trim().toLocaleLowerCase("zh-CN");
+  const filteredLicenses = useMemo(() => {
+    if (!normalizedQuery) {
+      return licenses;
+    }
+
+    return licenses.filter((license) => getLicenseSearchText(license).includes(normalizedQuery));
+  }, [licenses, normalizedQuery]);
+
   if (licenses.length === 0) {
     return <EmptyState message={`${title}暂无卡密记录。`} />;
   }
 
   return (
     <section className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-200 p-5">
-        <h2 className="text-lg font-semibold tracking-normal text-slate-950">{title}</h2>
-        <p className="mt-1 text-sm text-slate-500">{description}</p>
+      <div className="flex flex-col gap-4 border-b border-slate-200 p-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold tracking-normal text-slate-950">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{description}</p>
+          {normalizedQuery ? (
+            <p className="mt-1 text-xs text-slate-500">
+              已筛选 {filteredLicenses.length} / {licenses.length} 条
+            </p>
+          ) : null}
+        </div>
+        <form
+          className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setActiveQuery(draftQuery);
+          }}
+        >
+          <label className="sr-only" htmlFor={`${title}-license-search`}>
+            搜索卡密或激活用户
+          </label>
+          <input
+            id={`${title}-license-search`}
+            value={draftQuery}
+            onChange={(event) => setDraftQuery(event.target.value)}
+            placeholder="搜索卡密 / 激活用户"
+            className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
+          />
+          <button
+            type="submit"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+          >
+            <Search className="h-4 w-4" />
+            搜索
+          </button>
+        </form>
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
@@ -300,7 +413,13 @@ function LicenseTable({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
-            {licenses.map((license) => (
+            {filteredLicenses.length === 0 ? (
+              <tr>
+                <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
+                  没有找到匹配的卡密或激活用户。
+                </td>
+              </tr>
+            ) : filteredLicenses.map((license) => (
               <tr key={license.id} className="align-top">
                 <td className="px-4 py-3 font-mono text-xs text-slate-700">{license.displayKey}</td>
                 <td className="px-4 py-3"><AppTypeBadge appType={license.appType} /></td>
