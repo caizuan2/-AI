@@ -1932,12 +1932,51 @@ export function IngestChatGPTShell({
     onToast?.({ title, description, type });
   }
 
-  async function handleCopyMessage(content: string) {
+  async function writeClipboardText(content: string) {
+    const text = content.trim();
+
+    if (!text) {
+      return false;
+    }
+
+    if (navigator.clipboard?.writeText && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text);
+        return true;
+      } catch {
+        // Fall through to the textarea fallback for HTTP deployments.
+      }
+    }
+
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    textArea.setAttribute("readonly", "");
+    textArea.style.position = "fixed";
+    textArea.style.left = "-9999px";
+    textArea.style.top = "0";
+    textArea.style.opacity = "0";
+
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    textArea.setSelectionRange(0, text.length);
+
     try {
-      await navigator.clipboard.writeText(content);
-      showToast("已复制");
+      return document.execCommand("copy");
     } catch {
-      showToast("复制失败", "当前环境暂不允许写入剪贴板。", "warning");
+      return false;
+    } finally {
+      document.body.removeChild(textArea);
+    }
+  }
+
+  async function handleCopyMessage(content: string) {
+    const copied = await writeClipboardText(content);
+
+    if (copied) {
+      showToast("已复制");
+    } else {
+      showToast("复制失败", "请手动选中文本后按 Ctrl+C 复制。", "warning");
     }
   }
 
@@ -2344,55 +2383,66 @@ export function IngestChatGPTShell({
                     );
                   }
 
+                  if (message.role === "user") {
+                    return (
+                      <div
+                        key={message.id}
+                        ref={(node) => registerMessageNode(message.id, node)}
+                        className={["flex w-full justify-end transition", highlightClass].join(" ")}
+                      >
+                        <div className="flex max-w-[82%] flex-col items-end gap-2 text-sm leading-6">
+                          <div className="rounded-[24px] bg-[#202020] px-4 py-3 text-white shadow-sm">
+                            <p className="whitespace-pre-wrap">{message.content}</p>
+                          </div>
+
+                          <IngestMessageQuickActions
+                            onCopy={() => void handleCopyMessage(message.content)}
+                            onEdit={() => handleEditMessage(message)}
+                            tone="light"
+                          />
+
+                          <p className="pr-1 text-[11px] text-[#999]">{message.time}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+
                   return (
                   <div
                     key={message.id}
                     ref={(node) => registerMessageNode(message.id, node)}
                     className={[
                       "flex w-full transition",
-                      message.role === "user" ? "justify-end" : "justify-start",
+                      "justify-start",
                       highlightClass
                     ].join(" ")}
                   >
                     <div className={[
                       "text-sm leading-6",
-                      isStructuredResult || message.role === "assistant" ? "w-full max-w-full" : "max-w-[82%]",
-                      message.role === "user"
-                        ? "rounded-[24px] bg-[#202020] px-4 py-3 text-white shadow-sm"
-                        : isStructuredResult
-                          ? "px-1 py-2 text-[#303030]"
-                          : "px-1 py-3 text-[#303030]"
+                      "w-full max-w-full",
+                      isStructuredResult
+                        ? "px-1 py-2 text-[#303030]"
+                        : "px-1 py-3 text-[#303030]"
                     ].join(" ")}>
-                      {message.role === "assistant" ? (
-                        <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
-                          <IngestAgentAvatar profile={messageProfile} size="xs" />
-                          <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
-                        </div>
-                      ) : null}
-                      {message.role === "assistant" ? (
-                        <IngestBehaviorTracker
-                          messageId={message.id}
-                          conversationId={draft.jobId ?? draft.id ?? null}
-                          agentId={messageFeedbackScope.agentId}
-                          knowledgeBaseId={messageFeedbackScope.knowledgeBaseId}
-                          namespace={messageFeedbackScope.namespace}
-                          chunkIds={messageChunkIds}
-                          evidenceIds={messageEvidenceIds}
-                          metadata={{ role: message.role, provider: message.provider ?? null }}
-                        />
-                      ) : null}
-                      {message.role === "assistant" ? (
-                        <IngestGPTMessageRenderer content={message.content} message={message} />
-                      ) : (
-                        <div>
-                          {message.attachments?.length ? <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-white/55">投喂说明</p> : null}
-                          <p className="whitespace-pre-wrap">{message.content}</p>
-                        </div>
-                      )}
-                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" ? (
+                      <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
+                        <IngestAgentAvatar profile={messageProfile} size="xs" />
+                        <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
+                      </div>
+                      <IngestBehaviorTracker
+                        messageId={message.id}
+                        conversationId={draft.jobId ?? draft.id ?? null}
+                        agentId={messageFeedbackScope.agentId}
+                        knowledgeBaseId={messageFeedbackScope.knowledgeBaseId}
+                        namespace={messageFeedbackScope.namespace}
+                        chunkIds={messageChunkIds}
+                        evidenceIds={messageEvidenceIds}
+                        metadata={{ role: message.role, provider: message.provider ?? null }}
+                      />
+                      <IngestGPTMessageRenderer content={message.content} message={message} />
+                      {SHOW_INTERNAL_OS_UI ? (
                         <IngestGPTOSPanel gptOS={message.gptOS} />
                       ) : null}
-                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" && message.gptOS?.autonomousResult ? (
+                      {SHOW_INTERNAL_OS_UI && message.gptOS?.autonomousResult ? (
                         <IngestAutonomousTaskPanel
                           task={message.gptOS.autonomousResult}
                           enabled={autonomousEnabled}
@@ -2404,7 +2454,7 @@ export function IngestChatGPTShell({
                           compact
                         />
                       ) : null}
-                      {SHOW_INTERNAL_OS_UI && message.role === "assistant" && message.gptOS?.taskChain ? (
+                      {SHOW_INTERNAL_OS_UI && message.gptOS?.taskChain ? (
                         <IngestGPTTaskChainPanel
                           chain={taskChain ?? message.gptOS.taskChain}
                           onPause={pauseCurrentTaskChain}
@@ -2419,16 +2469,7 @@ export function IngestChatGPTShell({
                           <IngestAttachmentPreview files={message.attachments} compact />
                         </div>
                       ) : null}
-                      {message.role === "user" ? (
-                        <div className="mt-3 flex flex-wrap justify-end gap-2">
-                          <IngestMessageQuickActions
-                            onCopy={() => void handleCopyMessage(message.content)}
-                            onEdit={() => handleEditMessage(message)}
-                            tone="dark"
-                          />
-                        </div>
-                      ) : null}
-                      {message.role === "assistant" && message.provider === "local-fallback" ? (
+                      {message.provider === "local-fallback" ? (
                         <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                           <span className="rounded-full bg-[#fff3d8] px-2 py-1 font-semibold text-[#9a6500]">离线草稿</span>
                         </div>
@@ -2466,8 +2507,8 @@ export function IngestChatGPTShell({
                           feedbackActions={feedbackActions}
                         />
                       ) : null}
-                      {message.role === "assistant" && !isAssistantResult ? feedbackActions : null}
-                      <p className={message.role === "user" ? "mt-2 text-[11px] text-white/50" : "mt-2 text-[11px] text-[#999]"}>
+                      {!isAssistantResult ? feedbackActions : null}
+                      <p className="mt-2 text-[11px] text-[#999]">
                         {message.time}
                       </p>
                     </div>
