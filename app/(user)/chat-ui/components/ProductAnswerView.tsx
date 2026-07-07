@@ -131,6 +131,7 @@ function normalizeScriptHeadingText(line: string) {
     .replace(/^#{1,6}\s*/, "")
     .replace(/^[-*+]\s+/, "")
     .replace(/^\d+[.、]\s*/, "")
+    .replace(/^[\s💡📌✅☑️⭐🌟🔥👉➡️]+/, "")
     .replace(/\*\*/g, "")
     .replace(/\s+/g, " ")
     .trim();
@@ -161,6 +162,17 @@ function parseCustomerScriptHeading(line: string) {
     };
   }
 
+  const hasScriptWord = /话术|客户回复|回复文案|沟通文案|私聊发送|微信发送|外发文案/i.test(normalized);
+  const hasScriptIntent = /复制|粘贴|直接|客户|微信|私聊|发送|发给|外发|对外|沟通/i.test(normalized);
+  const isStrategyHeading = /背后|策略|要点|原则|思路|说明|分析|注意事项|使用建议/i.test(normalized);
+
+  if (hasScriptWord && hasScriptIntent && !isStrategyHeading) {
+    return {
+      title: normalized.length <= 28 ? normalized : "客户话术",
+      firstLine: ""
+    };
+  }
+
   return null;
 }
 
@@ -172,6 +184,13 @@ function isNaturalAnswerSectionHeading(line: string) {
   }
 
   if (/^#{1,6}\s+/.test(line.trim())) {
+    return true;
+  }
+
+  if (
+    normalized.length <= 36
+    && /(?:沟通要点|话术背后的策略|背后的策略|策略说明|使用建议|注意事项|下一步建议)/i.test(normalized)
+  ) {
     return true;
   }
 
