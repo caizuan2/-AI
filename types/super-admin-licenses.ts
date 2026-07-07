@@ -39,6 +39,7 @@ export type SuperAdminLicenseRecord = {
   redeemedAt: string | null;
   redeemedByUserId: string | null;
   redeemedByUserLabel: string | null;
+  redeemedByUserAccount: string | null;
 };
 
 export type SuperAdminLicenseSummary = {

@@ -111,6 +111,7 @@ function getLicenseSearchText(license: SuperAdminLicenseRecord) {
   return [
     license.displayKey,
     license.redeemedByUserLabel,
+    license.redeemedByUserAccount,
     license.redeemedByUserId,
     license.tenantId,
     license.note,
@@ -377,13 +378,13 @@ function LicenseTable({
           }}
         >
           <label className="sr-only" htmlFor={`${title}-license-search`}>
-            搜索卡密或激活用户
+            搜索卡密、激活用户或账号
           </label>
           <input
             id={`${title}-license-search`}
             value={draftQuery}
             onChange={(event) => setDraftQuery(event.target.value)}
-            placeholder="搜索卡密 / 激活用户"
+            placeholder="搜索卡密 / 激活用户 / 账号"
             className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
           />
           <button
@@ -407,6 +408,7 @@ function LicenseTable({
               <th className="px-4 py-3">到期</th>
               <th className="px-4 py-3">激活时间</th>
               <th className="px-4 py-3">激活用户</th>
+              <th className="px-4 py-3">账号</th>
               <th className="px-4 py-3">租户</th>
               <th className="px-4 py-3">备注</th>
               <th className="px-4 py-3">操作</th>
@@ -415,8 +417,8 @@ function LicenseTable({
           <tbody className="divide-y divide-slate-200">
             {filteredLicenses.length === 0 ? (
               <tr>
-                <td colSpan={11} className="px-4 py-8 text-center text-sm text-slate-500">
-                  没有找到匹配的卡密或激活用户。
+                <td colSpan={12} className="px-4 py-8 text-center text-sm text-slate-500">
+                  没有找到匹配的卡密、激活用户或账号。
                 </td>
               </tr>
             ) : filteredLicenses.map((license) => (
@@ -433,6 +435,7 @@ function LicenseTable({
                 <td className="px-4 py-3 text-slate-600">{formatDate(license.expiresAt)}</td>
                 <td className="px-4 py-3 text-slate-600">{license.activatedAt ? formatDate(license.activatedAt) : "-"}</td>
                 <td className="px-4 py-3 text-slate-600">{license.redeemedByUserLabel ?? "-"}</td>
+                <td className="px-4 py-3 text-slate-600">{license.redeemedByUserAccount ?? "-"}</td>
                 <td className="px-4 py-3 text-slate-600">{license.tenantId ?? "-"}</td>
                 <td className="px-4 py-3 text-slate-600">{license.note ?? "-"}</td>
                 <td className="px-4 py-3">

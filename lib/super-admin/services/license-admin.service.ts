@@ -239,6 +239,16 @@ function getRedeemerLabel(license: LicenseWithRedeemer) {
   return user.name?.trim() || user.phone || user.email || license.redeemedByUserId;
 }
 
+function getRedeemerAccount(license: LicenseWithRedeemer) {
+  const user = license.redeemedByUser;
+
+  if (!user) {
+    return null;
+  }
+
+  return user.phone || user.email || license.redeemedByUserId;
+}
+
 function enrichLicense(license: LicenseWithRedeemer, metadata?: LicenseMetadata): SuperAdminLicenseRecord {
   const resolvedMetadata = metadata ?? getDefaultMetadata();
 
@@ -257,7 +267,8 @@ function enrichLicense(license: LicenseWithRedeemer, metadata?: LicenseMetadata)
     activatedAt: toIso(license.redeemedAt),
     redeemedAt: toIso(license.redeemedAt),
     redeemedByUserId: license.redeemedByUserId,
-    redeemedByUserLabel: getRedeemerLabel(license)
+    redeemedByUserLabel: getRedeemerLabel(license),
+    redeemedByUserAccount: getRedeemerAccount(license)
   };
 }
 
