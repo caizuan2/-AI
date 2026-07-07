@@ -179,6 +179,17 @@ type SpeechWindow = Window & {
   SpeechRecognition?: SpeechRecognitionConstructor;
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
+type AdminIngestConversationSyncSnapshot = {
+  agents?: IngestChatAgent[];
+  agentConversations?: IngestAgentConversation[];
+  activeAgentId?: string;
+  activeConversationId?: string;
+  conversationMessagesById?: Record<string, IngestChatMessage[]>;
+  conversationDraftsById?: Record<string, IngestKnowledgeDraft>;
+  pinnedAgentIds?: string[];
+  expandedAgentIds?: string[];
+  expandedConversationAgentIds?: string[];
+};
 
 const tenantId: string | null = null;
 const userId: string | null = null;
@@ -218,6 +229,8 @@ const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
 const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
+const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
+const INGEST_REMOTE_SYNC_DEBOUNCE_MS = 800;
 
 function readLocalArray<T>(key: string): T[] {
   try {
@@ -325,6 +338,73 @@ function writeLocalJson(key: string, value: unknown) {
   } catch {
     // localStorage can be unavailable in hardened browsers; UI should keep running.
   }
+}
+
+function mergeById<T extends { id: string }>(remoteItems: T[] = [], localItems: T[] = []) {
+  const merged = new Map<string, T>();
+
+  for (const item of remoteItems) {
+    merged.set(item.id, item);
+  }
+
+  for (const item of localItems) {
+    merged.set(item.id, item);
+  }
+
+  return Array.from(merged.values());
+}
+
+function mergeStringIds(remoteItems: string[] = [], localItems: string[] = []) {
+  return Array.from(new Set([...remoteItems, ...localItems]));
+}
+
+function mergeMessageList(remoteMessages: IngestChatMessage[] = [], localMessages: IngestChatMessage[] = []) {
+  const merged = new Map<string, IngestChatMessage>();
+
+  for (const message of remoteMessages) {
+    merged.set(message.id, markMessageCompleted(message));
+  }
+
+  for (const message of localMessages) {
+    merged.set(message.id, markMessageCompleted(message));
+  }
+
+  return Array.from(merged.values()).filter((message) => !isEmptyHistoryMessage(message));
+}
+
+function mergeMessageRecords(
+  remoteRecords: Record<string, IngestChatMessage[]> = {},
+  localRecords: Record<string, IngestChatMessage[]> = {}
+) {
+  const next: Record<string, IngestChatMessage[]> = {};
+  const keys = new Set([...Object.keys(remoteRecords), ...Object.keys(localRecords)]);
+
+  keys.forEach((key) => {
+    const messages = mergeMessageList(remoteRecords[key], localRecords[key]);
+
+    if (messages.length > 0) {
+      next[key] = messages;
+    }
+  });
+
+  return next;
+}
+
+function hasRemoteConversationSyncState(
+  state: AdminIngestConversationSyncSnapshot | null | undefined
+): state is AdminIngestConversationSyncSnapshot {
+  return Boolean(
+    state
+    && (
+      state.agents?.length
+      || state.agentConversations?.length
+      || state.pinnedAgentIds?.length
+      || state.expandedAgentIds?.length
+      || state.expandedConversationAgentIds?.length
+      || Object.keys(state.conversationMessagesById ?? {}).length
+      || Object.keys(state.conversationDraftsById ?? {}).length
+    )
+  );
 }
 
 function createNotification(input: Pick<IngestNotification, "type" | "title" | "description"> & {
@@ -651,6 +731,8 @@ export function IngestModeToggle() {
   const [isUrlIngesting, setIsUrlIngesting] = useState(false);
   const [autonomousEnabled, setAutonomousEnabled] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [conversationSyncLoaded, setConversationSyncLoaded] = useState(false);
+  const lastConversationSyncPayloadRef = useRef("");
   const uploadState = uploadedFiles[0] ?? null;
   const modelOptions = INGEST_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
@@ -765,6 +847,74 @@ export function IngestModeToggle() {
       return;
     }
 
+    let cancelled = false;
+
+    async function loadRemoteConversationState() {
+      try {
+        const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store"
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const payload = await response.json() as {
+          state?: AdminIngestConversationSyncSnapshot;
+        };
+        const remoteState = payload.state;
+
+        if (cancelled || !hasRemoteConversationSyncState(remoteState)) {
+          return;
+        }
+
+        restoredInitialConversationRef.current = false;
+        const remoteAgents = (remoteState.agents ?? []).map((agent) => ({
+          ...agent,
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget]
+        }));
+        const remoteConversations = (remoteState.agentConversations ?? []).map((conversation) => ({
+          ...conversation,
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget]
+        }));
+
+        setAgents((current) => mergeById(remoteAgents, current));
+        setAgentConversations((current) => mergeById(remoteConversations, current));
+        setConversationMessagesById((current) => mergeMessageRecords(remoteState.conversationMessagesById, current));
+        setConversationDraftsById((current) => ({
+          ...(remoteState.conversationDraftsById ?? {}),
+          ...current
+        }));
+        setPinnedAgentIds((current) => mergeStringIds(remoteState.pinnedAgentIds, current));
+        setExpandedAgentIds((current) => mergeStringIds(remoteState.expandedAgentIds, current));
+        setExpandedConversationAgentIds((current) => mergeStringIds(remoteState.expandedConversationAgentIds, current));
+        setActiveAgentId((current) => current || remoteState.activeAgentId || "");
+        setActiveConversationId((current) => current || remoteState.activeConversationId || "");
+      } catch (error) {
+        console.warn("[admin-ingest:conversation-sync:load]", error);
+      } finally {
+        if (!cancelled) {
+          setConversationSyncLoaded(true);
+        }
+      }
+    }
+
+    void loadRemoteConversationState();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [historyLoaded, platformContext.platform, platformContext.syncTarget]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
     writeLocalJson(INGEST_AGENTS_STORAGE_KEY, agents);
   }, [agents, historyLoaded]);
 
@@ -872,6 +1022,62 @@ export function IngestModeToggle() {
       return next;
     });
   }, [activeConversationId, draft, historyLoaded]);
+
+  useEffect(() => {
+    if (!historyLoaded || !conversationSyncLoaded) {
+      return;
+    }
+
+    const syncPayload: AdminIngestConversationSyncSnapshot = {
+      agents,
+      agentConversations,
+      activeAgentId,
+      activeConversationId,
+      conversationMessagesById,
+      conversationDraftsById,
+      pinnedAgentIds,
+      expandedAgentIds,
+      expandedConversationAgentIds
+    };
+    const serialized = JSON.stringify(syncPayload);
+
+    if (serialized === lastConversationSyncPayloadRef.current) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+        method: "PUT",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: serialized
+      })
+        .then((response) => {
+          if (response.ok) {
+            lastConversationSyncPayloadRef.current = serialized;
+          }
+        })
+        .catch((error) => {
+          console.warn("[admin-ingest:conversation-sync:save]", error);
+        });
+    }, INGEST_REMOTE_SYNC_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    activeAgentId,
+    activeConversationId,
+    agentConversations,
+    agents,
+    conversationDraftsById,
+    conversationMessagesById,
+    conversationSyncLoaded,
+    expandedAgentIds,
+    expandedConversationAgentIds,
+    historyLoaded,
+    pinnedAgentIds
+  ]);
 
   useEffect(() => {
     if (!historyLoaded || restoredInitialConversationRef.current || !activeConversationId) {

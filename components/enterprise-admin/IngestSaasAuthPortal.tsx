@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
+  ArrowLeft,
   ArrowRight,
   BadgeCheck,
   KeyRound,
@@ -323,6 +324,15 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
     }
   }
 
+  function goBackFromActivate() {
+    if (typeof window !== "undefined" && window.history.length > 1) {
+      router.back();
+      return;
+    }
+
+    router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent(nextPath)}`);
+  }
+
   return (
     <main data-ui-health="ingest-auth-portal" className="grid min-h-dvh bg-[#f6f7f4] text-[#1f2926] lg:grid-cols-[1.05fr_0.95fr]">
       <section className="relative hidden overflow-hidden bg-[#111816] px-10 py-10 text-white lg:flex lg:flex-col">
@@ -355,6 +365,17 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             </span>
             <h1 className="mt-4 text-2xl font-semibold">AI 投喂 SaaS</h1>
           </div>
+
+          {mode === "activate" ? (
+            <button
+              type="button"
+              onClick={goBackFromActivate}
+              className="mb-5 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              返回上一步
+            </button>
+          ) : null}
 
           <div>
             <p className="text-sm font-medium text-emerald-700">{copy.eyebrow}</p>
