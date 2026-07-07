@@ -207,6 +207,75 @@ async function main() {
   assert.match(standaloneQuotedScriptMarkup, /姐\/哥，我特别理解你现在的心情/);
   assert.match(standaloneQuotedScriptMarkup, /关键点/);
 
+  const coreScriptAnswer = [
+    "好的，面对朋友各种减肥方法都没达到想要效果的情况，关键不是直接推产品，而是先接住他的挫败感。",
+    "",
+    "客户话术",
+    "",
+    "场景一：理解挫败感，重塑信心",
+    "核心话术：",
+    "",
+    "兄弟/姐妹，我特别懂你说的那种感觉，试了那么多方法，要么饿得头昏眼花，要么累得半死，好不容易瘦了几斤，一停下又反弹了，真的很打击人。",
+    "",
+    "这个话术为什么有效：",
+    "- 共情优先，先承认他的痛苦是真的。",
+    "- 把问题从意志力转到方法不对。",
+    "",
+    "场景二：用效果和安全说话",
+    "核心话术：",
+    "",
+    "我跟你说个实话，如果只是让你换一种药丸吃，我肯定不会推荐给你，因为那只是换汤不换药。"
+  ].join("\n");
+  const coreScriptSegments = splitNaturalAnswerForCustomerScriptCards(coreScriptAnswer);
+  const coreScriptCards = coreScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(coreScriptCards.length, 2);
+  assert.match(coreScriptCards[0].text, /兄弟\/姐妹，我特别懂你说的那种感觉/);
+  assert.doesNotMatch(coreScriptCards[0].text, /这个话术为什么有效/);
+  assert.match(coreScriptCards[1].text, /如果只是让你换一种药丸吃/);
+  assert.equal(
+    coreScriptSegments.some((segment) => segment.kind === "markdown" && /这个话术为什么有效/.test(segment.text)),
+    true
+  );
+
+  const proseLeadScriptAnswer = [
+    "准备好一个或者几个案例最有效。如果他认识故事里的人，可信度会翻倍。可以这样说：",
+    "",
+    "我有好几个朋友刚开始也是你这种想法，觉得我都试过这么多了，肯定没用。但他们抱着最后试试的心态，跟着我们调整了饮食结构和生活习惯，没有节食，也没有疯狂运动。第一个月就干净地掉了8-10斤，而且最关键的是，他们是看着自己肚子下降，腰围小一圈，整个人状态好了很多。",
+    "",
+    "你的下一步行动",
+    "你可以直接复制上面这段，看看他的反应。"
+  ].join("\n");
+  const proseLeadScriptSegments = splitNaturalAnswerForCustomerScriptCards(proseLeadScriptAnswer);
+  const proseLeadScriptCards = proseLeadScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(proseLeadScriptCards.length, 1);
+  assert.match(proseLeadScriptCards[0].text, /我有好几个朋友刚开始也是你这种想法/);
+  assert.doesNotMatch(proseLeadScriptCards[0].text, /你的下一步行动/);
+  assert.equal(
+    proseLeadScriptSegments.some((segment) => segment.kind === "markdown" && /你的下一步行动/.test(segment.text)),
+    true
+  );
+  const proseLeadScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: proseLeadScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={proseLeadScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(proseLeadScriptMarkup, /复制话术/);
+  assert.match(proseLeadScriptMarkup, /我有好几个朋友刚开始也是你这种想法/);
+  assert.match(proseLeadScriptMarkup, /你的下一步行动/);
+
   const inlineLabeledScriptAnswer = [
     "这个问题很典型。客户真正担心的是安全感和刻板印象。",
     "",

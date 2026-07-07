@@ -150,7 +150,7 @@ function parseCustomerScriptHeading(line: string) {
   }
 
   const labelPatterns = [
-    /^(可直接(?:复制)?(?:发给|给)客户|复制给客户|客户(?:可复制)?话术|客户回复|标准(?:回应|回复)(?:要点|话术)?(?:[（(][^）)]{1,36}[）)])?|标准回复(?:话术)?|直接复制(?:使用)?|对外话术|外发话术|您可以这样发给客户|可以这样发给客户)\s*[：:]?\s*(.*)$/i,
+    /^(核心话术|客户核心话术|可直接(?:复制)?(?:发给|给)客户|复制给客户|客户(?:可复制)?话术|客户回复|标准(?:回应|回复)(?:要点|话术)?(?:[（(][^）)]{1,36}[）)])?|标准回复(?:话术)?|直接复制(?:使用)?|对外话术|外发话术|您可以这样发给客户|可以这样发给客户)\s*[：:]?\s*(.*)$/i,
     /^(话术\s*(?:[一二三四五六七八九十\d]+)?(?:[（(][^）)]{1,24}[）)])?)\s*[：:]?\s*(.*)$/i
   ];
 
@@ -179,6 +179,12 @@ function parseCustomerScriptHeading(line: string) {
   }
 
   return null;
+}
+
+function parseCustomerScriptContainerHeading(line: string) {
+  const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
+
+  return normalized === "客户话术" ? "客户话术" : null;
 }
 
 function extractCustomerQuoteLine(line: string): CustomerQuoteLine | null {
@@ -222,6 +228,39 @@ function isLikelyCustomerScriptQuote(text: string) {
   return hasDirectAddress && hasConversationTone;
 }
 
+function parseCustomerScriptLeadIn(line: string) {
+  const normalized = normalizeScriptHeadingText(line);
+
+  if (!normalized || /(?:为什么有效|背后|策略|要点|下一步建议|使用建议|注意事项)/.test(normalized)) {
+    return null;
+  }
+
+  if (
+    /(?:可以|可|建议|你可以|您可以|直接|就)(?:这样|这么|按这个|照这个).{0,16}(?:说|回复|发|讲|开口|开始对话|跟客户|给他|给她|给客户)/.test(normalized)
+    || /(?:可以这样说|你可以这样说|您可以这样说|可以这样开始对话|可以直接复制使用)/.test(normalized)
+  ) {
+    return "客户话术";
+  }
+
+  return null;
+}
+
+function isLikelyCustomerScriptParagraph(line: string) {
+  const normalized = normalizeScriptHeadingText(line);
+
+  if (
+    normalized.length < 24
+    || /^(?:场景|方案|第[一二三四五六七八九十\d]+步|[一二三四五六七八九十]+、|这个话术为什么有效|为什么|关键点|你的下一步|最后给你)/.test(normalized)
+  ) {
+    return false;
+  }
+
+  const hasDirectAddress = /姐|哥|兄弟|姐妹|宝|朋友|您好|你好|您|你/.test(normalized);
+  const hasConversationTone = /理解|别急|不用|不要|放心|我帮|我们|一起|可以|先|调整|感觉|情况|试过|没用|担心|反弹|坚持|产品|方案/.test(normalized);
+
+  return hasDirectAddress && hasConversationTone;
+}
+
 function inferCustomerScriptTitle(markdownLines: string[]) {
   const heading = [...markdownLines]
     .reverse()
@@ -231,7 +270,7 @@ function inferCustomerScriptTitle(markdownLines: string[]) {
   return heading || "客户话术";
 }
 
-function isNaturalAnswerSectionHeading(line: string) {
+function isNaturalAnswerSectionHeading(line: string, activeScriptTitle = "") {
   const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
 
   if (!normalized) {
@@ -245,6 +284,17 @@ function isNaturalAnswerSectionHeading(line: string) {
   if (
     normalized.length <= 36
     && /(?:沟通要点|话术背后的策略|背后的策略|策略说明|使用建议|注意事项|下一步建议)/i.test(normalized)
+  ) {
+    return true;
+  }
+
+  if (/^(?:这个话术为什么有效|这段话术为什么有效|为什么(?:这样说|有效)?|关键点|核心策略|你的下一步行动|下一步行动|最后给你的建议|最后建议)(?:$|[：:、\s])/.test(normalized)) {
+    return true;
+  }
+
+  if (
+    /核心话术|客户话术|可以这样说/.test(activeScriptTitle)
+    && /^(?:场景|方案)[一二三四五六七八九十\d]+(?:$|[：:、\s])/.test(normalized)
   ) {
     return true;
   }
@@ -288,6 +338,7 @@ function splitMarkdownScriptHeadings(markdown: string) {
   const segments: NaturalAnswerSegment[] = [];
   const markdownLines: string[] = [];
   let activeScript: { title: string; lines: string[] } | null = null;
+  let pendingScriptTitle: string | null = null;
 
   function flushMarkdown() {
     appendMarkdownSegment(segments, markdownLines.join("\n"));
@@ -304,11 +355,29 @@ function splitMarkdownScriptHeadings(markdown: string) {
   }
 
   for (const line of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    const containerHeading = parseCustomerScriptContainerHeading(line);
+
+    if (containerHeading) {
+      flushScript();
+      markdownLines.push(line);
+      pendingScriptTitle = containerHeading;
+      continue;
+    }
+
+    const leadInTitle = parseCustomerScriptLeadIn(line);
+
+    if (!activeScript && leadInTitle) {
+      markdownLines.push(line);
+      pendingScriptTitle = leadInTitle;
+      continue;
+    }
+
     const scriptHeading = parseCustomerScriptHeading(line);
 
     if (scriptHeading) {
       flushScript();
       flushMarkdown();
+      pendingScriptTitle = null;
       activeScript = {
         title: scriptHeading.title,
         lines: scriptHeading.firstLine ? [scriptHeading.firstLine] : []
@@ -328,6 +397,7 @@ function splitMarkdownScriptHeadings(markdown: string) {
 
       flushMarkdown();
       appendCustomerScriptSegment(segments, title, quoteLine.text);
+      pendingScriptTitle = null;
 
       if (quoteLine.trailingText) {
         markdownLines.push(quoteLine.trailingText);
@@ -336,7 +406,17 @@ function splitMarkdownScriptHeadings(markdown: string) {
       continue;
     }
 
-    if (activeScript && isNaturalAnswerSectionHeading(line)) {
+    if (!activeScript && pendingScriptTitle && isLikelyCustomerScriptParagraph(line)) {
+      flushMarkdown();
+      activeScript = {
+        title: pendingScriptTitle,
+        lines: [line]
+      };
+      pendingScriptTitle = null;
+      continue;
+    }
+
+    if (activeScript && isNaturalAnswerSectionHeading(line, activeScript.title)) {
       flushScript();
       markdownLines.push(line);
       continue;
