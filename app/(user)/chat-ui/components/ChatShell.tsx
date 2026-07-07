@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDown, History, Menu, Plus } from "lucide-react";
+import { ArrowDown, Menu, Plus } from "lucide-react";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { USER_APP_KIND } from "@/lib/app-version";
@@ -78,6 +78,7 @@ import type {
 const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
 const PROMPT_HISTORY_STORAGE_KEY_PREFIX = "chat-ui:prompt-history";
 const PROMPT_HISTORY_LIMIT = 30;
+const PROMPT_HISTORY_RAIL_MARK_COUNT = 42;
 const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
 const CHAT_SCROLL_BOTTOM_THRESHOLD = 96;
 const CHAT_MESSAGE_TOP_OFFSET = 16;
@@ -202,13 +203,27 @@ function addPromptHistoryItem(prompts: string[], text: string) {
   return [nextPrompt, ...existingPrompts].slice(0, PROMPT_HISTORY_LIMIT);
 }
 
+function normalizeAvatarUrl(avatarUrl: string | null | undefined) {
+  const value = typeof avatarUrl === "string" ? avatarUrl.trim() : "";
+
+  if (!value) {
+    return null;
+  }
+
+  if (/^(?:https?:|data:|blob:|\/)/i.test(value)) {
+    return value;
+  }
+
+  return `/${value.replace(/^\/+/, "")}`;
+}
+
 function readStoredAvatarUrl(user: CurrentChatUser | null | undefined) {
   if (typeof window === "undefined" || !user) {
     return null;
   }
 
   try {
-    return window.localStorage.getItem(getChatUserAvatarStorageKey(user));
+    return normalizeAvatarUrl(window.localStorage.getItem(getChatUserAvatarStorageKey(user)));
   } catch {
     return null;
   }
@@ -221,9 +236,10 @@ function writeStoredAvatarUrl(user: CurrentChatUser | null | undefined, avatarUr
 
   try {
     const storageKey = getChatUserAvatarStorageKey(user);
+    const nextAvatarUrl = normalizeAvatarUrl(avatarUrl);
 
-    if (avatarUrl) {
-      window.localStorage.setItem(storageKey, avatarUrl);
+    if (nextAvatarUrl) {
+      window.localStorage.setItem(storageKey, nextAvatarUrl);
       return;
     }
 
@@ -234,14 +250,16 @@ function writeStoredAvatarUrl(user: CurrentChatUser | null | undefined, avatarUr
 }
 
 function mergeCurrentUserAvatar(user: CurrentChatUser, avatarUrl: string | null): CurrentChatUser {
+  const nextAvatarUrl = normalizeAvatarUrl(avatarUrl);
+
   return {
     ...user,
-    avatar_url: avatarUrl,
-    avatarUrl: avatarUrl,
-    avatar: avatarUrl,
-    profile_image: avatarUrl,
-    profileImage: avatarUrl,
-    image: avatarUrl
+    avatar_url: nextAvatarUrl,
+    avatarUrl: nextAvatarUrl,
+    avatar: nextAvatarUrl,
+    profile_image: nextAvatarUrl,
+    profileImage: nextAvatarUrl,
+    image: nextAvatarUrl
   };
 }
 
@@ -376,56 +394,91 @@ function PromptHistoryRail({
   prompts: string[];
   onSelect: (prompt: string) => void;
 }) {
+  const [promptHistoryPanelOpen, setPromptHistoryPanelOpen] = React.useState(false);
+
+  function handlePromptHistoryBlur(event: React.FocusEvent<HTMLDivElement>) {
+    const nextTarget = event.relatedTarget;
+
+    if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+      setPromptHistoryPanelOpen(false);
+    }
+  }
+
   return (
     <aside
       aria-label="提示词记录栏"
-      className="group absolute bottom-32 right-3 top-24 z-20 hidden lg:flex"
+      className="pointer-events-none absolute bottom-32 right-3 top-24 z-20 hidden lg:block"
     >
-      <div className="pointer-events-auto flex h-full w-8 items-center justify-center">
+      <div
+        className="pointer-events-auto relative flex h-full w-10 items-center justify-center"
+        onBlur={handlePromptHistoryBlur}
+        onFocus={() => setPromptHistoryPanelOpen(true)}
+        onMouseEnter={() => setPromptHistoryPanelOpen(true)}
+        onMouseLeave={() => setPromptHistoryPanelOpen(false)}
+      >
         <button
           type="button"
-          className="focus-ring flex h-20 w-8 items-center justify-center rounded-full border border-slate-200 bg-white/90 text-slate-400 shadow-sm shadow-slate-200/70 transition hover:text-slate-700"
-          aria-label="展开提示词记录"
+          onClick={() => setPromptHistoryPanelOpen(true)}
+          onFocus={() => setPromptHistoryPanelOpen(true)}
+          onMouseEnter={() => setPromptHistoryPanelOpen(true)}
+          onPointerEnter={() => setPromptHistoryPanelOpen(true)}
+          className="focus-ring flex h-[min(62vh,520px)] w-8 items-center justify-center rounded-full border border-slate-200 bg-white/80 text-slate-400 shadow-sm shadow-slate-200/70 transition hover:border-slate-300 hover:bg-white hover:text-slate-700"
+          aria-label="提示词记录条"
           title="提示词记录"
         >
-          <History className="h-4 w-4" aria-hidden="true" />
+          <span className="flex h-[calc(100%-28px)] w-3 flex-col items-center justify-between" aria-hidden="true">
+            {Array.from({ length: PROMPT_HISTORY_RAIL_MARK_COUNT }).map((_, index) => (
+              <span
+                key={index}
+                className={cn(
+                  "h-px w-2 rounded-full bg-slate-300",
+                  index >= PROMPT_HISTORY_RAIL_MARK_COUNT - 4 ? "bg-slate-950" : null
+                )}
+              />
+            ))}
+          </span>
         </button>
-      </div>
-      <div className="pointer-events-auto absolute right-0 top-0 hidden max-h-[min(70vh,560px)] w-80 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-300/50 group-focus-within:block group-hover:block">
-        <div className="border-b border-slate-100 px-4 py-3">
-          <div className="text-sm font-semibold text-slate-900">提示词记录</div>
-          <div className="mt-1 text-xs text-slate-500">移动到右侧记录栏可查看，点击可回填输入框。</div>
-        </div>
-        <div className="max-h-[calc(min(70vh,560px)-72px)] space-y-2 overflow-y-auto p-3">
-          {prompts.length > 0 ? (
-            prompts.map((prompt, index) => (
-              <button
-                key={`${index}-${prompt.slice(0, 32)}`}
-                type="button"
-                onClick={() => onSelect(prompt)}
-                className="focus-ring flex w-full gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 transition hover:border-blue-100 hover:bg-blue-50 hover:text-slate-950"
-                title={prompt}
-              >
-                <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">
-                  {index + 1}
-                </span>
-                <span
-                  className="min-w-0 flex-1 overflow-hidden leading-5"
-                  style={{
-                    display: "-webkit-box",
-                    WebkitBoxOrient: "vertical",
-                    WebkitLineClamp: 2
-                  }}
-                >
-                  {prompt}
-                </span>
-              </button>
-            ))
-          ) : (
-            <div className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-500">
-              发送后的提示词会保存在这里。
-            </div>
+        <div
+          className={cn(
+            "pointer-events-auto absolute right-10 top-1/2 max-h-[min(70vh,560px)] w-80 -translate-y-1/2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-300/50",
+            promptHistoryPanelOpen ? "block" : "hidden"
           )}
+        >
+          <div className="border-b border-slate-100 px-4 py-3">
+            <div className="text-sm font-semibold text-slate-900">提示词记录</div>
+            <div className="mt-1 text-xs text-slate-500">移动到右侧记录栏可查看，点击可回填输入框。</div>
+          </div>
+          <div className="max-h-[calc(min(70vh,560px)-72px)] space-y-2 overflow-y-auto p-3">
+            {prompts.length > 0 ? (
+              prompts.map((prompt, index) => (
+                <button
+                  key={`${index}-${prompt.slice(0, 32)}`}
+                  type="button"
+                  onClick={() => onSelect(prompt)}
+                  className="focus-ring flex w-full gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 transition hover:border-blue-100 hover:bg-blue-50 hover:text-slate-950"
+                  title={prompt}
+                >
+                  <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">
+                    {index + 1}
+                  </span>
+                  <span
+                    className="min-w-0 flex-1 overflow-hidden leading-5"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitBoxOrient: "vertical",
+                      WebkitLineClamp: 2
+                    }}
+                  >
+                    {prompt}
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-500">
+                发送后的提示词会保存在这里。
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </aside>
@@ -526,12 +579,13 @@ export function ChatShell() {
 
   const refreshCurrentUser = React.useCallback(async (options: { cacheBust?: boolean } = {}) => {
     const result = await fetchCurrentChatUser(options);
-    const remoteAvatarUrl = getCurrentChatUserAvatarUrl(result.user);
+    const remoteAvatarUrl = normalizeAvatarUrl(getCurrentChatUserAvatarUrl(result.user));
     const storedAvatarUrl = readStoredAvatarUrl(result.user);
-    const nextUser = mergeCurrentUserAvatar(result.user, remoteAvatarUrl || storedAvatarUrl || null);
+    const nextAvatarUrl = storedAvatarUrl || remoteAvatarUrl;
+    const nextUser = mergeCurrentUserAvatar(result.user, nextAvatarUrl);
 
     setCurrentUser(nextUser);
-    setCurrentAvatarUrl(getCurrentChatUserAvatarUrl(nextUser));
+    setCurrentAvatarUrl(nextAvatarUrl);
     return nextUser;
   }, []);
 
@@ -644,14 +698,10 @@ export function ChatShell() {
       return;
     }
 
-    const remoteAvatarUrl = getCurrentChatUserAvatarUrl(currentUser);
+    const storedAvatarUrl = readStoredAvatarUrl(currentUser);
+    const remoteAvatarUrl = normalizeAvatarUrl(getCurrentChatUserAvatarUrl(currentUser));
 
-    if (remoteAvatarUrl) {
-      setCurrentAvatarUrl(remoteAvatarUrl);
-      return;
-    }
-
-    setCurrentAvatarUrl(readStoredAvatarUrl(currentUser));
+    setCurrentAvatarUrl(storedAvatarUrl || remoteAvatarUrl);
   }, [currentUser]);
 
   const updateScrollToBottomVisibility = React.useCallback(() => {
@@ -1503,13 +1553,15 @@ export function ChatShell() {
 
   function handleAvatarSaved(nextAvatarUrl: string | null) {
     clearActionFeedback();
-    writeStoredAvatarUrl(currentUser, nextAvatarUrl);
-    setCurrentAvatarUrl(nextAvatarUrl);
-    setCurrentUser((user) => (user ? mergeCurrentUserAvatar(user, nextAvatarUrl) : user));
+    const immediateAvatarUrl = normalizeAvatarUrl(nextAvatarUrl);
+
+    writeStoredAvatarUrl(currentUser, immediateAvatarUrl);
+    setCurrentAvatarUrl(immediateAvatarUrl);
+    setCurrentUser((user) => (user ? mergeCurrentUserAvatar(user, immediateAvatarUrl) : user));
     void refreshCurrentUser({ cacheBust: true })
       .then((user) => {
-        const refreshedAvatarUrl = getCurrentChatUserAvatarUrl(user);
-        const stableAvatarUrl = nextAvatarUrl === null ? null : refreshedAvatarUrl || nextAvatarUrl;
+        const refreshedAvatarUrl = normalizeAvatarUrl(getCurrentChatUserAvatarUrl(user));
+        const stableAvatarUrl = immediateAvatarUrl === null ? null : immediateAvatarUrl || readStoredAvatarUrl(user) || refreshedAvatarUrl;
 
         writeStoredAvatarUrl(user, stableAvatarUrl);
         setCurrentAvatarUrl(stableAvatarUrl);
@@ -1521,7 +1573,7 @@ export function ChatShell() {
       .catch((requestError) => {
         console.warn("[chat-ui] refresh current user after avatar save failed", requestError);
       });
-    setActionSuccess(nextAvatarUrl ? "头像已更新。" : "已恢复默认头像。", "avatar");
+    setActionSuccess(immediateAvatarUrl ? "头像已更新。" : "已恢复默认头像。", "avatar");
   }
 
   function rememberPromptHistory(text: string) {
