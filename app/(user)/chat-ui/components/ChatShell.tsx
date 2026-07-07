@@ -35,6 +35,7 @@ import {
   getCurrentChatUserAvatarUrl,
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
+  normalizeCurrentChatUserAvatarUrl,
   normalizeChatMode
 } from "../chat-ui-state";
 import {
@@ -159,13 +160,9 @@ function readPinnedConversationIds(storageKey: string | null) {
 }
 
 function normalizeAvatarUrl(avatarUrl: string | null | undefined) {
-  const value = typeof avatarUrl === "string" ? avatarUrl.trim() : "";
+  const value = normalizeCurrentChatUserAvatarUrl(avatarUrl);
 
-  if (!value) {
-    return null;
-  }
-
-  if (/^(?:https?:|data:|blob:|\/)/i.test(value)) {
+  if (!value || /^(?:https?:|data:|blob:|\/)/i.test(value)) {
     return value;
   }
 
