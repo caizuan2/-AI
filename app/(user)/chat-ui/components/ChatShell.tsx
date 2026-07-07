@@ -76,7 +76,6 @@ import type {
 } from "../types";
 
 const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
-const PROMPT_HISTORY_STORAGE_KEY_PREFIX = "chat-ui:prompt-history";
 const PROMPT_HISTORY_LIMIT = 30;
 const PROMPT_HISTORY_RAIL_MARK_COUNT = 42;
 const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
@@ -126,6 +125,11 @@ type ConfirmDialogState = {
   onConfirm: () => void;
 } | null;
 
+type PromptHistoryItem = {
+  messageId: string;
+  prompt: string;
+};
+
 function getChatUserStorageIdentity(user: CurrentChatUser | null | undefined) {
   const identity =
     (typeof user?.id === "string" ? user.id.trim() : "") ||
@@ -138,12 +142,6 @@ function getPinnedConversationStorageKey(user: CurrentChatUser | null | undefine
   const identity = getChatUserStorageIdentity(user);
 
   return identity ? `${PINNED_CONVERSATION_STORAGE_KEY_PREFIX}:${encodeURIComponent(identity)}` : null;
-}
-
-function getPromptHistoryStorageKey(user: CurrentChatUser | null | undefined) {
-  const identity = getChatUserStorageIdentity(user);
-
-  return identity ? `${PROMPT_HISTORY_STORAGE_KEY_PREFIX}:${encodeURIComponent(identity)}` : null;
 }
 
 function readPinnedConversationIds(storageKey: string | null) {
@@ -160,49 +158,6 @@ function readPinnedConversationIds(storageKey: string | null) {
   }
 }
 
-function readPromptHistory(storageKey: string | null) {
-  if (typeof window === "undefined" || !storageKey) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
-
-    return Array.isArray(parsed)
-      ? parsed
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .slice(0, PROMPT_HISTORY_LIMIT)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function writePromptHistory(storageKey: string | null, prompts: string[]) {
-  if (!storageKey) {
-    return;
-  }
-
-  try {
-    window.localStorage.setItem(storageKey, JSON.stringify(prompts.slice(0, PROMPT_HISTORY_LIMIT)));
-  } catch {
-    // Prompt history is a convenience panel; storage failures should not block chatting.
-  }
-}
-
-function addPromptHistoryItem(prompts: string[], text: string) {
-  const nextPrompt = text.trim();
-
-  if (!nextPrompt) {
-    return prompts;
-  }
-
-  const duplicatedPrompt = nextPrompt.replace(/\s+/g, " ");
-  const existingPrompts = prompts.filter((prompt) => prompt.trim().replace(/\s+/g, " ") !== duplicatedPrompt);
-
-  return [nextPrompt, ...existingPrompts].slice(0, PROMPT_HISTORY_LIMIT);
-}
-
 function normalizeAvatarUrl(avatarUrl: string | null | undefined) {
   const value = typeof avatarUrl === "string" ? avatarUrl.trim() : "";
 
@@ -215,6 +170,17 @@ function normalizeAvatarUrl(avatarUrl: string | null | undefined) {
   }
 
   return `/${value.replace(/^\/+/, "")}`;
+}
+
+function buildPromptHistoryItems(messages: ChatMessageView[]): PromptHistoryItem[] {
+  return messages
+    .filter((message) => message.role === "user" && message.content.trim().length > 0)
+    .map((message) => ({
+      messageId: message.id,
+      prompt: message.content.trim()
+    }))
+    .reverse()
+    .slice(0, PROMPT_HISTORY_LIMIT);
 }
 
 function readStoredAvatarUrl(user: CurrentChatUser | null | undefined) {
@@ -391,10 +357,14 @@ function PromptHistoryRail({
   prompts,
   onSelect
 }: {
-  prompts: string[];
-  onSelect: (prompt: string) => void;
+  prompts: PromptHistoryItem[];
+  onSelect: (item: PromptHistoryItem) => void;
 }) {
   const [promptHistoryPanelOpen, setPromptHistoryPanelOpen] = React.useState(false);
+
+  if (prompts.length === 0) {
+    return null;
+  }
 
   function handlePromptHistoryBlur(event: React.FocusEvent<HTMLDivElement>) {
     const nextTarget = event.relatedTarget;
@@ -446,38 +416,35 @@ function PromptHistoryRail({
         >
           <div className="border-b border-slate-100 px-4 py-3">
             <div className="text-sm font-semibold text-slate-900">提示词记录</div>
-            <div className="mt-1 text-xs text-slate-500">移动到右侧记录栏可查看，点击可回填输入框。</div>
+            <div className="mt-1 text-xs text-slate-500">移动到右侧记录栏可查看，点击可定位到对应提示词。</div>
           </div>
           <div className="max-h-[calc(min(70vh,560px)-72px)] space-y-2 overflow-y-auto p-3">
-            {prompts.length > 0 ? (
-              prompts.map((prompt, index) => (
-                <button
-                  key={`${index}-${prompt.slice(0, 32)}`}
-                  type="button"
-                  onClick={() => onSelect(prompt)}
-                  className="focus-ring flex w-full gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 transition hover:border-blue-100 hover:bg-blue-50 hover:text-slate-950"
-                  title={prompt}
+            {prompts.map((item, index) => (
+              <button
+                key={item.messageId}
+                type="button"
+                onClick={() => {
+                  onSelect(item);
+                  setPromptHistoryPanelOpen(false);
+                }}
+                className="focus-ring flex w-full gap-2 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left text-xs text-slate-700 transition hover:border-blue-100 hover:bg-blue-50 hover:text-slate-950"
+                title={item.prompt}
+              >
+                <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">
+                  {index + 1}
+                </span>
+                <span
+                  className="min-w-0 flex-1 overflow-hidden leading-5"
+                  style={{
+                    display: "-webkit-box",
+                    WebkitBoxOrient: "vertical",
+                    WebkitLineClamp: 2
+                  }}
                 >
-                  <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-white text-[10px] font-semibold text-slate-500">
-                    {index + 1}
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 overflow-hidden leading-5"
-                    style={{
-                      display: "-webkit-box",
-                      WebkitBoxOrient: "vertical",
-                      WebkitLineClamp: 2
-                    }}
-                  >
-                    {prompt}
-                  </span>
-                </button>
-              ))
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 px-3 py-5 text-center text-xs text-slate-500">
-                发送后的提示词会保存在这里。
-              </div>
-            )}
+                  {item.prompt}
+                </span>
+              </button>
+            ))}
           </div>
         </div>
       </div>
@@ -495,7 +462,6 @@ export function ChatShell() {
   const [messages, setMessages] = React.useState<ChatMessageView[]>([]);
   const [input, setInput] = React.useState("");
   const [inputAttachments, setInputAttachments] = React.useState<ChatAttachmentDraft[]>([]);
-  const [promptHistory, setPromptHistory] = React.useState<string[]>([]);
   const [manualChatMode, setManualChatMode] = React.useState<ChatModeKey | null>(null);
   const [loading, setLoading] = React.useState(false);
   const [historyLoading, setHistoryLoading] = React.useState(false);
@@ -531,7 +497,7 @@ export function ChatShell() {
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
   const currentUserIdentity = getChatUserStorageIdentity(currentUser);
   const pinnedConversationStorageKey = getPinnedConversationStorageKey(currentUser);
-  const promptHistoryStorageKey = getPromptHistoryStorageKey(currentUser);
+  const promptHistory = React.useMemo(() => buildPromptHistoryItems(messages), [messages]);
   const visibleConversations = React.useMemo(() => {
     const originalIndex = new Map(conversations.map((conversation, index) => [conversation.id, index]));
 
@@ -682,15 +648,6 @@ export function ChatShell() {
 
     setSelectedKnowledgeBases(readStoredKnowledgeBases(currentUser));
   }, [currentUser, currentUserIdentity, currentUserLoaded]);
-
-  React.useEffect(() => {
-    if (!currentUserLoaded || !currentUserIdentity) {
-      setPromptHistory([]);
-      return;
-    }
-
-    setPromptHistory(readPromptHistory(promptHistoryStorageKey));
-  }, [currentUserIdentity, currentUserLoaded, promptHistoryStorageKey]);
 
   React.useEffect(() => {
     if (!currentUser) {
@@ -1576,19 +1533,15 @@ export function ChatShell() {
     setActionSuccess(immediateAvatarUrl ? "头像已更新。" : "已恢复默认头像。", "avatar");
   }
 
-  function rememberPromptHistory(text: string) {
-    setPromptHistory((current) => {
-      const next = addPromptHistoryItem(current, text);
+  function handlePromptHistorySelect(item: PromptHistoryItem) {
+    setScrollFocusMessageId(item.messageId);
 
-      writePromptHistory(promptHistoryStorageKey, next);
-      return next;
-    });
-  }
+    if (scrollChatMessageToTop(item.messageId, "smooth")) {
+      showNotice("已定位到对应提示词。");
+      return;
+    }
 
-  function handlePromptHistorySelect(prompt: string) {
-    setInput(prompt);
-    setManualChatMode(null);
-    showNotice("已填入输入框，可修改后发送。");
+    showNotice("这条提示词暂时无法定位，请稍后再试。");
   }
 
   async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
@@ -1692,7 +1645,6 @@ export function ChatShell() {
       localAssistantMessageId = nextAssistantMessage.id;
       activeAskAbortRef.current = abortController;
       pendingScrollToUserMessageIdRef.current = nextUserMessage.id;
-      rememberPromptHistory(text);
       setScrollFocusMessageId(nextUserMessage.id);
       setInput("");
       setInputAttachments([]);
