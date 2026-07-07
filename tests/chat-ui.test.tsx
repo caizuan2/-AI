@@ -551,17 +551,29 @@ async function main() {
   assert.match(validateAvatarFile(invalidAvatarFile) ?? "", /仅支持/);
   assert.match(validateAvatarFile(oversizedAvatarFile) ?? "", /2MB/);
   const chatShellText = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
+  const avatarDialogSource = readFileSync("app/(user)/chat-ui/components/AvatarSettingsDialog.tsx", "utf8");
 
   assert.match(chatShellText, /setCurrentUser/);
-  assert.match(chatShellText, /writeStoredAvatarUrl\(currentUser, nextAvatarUrl\)/);
-  assert.match(chatShellText, /mergeCurrentUserAvatar\(user, nextAvatarUrl\)/);
-  assert.match(chatShellText, /stableAvatarUrl = nextAvatarUrl === null \? null : refreshedAvatarUrl \|\| nextAvatarUrl/);
+  assert.match(chatShellText, /function normalizeAvatarUrl/);
+  assert.match(chatShellText, /const nextAvatarUrl = storedAvatarUrl \|\| remoteAvatarUrl/);
+  assert.match(chatShellText, /setCurrentAvatarUrl\(storedAvatarUrl \|\| remoteAvatarUrl\)/);
+  assert.match(chatShellText, /const immediateAvatarUrl = normalizeAvatarUrl\(nextAvatarUrl\)/);
+  assert.match(chatShellText, /writeStoredAvatarUrl\(currentUser, immediateAvatarUrl\)/);
+  assert.match(chatShellText, /mergeCurrentUserAvatar\(user, immediateAvatarUrl\)/);
+  assert.match(chatShellText, /stableAvatarUrl = immediateAvatarUrl === null \? null : immediateAvatarUrl \|\| readStoredAvatarUrl\(user\) \|\| refreshedAvatarUrl/);
   assert.match(chatShellText, /mergeCurrentUserAvatar\(\{[\s\S]*stableAvatarUrl\)/);
+  assert.match(avatarDialogSource, /rawValue && !\/\^\(\?:https\?:\|data:\|blob:\|\\\/\)\/i\.test\(rawValue\)/);
   assert.match(chatShellText, /pendingScrollToUserMessageIdRef\.current = nextUserMessage\.id/);
   assert.match(chatShellText, /setScrollFocusMessageId\(nextUserMessage\.id\)/);
   assert.match(chatShellText, /scrollChatMessageToTop\(targetMessageId, "auto"\)/);
   assert.match(chatShellText, /PROMPT_HISTORY_STORAGE_KEY_PREFIX/);
+  assert.match(chatShellText, /PROMPT_HISTORY_RAIL_MARK_COUNT/);
   assert.match(chatShellText, /<PromptHistoryRail prompts=\{promptHistory\}/);
+  assert.match(chatShellText, /aria-label="提示词记录条"/);
+  assert.match(chatShellText, /setPromptHistoryPanelOpen\(true\)/);
+  assert.match(chatShellText, /promptHistoryPanelOpen \? "block" : "hidden"/);
+  assert.match(chatShellText, /right-10 top-1\/2/);
+  assert.doesNotMatch(chatShellText, /right-3 top-24 z-20 hidden lg:flex/);
   assert.match(chatShellText, /aria-label="滚动到底部"/);
   assert.match(chatShellText, /<ArrowDown className="h-5 w-5"/);
   assert.equal(getCurrentChatUserDisplayName({
@@ -902,7 +914,7 @@ async function main() {
   assert.match(chatShellSourceForEdit, /onEditUserMessage=\{handleEditUserMessage\}/);
   assert.match(chatShellSourceForEdit, /userAvatarUrl=\{currentAvatarUrl\}/);
   assert.match(chatShellSourceForEdit, /currentUser=\{currentUser\}/);
-  assert.match(chatShellSourceForEdit, /mergeCurrentUserAvatar\(user, nextAvatarUrl\)/);
+  assert.match(chatShellSourceForEdit, /mergeCurrentUserAvatar\(user, immediateAvatarUrl\)/);
   const historyImageMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[

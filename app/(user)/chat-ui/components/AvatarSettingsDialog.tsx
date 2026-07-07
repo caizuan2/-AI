@@ -26,7 +26,10 @@ export function validateAvatarFile(file: File) {
 }
 
 function withAvatarVersion(url: string | null) {
-  const value = typeof url === "string" ? url.trim() : "";
+  const rawValue = typeof url === "string" ? url.trim() : "";
+  const value = rawValue && !/^(?:https?:|data:|blob:|\/)/i.test(rawValue)
+    ? `/${rawValue.replace(/^\/+/, "")}`
+    : rawValue;
 
   if (!value || value.startsWith("data:") || value.startsWith("blob:")) {
     return value || null;
