@@ -2,7 +2,7 @@ import type { CapacitorConfig } from "@capacitor/cli";
 
 const adminAppUrl =
   process.env.NEXT_PUBLIC_ADMIN_APP_URL ||
-  "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest";
+  "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=apk";
 
 const config: CapacitorConfig = {
   appId: "com.aiknowledge.admin",
@@ -10,7 +10,7 @@ const config: CapacitorConfig = {
   webDir: "admin-app-shell",
   server: {
     url: adminAppUrl,
-    cleartext: false
+    cleartext: true
   }
 };
 

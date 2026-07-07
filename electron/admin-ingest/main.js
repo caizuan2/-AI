@@ -8,7 +8,7 @@ const path = require("path");
 const APP_NAME = "AI知识库投喂端";
 const APP_ID = "com.aiknowledge.ingestadmin.desktop";
 const SESSION_PARTITION = "persist:admin-ingest";
-const DEFAULT_ADMIN_INGEST_URL = "http://localhost:3020/admin-ingest?app=ingest-admin&platform=exe";
+const DEFAULT_ADMIN_INGEST_URL = "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=exe";
 const READY_CHECK_RETRIES = Number.parseInt(process.env.ADMIN_INGEST_READY_RETRIES || "60", 10);
 const READY_CHECK_INTERVAL_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_INTERVAL_MS || "1000", 10);
 const READY_CHECK_TIMEOUT_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_TIMEOUT_MS || "1800", 10);
@@ -377,7 +377,7 @@ function checkUrlReady(targetUrl) {
 
       settled = true;
       resolve({
-        ok: response.statusCode === 200,
+        ok: response.statusCode >= 200 && response.statusCode < 400,
         statusCode: response.statusCode,
         statusMessage: response.statusMessage
       });
