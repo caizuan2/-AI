@@ -423,6 +423,32 @@ export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undef
   return `chat-ui:user-avatar:${identity}`;
 }
 
+const loopbackAvatarHostPattern = /^(?:localhost|0\.0\.0\.0|127(?:\.\d{1,3}){3}|\[?::1\]?)$/i;
+
+export function normalizeCurrentChatUserAvatarUrl(url: string | null | undefined) {
+  const value = cleanText(url);
+
+  if (!value) {
+    return null;
+  }
+
+  if (!/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  try {
+    const parsedUrl = new URL(value);
+
+    if (loopbackAvatarHostPattern.test(parsedUrl.hostname)) {
+      return `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+  } catch {
+    return value;
+  }
+
+  return value;
+}
+
 function withAvatarCacheVersion(url: string | null, version: string | null) {
   if (!url || !version || url.startsWith("data:") || url.startsWith("blob:")) {
     return url;
@@ -451,7 +477,7 @@ export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undef
   );
   const avatarVersion = cleanText(user?.avatar_updated_at) || cleanText(user?.avatarUpdatedAt) || null;
 
-  return withAvatarCacheVersion(avatarUrl, avatarVersion);
+  return withAvatarCacheVersion(normalizeCurrentChatUserAvatarUrl(avatarUrl), avatarVersion);
 }
 
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {

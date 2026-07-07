@@ -50,11 +50,11 @@ function getAvatarProfilePath(userId: string) {
   return path.join(getAvatarDirectory(), ".profiles", `${getSafeUserProfileName(userId)}.json`);
 }
 
-function buildAvatarApiUrl(request: Request, fileName: string, version: string | number) {
-  const url = new URL(`/api/auth/avatar/${encodeURIComponent(fileName)}`, request.url);
+function buildAvatarApiUrl(_request: Request, fileName: string, version: string | number) {
+  const url = new URL(`/api/auth/avatar/${encodeURIComponent(fileName)}`, "http://avatar.local");
   url.searchParams.set("v", String(version));
 
-  return url.toString();
+  return `${url.pathname}${url.search}`;
 }
 
 export async function writeUserAvatarProfile(userId: string, fileName: string, request: Request) {

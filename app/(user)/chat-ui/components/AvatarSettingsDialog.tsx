@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { ImagePlus, RotateCcw, Save, X } from "lucide-react";
-import { getChatUserAvatarStorageKey } from "../chat-ui-state";
+import { getChatUserAvatarStorageKey, normalizeCurrentChatUserAvatarUrl } from "../chat-ui-state";
 import { deleteCurrentUserAvatar, updateCurrentUserAvatar } from "../api";
 import type { CurrentChatUser } from "../types";
 
@@ -26,7 +26,7 @@ export function validateAvatarFile(file: File) {
 }
 
 function withAvatarVersion(url: string | null) {
-  const rawValue = typeof url === "string" ? url.trim() : "";
+  const rawValue = normalizeCurrentChatUserAvatarUrl(url) ?? "";
   const value = rawValue && !/^(?:https?:|data:|blob:|\/)/i.test(rawValue)
     ? `/${rawValue.replace(/^\/+/, "")}`
     : rawValue;

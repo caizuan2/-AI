@@ -24,6 +24,7 @@ import {
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
   getCachedChatAttachmentPreviewUrl,
+  normalizeCurrentChatUserAvatarUrl,
   normalizeChatMode
 } from "../app/(user)/chat-ui/chat-ui-state";
 import {
@@ -164,6 +165,65 @@ async function main() {
   assert.match(implicitScriptMarkup, /直接可复制的话术（微信\/私聊发送）/);
   assert.match(implicitScriptMarkup, /宝\/兄弟，听你试了那么多种减肥方法/);
   assert.match(implicitScriptMarkup, /给你的沟通要点/);
+
+  const standaloneQuotedScriptAnswer = [
+    "客户用KKS体重下降慢，情绪急躁。这个情况在减脂初期很常见，下面给你一套完整跟进方案。",
+    "",
+    "一、先快速稳住客户情绪",
+    "客户急躁的时候，别急着讲道理，先共情、接住情绪。",
+    "",
+    "“姐/哥，我特别理解你现在的心情。花钱又花时间，谁不希望快点看到变化对吧？你这样想是正常的，别急，我帮你分析一下为什么这几天体重变化慢，以及接下来怎么调整。” 关键点：",
+    "",
+    "- 第一时间认可对方感受，不要否定或讲大道理",
+    "- 给信心：这个情况我见得多，基本都能解决",
+    "- 把问题明确化：我们一起来看看是哪一步需要优化"
+  ].join("\n");
+  const standaloneQuotedScriptSegments = splitNaturalAnswerForCustomerScriptCards(standaloneQuotedScriptAnswer);
+  const standaloneQuotedScriptCards = standaloneQuotedScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(standaloneQuotedScriptCards.length, 1);
+  assert.match(standaloneQuotedScriptCards[0].text, /姐\/哥，我特别理解你现在的心情/);
+  assert.equal(
+    standaloneQuotedScriptSegments.some((segment) => segment.kind === "markdown" && /关键点/.test(segment.text)),
+    true
+  );
+  const standaloneQuotedScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: standaloneQuotedScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={standaloneQuotedScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(standaloneQuotedScriptMarkup, /复制话术/);
+  assert.match(standaloneQuotedScriptMarkup, /姐\/哥，我特别理解你现在的心情/);
+  assert.match(standaloneQuotedScriptMarkup, /关键点/);
+
+  const inlineLabeledScriptAnswer = [
+    "这个问题很典型。客户真正担心的是安全感和刻板印象。",
+    "",
+    "✅ 标准回应要点（可直接发给客户）：“完全不用饿肚子！KKS不是节食，而是通过营养重组和代谢调整来优化身体对能量的利用。很多客户反馈，吃够了反而不馋了，肚子也不咕咕叫了。”",
+    "",
+    "为什么这么说？依据来自KKS体系里对节食、断食和极低热量方案的区分。"
+  ].join("\n");
+  const inlineLabeledScriptSegments = splitNaturalAnswerForCustomerScriptCards(inlineLabeledScriptAnswer);
+  const inlineLabeledScriptCards = inlineLabeledScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(inlineLabeledScriptCards.length, 1);
+  assert.match(inlineLabeledScriptCards[0].title, /标准回应要点/);
+  assert.match(inlineLabeledScriptCards[0].text, /完全不用饿肚子/);
+  assert.equal(
+    inlineLabeledScriptSegments.some((segment) => segment.kind === "markdown" && /为什么这么说/.test(segment.text)),
+    true
+  );
 
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
@@ -826,6 +886,19 @@ async function main() {
   assert.doesNotMatch(chatAvatarMarkup, /lucide-bot/);
   assert.equal(drawerWithAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
   assert.equal(chatAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
+  assert.equal(
+    normalizeCurrentChatUserAvatarUrl("http://127.0.0.1:3021/api/auth/avatar/user_1.png?v=123"),
+    "/api/auth/avatar/user_1.png?v=123"
+  );
+  assert.equal(
+    getCurrentChatUserAvatarUrl({
+      id: "user_loopback",
+      name: "内网头像",
+      avatar_url: "http://127.0.0.1:3021/api/auth/avatar/user_loopback.png?v=456",
+      licenseActivated: true
+    }),
+    "/api/auth/avatar/user_loopback.png?v=456"
+  );
 
   const chatCamelAvatarMarkup = renderToStaticMarkup(
     <ChatMessages

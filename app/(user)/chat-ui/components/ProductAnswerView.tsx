@@ -45,6 +45,11 @@ type NaturalAnswerSegment =
   | { kind: "markdown"; text: string }
   | { kind: "customerScript"; title: string; text: string };
 
+type CustomerQuoteLine = {
+  text: string;
+  trailingText: string;
+};
+
 function CopyMiniButton({
   text,
   label = "复制",
@@ -145,7 +150,7 @@ function parseCustomerScriptHeading(line: string) {
   }
 
   const labelPatterns = [
-    /^(可直接(?:复制)?(?:发给|给)客户|复制给客户|客户(?:可复制)?话术|客户回复|标准回复(?:话术)?|直接复制(?:使用)?|对外话术|外发话术|您可以这样发给客户|可以这样发给客户)\s*[：:]?\s*(.*)$/i,
+    /^(可直接(?:复制)?(?:发给|给)客户|复制给客户|客户(?:可复制)?话术|客户回复|标准(?:回应|回复)(?:要点|话术)?(?:[（(][^）)]{1,36}[）)])?|标准回复(?:话术)?|直接复制(?:使用)?|对外话术|外发话术|您可以这样发给客户|可以这样发给客户)\s*[：:]?\s*(.*)$/i,
     /^(话术\s*(?:[一二三四五六七八九十\d]+)?(?:[（(][^）)]{1,24}[）)])?)\s*[：:]?\s*(.*)$/i
   ];
 
@@ -174,6 +179,56 @@ function parseCustomerScriptHeading(line: string) {
   }
 
   return null;
+}
+
+function extractCustomerQuoteLine(line: string): CustomerQuoteLine | null {
+  const normalized = line
+    .trim()
+    .replace(/^>\s*/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.、]\s*/, "")
+    .trim();
+  const quoteMatch = normalized.match(/^[“"]([\s\S]{8,1200}?)[”"]\s*([\s\S]*)$/);
+
+  if (!quoteMatch) {
+    return null;
+  }
+
+  return {
+    text: quoteMatch[1].trim(),
+    trailingText: quoteMatch[2]?.trim() ?? ""
+  };
+}
+
+function hasCustomerScriptContext(markdownLines: string[]) {
+  const context = markdownLines
+    .slice(-5)
+    .map((line) => normalizeScriptHeadingText(line))
+    .join("\n");
+
+  return /客户|话术|回复|发给|复制|微信|私聊|跟.*说|这样说|这样跟|共情|接住|安抚|回应|沟通/.test(context);
+}
+
+function isLikelyCustomerScriptQuote(text: string) {
+  const normalized = text.replace(/\s+/g, "");
+
+  if (normalized.length < 16) {
+    return false;
+  }
+
+  const hasDirectAddress = /姐|哥|兄弟|姐妹|宝|您好|你好|您|你/.test(normalized);
+  const hasConversationTone = /理解|别急|不用担心|我帮你|我们|一起|可以|先|调整|回复|感觉|情况|问题|身体/.test(normalized);
+
+  return hasDirectAddress && hasConversationTone;
+}
+
+function inferCustomerScriptTitle(markdownLines: string[]) {
+  const heading = [...markdownLines]
+    .reverse()
+    .map((line) => normalizeScriptHeadingText(line).replace(/[：:]$/, ""))
+    .find((line) => line.length > 0 && line.length <= 36 && /客户|话术|回复|共情|安抚|回应|沟通|情绪/.test(line));
+
+  return heading || "客户话术";
 }
 
 function isNaturalAnswerSectionHeading(line: string) {
@@ -261,6 +316,26 @@ function splitMarkdownScriptHeadings(markdown: string) {
       continue;
     }
 
+    const quoteLine = extractCustomerQuoteLine(line);
+
+    if (
+      !activeScript
+      && quoteLine
+      && hasCustomerScriptContext(markdownLines)
+      && isLikelyCustomerScriptQuote(quoteLine.text)
+    ) {
+      const title = inferCustomerScriptTitle(markdownLines);
+
+      flushMarkdown();
+      appendCustomerScriptSegment(segments, title, quoteLine.text);
+
+      if (quoteLine.trailingText) {
+        markdownLines.push(quoteLine.trailingText);
+      }
+
+      continue;
+    }
+
     if (activeScript && isNaturalAnswerSectionHeading(line)) {
       flushScript();
       markdownLines.push(line);
@@ -282,7 +357,7 @@ function splitMarkdownScriptHeadings(markdown: string) {
 }
 
 const inlineCustomerScriptPattern =
-  /(?:^|\n|[ \t])(?:[（(]\s*)?(您可以这样发给客户|可以这样发给客户|可直接发给客户|复制给客户|客户话术)(?:\s*[）)])?\s*[：:，,]?\s*[“"]([\s\S]{8,1200}?)[”"]/g;
+  /(^|\n|[ \t。；;，,])(?:[✅☑️]\s*)?(?:[（(]\s*)?((?:标准(?:回应|回复)(?:要点|话术)?|标准回复(?:话术)?|客户(?:可复制)?话术|客户回复|对外话术|外发话术|回复文案|沟通文案|可直接(?:复制)?(?:发给|给)客户|复制给客户|直接复制(?:使用)?|您可以这样发给客户|可以这样发给客户)(?:[（(][^）)]{0,36}(?:可直接(?:复制)?(?:发给|给)客户|微信|私聊|发送|外发)[^）)]{0,36}[）)])?)(?:\s*[）)])?\s*[：:，,]\s*[“"]([\s\S]{8,1200}?)[”"]/g;
 
 export function splitNaturalAnswerForCustomerScriptCards(text: string): NaturalAnswerSegment[] {
   const segments: NaturalAnswerSegment[] = [];
@@ -292,11 +367,12 @@ export function splitNaturalAnswerForCustomerScriptCards(text: string): NaturalA
   let match: RegExpExecArray | null = inlineCustomerScriptPattern.exec(text);
 
   while (match) {
-    const index = match.index;
+    const boundary = match[1] ?? "";
+    const index = match.index + boundary.length;
 
     splitMarkdownScriptHeadings(text.slice(lastIndex, index)).forEach((segment) => segments.push(segment));
-    appendCustomerScriptSegment(segments, match[1] || "客户话术", match[2] || "");
-    lastIndex = index + match[0].length;
+    appendCustomerScriptSegment(segments, match[2] || "客户话术", match[3] || "");
+    lastIndex = match.index + match[0].length;
     match = inlineCustomerScriptPattern.exec(text);
   }
 
