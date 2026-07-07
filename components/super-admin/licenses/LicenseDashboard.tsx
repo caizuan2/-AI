@@ -113,8 +113,6 @@ function getLicenseSearchText(license: SuperAdminLicenseRecord) {
     license.redeemedByUserLabel,
     license.redeemedByUserAccount,
     license.redeemedByUserId,
-    license.tenantId,
-    license.note,
     statusLabels[license.status],
     planLabels[license.plan]
   ]
@@ -345,6 +343,7 @@ function LicenseTable({
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
+  const [copiedLicenseId, setCopiedLicenseId] = useState<string | null>(null);
   const normalizedQuery = activeQuery.trim().toLocaleLowerCase("zh-CN");
   const filteredLicenses = useMemo(() => {
     if (!normalizedQuery) {
@@ -353,6 +352,20 @@ function LicenseTable({
 
     return licenses.filter((license) => getLicenseSearchText(license).includes(normalizedQuery));
   }, [licenses, normalizedQuery]);
+
+  async function handleCopyLicenseKey(license: SuperAdminLicenseRecord) {
+    const copied = await copyTextToClipboard(license.displayKey);
+
+    if (copied) {
+      setCopiedLicenseId(license.id);
+      window.setTimeout(() => {
+        setCopiedLicenseId(null);
+      }, 1600);
+      return;
+    }
+
+    window.prompt("复制卡密", license.displayKey);
+  }
 
   if (licenses.length === 0) {
     return <EmptyState message={`${title}暂无卡密记录。`} />;
@@ -409,15 +422,13 @@ function LicenseTable({
               <th className="px-4 py-3">激活时间</th>
               <th className="px-4 py-3">激活用户</th>
               <th className="px-4 py-3">账号</th>
-              <th className="px-4 py-3">租户</th>
-              <th className="px-4 py-3">备注</th>
               <th className="px-4 py-3">操作</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
             {filteredLicenses.length === 0 ? (
               <tr>
-                <td colSpan={12} className="px-4 py-8 text-center text-sm text-slate-500">
+                <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">
                   没有找到匹配的卡密、激活用户或账号。
                 </td>
               </tr>
@@ -436,18 +447,26 @@ function LicenseTable({
                 <td className="px-4 py-3 text-slate-600">{license.activatedAt ? formatDate(license.activatedAt) : "-"}</td>
                 <td className="px-4 py-3 text-slate-600">{license.redeemedByUserLabel ?? "-"}</td>
                 <td className="px-4 py-3 text-slate-600">{license.redeemedByUserAccount ?? "-"}</td>
-                <td className="px-4 py-3 text-slate-600">{license.tenantId ?? "-"}</td>
-                <td className="px-4 py-3 text-slate-600">{license.note ?? "-"}</td>
                 <td className="px-4 py-3">
-                  <button
-                    type="button"
-                    onClick={() => onDisable(license.id)}
-                    disabled={license.status === "DISABLED" || disablingId === license.id}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {disablingId === license.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
-                    禁用
-                  </button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onDisable(license.id)}
+                      disabled={license.status === "DISABLED" || disablingId === license.id}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {disablingId === license.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
+                      禁用
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLicenseKey(license)}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      {copiedLicenseId === license.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                      {copiedLicenseId === license.id ? "已复制" : "复制"}
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
