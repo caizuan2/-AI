@@ -324,13 +324,18 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
     }
   }
 
-  function goBackFromActivate() {
-    if (typeof window !== "undefined" && window.history.length > 1) {
-      router.back();
-      return;
+  async function goBackFromActivate() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include"
+      });
+    } catch {
+      // Still let the user leave the activation gate if logout fails.
     }
 
     router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent(nextPath)}`);
+    router.refresh();
   }
 
   return (
