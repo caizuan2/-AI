@@ -1,5 +1,5 @@
 appId: com.aiknowledge.ingestadmin.desktop
-productName: AI知识库投喂端
+productName: 小董AI
 directories:
   output: dist-app/admin-ingest/windows
 files:
@@ -8,6 +8,7 @@ files:
 extraMetadata:
   main: electron/admin-ingest/main.js
 win:
+  icon: assets/admin-ingest/xiaodong-ai.ico
   target:
     - portable
-  artifactName: "AI知识库投喂端.${ext}"
+  artifactName: "小董AI.${ext}"

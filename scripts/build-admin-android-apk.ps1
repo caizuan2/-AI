@@ -9,6 +9,8 @@ $OutputDir = Join-Path $Root "dist-app/admin-android"
 $PublicAdminDir = Join-Path $Root "public/downloads/admin"
 $OutputApk = Join-Path $OutputDir "ai-knowledge-admin.apk"
 $LatestOutputApk = Join-Path $OutputDir "ai-knowledge-admin-latest.apk"
+$AdminIconSourceDir = Join-Path $Root "assets/admin-ingest/android-icons"
+$AndroidResDir = Join-Path $AndroidDir "app/src/main/res"
 
 function Invoke-ProjectCommand {
   param(
@@ -53,8 +55,47 @@ Remove-Item -LiteralPath (Join-Path $PublicAdminDir "ai-knowledge-admin-latest.a
 
 $OriginalBuildGradleBytes = if (Test-Path $BuildGradle) { [System.IO.File]::ReadAllBytes($BuildGradle) } else { $null }
 $OriginalUserConfigBytes = [System.IO.File]::ReadAllBytes($UserConfig)
+$OriginalLauncherIconBytes = @{}
 $usedTemporaryConfig = $false
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+function Backup-AndroidLauncherIcons {
+  $OriginalLauncherIconBytes.Clear()
+
+  if (-not (Test-Path $AndroidResDir)) {
+    return
+  }
+
+  Get-ChildItem -LiteralPath $AndroidResDir -Recurse -File -Include "ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png" -ErrorAction SilentlyContinue |
+    ForEach-Object {
+      $OriginalLauncherIconBytes[$_.FullName] = [System.IO.File]::ReadAllBytes($_.FullName)
+    }
+}
+
+function Restore-AndroidLauncherIcons {
+  foreach ($Entry in $OriginalLauncherIconBytes.GetEnumerator()) {
+    [System.IO.File]::WriteAllBytes([string]$Entry.Key, [byte[]]$Entry.Value)
+  }
+}
+
+function Copy-AdminLauncherIcons {
+  if (-not (Test-Path $AdminIconSourceDir)) {
+    throw "Admin launcher icon source not found: $AdminIconSourceDir"
+  }
+
+  Get-ChildItem -LiteralPath $AdminIconSourceDir -Recurse -File -Include "ic_launcher.png", "ic_launcher_round.png", "ic_launcher_foreground.png" |
+    ForEach-Object {
+      $RelativePath = $_.FullName.Substring($AdminIconSourceDir.Length).TrimStart("\", "/")
+      $Destination = Join-Path $AndroidResDir $RelativePath
+      $DestinationDir = Split-Path -Parent $Destination
+
+      if (-not (Test-Path $DestinationDir)) {
+        throw "Android launcher icon destination not found: $DestinationDir"
+      }
+
+      Copy-Item -LiteralPath $_.FullName -Destination $Destination -Force
+    }
+}
 
 try {
   try {
@@ -77,6 +118,9 @@ try {
 
   $adminBuildGradle = [regex]::Replace($adminBuildGradle, 'applicationId\s+"[^"]+"', 'applicationId "com.aiknowledge.admin"', 1)
   [System.IO.File]::WriteAllText($BuildGradle, $adminBuildGradle, $utf8NoBom)
+
+  Backup-AndroidLauncherIcons
+  Copy-AdminLauncherIcons
 
   $IsWindowsPlatform = ($PSVersionTable.PSEdition -eq "Desktop") -or ($PSVersionTable.Platform -eq "Win32NT") -or ($env:OS -eq "Windows_NT")
   $GradleWrapperName = if ($IsWindowsPlatform) { "gradlew.bat" } else { "gradlew" }
@@ -116,4 +160,6 @@ try {
   } catch {
     Write-Warning "Failed to resync user Android config after admin build. Please run npx cap sync android manually."
   }
+
+  Restore-AndroidLauncherIcons
 }

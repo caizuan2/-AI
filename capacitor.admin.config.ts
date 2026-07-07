@@ -6,7 +6,7 @@ const adminAppUrl =
 
 const config: CapacitorConfig = {
   appId: "com.aiknowledge.admin",
-  appName: "AI知识库管理后台",
+  appName: "小董AI",
   webDir: "admin-app-shell",
   server: {
     url: adminAppUrl,

@@ -5,7 +5,7 @@ const https = require("https");
 const os = require("os");
 const path = require("path");
 
-const APP_NAME = "AI知识库投喂端";
+const APP_NAME = "小董AI";
 const APP_ID = "com.aiknowledge.ingestadmin.desktop";
 const SESSION_PARTITION = "persist:admin-ingest";
 const DEFAULT_ADMIN_INGEST_URL = "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=exe";
