@@ -4,7 +4,8 @@ import { chatWithFallback } from "@/lib/ai/providers";
 import {
   buildRagPromptMessages,
   type RagAnswerMode,
-  type RagContext
+  type RagContext,
+  type RagRecentConversationTurn
 } from "@/lib/ai/rag-prompt";
 import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { recordAiUsage } from "@/lib/analytics";
@@ -49,6 +50,7 @@ export interface GenerateRagAnswerOptions {
   intentLabel?: string;
   retrievalMessage?: string | null;
   businessExecutionContext?: string | null;
+  recentConversation?: RagRecentConversationTurn[];
 }
 
 function clamp01(value: number) {
@@ -140,7 +142,8 @@ export async function generateRagAnswer(
     confidence: options.confidence,
     intentLabel: options.intentLabel,
     retrievalMessage: options.retrievalMessage,
-    businessExecutionContext: options.businessExecutionContext
+    businessExecutionContext: options.businessExecutionContext,
+    recentConversation: options.recentConversation
   });
   const startedAt = Date.now();
   const estimatedInputTokens = estimateTokenCount(messages.map((message) => message.content).join("\n\n"));

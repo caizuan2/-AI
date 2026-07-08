@@ -4,6 +4,10 @@ import path from "path";
 import { getStore } from "@netlify/blobs";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
+import {
+  createChatImageOcrMetadata,
+  extractChatImageText
+} from "@/lib/ai-chat/image-ocr";
 import { requireAiChatAccess } from "@/lib/auth/guards";
 import { AppError, ValidationError, toAppError } from "@/lib/errors";
 
@@ -357,6 +361,13 @@ export async function POST(request: Request) {
     const extension = allowedAttachmentMimeTypes.get(mimeType) ?? "bin";
     const originalName = safeFileBaseName(file.name);
     const arrayBuffer = await file.arrayBuffer();
+    const ocrMetadata = createChatImageOcrMetadata(
+      await extractChatImageText({
+        arrayBuffer,
+        filename: originalName,
+        mimeType
+      }),
+    );
     const savedAttachment = shouldUseLocalUploadFallback()
       ? await saveAttachmentToLocalPublicUploads({
           actorId: actor.id,
@@ -397,6 +408,7 @@ export async function POST(request: Request) {
           ...(savedAttachment.blobKey
             ? { blobKey: savedAttachment.blobKey }
             : {}),
+          ...ocrMetadata,
         },
       },
     };

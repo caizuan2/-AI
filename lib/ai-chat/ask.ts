@@ -17,7 +17,7 @@ import {
 import { suggestKnowledgeImprovements } from "@/gpt-os/knowledge/auto_suggester";
 import { analyzeKnowledgeFeedback } from "@/gpt-os/knowledge/feedback_analyzer";
 import { detectKnowledgeGap } from "@/gpt-os/knowledge/gap_detector";
-import type { RagContext } from "@/lib/ai/rag-prompt";
+import type { RagContext, RagRecentConversationTurn } from "@/lib/ai/rag-prompt";
 import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import {
   buildCustomerAnswerFromChunks,
@@ -109,6 +109,7 @@ export interface AiChatAnswerProviderInput {
   agentId: string;
   knowledgeBaseId: string;
   namespace: string;
+  recentConversation: RagRecentConversationTurn[];
 }
 
 export interface AiChatAnswerProviderResult {
@@ -164,6 +165,7 @@ export type AiChatDb = RagSearchDb & {
     update(args: unknown): Promise<ConversationRecord>;
   };
   message: {
+    findMany?(args: unknown): Promise<MessageRecord[]>;
     create(args: unknown): Promise<MessageRecord>;
   };
   auditLog: {
@@ -173,7 +175,13 @@ export type AiChatDb = RagSearchDb & {
 
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_METADATA_BYTES = 4096;
+const MAX_ATTACHMENT_TEXT_CONTEXT_CHARS = 3200;
+const MAX_ATTACHMENT_SEARCH_HINT_CHARS = 360;
+const MAX_CONVERSATION_MEMORY_TURNS = 8;
+const MAX_CONVERSATION_MEMORY_CHARS_PER_TURN = 900;
+const MAX_CONVERSATION_MEMORY_TOTAL_CHARS = 3600;
 const allowedAttachmentTypes = new Set(["image", "camera_photo", "gallery_photo", "file", "audio", "video"]);
+const ATTACHMENT_SEARCH_KEYWORD_PATTERN = /订单号|订单|退款|退费|退货|售后|发货|物流|付款|支付|价格|费用|成分|用法|使用|效果|安全|禁忌|周期|剂量|减肥|瘦身|体重|反弹|不瘦|客户|回复|话术|沟通/gi;
 
 function defaultDb() {
   return prisma as unknown as AiChatDb;
@@ -770,7 +778,7 @@ function readAttachmentSearchText(metadata: JsonObject | undefined) {
     return "";
   }
 
-  return [
+  const text = [
     metadata.ocr,
     metadata.ocrText,
     metadata.text,
@@ -781,6 +789,122 @@ function readAttachmentSearchText(metadata: JsonObject | undefined) {
     .map((value) => trimString(value).slice(0, 160))
     .filter(Boolean)
     .join(" ");
+
+  return [
+    buildAttachmentSearchHints(text),
+    text
+  ].filter(Boolean).join(" ");
+}
+
+function readAttachmentOcrText(metadata: JsonObject | undefined) {
+  if (!metadata) {
+    return "";
+  }
+
+  return [
+    metadata.ocrText,
+    metadata.ocr,
+    metadata.text,
+    metadata.caption,
+    metadata.description,
+    metadata.summary
+  ]
+    .map((value) => trimString(value))
+    .find(Boolean) ?? "";
+}
+
+function normalizeAttachmentSearchSegment(value: string) {
+  return value
+    .replace(/^(?:客户|用户|对方|微信截图|截图|聊天记录|他说|她说|说|问|表示|反馈|我想|我要|想要|请问|麻烦|帮我|给我)+/g, "")
+    .replace(/(?:要在哪里找|在哪里找|在哪儿找|哪里找|怎么找|如何找)$/g, "")
+    .trim();
+}
+
+function buildAttachmentSearchHints(text: string) {
+  const hints = new Set<string>();
+  const normalized = trimString(text)
+    .slice(0, MAX_ATTACHMENT_SEARCH_HINT_CHARS)
+    .replace(/[\u0000，。！？、；;：:\n\r\t"'“”‘’（）()【】\[\]<>《》]+/g, " ");
+
+  for (const match of normalized.match(ATTACHMENT_SEARCH_KEYWORD_PATTERN) ?? []) {
+    hints.add(match);
+  }
+
+  for (const segment of normalized.split(/\s+/)) {
+    const cleaned = normalizeAttachmentSearchSegment(segment);
+
+    if (/[\u4e00-\u9fff]/.test(cleaned) && cleaned.length >= 2 && cleaned.length <= 12) {
+      hints.add(cleaned);
+    }
+
+    if (hints.size >= 12) {
+      break;
+    }
+  }
+
+  return Array.from(hints).slice(0, 12).join(" ");
+}
+
+function buildAttachmentTextBlocks(attachments: ReturnType<typeof validateAttachments>) {
+  return attachments
+    .map((attachment, index) => {
+      const text = readAttachmentOcrText(attachment.metadata ?? undefined)
+        .slice(0, MAX_ATTACHMENT_TEXT_CONTEXT_CHARS)
+        .trim();
+
+      if (!text) {
+        return "";
+      }
+
+      const label = attachment.filename || attachment.name || `附件 ${index + 1}`;
+
+      return [
+        `附件 ${index + 1}：${label}`,
+        "识别文字：",
+        text
+      ].join("\n");
+    })
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, MAX_ATTACHMENT_TEXT_CONTEXT_CHARS)
+    .trim();
+}
+
+function buildAttachmentTextContext(attachmentTextBlocks: string) {
+  const blocks = attachmentTextBlocks.trim();
+  if (!blocks) {
+    return null;
+  }
+
+  return [
+    "[USER_IMAGE_OCR_CONTEXT]",
+    "用户上传的微信截图/图片中识别到以下文字。回答时请优先基于这些原文理解客户问题；不要把这段系统说明展示给用户。",
+    blocks
+  ].join("\n");
+}
+
+function buildAttachmentOcrContext(attachmentTextBlocks: string): RagContext | null {
+  const content = attachmentTextBlocks.trim();
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    id: "attachment-ocr-context",
+    title: "用户上传截图识别文字",
+    content,
+    summary: "用户上传截图识别文字",
+    category: "attachment_ocr",
+    tags: ["截图识别", "微信截图"],
+    sourceType: "attachment_ocr",
+    sourceId: "attachment-ocr",
+    sourceTitle: "用户上传截图识别文字",
+    score: 0.3,
+    relevance_score: 0.3,
+    chunk_rank: 1,
+    similarity: 0.3
+  };
 }
 
 function buildRagQueryContext(
@@ -808,15 +932,18 @@ function buildRagQueryContext(
     modeReason
   );
 
+  const attachmentTextParts = attachments
+    .map((attachment) => readAttachmentSearchText(attachment.metadata ?? undefined))
+    .filter(Boolean);
   const attachmentParts = attachments.flatMap((attachment) => [
     attachment.type,
     attachment.filename,
     attachment.name,
-    attachment.mime_type,
-    readAttachmentSearchText(attachment.metadata ?? undefined)
+    attachment.mime_type
   ]);
 
   return [
+    ...attachmentTextParts,
     question,
     ...modeParts,
     ...attachmentParts
@@ -949,6 +1076,109 @@ async function saveAssistantMessage(
   });
 }
 
+function normalizeConversationMemoryRole(value: unknown): "user" | "assistant" | null {
+  const role = trimString(value).toLowerCase();
+
+  if (role === "user") {
+    return "user";
+  }
+
+  if (role === "assistant") {
+    return "assistant";
+  }
+
+  return null;
+}
+
+function readConversationMemoryContent(message: MessageRecord) {
+  const metadata = toJsonObject(message.metadata) ?? {};
+  const finalizedAnswer = metadata.finalizedAnswer && typeof metadata.finalizedAnswer === "object" && !Array.isArray(metadata.finalizedAnswer)
+    ? metadata.finalizedAnswer
+    : null;
+
+  return readSerializedMessageContent(message, metadata, finalizedAnswer)
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function toConversationMemoryTurn(message: MessageRecord): RagRecentConversationTurn | null {
+  const role = normalizeConversationMemoryRole(message.role);
+
+  if (!role) {
+    return null;
+  }
+
+  const content = readConversationMemoryContent(message).slice(0, MAX_CONVERSATION_MEMORY_CHARS_PER_TURN).trim();
+
+  if (!content) {
+    return null;
+  }
+
+  return {
+    role,
+    content,
+    createdAt: toIsoString(message.createdAt) || null
+  };
+}
+
+async function loadRecentConversation(
+  db: AiChatDb,
+  actor: AiChatActor,
+  conversationId: string
+): Promise<RagRecentConversationTurn[]> {
+  if (typeof db.message.findMany !== "function") {
+    return [];
+  }
+
+  const messages = await db.message.findMany({
+    where: {
+      conversationId,
+      OR: [
+        { userId: actor.id },
+        { userId: null }
+      ]
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: MAX_CONVERSATION_MEMORY_TURNS * 2
+  }).catch(() => []);
+  const selectedNewestFirst: RagRecentConversationTurn[] = [];
+  let totalChars = 0;
+
+  for (const message of messages) {
+    const turn = toConversationMemoryTurn(message);
+
+    if (!turn) {
+      continue;
+    }
+
+    const remainingChars = MAX_CONVERSATION_MEMORY_TOTAL_CHARS - totalChars;
+
+    if (remainingChars <= 0) {
+      break;
+    }
+
+    const clippedContent = turn.content.slice(0, Math.min(turn.content.length, remainingChars)).trim();
+
+    if (!clippedContent) {
+      continue;
+    }
+
+    selectedNewestFirst.push({
+      ...turn,
+      content: clippedContent
+    });
+    totalChars += clippedContent.length;
+
+    if (selectedNewestFirst.length >= MAX_CONVERSATION_MEMORY_TURNS) {
+      break;
+    }
+  }
+
+  return selectedNewestFirst.reverse();
+}
+
 export async function handleAiChatAsk(
   actor: AiChatActor,
   input: AiChatAskInput,
@@ -979,9 +1209,12 @@ export async function handleAiChatAsk(
     || trimString(input.namespace)
   );
   const conversationId = readConversationId(input);
+  const attachmentTextBlocks = buildAttachmentTextBlocks(attachments);
+  const attachmentTextContext = buildAttachmentTextContext(attachmentTextBlocks);
   const businessExecutionContext = [
     knowledgeSelectionContext?.prompt,
-    businessContext?.prompt
+    businessContext?.prompt,
+    attachmentTextContext
   ].filter(Boolean).join("\n\n") || null;
   let osContext = os_core.process({
     query: question,
@@ -1004,12 +1237,14 @@ export async function handleAiChatAsk(
 
   const conversation = await getOrCreateConversation(db, actor, conversationId, question, mode);
   const normalizedConversationId = String(conversation.id);
+  const recentConversation = await loadRecentConversation(db, actor, normalizedConversationId);
   await saveUserMessage(db, actor, normalizedConversationId, question, attachments, {
     mode,
     enableDeepThinking,
     enableWebSearch,
     ...agentScope,
     attachmentCount: attachments.length,
+    attachmentOcrApplied: Boolean(attachmentTextContext),
     ...(knowledgeSelectionContext
       ? {
           knowledgeSelection: knowledgeSelectionContext.metadata
@@ -1076,7 +1311,11 @@ export async function handleAiChatAsk(
     tenantId: scopedTenantId,
   }));
   const chunks = mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
-  const contexts = buildRagContext(chunks);
+  const attachmentOcrContext = buildAttachmentOcrContext(attachmentTextBlocks);
+  const contexts = [
+    ...buildRagContext(chunks),
+    ...(chunks.length === 0 && attachmentOcrContext ? [attachmentOcrContext] : [])
+  ];
   const sources = chunks.map(toSource);
   const confidence = calculateConfidence(chunks);
   const ragDiagnostics = os_core.buildRagDiagnostics(osContext, chunks, contexts);
@@ -1158,6 +1397,7 @@ export async function handleAiChatAsk(
           fallbackChain: osContext.route.fallback_chain,
           traceId: osContext.trace_id,
           businessExecutionContext,
+          recentConversation,
           ...agentScope
         });
 
