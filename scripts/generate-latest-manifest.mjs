@@ -1,9 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const versionInfo = JSON.parse(fs.readFileSync(path.join(rootDir, "version.json"), "utf8"));
+const versionPath = path.join(rootDir, "version.json");
+const versionInfo = JSON.parse(fs.readFileSync(versionPath, "utf8"));
 const outputPath = path.join(rootDir, "public", "releases", "latest.json");
 const isRelease = process.argv.includes("--release");
 
@@ -31,7 +33,37 @@ function getAssetUrl(assetName, fallbackUrl) {
     return `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(assetName)}`;
   }
 
-  return fallbackUrl || `https://github.com/${repo}/releases/latest/download/${assetName}`;
+  return `https://github.com/${repo}/releases/latest/download/${assetName}`;
+}
+
+function readGitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: rootDir,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function writeVersionReleaseSha(webReleaseSha) {
+  if (!webReleaseSha) {
+    return;
+  }
+
+  const nextVersionInfo = {
+    ...versionInfo,
+    web_release_sha: webReleaseSha
+  };
+  const nextContent = `${JSON.stringify(nextVersionInfo, null, 2)}\n`;
+
+  if (fs.readFileSync(versionPath, "utf8") !== nextContent) {
+    fs.writeFileSync(versionPath, nextContent, "utf8");
+  }
+
+  versionInfo.web_release_sha = webReleaseSha;
 }
 
 function hasCurrentVersion(existing) {
@@ -49,6 +81,7 @@ function buildVersion(appKey, existingApp, urls, updatedAt) {
     rollout: 100,
     minimum_build: Number(previous.minimum_build) || 100,
     force_update: previous.force_update === true,
+    web_release_sha: urls.web_release_sha || previous.web_release_sha || "",
     web_url: urls.web_url || previous.web_url || "",
     apk_url: urls.apk_url || previous.apk_url || "",
     exe_url: urls.exe_url || previous.exe_url || "",
@@ -77,6 +110,7 @@ function snapshot(app) {
     build: version.build,
     minimum_build: version.minimum_build,
     force_update: version.force_update,
+    web_release_sha: version.web_release_sha,
     web_url: version.web_url,
     apk_url: version.apk_url,
     exe_url: version.exe_url,
@@ -98,15 +132,22 @@ const apkAsset = process.env.APK_ASSET || "ai-knowledge-chat-latest.apk";
 const exeAsset = process.env.EXE_ASSET || "ai-knowledge-chat-latest.exe";
 const userExisting = existing.apps?.user;
 const adminExisting = existing.apps?.admin;
+const webReleaseSha = process.env.WEB_RELEASE_SHA
+  || process.env.NEXT_PUBLIC_WEB_RELEASE_SHA
+  || process.env.NEXT_PUBLIC_RELEASE_SHA
+  || readGitSha();
+writeVersionReleaseSha(webReleaseSha);
 
 const userVersion = buildVersion("user", userExisting, {
-  web_url: process.env.USER_WEB_URL || "https://stately-sawine-1efd4d.netlify.app/chat-ui",
+  web_release_sha: webReleaseSha,
+  web_url: process.env.USER_WEB_URL || "http://47.238.0.23/app/chat",
   apk_url: getAssetUrl(apkAsset, getCurrentVersion(userExisting).apk_url),
   exe_url: getAssetUrl(exeAsset, getCurrentVersion(userExisting).exe_url),
-  download_page: "https://stately-sawine-1efd4d.netlify.app/download"
+  download_page: process.env.USER_DOWNLOAD_PAGE || "http://47.238.0.23/download"
 }, updatedAt);
 
 const adminVersion = buildVersion("admin", adminExisting, {
+  web_release_sha: webReleaseSha,
   web_url: process.env.ADMIN_WEB_URL || "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
   apk_url: getCurrentVersion(adminExisting).apk_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
   exe_url: getCurrentVersion(adminExisting).exe_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
@@ -133,6 +174,7 @@ const manifest = {
   minimum_build: userVersion.minimum_build,
   forceUpdate: userVersion.force_update,
   force_update: userVersion.force_update,
+  web_release_sha: userVersion.web_release_sha,
   apk: apkAsset,
   exe: exeAsset,
   apk_url: userVersion.apk_url,

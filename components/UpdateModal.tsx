@@ -37,7 +37,15 @@ export function UpdateModal({
   onSnooze
 }: UpdateModalProps) {
   const latest = update.latest;
-  const updateTip = platformUpdateTips[platform];
+  const isWebContentUpdate = update.updateKind === "web";
+  const updateTip = isWebContentUpdate
+    ? "这是线上内容更新，点击刷新即可在当前应用内加载最新版本，不需要重新安装 APK/EXE。"
+    : platformUpdateTips[platform];
+  const ActionIcon = isWebContentUpdate ? RefreshCw : Download;
+  const updateTitle = isWebContentUpdate ? "发现内容更新" : "发现新版本";
+  const updateActionText = isWebContentUpdate ? "立即刷新" : "立即更新";
+  const currentWebReleaseSha = update.currentWebReleaseSha?.slice(0, 8) || "当前加载版本";
+  const latestWebReleaseSha = latest.web_release_sha?.slice(0, 8) || "最新线上版本";
 
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm sm:items-center">
@@ -53,13 +61,23 @@ export function UpdateModal({
           </span>
           <div className="min-w-0 flex-1">
             <h2 id={`${appKind}-app-update-title`} className="text-lg font-bold text-slate-950">
-              发现新版本
+              {updateTitle}
             </h2>
             <p className="mt-1 text-sm font-semibold text-blue-700">{latest.app_name}</p>
             <p className="mt-2 text-sm leading-6 text-slate-600">
-              当前版本：{update.currentVersion}（Build {update.currentBuild}）
-              <br />
-              最新版本：{latest.version}（Build {latest.build}）
+              {isWebContentUpdate ? (
+                <>
+                  当前内容：{currentWebReleaseSha}
+                  <br />
+                  最新内容：{latestWebReleaseSha}
+                </>
+              ) : (
+                <>
+                  当前版本：{update.currentVersion}（Build {update.currentBuild}）
+                  <br />
+                  最新版本：{latest.version}（Build {latest.build}）
+                </>
+              )}
             </p>
           </div>
           {dismissible ? (
@@ -100,10 +118,10 @@ export function UpdateModal({
             href={updateUrl || latest.download_page}
             onClick={onUpdateNow}
             className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700"
-            aria-label={`立即更新 ${latest.app_name}`}
+            aria-label={`${updateActionText} ${latest.app_name}`}
           >
-            <Download className="h-5 w-5" aria-hidden="true" />
-            立即更新
+            <ActionIcon className="h-5 w-5" aria-hidden="true" />
+            {updateActionText}
           </a>
           {dismissible ? (
             <Button type="button" variant="outline" onClick={onSnooze} className="h-14 min-h-14 flex-1 rounded-xl px-6 text-base font-bold">
