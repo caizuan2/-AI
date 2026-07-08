@@ -7,7 +7,7 @@ import {
   snoozeUpdateNotice,
   type AppUpdateResult
 } from "@/lib/app-update";
-import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA, type AppKind } from "@/lib/app-version";
+import { type AppKind } from "@/lib/app-version";
 import { checkCurrentAppUpdate } from "@/lib/update-checker";
 import { detectPlatform, openLink, resolveDownload, type UpdatePlatform } from "@/lib/update-core";
 import { UpdateModal } from "@/components/UpdateModal";
@@ -77,9 +77,9 @@ function reloadCurrentWebShell() {
 
 export function AppUpdateNotice({
   appKind,
-  currentVersion = APP_VERSION,
-  currentBuild = APP_BUILD,
-  currentWebReleaseSha = APP_WEB_RELEASE_SHA
+  currentVersion,
+  currentBuild,
+  currentWebReleaseSha
 }: AppUpdateNoticeProps) {
   const [update, setUpdate] = React.useState<AppUpdateResult | null>(null);
 
