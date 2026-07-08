@@ -16,7 +16,7 @@ import {
 import { detectPlatform, openLink, resolveDownload } from "../lib/update-core";
 import { normalizeAppStoreManifest } from "../lib/app-store";
 import { AppUpdateNoticeDialog } from "../components/AppUpdateNotice";
-import { APP_BUILD, APP_VERSION } from "../lib/app-version";
+import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
 
 const parsedManifest = normalizeLatestReleaseManifest(releaseInfo);
@@ -37,6 +37,8 @@ assert.equal(APP_VERSION, releaseInfo.version);
 assert.equal(APP_BUILD, releaseInfo.build);
 assert.equal(manifest.user.build, APP_BUILD);
 assert.equal(manifest.admin.build, APP_BUILD);
+assert.equal(manifest.user.web_release_sha, releaseInfo.web_release_sha);
+assert.equal(APP_WEB_RELEASE_SHA, releaseInfo.web_release_sha || APP_WEB_RELEASE_SHA);
 assert.equal(releaseInfo.forceUpdate, false);
 assert.equal(releaseInfo.force_update, false);
 assert.equal(releaseInfo.download.android, manifest.user.apk_url);
@@ -83,6 +85,7 @@ async function main() {
 
   assert.equal(userUpdate.hasUpdate, true);
   assert.equal(userUpdate.forceUpdate, false);
+  assert.equal(userUpdate.updateKind, "package");
   assert.equal(userUpdate.latest?.version, manifest.user.version);
 
   const currentUserUpdate = await checkAppUpdate({
@@ -94,6 +97,26 @@ async function main() {
 
   assert.equal(currentUserUpdate.hasUpdate, false);
   assert.equal(currentUserUpdate.forceUpdate, false);
+  assert.equal(currentUserUpdate.updateKind, "none");
+
+  const webManifest: LatestReleaseManifest = {
+    ...manifest,
+    user: {
+      ...manifest.user,
+      web_release_sha: "remote-web-release-sha"
+    }
+  };
+  const webContentUpdate = await checkAppUpdate({
+    appKind: "user",
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+    currentWebReleaseSha: "local-web-release-sha",
+    fetcher: createFetch(webManifest)
+  });
+
+  assert.equal(webContentUpdate.hasUpdate, true);
+  assert.equal(webContentUpdate.forceUpdate, false);
+  assert.equal(webContentUpdate.updateKind, "web");
 
   const equalBuildForceManifest: LatestReleaseManifest = {
     ...manifest,
@@ -111,6 +134,7 @@ async function main() {
 
   assert.equal(equalBuildForceUpdate.hasUpdate, false);
   assert.equal(equalBuildForceUpdate.forceUpdate, false);
+  assert.equal(equalBuildForceUpdate.updateKind, "none");
 
   const forceManifest: LatestReleaseManifest = {
     ...manifest,
@@ -128,6 +152,7 @@ async function main() {
 
   assert.equal(forceUpdate.hasUpdate, true);
   assert.equal(forceUpdate.forceUpdate, true);
+  assert.equal(forceUpdate.updateKind, "package");
   assert.equal(canDismissUpdate(forceUpdate), false);
 
   assert.equal(resolveUpdateUrl(manifest.user, "android"), manifest.user.apk_url);
@@ -175,8 +200,10 @@ async function main() {
         appKind: "user",
         currentVersion: "1.0.1",
         currentBuild: manifest.user.build - 1,
+        currentWebReleaseSha: manifest.user.web_release_sha,
         hasUpdate: true,
         forceUpdate: false,
+        updateKind: "package",
         latest: manifest.user,
         updatedAt: manifest.updated_at
       },
@@ -202,6 +229,33 @@ async function main() {
   assert.match(userDialogMarkup, new RegExp(manifest.user.apk_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(userDialogMarkup, /稍后提醒/);
   assert.doesNotMatch(userDialogMarkup, /<a[^>]*\sdisabled(?:=|\s|>)/);
+
+  const webDialogMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "user",
+      update: {
+        appKind: "user",
+        currentVersion: APP_VERSION,
+        currentBuild: APP_BUILD,
+        currentWebReleaseSha: "local-web-release-sha",
+        hasUpdate: true,
+        forceUpdate: false,
+        updateKind: "web",
+        latest: webManifest.user,
+        updatedAt: manifest.updated_at
+      },
+      updateUrl: webManifest.user.web_url,
+      platform: "web",
+      dismissible: true,
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+
+  assert.match(webDialogMarkup, /发现内容更新/);
+  assert.match(webDialogMarkup, /立即刷新/);
+  assert.match(webDialogMarkup, /不需要重新安装 APK\/EXE/);
+  assert.doesNotMatch(webDialogMarkup, /Android 安装包需要下载/);
 
   const androidBridgeCalls: string[] = [];
   assert.equal(openLink(manifest.user.apk_url, {
@@ -301,8 +355,10 @@ async function main() {
         appKind: "admin",
         currentVersion: "1.0.1",
         currentBuild: manifest.admin.minimum_build - 1,
+        currentWebReleaseSha: manifest.admin.web_release_sha,
         hasUpdate: true,
         forceUpdate: true,
+        updateKind: "package",
         latest: manifest.admin,
         updatedAt: manifest.updated_at
       },
@@ -327,10 +383,14 @@ async function main() {
   assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1000), false);
   snoozeUpdateNotice("user", manifest.user.build, storageAdapter, 1000);
   assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001), true);
+  assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001, "remote-web-release-sha"), false);
+  snoozeUpdateNotice("user", manifest.user.build, storageAdapter, 1000, "remote-web-release-sha");
+  assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001, "remote-web-release-sha"), true);
 
   const appUpdateNotice = readFileSync("components/AppUpdateNotice.tsx", "utf8");
   assert.match(appUpdateNotice, /localStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
+  assert.match(appUpdateNotice, /reloadCurrentWebShell/);
 
   const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");
   assert.match(updateModal, /必须更新到最新版本后才能继续使用/);

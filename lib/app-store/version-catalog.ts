@@ -9,6 +9,7 @@ export interface AppStoreVersion {
   rollout: number;
   minimum_build: number;
   force_update: boolean;
+  web_release_sha?: string;
   web_url: string;
   apk_url: string;
   exe_url: string;
@@ -36,6 +37,7 @@ export interface AppReleaseSnapshot {
   build: number;
   minimum_build: number;
   force_update: boolean;
+  web_release_sha?: string;
   web_url: string;
   apk_url: string;
   exe_url: string;
@@ -111,6 +113,7 @@ export function normalizeAppStoreVersion(value: unknown): AppStoreVersion | null
     rollout: normalizeRollout(value.rollout),
     minimum_build: getNumber(value.minimum_build),
     force_update: getBoolean(value.force_update),
+    web_release_sha: getString(value.web_release_sha),
     web_url: getString(value.web_url),
     apk_url: getString(value.apk_url),
     exe_url: getString(value.exe_url),
@@ -226,6 +229,7 @@ export function getAppReleaseSnapshot(app: AppStoreApplication, version = getAct
     build: version.build,
     minimum_build: version.minimum_build,
     force_update: version.force_update,
+    web_release_sha: version.web_release_sha,
     web_url: version.web_url,
     apk_url: version.apk_url,
     exe_url: version.exe_url,

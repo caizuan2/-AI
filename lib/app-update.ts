@@ -22,6 +22,7 @@ export interface AppReleaseInfo {
   build: number;
   minimum_build: number;
   force_update: boolean;
+  web_release_sha?: string;
   web_url: string;
   apk_url: string;
   exe_url: string;
@@ -39,8 +40,10 @@ export interface AppUpdateResult {
   appKind: AppKind;
   currentVersion: string;
   currentBuild: number;
+  currentWebReleaseSha?: string;
   hasUpdate: boolean;
   forceUpdate: boolean;
+  updateKind: "none" | "web" | "package";
   latest: AppReleaseInfo | null;
   updatedAt: string | null;
 }
@@ -51,6 +54,7 @@ interface CheckAppUpdateOptions {
   appKind: AppKind;
   currentVersion: string;
   currentBuild: number;
+  currentWebReleaseSha?: string;
   userId?: string;
   platform?: AppPlatform;
   manifestUrl?: string;
@@ -81,6 +85,10 @@ function getBoolean(value: unknown) {
   return value === true;
 }
 
+function normalizeReleaseSha(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function getAliasValue(value: Record<string, unknown>, ...keys: string[]) {
   for (const key of keys) {
     if (key in value) {
@@ -109,6 +117,7 @@ function normalizeReleaseInfo(value: unknown): AppReleaseInfo | null {
     build,
     minimum_build: minimumBuild,
     force_update: getBoolean(getAliasValue(value, "force_update", "forceUpdate")),
+    web_release_sha: normalizeReleaseSha(getAliasValue(value, "web_release_sha", "webReleaseSha")),
     web_url: getString(getAliasValue(value, "web_url", "webUrl")) || getString(download.web),
     apk_url: getString(getAliasValue(value, "apk_url", "apkUrl")) || getString(download.android),
     exe_url: getString(getAliasValue(value, "exe_url", "exeUrl")) || getString(download.windows),
@@ -139,12 +148,14 @@ function normalizeSingleSourceManifest(value: unknown): LatestReleaseManifest | 
   const apkUrl = getString(getAliasValue(value, "apk_url", "apkUrl")) || getString(download.android);
   const exeUrl = getString(getAliasValue(value, "exe_url", "exeUrl")) || getString(download.windows);
   const downloadPage = getString(getAliasValue(value, "download_page", "downloadPage")) || getString(download.page) || webUrl;
+  const webReleaseSha = normalizeReleaseSha(getAliasValue(value, "web_release_sha", "webReleaseSha"));
 
   const baseRelease = {
     version,
     build,
     minimum_build: minimumBuild,
     force_update: forceUpdate,
+    web_release_sha: webReleaseSha,
     web_url: webUrl,
     apk_url: apkUrl,
     exe_url: exeUrl,
@@ -260,8 +271,10 @@ function getEmptyResult(options: CheckAppUpdateOptions): AppUpdateResult {
     appKind: options.appKind,
     currentVersion: options.currentVersion,
     currentBuild: options.currentBuild,
+    currentWebReleaseSha: options.currentWebReleaseSha,
     hasUpdate: false,
     forceUpdate: false,
+    updateKind: "none",
     latest: null,
     updatedAt: null
   };
@@ -298,13 +311,23 @@ export async function checkAppUpdate(options: CheckAppUpdateOptions): Promise<Ap
       currentBuild: options.currentBuild,
       release: latest
     });
+    const currentWebReleaseSha = normalizeReleaseSha(options.currentWebReleaseSha);
+    const latestWebReleaseSha = normalizeReleaseSha(latest.web_release_sha);
+    const hasWebUpdate = Boolean(
+      currentWebReleaseSha
+      && latestWebReleaseSha
+      && currentWebReleaseSha !== latestWebReleaseSha
+    );
+    const updateKind = policy.hasUpdate ? "package" : hasWebUpdate ? "web" : "none";
 
     return {
       appKind: options.appKind,
       currentVersion: options.currentVersion,
       currentBuild: options.currentBuild,
-      hasUpdate: policy.hasUpdate,
+      currentWebReleaseSha: options.currentWebReleaseSha,
+      hasUpdate: policy.hasUpdate || hasWebUpdate,
       forceUpdate: policy.forceUpdate,
+      updateKind,
       latest,
       updatedAt: manifest.updated_at
     };
@@ -333,7 +356,13 @@ export function canDismissUpdate(update: Pick<AppUpdateResult, "hasUpdate" | "fo
   return update.hasUpdate && !update.forceUpdate;
 }
 
-export function getUpdateSnoozeKey(appKind: AppKind, latestBuild: number) {
+export function getUpdateSnoozeKey(appKind: AppKind, latestBuild: number, webReleaseSha = "") {
+  const normalizedWebReleaseSha = normalizeReleaseSha(webReleaseSha);
+
+  if (normalizedWebReleaseSha) {
+    return `app-update-snoozed:${appKind}:web:${latestBuild}:${normalizedWebReleaseSha}`;
+  }
+
   return `app-update-snoozed:${appKind}:${latestBuild}`;
 }
 
@@ -341,13 +370,14 @@ export function shouldSkipUpdateNotice(
   appKind: AppKind,
   latestBuild: number,
   storage: UpdateStorage | undefined,
-  now = Date.now()
+  now = Date.now(),
+  webReleaseSha = ""
 ) {
   if (!storage) {
     return false;
   }
 
-  const rawValue = storage.getItem(getUpdateSnoozeKey(appKind, latestBuild));
+  const rawValue = storage.getItem(getUpdateSnoozeKey(appKind, latestBuild, webReleaseSha));
   const snoozedUntil = rawValue ? Number(rawValue) : 0;
 
   return Number.isFinite(snoozedUntil) && snoozedUntil > now;
@@ -357,11 +387,12 @@ export function snoozeUpdateNotice(
   appKind: AppKind,
   latestBuild: number,
   storage: UpdateStorage | undefined,
-  now = Date.now()
+  now = Date.now(),
+  webReleaseSha = ""
 ) {
   if (!storage) {
     return;
   }
 
-  storage.setItem(getUpdateSnoozeKey(appKind, latestBuild), String(now + UPDATE_SNOOZE_MS));
+  storage.setItem(getUpdateSnoozeKey(appKind, latestBuild, webReleaseSha), String(now + UPDATE_SNOOZE_MS));
 }

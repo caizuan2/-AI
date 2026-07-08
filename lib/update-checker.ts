@@ -4,12 +4,13 @@ import {
   type AppPlatform,
   type AppUpdateResult
 } from "./app-update";
-import { APP_BUILD, APP_VERSION, type AppKind } from "./app-version";
+import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA, type AppKind } from "./app-version";
 
 interface CheckCurrentAppUpdateOptions {
   appKind: AppKind;
   currentVersion?: string;
   currentBuild?: number;
+  currentWebReleaseSha?: string;
   userId?: string;
   platform?: AppPlatform;
   manifestUrl?: string;
@@ -19,12 +20,14 @@ interface CheckCurrentAppUpdateOptions {
 export interface CurrentAppVersion {
   version: string;
   build: number;
+  webReleaseSha: string;
 }
 
 export function getCurrentAppVersion(): CurrentAppVersion {
   return {
     version: APP_VERSION,
-    build: APP_BUILD
+    build: APP_BUILD,
+    webReleaseSha: APP_WEB_RELEASE_SHA
   };
 }
 
@@ -39,6 +42,7 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
     appKind: options.appKind,
     currentVersion: options.currentVersion ?? current.version,
     currentBuild: options.currentBuild ?? current.build,
+    currentWebReleaseSha: options.currentWebReleaseSha ?? current.webReleaseSha,
     userId: options.userId,
     platform: options.platform,
     manifestUrl: options.manifestUrl,
