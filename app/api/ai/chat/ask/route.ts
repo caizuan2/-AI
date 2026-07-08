@@ -141,6 +141,7 @@ export async function POST(request: Request) {
               provider: requestedProvider,
               providerFallbackChain,
               businessExecutionContext,
+              recentConversation,
               agentId,
               knowledgeBaseId,
               namespace
@@ -158,7 +159,8 @@ export async function POST(request: Request) {
                 answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
                 confidence: confidenceToNumber(confidence),
                 intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
-                businessExecutionContext
+                businessExecutionContext,
+                recentConversation
               });
 
               return {
