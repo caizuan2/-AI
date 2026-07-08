@@ -15,6 +15,7 @@ import {
 } from "../lib/app-update";
 import { detectPlatform, openLink, resolveDownload } from "../lib/update-core";
 import { normalizeAppStoreManifest } from "../lib/app-store";
+import { checkCurrentAppUpdate, getCurrentAppVersion } from "../lib/update-checker";
 import { AppUpdateNoticeDialog } from "../components/AppUpdateNotice";
 import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
@@ -98,6 +99,66 @@ async function main() {
   assert.equal(currentUserUpdate.hasUpdate, false);
   assert.equal(currentUserUpdate.forceUpdate, false);
   assert.equal(currentUserUpdate.updateKind, "none");
+
+  const legacyNativeVersion = getCurrentAppVersion({
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(legacyNativeVersion.version, "旧安装包");
+  assert.equal(legacyNativeVersion.build, 0);
+
+  const legacyNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(legacyNativeUpdate.hasUpdate, true);
+  assert.equal(legacyNativeUpdate.updateKind, "package");
+  assert.equal(legacyNativeUpdate.currentBuild, 0);
+  assert.equal(legacyNativeUpdate.currentVersion, "旧安装包");
+
+  const currentNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    search: `?shellVersion=${encodeURIComponent(APP_VERSION)}&shellBuild=${APP_BUILD}`,
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(currentNativeUpdate.hasUpdate, false);
+  assert.equal(currentNativeUpdate.updateKind, "none");
+
+  const staleNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    runtimeWindow: {
+      aiKnowledge: {
+        appVersion: "1.0.1"
+      }
+    }
+  });
+  assert.equal(staleNativeUpdate.hasUpdate, true);
+  assert.equal(staleNativeUpdate.updateKind, "package");
+
+  const browserRuntimeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0"
+  });
+  assert.equal(browserRuntimeUpdate.hasUpdate, false);
+  assert.equal(browserRuntimeUpdate.updateKind, "none");
 
   const webManifest: LatestReleaseManifest = {
     ...manifest,
@@ -402,6 +463,8 @@ async function main() {
   assert.match(enterpriseAutoUpdate, /\/chat-ui/);
   assert.match(enterpriseAutoUpdate, /\/ingest/);
   assert.match(readFileSync("app/layout.tsx", "utf8"), /EnterpriseAutoUpdate/);
+  assert.match(readFileSync("electron/preload.cjs", "utf8"), /appVersion/);
+  assert.match(readFileSync("capacitor.config.ts", "utf8"), /shellBuild/);
 
   const releaseScriptPath = "scripts/release-all-installers.ps1";
   assert.ok(existsSync(releaseScriptPath), "release-all-installers.ps1 should exist.");
