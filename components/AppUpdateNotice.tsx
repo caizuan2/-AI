@@ -286,6 +286,9 @@ export function AppUpdateNotice({
         if (!reloadCurrentWebShell()) {
           throw new Error("当前应用刷新失败，请关闭后重新打开小董AI。");
         }
+
+        setUpdate(null);
+        setInstallState(idleInstallState);
       } catch (error) {
         setInstallState({
           phase: "error",

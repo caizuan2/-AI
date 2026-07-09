@@ -138,8 +138,11 @@ async function main() {
     providerConfigured: true,
     answerProvider: async ({ businessExecutionContext, contexts }) => {
       assert.match(businessExecutionContext ?? "", /USER_IMAGE_OCR_CONTEXT/);
+      assert.match(businessExecutionContext ?? "", /WECHAT_SCREENSHOT_PRIMARY_CONTEXT/);
+      assert.match(businessExecutionContext ?? "", /禁止编造截图里没有出现/);
       assert.match(businessExecutionContext ?? "", /我想申请退款/);
       assert.equal(contexts.some((context) => context.sourceId === "chunk_refund_1"), true);
+      assert.equal(contexts.some((context) => context.sourceType === "attachment_ocr"), true);
 
       return {
         answer: "先安抚客户，再引导客户提供订单号并说明退款处理流程。",
@@ -197,6 +200,136 @@ async function main() {
 
   assert.equal(ocrOnlyResult.provider_status, "ok");
   assert.equal(ocrOnlyResult.sources.length, 0);
+
+  const wechatScreenshotFake = createFakeDb();
+  wechatScreenshotFake.state.chunks.push({
+    id: "chunk_kks_1",
+    fileId: "file_kks",
+    knowledgeItemId: "knowledge_kks",
+    metadata: {
+      agentId: "kks",
+      knowledgeBaseId: "kb:kks",
+      namespace: "agent:kks:kb:kb:kks",
+      published: true,
+      sharedToUserApp: true
+    },
+    chunkText: "客户担心减肥产品反弹、拉肚子、副作用和多久见效时，需要先承接顾虑，再解释体重管理逻辑。不要编造客户没有说过的症状。",
+    summary: "体重管理顾虑承接",
+    createdAt: new Date("2026-06-01T00:00:00.000Z"),
+    knowledgeItem: {
+      id: "knowledge_kks",
+      userId: "user_1",
+      title: "体重管理顾虑承接",
+      summary: "体重管理顾虑承接",
+      tags: ["瘦身", "顾虑"],
+      category: "瘦身",
+      sourceType: "admin_text",
+      sourceTitle: "体重管理顾虑承接",
+      sourceUrl: null,
+      importance: 3,
+      deletedAt: null
+    },
+    file: {
+      id: "file_kks",
+      originalName: "kks.md",
+      deletedAt: null
+    }
+  });
+  const wechatScreenshotOcrText = [
+    "我看到你朋友圈在卖那个减肥产品，我想了解一下",
+    "我生完宝宝之后，体重一直下不去",
+    "我之前也吃过一些其它抑制我食欲的产品，但是那个太伤身体了",
+    "你们这个是什么原理瘦身",
+    "会反弹吗",
+    "会拉肚子吗",
+    "有副作用吗",
+    "多久能看到效果呢"
+  ].join("\n");
+  const wechatScreenshotResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "看图问题，怎么引导呢",
+    mode: "expert",
+    attachments: [
+      {
+        type: "image",
+        name: "wechat-customer.png",
+        filename: "wechat-customer.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "ok",
+          ocrText: wechatScreenshotOcrText
+        }
+      }
+    ]
+  }, {
+    db: wechatScreenshotFake.db,
+    providerConfigured: true,
+    answerProvider: async ({ businessExecutionContext, contexts }) => {
+      const context = businessExecutionContext ?? "";
+
+      assert.match(context, /WECHAT_SCREENSHOT_PRIMARY_CONTEXT/);
+      assert.match(context, /生完宝宝/);
+      assert.match(context, /抑制我食欲/);
+      assert.match(context, /什么原理瘦身/);
+      assert.match(context, /会反弹/);
+      assert.match(context, /会拉肚子/);
+      assert.match(context, /有副作用/);
+      assert.match(context, /多久能看到效果/);
+      assert.match(context, /不要泛化讲看图方法/);
+      assert.match(context, /禁止编造截图里没有出现/);
+      assert.equal(contexts.some((item) => item.sourceType === "attachment_ocr"), true);
+
+      return {
+        answer: "先提炼客户顾虑：产后体重、担心伤身体、原理、反弹、拉肚子、副作用和见效时间。再围绕这些原话给引导策略和可复制话术。",
+        providerUsed: "test",
+        modelUsed: "test-model",
+        fallbackUsed: false
+      };
+    }
+  });
+
+  assert.equal(wechatScreenshotResult.provider_status, "ok");
+  assert.match(wechatScreenshotResult.answer, /产后体重/);
+
+  const missingOcrFake = createFakeDb();
+  let missingOcrProviderCalled = false;
+  const missingOcrResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "看图问题，怎么引导呢",
+    mode: "expert",
+    attachments: [
+      {
+        type: "image",
+        name: "unclear-wechat.png",
+        filename: "unclear-wechat.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "unavailable"
+        }
+      }
+    ]
+  }, {
+    db: missingOcrFake.db,
+    providerConfigured: true,
+    answerProvider: async () => {
+      missingOcrProviderCalled = true;
+
+      return {
+        answer: "不应该调用模型。",
+        providerUsed: "test",
+        modelUsed: "test-model",
+        fallbackUsed: false
+      };
+    }
+  });
+
+  assert.equal(missingOcrProviderCalled, false);
+  assert.equal(missingOcrResult.provider_status, "no_relevant_knowledge");
+  assert.match(missingOcrResult.answer, /截图的文字没有识别成功/);
 
   console.log("AI chat attachment OCR context tests passed.");
 }

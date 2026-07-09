@@ -291,7 +291,8 @@ async function main() {
   );
 
   assert.match(userDialogMarkup, /发现新版本/);
-  assert.match(userDialogMarkup, new RegExp(manifest.user.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(userDialogMarkup, /小董AI/);
+  assert.doesNotMatch(userDialogMarkup, /AI知识库助手/);
   assert.match(userDialogMarkup, /当前版本：1\.0\.1/);
   assert.match(userDialogMarkup, new RegExp(`最新版本：${manifest.user.version}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const item of manifest.user.changelog) {
