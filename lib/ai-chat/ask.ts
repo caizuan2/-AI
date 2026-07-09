@@ -870,6 +870,47 @@ function buildAttachmentTextBlocks(attachments: ReturnType<typeof validateAttach
     .trim();
 }
 
+function hasImageAttachment(attachments: ReturnType<typeof validateAttachments>) {
+  return attachments.some((attachment) => {
+    const type = attachment.type.toLowerCase();
+    const mimeType = (attachment.mime_type ?? "").toLowerCase();
+    const name = `${attachment.filename ?? ""} ${attachment.name ?? ""}`.toLowerCase();
+
+    return type === "image"
+      || mimeType.startsWith("image/")
+      || /\.(?:png|jpe?g|webp|gif|bmp)$/i.test(name);
+  });
+}
+
+function isScreenshotGuidanceQuestion(question: string, input: AiChatAskInput) {
+  const hint = [
+    question,
+    input.userMode,
+    input.modeLabel,
+    input.modePrompt,
+    input.modeReason
+  ].map(trimString).join(" ");
+
+  return /(?:看图|看截图|截图|图片|微信|聊天记录|客户原话|客户截图|怎么引导|如何引导|怎么回复|如何回复|回复客户|客户怎么回|客户怎么回复|怎么沟通|怎么处理|怎么说)/.test(hint)
+    || /(?:wechat|screenshot|customer_screenshot)/i.test(hint);
+}
+
+function shouldRequireAttachmentOcr(
+  question: string,
+  input: AiChatAskInput,
+  attachments: ReturnType<typeof validateAttachments>
+) {
+  return hasImageAttachment(attachments) && isScreenshotGuidanceQuestion(question, input);
+}
+
+function buildAttachmentOcrMissingAnswer() {
+  return [
+    "这张截图的文字没有识别成功，我现在不能可靠判断客户原话。",
+    "",
+    "请重新上传更清晰的微信截图，或者把客户消息复制到输入框里。我拿到客户原话后，再帮你提炼客户问题、引导思路和可直接发送的话术。"
+  ].join("\n");
+}
+
 function buildAttachmentTextContext(attachmentTextBlocks: string) {
   const blocks = attachmentTextBlocks.trim();
   if (!blocks) {
@@ -878,7 +919,12 @@ function buildAttachmentTextContext(attachmentTextBlocks: string) {
 
   return [
     "[USER_IMAGE_OCR_CONTEXT]",
-    "用户上传的微信截图/图片中识别到以下文字。回答时请优先基于这些原文理解客户问题；不要把这段系统说明展示给用户。",
+    "[WECHAT_SCREENSHOT_PRIMARY_CONTEXT]",
+    "下面是用户上传微信截图/客户聊天截图识别出的客户原话，是本轮问题的主上下文。",
+    "回答必须优先围绕这些原文：先提炼客户真实顾虑/问题，再给引导策略和可直接复制给客户的话术。",
+    "如果用户问“看图/截图/怎么引导/怎么回复”，不要泛化讲看图方法，直接基于截图原文回答。",
+    "禁止编造截图里没有出现的客户背景、产品、价格、订单、症状、时间线或场景；不确定时先说明需要继续确认。",
+    "不要把本段系统说明展示给用户。",
     blocks
   ].join("\n");
 }
@@ -1211,6 +1257,7 @@ export async function handleAiChatAsk(
   const conversationId = readConversationId(input);
   const attachmentTextBlocks = buildAttachmentTextBlocks(attachments);
   const attachmentTextContext = buildAttachmentTextContext(attachmentTextBlocks);
+  const requiresAttachmentOcr = shouldRequireAttachmentOcr(question, input, attachments);
   const businessExecutionContext = [
     knowledgeSelectionContext?.prompt,
     businessContext?.prompt,
@@ -1244,6 +1291,7 @@ export async function handleAiChatAsk(
     enableWebSearch,
     ...agentScope,
     attachmentCount: attachments.length,
+    attachmentOcrRequired: requiresAttachmentOcr,
     attachmentOcrApplied: Boolean(attachmentTextContext),
     ...(knowledgeSelectionContext
       ? {
@@ -1264,8 +1312,86 @@ export async function handleAiChatAsk(
     enableWebSearch,
     ...agentScope,
     attachmentCount: attachments.length,
+    attachmentOcrRequired: requiresAttachmentOcr,
     ...(knowledgeSelectionContext ? { knowledgeSelection: knowledgeSelectionContext.metadata } : {})
   });
+
+  if (requiresAttachmentOcr && !attachmentTextContext) {
+    const answer = buildAttachmentOcrMissingAnswer();
+    const sources: ReturnType<typeof toSource>[] = [];
+    const confidence: RagConfidence = "low";
+    const providerStatus = "no_relevant_knowledge" as const;
+    const assistantMessage = await saveAssistantMessage(db, actor, normalizedConversationId, answer, sources, answer, {
+      mode,
+      confidence,
+      sourceCount: 0,
+      enableDeepThinking,
+      enableWebSearch,
+      ...agentScope,
+      attachmentCount: attachments.length,
+      attachmentOcrRequired: true,
+      attachmentOcrApplied: false,
+      providerStatus,
+      fallbackUsed: true,
+      providerErrorCode: "ATTACHMENT_OCR_TEXT_MISSING",
+      webSearchStatus: enableWebSearch ? "reserved_not_enabled" : "disabled"
+    });
+
+    await db.conversation.update({
+      where: {
+        id: normalizedConversationId
+      },
+      data: {
+        mode,
+        metadata: {
+          lastMode: mode,
+          lastConfidence: confidence,
+          lastSourceCount: 0,
+          providerErrorCode: "ATTACHMENT_OCR_TEXT_MISSING",
+          attachmentOcrRequired: true,
+          attachmentOcrApplied: false,
+          enableDeepThinking,
+          enableWebSearch
+        }
+      }
+    }).catch(() => undefined);
+
+    return {
+      answer,
+      conversation_id: normalizedConversationId,
+      message_id: String(assistantMessage.id),
+      mode,
+      customer_answer: answer,
+      finalized_answer: null,
+      sources,
+      confidence,
+      provider_status: providerStatus,
+      model: osContext.route.model,
+      actualModel: osContext.route.actualModel,
+      selected_model: osContext.route.selected_model,
+      provider: osContext.route.provider,
+      fallbackUsed: true,
+      errorCode: "ATTACHMENT_OCR_TEXT_MISSING",
+      trace_id: osContext.trace_id,
+      latency_ms: 0,
+      rag_diagnostics: {
+        topK: osContext.rag.topK,
+        hitCount: 0,
+        contextChars: 0,
+        retrieval_efficiency_score: 0
+      },
+      feedback_meta: {
+        message_id: String(assistantMessage.id),
+        trace_id: osContext.trace_id,
+        model: osContext.route.model,
+        actualModel: osContext.route.actualModel,
+        selected_model: osContext.route.selected_model,
+        provider: osContext.route.provider,
+        fallbackUsed: true,
+        sources
+      }
+    };
+  }
 
   const topK = osContext.rag.topK;
   const dbChunks = await retrieveRelevantChunks(ragQueryContext, {
@@ -1314,7 +1440,7 @@ export async function handleAiChatAsk(
   const attachmentOcrContext = buildAttachmentOcrContext(attachmentTextBlocks);
   const contexts = [
     ...buildRagContext(chunks),
-    ...(chunks.length === 0 && attachmentOcrContext ? [attachmentOcrContext] : [])
+    ...(attachmentOcrContext ? [attachmentOcrContext] : [])
   ];
   const sources = chunks.map(toSource);
   const confidence = calculateConfidence(chunks);

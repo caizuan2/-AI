@@ -74,6 +74,7 @@ export function UpdateModal({
     : busy
       ? "正在更新"
       : "立即更新";
+  const displayAppName = appKind === "user" ? "小董AI" : latest.app_name;
   const currentWebReleaseSha = update.currentWebReleaseSha?.slice(0, 8) || "当前加载版本";
   const latestWebReleaseSha = latest.web_release_sha?.slice(0, 8) || "最新线上版本";
 
@@ -93,7 +94,7 @@ export function UpdateModal({
             <h2 id={`${appKind}-app-update-title`} className="text-lg font-bold text-slate-950">
               {updateTitle}
             </h2>
-            <p className="mt-1 text-sm font-semibold text-blue-700">{latest.app_name}</p>
+            <p className="mt-1 text-sm font-semibold text-blue-700">{displayAppName}</p>
             <p className="mt-2 text-sm leading-6 text-slate-600">
               {isWebContentUpdate ? (
                 <>
@@ -174,7 +175,7 @@ export function UpdateModal({
             onClick={onUpdateNow}
             disabled={updateActionDisabled}
             className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-default disabled:bg-blue-500"
-            aria-label={`${updateActionText} ${latest.app_name}`}
+            aria-label={`${updateActionText} ${displayAppName}`}
           >
             <ActionIcon className={busy ? "h-5 w-5 animate-spin" : "h-5 w-5"} aria-hidden="true" />
             {updateActionText}
