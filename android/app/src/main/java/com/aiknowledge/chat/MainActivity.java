@@ -1,14 +1,22 @@
 package com.aiknowledge.chat;
 
 import android.app.Activity;
+import android.app.DownloadManager;
+import android.content.BroadcastReceiver;
 import android.content.ActivityNotFoundException;
 import android.content.ClipData;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.Message;
+import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -17,20 +25,28 @@ import android.webkit.WebSettings;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.Toast;
+import androidx.core.content.FileProvider;
 import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
 import com.getcapacitor.BridgeWebViewClient;
+import java.io.File;
+import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
-    private static final String APP_ORIGIN = "https://stately-sawine-1efd4d.netlify.app";
-    private static final String USER_CHAT_URL = APP_ORIGIN + "/chat-ui";
-    private static final String ADMIN_INGEST_URL = APP_ORIGIN + "/ingest";
+    private static final String APP_ORIGIN = "http://47.238.0.23";
+    private static final String LEGACY_APP_ORIGIN = "https://stately-sawine-1efd4d.netlify.app";
+    private static final String USER_CHAT_URL = APP_ORIGIN + "/app/chat";
+    private static final String ADMIN_INGEST_URL = LEGACY_APP_ORIGIN + "/ingest";
     private static final String ADMIN_APP_PACKAGE = "com.aiknowledge.admin";
     private static final String UPDATE_STATE_PREFS = "app_update_state";
     private static final String WEBVIEW_STATE_VERSION_PREFIX = "webview_state_cleared_";
     private static final int FILE_CHOOSER_REQUEST_CODE = 6205;
     private ValueCallback<Uri[]> fileChooserCallback;
+    private long updateDownloadId = -1L;
+    private BroadcastReceiver updateDownloadReceiver;
+    private File updateDownloadFile;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -72,6 +88,12 @@ public class MainActivity extends BridgeActivity {
         }
 
         super.onBackPressed();
+    }
+
+    @Override
+    public void onDestroy() {
+        unregisterUpdateDownloadReceiver();
+        super.onDestroy();
     }
 
     private boolean isAdminShell() {
@@ -151,7 +173,8 @@ public class MainActivity extends BridgeActivity {
     }
 
     private static boolean isSameAppOrigin(Uri uri) {
-        return APP_ORIGIN.equals(uri.getScheme() + "://" + uri.getHost());
+        String origin = uri.getScheme() + "://" + uri.getHost();
+        return APP_ORIGIN.equals(origin) || LEGACY_APP_ORIGIN.equals(origin);
     }
 
     private static boolean isHttpUri(Uri uri) {
@@ -180,7 +203,9 @@ public class MainActivity extends BridgeActivity {
             return path.equals("/ingest") || path.startsWith("/ingest/");
         }
 
-        return path.equals("/chat-ui")
+        return path.equals("/app/chat")
+            || path.startsWith("/app/chat/")
+            || path.equals("/chat-ui")
             || path.startsWith("/chat-ui/")
             || path.equals("/register")
             || path.equals("/unlock");
@@ -206,10 +231,195 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    private static String getSafeUpdateFileName(String fileName, Uri uri) {
+        String candidate = fileName == null ? "" : fileName.trim();
+
+        if (candidate.length() == 0 && uri != null && uri.getLastPathSegment() != null) {
+            candidate = uri.getLastPathSegment();
+        }
+
+        candidate = candidate.replaceAll("[\\\\/:*?\"<>|]", "");
+
+        if (!candidate.toLowerCase().endsWith(".apk")) {
+            candidate = "小董AI.apk";
+        }
+
+        return candidate;
+    }
+
+    private File getUpdateDownloadFile(String fileName) {
+        File directory = getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS);
+        if (directory == null) {
+            directory = getCacheDir();
+        }
+
+        if (!directory.exists()) {
+            directory.mkdirs();
+        }
+
+        return new File(directory, fileName);
+    }
+
+    private void postUpdateProgress(String phase, int progress, String message, String error) {
+        if (getBridge() == null || getBridge().getWebView() == null) {
+            return;
+        }
+
+        WebView webView = getBridge().getWebView();
+        String script = "window.dispatchEvent(new CustomEvent('ai-knowledge-update-progress',{detail:{"
+            + "phase:" + JSONObject.quote(phase)
+            + ",progress:" + progress
+            + ",message:" + JSONObject.quote(message)
+            + ",error:" + (error == null ? "undefined" : JSONObject.quote(error))
+            + "}}));";
+
+        webView.post(() -> webView.evaluateJavascript(script, null));
+    }
+
+    private void unregisterUpdateDownloadReceiver() {
+        if (updateDownloadReceiver == null) {
+            return;
+        }
+
+        try {
+            unregisterReceiver(updateDownloadReceiver);
+        } catch (IllegalArgumentException error) {
+            // Receiver was already cleared by the system.
+        }
+
+        updateDownloadReceiver = null;
+    }
+
+    private void registerUpdateDownloadReceiver() {
+        unregisterUpdateDownloadReceiver();
+
+        updateDownloadReceiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context context, Intent intent) {
+                long completedId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L);
+
+                if (completedId != updateDownloadId) {
+                    return;
+                }
+
+                handleUpdateDownloadComplete();
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE);
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(updateDownloadReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(updateDownloadReceiver, filter);
+        }
+    }
+
+    private void handleUpdateDownloadComplete() {
+        unregisterUpdateDownloadReceiver();
+
+        DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (manager == null) {
+            postUpdateProgress("error", 0, "更新包下载失败。", "系统下载服务不可用。");
+            return;
+        }
+
+        DownloadManager.Query query = new DownloadManager.Query().setFilterById(updateDownloadId);
+        try (Cursor cursor = manager.query(query)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                postUpdateProgress("error", 0, "更新包下载失败。", "没有找到下载结果。");
+                return;
+            }
+
+            int statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS);
+            int reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON);
+            int status = statusIndex >= 0 ? cursor.getInt(statusIndex) : DownloadManager.STATUS_FAILED;
+
+            if (status == DownloadManager.STATUS_SUCCESSFUL && updateDownloadFile != null) {
+                postUpdateProgress("installing", 96, "APK 已下载完成，正在打开安装界面...", null);
+                installDownloadedApk(updateDownloadFile);
+                return;
+            }
+
+            int reason = reasonIndex >= 0 ? cursor.getInt(reasonIndex) : 0;
+            postUpdateProgress("error", 0, "更新包下载失败。", "系统下载失败，错误码：" + reason);
+        }
+    }
+
+    private void downloadUpdatePackage(String url, String fileName) {
+        Uri uri = Uri.parse(url);
+        if (!isHttpUri(uri)) {
+            postUpdateProgress("error", 0, "更新包下载失败。", "下载地址格式不正确。");
+            return;
+        }
+
+        DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (manager == null) {
+            postUpdateProgress("error", 0, "更新包下载失败。", "系统下载服务不可用。");
+            return;
+        }
+
+        updateDownloadFile = getUpdateDownloadFile(getSafeUpdateFileName(fileName, uri));
+        if (updateDownloadFile.exists()) {
+            updateDownloadFile.delete();
+        }
+
+        DownloadManager.Request request = new DownloadManager.Request(uri);
+        request.setTitle("小董AI");
+        request.setDescription("正在下载更新包");
+        request.setMimeType("application/vnd.android.package-archive");
+        request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED);
+        request.setDestinationUri(Uri.fromFile(updateDownloadFile));
+
+        try {
+            updateDownloadId = manager.enqueue(request);
+            registerUpdateDownloadReceiver();
+            postUpdateProgress("downloading", 15, "正在当前应用内下载 APK，请稍候...", null);
+            Toast.makeText(this, "正在下载更新包", Toast.LENGTH_SHORT).show();
+        } catch (IllegalArgumentException error) {
+            postUpdateProgress("error", 0, "更新包下载失败。", error.getMessage());
+        }
+    }
+
+    private void installDownloadedApk(File apkFile) {
+        if (apkFile == null || !apkFile.exists()) {
+            postUpdateProgress("error", 0, "更新包下载失败。", "APK 文件不存在。");
+            return;
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !getPackageManager().canRequestPackageInstalls()) {
+            postUpdateProgress("error", 0, "需要允许安装未知来源应用。", "请在系统设置中允许小董AI安装更新包，然后重新点击更新。");
+            Intent settingsIntent = new Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + getPackageName())
+            );
+            startActivity(settingsIntent);
+            return;
+        }
+
+        Uri apkUri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", apkFile);
+        Intent installIntent = new Intent(Intent.ACTION_VIEW);
+        installIntent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+        installIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        installIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+        try {
+            startActivity(installIntent);
+            postUpdateProgress("ready", 100, "安装界面已打开，请按提示完成更新。", null);
+        } catch (ActivityNotFoundException error) {
+            postUpdateProgress("error", 0, "无法打开安装界面。", "请在系统下载通知中手动打开安装包。");
+        }
+    }
+
     private class AndroidBridge {
         @JavascriptInterface
         public void openUrl(String url) {
             runOnUiThread(() -> openExternalBrowser(Uri.parse(url)));
+        }
+
+        @JavascriptInterface
+        public void downloadUpdate(String url, String fileName) {
+            runOnUiThread(() -> downloadUpdatePackage(url, fileName));
         }
     }
 
@@ -248,6 +458,8 @@ public class MainActivity extends BridgeActivity {
 
         return path.equals("/chat-ui")
             || path.startsWith("/chat-ui/")
+            || path.equals("/app/chat")
+            || path.startsWith("/app/chat/")
             || path.equals("/download")
             || path.startsWith("/download/")
             || path.equals("/user-download.html");
@@ -434,10 +646,12 @@ public class MainActivity extends BridgeActivity {
                     + "guard();"
                     + "})();"
                 : "(function(){"
-                    + "var origin='https://stately-sawine-1efd4d.netlify.app';"
-                    + "var chat=origin+'/chat-ui';"
+                    + "var origin='http://47.238.0.23';"
+                    + "var legacy='https://stately-sawine-1efd4d.netlify.app';"
+                    + "var chat=origin+'/app/chat';"
+                    + "function sameOrigin(){return location.origin===origin||location.origin===legacy;}"
                     + "function blocked(path){return path==='/ingest'||path.indexOf('/ingest/')===0||path==='/admin'||path.indexOf('/admin/')===0||path==='/api/admin'||path.indexOf('/api/admin/')===0;}"
-                    + "function guard(){if(location.origin===origin&&blocked(location.pathname)){location.replace(chat);}}"
+                    + "function guard(){if(sameOrigin()&&blocked(location.pathname)){location.replace(chat);}}"
                     + "if(!window.__aiUserAppRouteGuardInstalled){"
                     + "window.__aiUserAppRouteGuardInstalled=true;"
                     + "var push=history.pushState;"

@@ -13,19 +13,39 @@ interface UpdateModalProps {
   updateUrl: string;
   platform: UpdatePlatform;
   dismissible: boolean;
-  onUpdateNow: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+  installState?: UpdateInstallState;
+  onUpdateNow: (event: React.MouseEvent<HTMLButtonElement>) => void;
   onSnooze: () => void;
 }
 
+type UpdateInstallPhase = "idle" | "preparing" | "downloading" | "installing" | "ready" | "error";
+
+interface UpdateInstallState {
+  phase: UpdateInstallPhase;
+  progress: number;
+  message: string;
+  error?: string;
+}
+
 const platformUpdateTips: Record<UpdatePlatform, string> = {
-  android: "Android 安装包需要下载后手动安装；如提示未知来源，请在系统设置中允许安装。",
-  windows: "Windows 安装包将通过 EXE 下载链接获取，下载后按提示安装即可。",
+  android: "Android 会在当前应用内下载 APK；下载完成后请按系统安装提示完成更新。",
+  windows: "Windows 会在当前应用内下载安装包，下载完成后自动打开安装程序。",
   ios: "iOS 端请打开下载页查看当前可用入口。",
   macos: "macOS 端请打开下载页查看当前可用入口。",
-  web: "Web 端会打开最新在线地址，无需安装。",
-  electron: "桌面端会打开外部分发链接，下载后按提示安装即可。",
+  web: "Web 端会在当前应用内刷新到最新内容，无需安装。",
+  electron: "桌面端会在当前应用内下载安装包，下载完成后自动打开安装程序。",
   unknown: "将打开下载页，请选择适合当前设备的安装入口。"
 };
+
+const idleInstallState: UpdateInstallState = {
+  phase: "idle",
+  progress: 0,
+  message: ""
+};
+
+function isInstallBusy(phase: UpdateInstallPhase) {
+  return phase === "preparing" || phase === "downloading" || phase === "installing";
+}
 
 export function UpdateModal({
   appKind,
@@ -33,17 +53,24 @@ export function UpdateModal({
   updateUrl,
   platform,
   dismissible,
+  installState,
   onUpdateNow,
   onSnooze
 }: UpdateModalProps) {
   const latest = update.latest;
   const isWebContentUpdate = update.updateKind === "web";
+  const activeInstallState = installState ?? idleInstallState;
+  const busy = isInstallBusy(activeInstallState.phase);
+  const hasInstallFeedback = activeInstallState.phase !== "idle";
+  const installProgress = Math.max(0, Math.min(100, Math.round(activeInstallState.progress || 0)));
   const updateTip = isWebContentUpdate
     ? "这是线上内容更新，点击刷新即可在当前应用内加载最新版本，不需要重新安装 APK/EXE。"
     : platformUpdateTips[platform];
   const ActionIcon = isWebContentUpdate ? RefreshCw : Download;
   const updateTitle = isWebContentUpdate ? "发现内容更新" : "发现新版本";
-  const updateActionText = isWebContentUpdate ? "立即刷新" : "立即更新";
+  const updateActionText = busy
+    ? (isWebContentUpdate ? "正在刷新" : "正在更新")
+    : (isWebContentUpdate ? "立即刷新" : "立即更新");
   const currentWebReleaseSha = update.currentWebReleaseSha?.slice(0, 8) || "当前加载版本";
   const latestWebReleaseSha = latest.web_release_sha?.slice(0, 8) || "最新线上版本";
 
@@ -113,16 +140,42 @@ export function UpdateModal({
 
         <p className="mt-4 text-xs leading-5 text-slate-500">{updateTip}</p>
 
+        {hasInstallFeedback ? (
+          <div
+            className={
+              activeInstallState.phase === "error"
+                ? "mt-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+                : "mt-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800"
+            }
+          >
+            <div className="flex items-center justify-between gap-3">
+              <span className="min-w-0 font-semibold">{activeInstallState.message}</span>
+              <span className="shrink-0 text-xs font-bold">{installProgress}%</span>
+            </div>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/80">
+              <div
+                className={activeInstallState.phase === "error" ? "h-full rounded-full bg-rose-500" : "h-full rounded-full bg-blue-600"}
+                style={{ width: `${installProgress}%` }}
+              />
+            </div>
+            {activeInstallState.error ? (
+              <p className="mt-2 text-xs leading-5">{activeInstallState.error}</p>
+            ) : null}
+          </div>
+        ) : null}
+
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          <a
-            href={updateUrl || latest.download_page}
+          <button
+            type="button"
+            data-update-url={updateUrl || latest.download_page}
             onClick={onUpdateNow}
-            className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700"
+            disabled={busy}
+            className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-wait disabled:bg-blue-500"
             aria-label={`${updateActionText} ${latest.app_name}`}
           >
-            <ActionIcon className="h-5 w-5" aria-hidden="true" />
+            <ActionIcon className={busy ? "h-5 w-5 animate-spin" : "h-5 w-5"} aria-hidden="true" />
             {updateActionText}
-          </a>
+          </button>
           {dismissible ? (
             <Button type="button" variant="outline" onClick={onSnooze} className="h-14 min-h-14 flex-1 rounded-xl px-6 text-base font-bold">
               稍后提醒
