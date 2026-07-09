@@ -55,6 +55,7 @@ interface CheckAppUpdateOptions {
   currentVersion: string;
   currentBuild: number;
   currentWebReleaseSha?: string;
+  preferWebContentUpdate?: boolean;
   userId?: string;
   platform?: AppPlatform;
   manifestUrl?: string;
@@ -318,7 +319,10 @@ export async function checkAppUpdate(options: CheckAppUpdateOptions): Promise<Ap
       && latestWebReleaseSha
       && currentWebReleaseSha !== latestWebReleaseSha
     );
-    const updateKind = policy.hasUpdate ? "package" : hasWebUpdate ? "web" : "none";
+    const canRefreshWebContent = Boolean(options.preferWebContentUpdate && latest.web_url && !latest.force_update);
+    const shouldUseWebUpdate = hasWebUpdate || (policy.hasUpdate && canRefreshWebContent);
+    const updateKind = policy.hasUpdate && !shouldUseWebUpdate ? "package" : shouldUseWebUpdate ? "web" : "none";
+    const forceUpdate = updateKind === "package" ? policy.forceUpdate : false;
 
     return {
       appKind: options.appKind,
@@ -326,7 +330,7 @@ export async function checkAppUpdate(options: CheckAppUpdateOptions): Promise<Ap
       currentBuild: options.currentBuild,
       currentWebReleaseSha: options.currentWebReleaseSha,
       hasUpdate: policy.hasUpdate || hasWebUpdate,
-      forceUpdate: policy.forceUpdate,
+      forceUpdate,
       updateKind,
       latest,
       updatedAt: manifest.updated_at

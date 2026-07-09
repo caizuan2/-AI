@@ -15,6 +15,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.Message;
 import android.provider.Settings;
 import android.webkit.CookieManager;
@@ -47,6 +49,8 @@ public class MainActivity extends BridgeActivity {
     private long updateDownloadId = -1L;
     private BroadcastReceiver updateDownloadReceiver;
     private File updateDownloadFile;
+    private final Handler updateProgressHandler = new Handler(Looper.getMainLooper());
+    private Runnable updateProgressRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -92,6 +96,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
         super.onDestroy();
     }
@@ -290,6 +295,87 @@ public class MainActivity extends BridgeActivity {
         updateDownloadReceiver = null;
     }
 
+    private static int getCursorInt(Cursor cursor, String columnName, int fallback) {
+        int columnIndex = cursor.getColumnIndex(columnName);
+        return columnIndex >= 0 ? cursor.getInt(columnIndex) : fallback;
+    }
+
+    private static long getCursorLong(Cursor cursor, String columnName, long fallback) {
+        int columnIndex = cursor.getColumnIndex(columnName);
+        return columnIndex >= 0 ? cursor.getLong(columnIndex) : fallback;
+    }
+
+    private void stopUpdateProgressPolling() {
+        if (updateProgressRunnable == null) {
+            return;
+        }
+
+        updateProgressHandler.removeCallbacks(updateProgressRunnable);
+        updateProgressRunnable = null;
+    }
+
+    private void startUpdateProgressPolling() {
+        stopUpdateProgressPolling();
+
+        updateProgressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (!pollUpdateDownloadProgress() && updateProgressRunnable != null) {
+                    updateProgressHandler.postDelayed(this, 600);
+                }
+            }
+        };
+        updateProgressHandler.postDelayed(updateProgressRunnable, 600);
+    }
+
+    private boolean pollUpdateDownloadProgress() {
+        if (updateDownloadId < 0L) {
+            return true;
+        }
+
+        DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+        if (manager == null) {
+            postUpdateProgress("error", 0, "更新包下载失败。", "系统下载服务不可用。");
+            stopUpdateProgressPolling();
+            return true;
+        }
+
+        DownloadManager.Query query = new DownloadManager.Query().setFilterById(updateDownloadId);
+        try (Cursor cursor = manager.query(query)) {
+            if (cursor == null || !cursor.moveToFirst()) {
+                return false;
+            }
+
+            int status = getCursorInt(cursor, DownloadManager.COLUMN_STATUS, DownloadManager.STATUS_PENDING);
+            if (status == DownloadManager.STATUS_FAILED) {
+                int reason = getCursorInt(cursor, DownloadManager.COLUMN_REASON, 0);
+                postUpdateProgress("error", 0, "更新包下载失败。", "系统下载失败，错误码：" + reason);
+                stopUpdateProgressPolling();
+                return true;
+            }
+
+            if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                postUpdateProgress("installing", 96, "APK 已下载完成，正在打开安装界面...", null);
+                stopUpdateProgressPolling();
+                unregisterUpdateDownloadReceiver();
+                installDownloadedApk(updateDownloadFile);
+                return true;
+            }
+
+            long loaded = getCursorLong(cursor, DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR, 0L);
+            long total = getCursorLong(cursor, DownloadManager.COLUMN_TOTAL_SIZE_BYTES, 0L);
+            int progress = 25;
+
+            if (total > 0L) {
+                progress = Math.min(95, 15 + (int) ((loaded * 80L) / total));
+            }
+
+            postUpdateProgress("downloading", progress, "正在当前应用内下载 APK，请稍候...", null);
+        }
+
+        return false;
+    }
+
     private void registerUpdateDownloadReceiver() {
         unregisterUpdateDownloadReceiver();
 
@@ -316,6 +402,7 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void handleUpdateDownloadComplete() {
+        stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
 
         DownloadManager manager = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
@@ -347,6 +434,8 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void downloadUpdatePackage(String url, String fileName) {
+        stopUpdateProgressPolling();
+
         Uri uri = Uri.parse(url);
         if (!isHttpUri(uri)) {
             postUpdateProgress("error", 0, "更新包下载失败。", "下载地址格式不正确。");
@@ -374,6 +463,7 @@ public class MainActivity extends BridgeActivity {
         try {
             updateDownloadId = manager.enqueue(request);
             registerUpdateDownloadReceiver();
+            startUpdateProgressPolling();
             postUpdateProgress("downloading", 15, "正在当前应用内下载 APK，请稍候...", null);
             Toast.makeText(this, "正在下载更新包", Toast.LENGTH_SHORT).show();
         } catch (IllegalArgumentException error) {

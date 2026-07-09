@@ -28,13 +28,13 @@ interface UpdateInstallState {
 }
 
 const platformUpdateTips: Record<UpdatePlatform, string> = {
-  android: "Android 会在当前应用内下载 APK；下载完成后请按系统安装提示完成更新。",
-  windows: "Windows 会在当前应用内下载安装包，下载完成后自动打开安装程序。",
+  android: "Android 会在当前应用内下载更新，进度完成后自动打开安装界面，不会跳转浏览器。",
+  windows: "Windows 会在当前应用内下载更新，进度完成后自动进入安装流程，不会弹出浏览器下载。",
   ios: "iOS 端请打开下载页查看当前可用入口。",
   macos: "macOS 端请打开下载页查看当前可用入口。",
-  web: "Web 端会在当前应用内刷新到最新内容，无需安装。",
-  electron: "桌面端会在当前应用内下载安装包，下载完成后自动打开安装程序。",
-  unknown: "将打开下载页，请选择适合当前设备的安装入口。"
+  web: "Web 端会在当前应用内加载最新内容，进度完成后自动进入系统，无需安装。",
+  electron: "桌面端会在当前应用内下载更新，进度完成后自动进入安装流程，不会弹出浏览器下载。",
+  unknown: "当前客户端如果不支持应用内更新，会提示重新下载安装新版小董AI。"
 };
 
 const idleInstallState: UpdateInstallState = {
@@ -64,13 +64,16 @@ export function UpdateModal({
   const hasInstallFeedback = activeInstallState.phase !== "idle";
   const installProgress = Math.max(0, Math.min(100, Math.round(activeInstallState.progress || 0)));
   const updateTip = isWebContentUpdate
-    ? "这是线上内容更新，点击刷新即可在当前应用内加载最新版本，不需要重新安装 APK/EXE。"
+    ? "这是线上内容更新，点击后会在当前应用内加载最新内容，进度完成后自动进入系统，不需要重新安装 APK/EXE。"
     : platformUpdateTips[platform];
   const ActionIcon = isWebContentUpdate ? RefreshCw : Download;
   const updateTitle = isWebContentUpdate ? "发现内容更新" : "发现新版本";
-  const updateActionText = busy
-    ? (isWebContentUpdate ? "正在刷新" : "正在更新")
-    : (isWebContentUpdate ? "立即刷新" : "立即更新");
+  const updateActionDisabled = busy || activeInstallState.phase === "ready";
+  const updateActionText = activeInstallState.phase === "ready"
+    ? "更新完成"
+    : busy
+      ? "正在更新"
+      : "立即更新";
   const currentWebReleaseSha = update.currentWebReleaseSha?.slice(0, 8) || "当前加载版本";
   const latestWebReleaseSha = latest.web_release_sha?.slice(0, 8) || "最新线上版本";
 
@@ -169,8 +172,8 @@ export function UpdateModal({
             type="button"
             data-update-url={updateUrl || latest.download_page}
             onClick={onUpdateNow}
-            disabled={busy}
-            className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-wait disabled:bg-blue-500"
+            disabled={updateActionDisabled}
+            className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-default disabled:bg-blue-500"
             aria-label={`${updateActionText} ${latest.app_name}`}
           >
             <ActionIcon className={busy ? "h-5 w-5 animate-spin" : "h-5 w-5"} aria-hidden="true" />

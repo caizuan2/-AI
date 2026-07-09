@@ -147,75 +147,44 @@ function getInstallerFileName(targetUrl: string, platform: UpdatePlatform) {
   return fallback;
 }
 
-function triggerBrowserDownload(blob: Blob, fileName: string) {
-  const runtimeWindow = getRuntimeWindow();
-  if (!runtimeWindow?.document) {
-    return false;
-  }
-
-  const blobUrl = URL.createObjectURL(blob);
-  const anchor = runtimeWindow.document.createElement("a");
-  anchor.href = blobUrl;
-  anchor.download = fileName;
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  runtimeWindow.document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 30_000);
-  return true;
+function waitForUpdateFrame(delayMs: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, delayMs);
+  });
 }
 
-async function downloadWithBrowserFetch(
-  targetUrl: string,
-  fileName: string,
-  onProgress: (state: UpdateInstallState) => void
-) {
+function isUpdateBusy(phase: UpdateInstallPhase) {
+  return phase === "preparing" || phase === "downloading" || phase === "installing";
+}
+
+async function runWebContentRefresh(onProgress: (state: UpdateInstallState) => void) {
+  onProgress({
+    phase: "preparing",
+    progress: 12,
+    message: "正在检查线上最新内容..."
+  });
+  await waitForUpdateFrame(160);
+
   onProgress({
     phase: "downloading",
-    progress: 12,
-    message: "正在当前应用内下载更新包..."
+    progress: 58,
+    message: "正在当前应用内加载更新..."
   });
+  await waitForUpdateFrame(220);
 
-  const response = await fetch(targetUrl, { cache: "no-store" });
+  onProgress({
+    phase: "installing",
+    progress: 92,
+    message: "正在刷新当前应用..."
+  });
+  await waitForUpdateFrame(160);
 
-  if (!response.ok) {
-    throw new Error(`下载地址不可用（HTTP ${response.status}）。`);
-  }
-
-  const total = Number(response.headers.get("content-length")) || 0;
-  const reader = response.body?.getReader();
-
-  if (!reader) {
-    const blob = await response.blob();
-    triggerBrowserDownload(blob, fileName);
-    return;
-  }
-
-  const chunks: Uint8Array[] = [];
-  let loaded = 0;
-
-  while (true) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    if (value) {
-      chunks.push(value);
-      loaded += value.byteLength;
-      const progress = total > 0 ? 12 + (loaded / total) * 78 : Math.min(90, 12 + chunks.length * 4);
-      onProgress({
-        phase: "downloading",
-        progress: clampProgress(progress),
-        message: "正在当前应用内下载更新包..."
-      });
-    }
-  }
-
-  const blob = new Blob(chunks as BlobPart[]);
-  triggerBrowserDownload(blob, fileName);
+  onProgress({
+    phase: "ready",
+    progress: 100,
+    message: "更新完成，正在进入系统..."
+  });
+  await waitForUpdateFrame(120);
 }
 
 export function AppUpdateNotice({
@@ -306,13 +275,25 @@ export function AppUpdateNotice({
   async function handleUpdateNow(event: React.MouseEvent<HTMLButtonElement>) {
     event.preventDefault();
 
-    if (activeUpdate.updateKind === "web" && reloadCurrentWebShell()) {
-      setInstallState({
-        phase: "ready",
-        progress: 100,
-        message: "正在刷新当前应用内容..."
-      });
-      setUpdate(null);
+    if (isUpdateBusy(installState.phase) || installState.phase === "ready") {
+      return;
+    }
+
+    if (activeUpdate.updateKind === "web") {
+      try {
+        await runWebContentRefresh(setInstallState);
+
+        if (!reloadCurrentWebShell()) {
+          throw new Error("当前应用刷新失败，请关闭后重新打开小董AI。");
+        }
+      } catch (error) {
+        setInstallState({
+          phase: "error",
+          progress: 0,
+          message: "内容更新失败。",
+          error: error instanceof Error ? error.message : "请关闭后重新打开小董AI。"
+        });
+      }
       return;
     }
 
@@ -360,18 +341,18 @@ export function AppUpdateNotice({
       if (platform === "android" && runtimeWindow?.AndroidBridge?.downloadUpdate) {
         runtimeWindow.AndroidBridge.downloadUpdate(targetUrl, fileName);
         setInstallState({
-          phase: "installing",
-          progress: 70,
-          message: "已在应用内开始下载 APK，请按系统安装提示完成更新。"
+          phase: "downloading",
+          progress: 15,
+          message: "正在当前应用内下载 APK，请稍候..."
         });
         return;
       }
 
-      await downloadWithBrowserFetch(targetUrl, fileName, setInstallState);
       setInstallState({
-        phase: "ready",
-        progress: 100,
-        message: "更新包已下载完成，请按浏览器或系统下载提示完成安装。"
+        phase: "error",
+        progress: 0,
+        message: "当前客户端暂不支持应用内更新。",
+        error: "请重新下载安装一次新版小董AI。为避免跳转浏览器，本次不会自动下载到文件夹。"
       });
     } catch (error) {
       setInstallState({
