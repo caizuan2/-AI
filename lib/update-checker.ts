@@ -214,11 +214,13 @@ export function getCurrentAppPlatform(userAgent?: string): AppPlatform {
 }
 
 export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOptions): Promise<AppUpdateResult> {
+  const runtimeWindow = options.runtimeWindow ?? getBrowserWindow();
+  const userAgent = options.userAgent ?? runtimeWindow?.navigator?.userAgent ?? "";
   const current = getCurrentAppVersion({
-    runtimeWindow: options.runtimeWindow,
+    runtimeWindow,
     search: options.search,
     storage: options.storage,
-    userAgent: options.userAgent
+    userAgent
   });
 
   return checkAppUpdate({
@@ -226,6 +228,7 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
     currentVersion: options.currentVersion ?? current.version,
     currentBuild: options.currentBuild ?? current.build,
     currentWebReleaseSha: options.currentWebReleaseSha ?? current.webReleaseSha,
+    preferWebContentUpdate: options.appKind === "user" && detectNativeShell(runtimeWindow, userAgent),
     userId: options.userId,
     platform: options.platform,
     manifestUrl: options.manifestUrl,

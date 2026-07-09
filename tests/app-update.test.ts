@@ -122,7 +122,8 @@ async function main() {
     }
   });
   assert.equal(legacyNativeUpdate.hasUpdate, true);
-  assert.equal(legacyNativeUpdate.updateKind, "package");
+  assert.equal(legacyNativeUpdate.updateKind, "web");
+  assert.equal(legacyNativeUpdate.forceUpdate, false);
   assert.equal(legacyNativeUpdate.currentBuild, 0);
   assert.equal(legacyNativeUpdate.currentVersion, "旧安装包");
 
@@ -150,7 +151,8 @@ async function main() {
     }
   });
   assert.equal(staleNativeUpdate.hasUpdate, true);
-  assert.equal(staleNativeUpdate.updateKind, "package");
+  assert.equal(staleNativeUpdate.updateKind, "web");
+  assert.equal(staleNativeUpdate.forceUpdate, false);
 
   const browserRuntimeUpdate = await checkCurrentAppUpdate({
     appKind: "user",
@@ -178,6 +180,18 @@ async function main() {
   assert.equal(webContentUpdate.hasUpdate, true);
   assert.equal(webContentUpdate.forceUpdate, false);
   assert.equal(webContentUpdate.updateKind, "web");
+
+  const nativeWebShellUpdate = await checkAppUpdate({
+    appKind: "user",
+    currentVersion: "旧安装包",
+    currentBuild: 0,
+    preferWebContentUpdate: true,
+    fetcher: createFetch(manifest)
+  });
+
+  assert.equal(nativeWebShellUpdate.hasUpdate, true);
+  assert.equal(nativeWebShellUpdate.forceUpdate, false);
+  assert.equal(nativeWebShellUpdate.updateKind, "web");
 
   const equalBuildForceManifest: LatestReleaseManifest = {
     ...manifest,
@@ -314,7 +328,7 @@ async function main() {
   );
 
   assert.match(webDialogMarkup, /发现内容更新/);
-  assert.match(webDialogMarkup, /立即刷新/);
+  assert.match(webDialogMarkup, /立即更新/);
   assert.match(webDialogMarkup, /不需要重新安装 APK\/EXE/);
   assert.doesNotMatch(webDialogMarkup, /Android 安装包需要下载/);
 
@@ -452,11 +466,18 @@ async function main() {
   assert.match(appUpdateNotice, /localStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /reloadCurrentWebShell/);
+  assert.match(appUpdateNotice, /runWebContentRefresh/);
+  assert.doesNotMatch(appUpdateNotice, /triggerBrowserDownload|downloadWithBrowserFetch|createObjectURL/);
 
   const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");
   assert.match(updateModal, /必须更新到最新版本后才能继续使用/);
   assert.match(updateModal, /当前版本/);
   assert.match(updateModal, /最新版本/);
+  assert.match(updateModal, /进度完成后自动进入系统/);
+
+  const electronMain = readFileSync("electron/main.cjs", "utf8");
+  assert.match(electronMain, /getUpdateDownloadDir/);
+  assert.doesNotMatch(electronMain, /app\.getPath\("downloads"\)/);
 
   const enterpriseAutoUpdate = readFileSync("components/EnterpriseAutoUpdate.tsx", "utf8");
   assert.match(enterpriseAutoUpdate, /AppUpdateNotice/);

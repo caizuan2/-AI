@@ -78,6 +78,10 @@ function getInstallerFileName(fileName, targetUrl) {
   return fallback;
 }
 
+function getUpdateDownloadDir() {
+  return path.join(app.getPath("userData"), "updates");
+}
+
 function downloadHttpFile(targetUrl, destinationPath, onProgress, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 5) {
@@ -141,7 +145,7 @@ async function downloadDesktopUpdate(targetUrl, fileName, webContents) {
   }
 
   const installerFileName = getInstallerFileName(fileName, targetUrl);
-  const downloadDir = app.getPath("downloads");
+  const downloadDir = getUpdateDownloadDir();
   const destinationPath = path.join(downloadDir, installerFileName);
   const temporaryPath = `${destinationPath}.download`;
 
@@ -179,7 +183,7 @@ async function downloadDesktopUpdate(targetUrl, fileName, webContents) {
   sendUpdateProgress(webContents, {
     phase: "ready",
     progress: 100,
-    message: "安装程序已打开，请按提示完成更新。"
+    message: "更新进度已完成，正在进入安装流程。"
   });
 
   return {
