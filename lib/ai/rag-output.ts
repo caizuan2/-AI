@@ -7,6 +7,9 @@ const courseMetadataLinePattern =
 const courseMechanismLinePattern =
   /^\s*(?:[-*•>]\s*)?.*(?:所有课程|课程体系|课程融合|底层标准化框架|标准化框架|写死为机制|不可拆分|不可跳步|不可拆分或跳步).*$/;
 
+const communicationFiveStepPattern =
+  /(?:沟通五步|沟通五步骤|讲事业沟通五步)/;
+
 const inlineSourceMetadataPatterns: RegExp[] = [
   /这版回答已结合[^。；\n]*(?:资料|来源|引用面板)[^。；\n]*(?:[。；]\s*)?/g,
   /(?:具体来源|来源)(?:仍)?保留在(?:引用)?面板中[。；]?\s*/g,
@@ -36,13 +39,26 @@ const inlineMachineTokenPatterns: RegExp[] = [
   /\b(?:score|similarity|rank|relevance_score|citationIndex|sourceTitle|sourceType)\s*[:：=]\s*[\w.%-]+/gi
 ];
 
+function rewriteCourseMechanismLine(line: string) {
+  if (!courseMechanismLinePattern.test(line)) {
+    return line;
+  }
+
+  if (communicationFiveStepPattern.test(line)) {
+    return "沟通五步可以按下面五个阶段理解：";
+  }
+
+  return "";
+}
+
 function removeSourceMetadataLines(value: string) {
   return value
     .split("\n")
+    .map(rewriteCourseMechanismLine)
     .filter((line) => (
+      line &&
       !sourceMetadataLinePattern.test(line) &&
-      !courseMetadataLinePattern.test(line) &&
-      !courseMechanismLinePattern.test(line)
+      !courseMetadataLinePattern.test(line)
     ))
     .join("\n");
 }
