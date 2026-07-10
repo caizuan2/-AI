@@ -83,6 +83,7 @@ const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
 const CHAT_SCROLL_BOTTOM_THRESHOLD = 96;
 const CHAT_MESSAGE_TOP_OFFSET = 16;
 const CHAT_MESSAGE_TOP_TOLERANCE = 8;
+const IMAGE_ONLY_DEFAULT_PROMPT = "请识别图片内容并给出回复建议。";
 
 type LinkDialogState = {
   kind: "share" | "group-chat";
@@ -1542,13 +1543,18 @@ export function ChatShell() {
   }
 
   async function submitText(text: string, attachments: ChatAttachmentDraft[] = []) {
-    if (!text || loading) {
+    const hasImageAttachment = attachments.some(isImageLikeAttachment);
+    const canSubmit = Boolean(text) || hasImageAttachment;
+
+    if (!canSubmit || loading) {
       if (!text && attachments.length > 0) {
-        showNotice("请先输入问题，再随问题一起发送附件。");
+        showNotice("请先输入问题，或选择图片后直接发送。");
       }
 
       return false;
     }
+
+    const askText = text || IMAGE_ONLY_DEFAULT_PROMPT;
 
     setError(null);
     setActionFeedback(null);
@@ -1569,14 +1575,14 @@ export function ChatShell() {
       const submitModeDecision = submittedManualChatMode
         ? resolveFinalChatMode({
           ruleDecision: detectChatMode({
-            text,
+            text: askText,
             hasImage: uploadedAttachments.some(isImageLikeAttachment),
             hasAttachment: uploadedAttachments.length > 0
           }),
           manualMode: submittedManualChatMode
         })
         : submittedFinalChatModeDecision;
-      const commercialExecution = detectUserIntent(text);
+      const commercialExecution = detectUserIntent(askText);
       const businessExecution = buildBusinessExecutionPlan(commercialExecution);
       const modeAlternativesText = submitModeDecision.alternatives
         .map((candidate) => `${candidate.label}(${Math.round(candidate.confidence * 100)}%)`)
@@ -1650,7 +1656,7 @@ export function ChatShell() {
       setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
 
       const result = await askChatStream({
-        text,
+        text: askText,
         attachments: uploadedAttachments,
         conversation_id: conversationId,
         mode,

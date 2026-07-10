@@ -36,16 +36,8 @@ import {
   CHAT_FILE_ACCEPT,
   ChatInput,
   createChatAttachmentFromFile,
-  getMicrophoneAccessErrorMessage,
-  getSpeechRecognitionErrorMessage,
-  mergeVoiceTranscript,
-  readSpeechRecognitionTranscript,
   removeChatAttachment,
   SelectedAttachmentList,
-  SPEECH_NO_MICROPHONE_MESSAGE,
-  SPEECH_PERMISSION_MESSAGE,
-  SPEECH_RECORDING_ONLY_MESSAGE,
-  SPEECH_UNSUPPORTED_MESSAGE,
   validateChatAttachmentFile
 } from "../app/(user)/chat-ui/components/ChatInput";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
@@ -305,7 +297,7 @@ async function main() {
   assert.match(shellMarkup, /Hi，我是你的沟通助手/);
   assert.match(shellMarkup, /打开历史会话/);
   assert.match(shellMarkup, /新建对话/);
-  assert.match(shellMarkup, /语音输入/);
+  assert.doesNotMatch(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
   assert.match(shellMarkup, /发送消息/);
   assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
@@ -325,7 +317,13 @@ async function main() {
   assert.ok(
     chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChatStream({")
   );
+  assert.match(chatShellSource, /IMAGE_ONLY_DEFAULT_PROMPT/);
+  assert.match(chatShellSource, /const canSubmit = Boolean\(text\) \|\| hasImageAttachment/);
+  assert.match(chatShellSource, /const askText = text \|\| IMAGE_ONLY_DEFAULT_PROMPT/);
+  assert.match(chatShellSource, /text: askText/);
+  assert.match(chatShellSource, /createUserMessage\(text, uploadedAttachments\)/);
   assert.doesNotMatch(chatShellSource, /文件上传失败，请重新选择后再发送/);
+  assert.doesNotMatch(chatShellSource, /请先输入问题，再随问题一起发送附件/);
   assert.match(chatShellSource, /inputCleared/);
   assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /正在加载历史记录/);
@@ -564,9 +562,13 @@ async function main() {
 
   const attachmentMenuMarkup = renderToStaticMarkup(<AttachmentMenu open />);
 
-  assert.match(attachmentMenuMarkup, /上传手机照片/);
-  assert.match(attachmentMenuMarkup, /上传文件/);
-  assert.match(attachmentMenuMarkup, /打开相机/);
+  assert.match(attachmentMenuMarkup, /aria-label="相机"/);
+  assert.match(attachmentMenuMarkup, /aria-label="照片"/);
+  assert.match(attachmentMenuMarkup, /aria-label="文件"/);
+  assert.match(attachmentMenuMarkup, /rounded-\[28px\]/);
+  assert.doesNotMatch(attachmentMenuMarkup, /上传入口/);
+  assert.doesNotMatch(attachmentMenuMarkup, /上传手机照片|上传文件|打开相机/);
+  assert.doesNotMatch(attachmentMenuMarkup, /从相册选择图片|选择文档或图片|拍摄一张照片/);
   assert.doesNotMatch(attachmentMenuMarkup, /占位/);
 
   const chatInputMarkup = renderToStaticMarkup(
@@ -585,6 +587,8 @@ async function main() {
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
   assert.match(chatInputMarkup, /disabled=""/);
   assert.match(chatInputMarkup, /bg-slate-200/);
   assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
@@ -627,10 +631,11 @@ async function main() {
   );
 
   assert.match(selectedAttachmentMarkup, /<img/);
-  assert.match(selectedAttachmentMarkup, /photo\.jpg/);
-  assert.match(selectedAttachmentMarkup, /contract\.pdf/);
-  assert.match(selectedAttachmentMarkup, /1KB/);
-  assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
+  assert.match(selectedAttachmentMarkup, /h-14 w-14/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /photo\.jpg/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /contract\.pdf/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /1KB/);
+  assert.match(selectedAttachmentMarkup, /删除附件 2/);
   assert.equal(validateChatAttachmentFile({
     size: 99 * 1024 * 1024
   } as File), null);
@@ -649,46 +654,18 @@ async function main() {
     enable_web_search: false
   }).attachments.length, 0);
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
-  assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
-  assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前环境暂不支持语音输入，请使用文字输入。");
-  assert.equal(SPEECH_RECORDING_ONLY_MESSAGE, "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。");
-  assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
-  assert.equal(getSpeechRecognitionErrorMessage("service-not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
-  assert.equal(getSpeechRecognitionErrorMessage("audio-capture"), SPEECH_NO_MICROPHONE_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("denied", "NotAllowedError")), SPEECH_PERMISSION_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage({ name: "PermissionDeniedError" }), SPEECH_PERMISSION_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("not found", "NotFoundError")), SPEECH_NO_MICROPHONE_MESSAGE);
-  assert.equal(readSpeechRecognitionTranscript({
-    results: [
-      {
-        0: {
-          transcript: "临时内容"
-        },
-        isFinal: false
-      },
-      {
-        0: {
-          transcript: "最终内容"
-        },
-        isFinal: true
-      }
-    ]
-  }).finalTranscript, "最终内容");
   const chatInputSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
 
-  assert.match(chatInputSource, /recognition\.interimResults\s*=\s*true/);
-  assert.match(chatInputSource, /recognition\.continuous\s*=\s*false/);
-  assert.match(chatInputSource, /recognitionRef\.current\?\.stop\(\)/);
-  assert.match(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
-  assert.match(chatInputSource, /getUserMedia\(\{\s*audio:\s*true\s*\}\)/);
-  assert.ok(
-    chatInputSource.indexOf("getUserMedia({ audio: true })") < chatInputSource.indexOf("const speechWindow = window as SpeechWindow;")
-  );
-  assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
-  assert.match(chatInputSource, /麦克风已开启，正在启动语音识别/);
-  assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
+  assert.doesNotMatch(chatInputSource, /<Mic className=/);
+  assert.doesNotMatch(chatInputSource, /SPEECH_/);
+  assert.doesNotMatch(chatInputSource, /SpeechRecognition/);
+  assert.doesNotMatch(chatInputSource, /aria-label=\{listening \? "停止语音输入" : "语音输入"\}/);
+  assert.doesNotMatch(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.doesNotMatch(chatInputSource, /麦克风已开启，正在启动语音识别/);
+  assert.doesNotMatch(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
   assert.match(chatInputSource, /const hasText = value\.trim\(\)\.length > 0/);
-  assert.match(chatInputSource, /const canSend = hasText && !loading/);
+  assert.match(chatInputSource, /const hasImageAttachment = attachments\.some\(isImageAttachmentDraft\)/);
+  assert.match(chatInputSource, /const canSend = \(hasText \|\| hasImageAttachment\) && !loading/);
   assert.match(chatInputSource, /textareaRef = React\.useRef<HTMLTextAreaElement/);
   assert.match(chatInputSource, /const resizeTextarea = React\.useCallback/);
   assert.match(chatInputSource, /wrap="soft"/);
@@ -917,20 +894,22 @@ async function main() {
   );
 
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
-  assert.match(chatMessagesMarkup, /打开图片预览 photo\.jpg/);
+  assert.match(chatMessagesMarkup, /打开图片预览 1/);
+  assert.match(chatMessagesMarkup, /data-chat-user-message-bubble="attachments"/);
   assert.match(chatMessagesMarkup, /<img/);
   assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
+  assert.doesNotMatch(chatMessagesMarkup, /photo\.jpg/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
   assert.match(chatMessagesMarkup, /aria-label="复制用户消息"/);
   assert.match(chatMessagesMarkup, /aria-label="编辑用户消息"/);
   assert.ok(
-    chatMessagesMarkup.indexOf("打开图片预览 photo.jpg") < chatMessagesMarkup.indexOf("退款流程怎么处理？")
+    chatMessagesMarkup.indexOf('data-chat-user-message-bubble="attachments"') < chatMessagesMarkup.indexOf('data-chat-image-thumbnail="true"')
+  );
+  assert.ok(
+    chatMessagesMarkup.indexOf('data-chat-image-thumbnail="true"') < chatMessagesMarkup.indexOf("退款流程怎么处理？")
   );
   assert.ok(
     chatMessagesMarkup.indexOf("退款流程怎么处理？") < chatMessagesMarkup.indexOf("aria-label=\"复制用户消息\"")
-  );
-  assert.ok(
-    chatMessagesMarkup.indexOf("bg-slate-100") < chatMessagesMarkup.indexOf("bg-blue-600")
   );
   assert.ok(
     chatMessagesMarkup.indexOf("bg-blue-600") < chatMessagesMarkup.indexOf("aria-label=\"编辑用户消息\"")
@@ -1044,7 +1023,7 @@ async function main() {
   assert.equal(getUserMessageCopyText({
     content: "",
     attachments: [imageAttachment]
-  }), "photo.jpg");
+  }), "暂无文字可复制");
   let copiedUserText = "";
 
   await copyUserMessageToClipboard(getUserMessageCopyText(messages[0]), {
@@ -1060,7 +1039,6 @@ async function main() {
   assert.doesNotMatch(chatMessagesSource, /<Bot className=/);
   assert.match(chatMessagesSource, /text-\[11px\] leading-none text-slate-400/);
   assert.doesNotMatch(chatMessagesSource, /bg-blue-600[\s\S]{0,220}formatMessageTime\(message\.created_at\)/);
-  assert.match(chatMessagesSource, /图片加载失败/);
   assert.match(chatMessagesSource, /图片预览不可用/);
   assert.match(chatMessagesSource, /文件暂不可预览/);
   assert.match(chatMessagesSource, /打开文件 \$\{name\}/);
@@ -1077,6 +1055,10 @@ async function main() {
   assert.match(chatMessagesSource, /getCurrentChatUserInitial\(currentUser\)/);
   assert.match(chatMessagesSource, /alt="当前用户头像"/);
   assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
+  assert.match(chatMessagesSource, /data-chat-user-message-bubble="attachments"/);
+  assert.match(chatMessagesSource, /data-chat-image-thumbnail="true"/);
+  assert.match(chatMessagesSource, /max-w-\[min\(220px,62vw\)\]/);
+  assert.match(chatMessagesSource, /max-h-\[260px\]/);
   assert.match(chatMessagesSource, /getAttachmentPreviewUrls/);
   assert.match(chatMessagesSource, /data-fallback-count=\{previewUrls\.length\}/);
   assert.match(chatMessagesSource, /onError=\{handleImageError\}/);
@@ -1235,38 +1217,26 @@ async function main() {
     />
   );
 
-  assert.match(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 1/);
+  assert.doesNotMatch(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
   assert.match(historyImageMarkup, /data-fallback-count/);
   assert.match(historyImageMarkup, /blob:history-preview-url/);
-  assert.match(historyImageMarkup, /打开图片预览 url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 history-photo\.png/);
   assert.match(historyImageMarkup, /https:\/\/example\.com\/history-photo\.png/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-photo\.webp/);
   assert.match(historyImageMarkup, /data:image\/webp;base64,AAAA/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/metadata-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 file-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/file-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 public-url-photo\.jpg/);
   assert.match(historyImageMarkup, /https:\/\/example\.com\/public-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 download-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/files\/download-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/path-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 storage-path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/storage-path-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 cached-photo\.jpg/);
   assert.match(historyImageMarkup, /blob:chat-image-preview/);
-  assert.match(historyImageMarkup, /打开图片预览 filename-photo\.png/);
   assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
-  assert.match(historyImageMarkup, /打开图片预览 priority-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/priority\.jpg/);
   assert.doesNotMatch(historyImageMarkup, /wrong-src-photo|WRONG/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-priority-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/metadata-priority\.jpg/);
   assert.doesNotMatch(historyImageMarkup, /wrong-metadata-src-photo/);
-  assert.match(historyImageMarkup, /lost-photo\.jpg/);
+  assert.doesNotMatch(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
   assert.match(historyImageMarkup, /打开文件 history-contract\.pdf/);
   assert.match(historyImageMarkup, /\/uploads\/chat-attachments\/history-contract\.pdf/);
@@ -1320,7 +1290,8 @@ async function main() {
     />
   );
 
-  assert.match(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
+  assert.match(stringAttachmentsMarkup, /打开图片预览 1/);
+  assert.doesNotMatch(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
   assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
   assert.match(chatMessagesMarkup, /小董AI/);
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
