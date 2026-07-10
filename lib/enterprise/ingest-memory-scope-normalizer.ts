@@ -88,7 +88,7 @@ function inferScopePreset(draft: IngestMemoryItem): ScopePreset | null {
     };
   }
 
-  if (hasPattern(text, /事业|同行|讲事业|招商|成交|裂变|同频|合作|客户开发|伙伴/i)) {
+  if (hasPattern(text, /事业|同行|讲事业|招商|成交|裂变|同频|合作|客户开发|伙伴|沟通五步|五步沟通|沟通\s*5\s*步|5\s*步\s*沟通/i)) {
     return {
       knowledgeBaseId: "kb-business-coach",
       kbId: "kb-business-coach",

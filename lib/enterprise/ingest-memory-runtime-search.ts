@@ -124,7 +124,52 @@ function entryScopeMatch(entry: MemoryIndexEntry, input: RuntimeMemorySearchInpu
   };
 }
 
-function scoreEntry(entry: MemoryIndexEntry, queryTokens: string[], scopeMatch: ScopeMatchResult): RuntimeMemorySearchResultItem | null {
+const EXACT_TERM_GROUPS = [
+  ["沟通五步", "五步沟通", "沟通5步", "5步沟通"],
+  ["讲事业", "事业导师"],
+  ["招商", "招商会"],
+  ["成交", "成交话术"],
+  ["破冰", "破冰流程"],
+  ["同频"],
+  ["一对一沟通", "一对一"],
+  ["33循环", "33周期"],
+  ["77循环", "77周期"],
+  ["脂达人", "脉达人", "控体"]
+];
+
+function normalizeExactTermText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, "");
+}
+
+function collectRuntimeExactTerms(query: string): string[] {
+  const normalizedQuery = normalizeExactTermText(query);
+  const matches: string[] = [];
+
+  for (const group of EXACT_TERM_GROUPS) {
+    if (group.some((term) => normalizedQuery.includes(normalizeExactTermText(term)))) {
+      matches.push(...group.map(normalizeExactTermText));
+    }
+  }
+
+  return Array.from(new Set(matches.filter(Boolean)));
+}
+
+function buildEntryExactSearchText(entry: MemoryIndexEntry): string {
+  return normalizeExactTermText([
+    entry.title,
+    entry.summary || "",
+    entry.contentPreview,
+    entry.searchText,
+    ...(entry.tags || [])
+  ].filter(Boolean).join("\n"));
+}
+
+function scoreEntry(
+  entry: MemoryIndexEntry,
+  queryTokens: string[],
+  exactTerms: string[],
+  scopeMatch: ScopeMatchResult
+): RuntimeMemorySearchResultItem | null {
   const tokenSet = new Set(entry.tokens);
   const matchedTokens = queryTokens.filter((token) => tokenSet.has(token));
   const uniqueMatches = Array.from(new Set(matchedTokens));
@@ -135,11 +180,16 @@ function scoreEntry(entry: MemoryIndexEntry, queryTokens: string[], scopeMatch: 
   )
     ? 0.08
     : 0;
-  const score = Math.min(1, tokenScore + titleScore + tagScore);
+  const entryExactText = buildEntryExactSearchText(entry);
+  const exactMatches = exactTerms.filter((term) => entryExactText.includes(term));
+  const exactScore = exactMatches.length > 0 ? Math.min(0.45, 0.22 + exactMatches.length * 0.08) : 0;
+  const score = Math.min(1, tokenScore + titleScore + tagScore + exactScore);
 
-  if (score < 0.2) {
+  if (score < 0.2 && exactMatches.length === 0) {
     return null;
   }
+
+  const displayMatches = Array.from(new Set([...uniqueMatches, ...exactMatches])).slice(0, 20);
 
   return {
     memoryId: entry.memoryId,
@@ -148,13 +198,14 @@ function scoreEntry(entry: MemoryIndexEntry, queryTokens: string[], scopeMatch: 
     contentPreview: entry.contentPreview,
     score: Number(score.toFixed(3)),
     reason: [
+      exactMatches.length > 0 ? `exact phrase:${exactMatches.slice(0, 4).join(",")}` : "",
       uniqueMatches.length > 0 ? `matched token:${uniqueMatches.slice(0, 8).join(",")}` : "scope-match",
       scopeMatch.sameKb ? "same kb" : "",
       scopeMatch.sameAgent ? "same agent" : "",
       scopeMatch.sameNamespace ? "namespace compatible" : "",
       scopeMatch.sameTenant ? "tenant compatible" : ""
     ].filter(Boolean).join(" | "),
-    matchedTokens: uniqueMatches.slice(0, 20),
+    matchedTokens: displayMatches,
     sourceApp: entry.sourceApp,
     knowledgeBaseId: entry.knowledgeBaseId,
     kbId: entry.kbId,
@@ -209,12 +260,13 @@ export async function searchRuntimeMemories(input: RuntimeMemorySearchInput): Pr
   }
 
   const queryTokens = tokenizeMemoryForIndex(query);
+  const exactTerms = collectRuntimeExactTerms(query);
   const limit = Math.max(1, Math.min(input.limit ?? 5, 10));
   const publishedById = new Map(publishedMemories.map((memory) => [memory.id, memory]));
   const matched = index.entries
     .map((entry) => ({ entry, scopeMatch: entryScopeMatch(entry, input) }))
     .filter((item) => item.scopeMatch.matches)
-    .map((item) => scoreEntry(item.entry, queryTokens, item.scopeMatch))
+    .map((item) => scoreEntry(item.entry, queryTokens, exactTerms, item.scopeMatch))
     .filter((item): item is RuntimeMemorySearchResultItem => Boolean(item))
     .sort((left, right) => right.score - left.score)
     .slice(0, limit)

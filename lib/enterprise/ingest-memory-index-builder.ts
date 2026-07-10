@@ -43,18 +43,37 @@ function collectSpecialTokens(text: string): string[] {
   const patterns = [
     /33\s*循环/gi,
     /77\s*循环/gi,
+    /沟通\s*五\s*步/gi,
+    /五\s*步\s*沟通/gi,
+    /沟通\s*5\s*步/gi,
+    /5\s*步\s*沟通/gi,
     /kks/gi,
     /脂达人/gi,
     /脉达人/gi,
     /控体/gi,
     /瘦身/gi,
+    /讲事业/gi,
+    /事业导师/gi,
+    /招商/gi,
+    /成交/gi,
+    /裂变/gi,
+    /同频/gi,
+    /破冰/gi,
+    /促成/gi,
+    /跟进/gi,
+    /一对一\s*沟通/gi,
     /考虑考虑/gi
   ];
 
   for (const pattern of patterns) {
     const matches = normalized.match(pattern) || [];
     for (const match of matches) {
-      tokens.push(match.replace(/\s+/g, ""));
+      const compact = match.replace(/\s+/g, "");
+      tokens.push(compact);
+
+      if (["沟通五步", "五步沟通", "沟通5步", "5步沟通"].includes(compact)) {
+        tokens.push("沟通五步", "五步沟通", "沟通5步", "5步沟通");
+      }
     }
   }
 
