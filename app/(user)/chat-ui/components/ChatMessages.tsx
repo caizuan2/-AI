@@ -68,6 +68,8 @@ function getBooleanValue(value: unknown) {
   return typeof value === "boolean" ? value : false;
 }
 
+const localPublicAttachmentFileNamePattern = /^[A-Za-z0-9_-]+-\d{10,}-[A-Fa-f0-9-]+\.[A-Za-z0-9]+$/;
+
 function looksLikeImageUrl(value: string) {
   const normalizedValue = value.trim().toLowerCase();
   const path = normalizedValue.split("?")[0]?.split("#")[0] ?? "";
@@ -76,6 +78,18 @@ function looksLikeImageUrl(value: string) {
     normalizedValue.startsWith("data:image/") ||
     /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/.test(path)
   );
+}
+
+function getUrlPath(value: string) {
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return "";
+    }
+  }
+
+  return value.split("?")[0]?.split("#")[0] ?? "";
 }
 
 function normalizeAttachmentImageUrl(value: unknown) {
@@ -110,6 +124,25 @@ function normalizeAttachmentImageUrl(value: unknown) {
   return "";
 }
 
+function normalizeLocalPublicAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
+
+  if (!text || text.startsWith("blob:") || text.startsWith("data:")) {
+    return "";
+  }
+
+  const path = getUrlPath(text);
+  const fileName = path.match(/(?:^|\/)uploads\/chat-attachments\/([^/?#]+)$/i)?.[1];
+
+  if (fileName) {
+    return `/api/ai/chat/attachments/download?key=${encodeURIComponent(fileName)}`;
+  }
+
+  return localPublicAttachmentFileNamePattern.test(text)
+    ? `/api/ai/chat/attachments/download?key=${encodeURIComponent(text)}`
+    : "";
+}
+
 function normalizeAttachmentDownloadUrl(value: unknown) {
   const text = getStringValue(value).replace(/\\/g, "/");
 
@@ -127,6 +160,12 @@ function normalizeAttachmentDownloadUrl(value: unknown) {
   return `/api/ai/chat/attachments/download?key=${encodeURIComponent(text)}`;
 }
 
+function normalizeBlobAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
+
+  return text.includes("/") ? normalizeAttachmentDownloadUrl(text) : "";
+}
+
 function appendUnique(values: string[], value: string) {
   if (value && !values.includes(value)) {
     values.push(value);
@@ -139,6 +178,7 @@ export function getAttachmentPreviewUrls(attachment: UserAttachment) {
   const urls: string[] = [];
   const pushImageUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentImageUrl(value));
   const pushDownloadUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentDownloadUrl(value));
+  const pushLocalPublicDownloadUrl = (value: unknown) => appendUnique(urls, normalizeLocalPublicAttachmentDownloadUrl(value));
 
   [
     attachment.previewUrl,
@@ -157,7 +197,10 @@ export function getAttachmentPreviewUrls(attachment: UserAttachment) {
     metadata.src,
     metadata.dataUrl,
     metadata.path
-  ].forEach(pushImageUrl);
+  ].forEach((value) => {
+    pushImageUrl(value);
+    pushLocalPublicDownloadUrl(value);
+  });
 
   [
     attachment.storagePath,
@@ -171,6 +214,18 @@ export function getAttachmentPreviewUrls(attachment: UserAttachment) {
   ].forEach((value) => {
     pushImageUrl(value);
     pushDownloadUrl(value);
+    pushLocalPublicDownloadUrl(value);
+  });
+
+  [
+    attachment.reference_id,
+    record.referenceId,
+    record.reference_id,
+    metadata.referenceId,
+    metadata.reference_id
+  ].forEach((value) => {
+    appendUnique(urls, normalizeBlobAttachmentDownloadUrl(value));
+    pushLocalPublicDownloadUrl(value);
   });
 
   appendUnique(urls, getCachedChatAttachmentPreviewUrl(attachment) || "");

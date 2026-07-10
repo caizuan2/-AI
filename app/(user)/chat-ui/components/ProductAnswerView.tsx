@@ -6,15 +6,12 @@ import remarkGfm from "remark-gfm";
 import {
   Brain,
   Check,
-  ChevronDown,
   Copy,
-  FileText,
   Loader2,
   MessageSquareText,
   Sparkles
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { sanitizeVisibleSources } from "@/lib/ai-chat/visible-output-sanitizer";
 import {
   buildProductAnswerDisplay,
   getFinalizedRawAnswerText,
@@ -527,12 +524,6 @@ function CustomerScriptInlineCard({
   );
 }
 
-function formatScore(score: unknown) {
-  const value = typeof score === "number" ? score : Number.NaN;
-
-  return Number.isFinite(value) ? `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%` : "";
-}
-
 function buildAnalysisMarkdown(display: NonNullable<ReturnType<typeof buildProductAnswerDisplay>>) {
   return display.analysisSections
     .map((section) => [
@@ -594,12 +585,6 @@ export function ProductAnswerView({
     ?? display?.salesModes.find((mode) => mode.key === display.defaultMode)
     ?? display?.salesModes[0];
   const analysisMarkdown = display ? buildAnalysisMarkdown(display) : "";
-  const visibleSources = sanitizeVisibleSources(
-    (sources ?? []).map((source) => ({
-      title: source.title,
-      content: source.content_preview
-    }))
-  );
 
   if (naturalAnswerText) {
     return (
@@ -638,34 +623,6 @@ export function ProductAnswerView({
             ))}
           </div>
         </section>
-
-        {visibleSources.length > 0 ? (
-          <details className="group rounded-[18px] border border-slate-200 bg-white px-5 py-4">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
-              <span className="inline-flex items-center gap-2">
-                <FileText className="h-4 w-4 text-blue-600" aria-hidden="true" />
-                引用来源
-              </span>
-              <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
-            </summary>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {visibleSources.map((source, index) => {
-                const originalSource = sources?.[index];
-                const score = formatScore(originalSource?.relevance_score ?? originalSource?.score);
-
-                return (
-                  <div key={`${source.title}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 truncate font-semibold text-slate-900">{source.title}</span>
-                      {score ? <span className="shrink-0 font-semibold text-blue-700">{score}</span> : null}
-                    </div>
-                    {source.summary ? <p className="mt-1">{source.summary}</p> : null}
-                  </div>
-                );
-              })}
-            </div>
-          </details>
-        ) : null}
       </article>
     );
   }
@@ -773,34 +730,6 @@ export function ProductAnswerView({
           </div>
         ) : null}
       </section>
-
-      {visibleSources.length > 0 ? (
-        <details className="group rounded-[18px] border border-slate-200 bg-white px-5 py-4">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-3 text-sm font-semibold text-slate-950">
-            <span className="inline-flex items-center gap-2">
-              <FileText className="h-4 w-4 text-blue-600" aria-hidden="true" />
-              引用来源
-            </span>
-            <ChevronDown className="h-4 w-4 text-slate-400 transition group-open:rotate-180" aria-hidden="true" />
-          </summary>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {visibleSources.map((source, index) => {
-              const originalSource = sources?.[index];
-              const score = formatScore(originalSource?.relevance_score ?? originalSource?.score);
-
-              return (
-                <div key={`${source.title}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="min-w-0 truncate font-semibold text-slate-900">{source.title}</span>
-                    {score ? <span className="shrink-0 font-semibold text-blue-700">{score}</span> : null}
-                  </div>
-                  {source.summary ? <p className="mt-1">{source.summary}</p> : null}
-                </div>
-              );
-            })}
-          </div>
-        </details>
-      ) : null}
     </article>
   );
 }

@@ -1170,6 +1170,17 @@ async function main() {
             },
             {
               type: "image",
+              name: "local-public-photo.jpg",
+              url: "/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"
+            },
+            {
+              type: "image",
+              name: "local-reference-photo.jpg",
+              storage: "local-public",
+              reference_id: "user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+            },
+            {
+              type: "image",
               name: "cached-photo.jpg",
               metadata: {
                 local_id: imageAttachment.id
@@ -1230,6 +1241,7 @@ async function main() {
   assert.match(historyImageMarkup, /\/api\/files\/download-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/storage-path-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/chat-attachments\/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000\.jpg/);
   assert.match(historyImageMarkup, /blob:chat-image-preview/);
   assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
   assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/priority\.jpg/);
@@ -1244,6 +1256,27 @@ async function main() {
   assert.match(historyImageMarkup, /contract\.pdf/);
   assert.match(historyImageMarkup, /文件暂不可预览/);
 
+  const localPublicUrls = getAttachmentPreviewUrls({
+    type: "image",
+    name: "local-public-photo.jpg",
+    url: "/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.ok(localPublicUrls.includes("/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"));
+  assert.ok(
+    localPublicUrls.includes("/api/ai/chat/attachments/download?key=user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg")
+  );
+
+  const localReferenceUrls = getAttachmentPreviewUrls({
+    type: "image",
+    name: "local-reference-photo.jpg",
+    reference_id: "user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.deepEqual(localReferenceUrls, [
+    "/api/ai/chat/attachments/download?key=user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+  ]);
+
   const fallbackUrls = getAttachmentPreviewUrls({
     id: "fallback-attachment",
     type: "image",
@@ -1251,6 +1284,7 @@ async function main() {
     previewUrl: "blob:expired-preview",
     publicUrl: "https://cdn.example.com/fallback.png",
     storagePath: "user_1/2026/07/fallback.png",
+    reference_id: "user_1-1719800000002-123e4567-e89b-12d3-a456-426614174002.png",
     metadata: {
       storagePath: "user_1/2026/07/fallback-metadata.png"
     }
@@ -1263,6 +1297,9 @@ async function main() {
   assert.ok(fallbackUrls.includes("/uploads/fallback-metadata.png"));
   assert.ok(
     fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1%2F2026%2F07%2Ffallback-metadata.png")
+  );
+  assert.ok(
+    fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1-1719800000002-123e4567-e89b-12d3-a456-426614174002.png")
   );
 
   const stringAttachmentsMarkup = renderToStaticMarkup(
@@ -1295,8 +1332,8 @@ async function main() {
   assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
   assert.match(chatMessagesMarkup, /小董AI/);
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
-  assert.match(chatMessagesMarkup, /引用来源/);
-  assert.match(chatMessagesMarkup, /退款处理流程/);
+  assert.doesNotMatch(chatMessagesMarkup, /引用来源/);
+  assert.doesNotMatch(chatMessagesMarkup, /退款处理流程/);
   assert.match(chatMessagesMarkup, /复制答案/);
   assert.doesNotMatch(chatMessagesMarkup, /RAG confidence/);
   assert.doesNotMatch(chatMessagesMarkup, /chunk: chunk_1/);
@@ -1788,12 +1825,16 @@ async function main() {
   assert.match(chatAttachmentRouteText, /fileUrl:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /storage:\s*savedAttachment\.storage/);
   assert.match(chatAttachmentRouteText, /blobKey:\s*savedAttachment\.blobKey/);
+  assert.match(chatAttachmentRouteText, /const downloadUrl = savedAttachment\.blobKey/);
   assert.match(chatAttachmentRouteText, /attachment:\s*responseData\.attachment/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.match(chatAttachmentDownloadRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
   assert.match(chatAttachmentDownloadRouteText, /requireAiChatAccess\(request, "ai_chat_attachment_download"\)/);
   assert.match(chatAttachmentDownloadRouteText, /safeBlobKeyPattern/);
+  assert.match(chatAttachmentDownloadRouteText, /safeLocalPublicAttachmentKeyPattern/);
+  assert.match(chatAttachmentDownloadRouteText, /readLocalPublicAttachment/);
+  assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actorId\)\}-`\)/);
   assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actor\.id\)\}\/`\)/);
   assert.match(chatAttachmentDownloadRouteText, /getWithMetadata\(key/);
   assert.match(chatAttachmentDownloadRouteText, /type:\s*"arrayBuffer"/);
