@@ -386,6 +386,9 @@ export async function POST(request: Request) {
           mimeType,
           size: file.size,
         });
+    const downloadUrl = savedAttachment.blobKey
+      ? savedAttachment.url
+      : `/api/ai/chat/attachments/download?key=${encodeURIComponent(savedAttachment.referenceId)}`;
 
     const responseData = {
       attachment: {
@@ -399,7 +402,7 @@ export async function POST(request: Request) {
         url: savedAttachment.url,
         publicUrl: savedAttachment.url,
         fileUrl: savedAttachment.url,
-        downloadUrl: savedAttachment.url,
+        downloadUrl,
         storage: savedAttachment.storage,
         blobKey: savedAttachment.blobKey,
         reference_id: savedAttachment.referenceId,
