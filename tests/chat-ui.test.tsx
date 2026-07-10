@@ -72,6 +72,7 @@ import {
   buildRichAnswerSections,
   splitCustomerAnswerParagraphs
 } from "../app/(user)/chat-ui/lib/answer-format";
+import { normalizeUserChatMarkdown } from "../lib/ai-chat/user-chat-markdown";
 
 async function main() {
   const naturalCustomerScriptAnswer = [
@@ -110,6 +111,38 @@ async function main() {
   assert.match(naturalScriptMarkup, /话术一（通用版）/);
   assert.match(naturalScriptMarkup, /收到。您先把客户的基本情况说一下/);
   assert.match(naturalScriptMarkup, /使用前建议/);
+
+  const htmlListAnswer = [
+    "第三步｜讲事业通心 + 流程 + 注意事项｜三位一体完成认知建设｜",
+    "<ul><li><strong>通心</strong>：唤醒内在动力（如“为什么现在是改变的好时机？”）</li><li><strong>流程</strong>：清晰呈现事业路径（入门→成长→复制→收获）</li><li><strong>注意事项</strong>：提前划清边界，增强可信度</li></ul>",
+    "第四步 &amp; 第五步｜锁定问题 + 扎口袋成交。"
+  ].join("\n");
+  const normalizedHtmlListAnswer = normalizeUserChatMarkdown(htmlListAnswer);
+
+  assert.doesNotMatch(normalizedHtmlListAnswer, /<\/?(?:ul|li|strong|b)>/i);
+  assert.match(normalizedHtmlListAnswer, /- \*\*通心\*\*：唤醒内在动力/);
+  assert.match(normalizedHtmlListAnswer, /- \*\*流程\*\*：清晰呈现事业路径/);
+  assert.match(normalizedHtmlListAnswer, /第四步 & 第五步/);
+
+  const htmlListMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: htmlListAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={htmlListAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.doesNotMatch(htmlListMarkup, /&lt;\/?(?:ul|li|strong|b)/i);
+  assert.match(htmlListMarkup, /通心/);
+  assert.match(htmlListMarkup, /流程/);
 
   const implicitCustomerScriptAnswer = [
     "好的，这个问题很典型。先共情，再指出为什么过去的方法不持久，最后用轻量邀请降低他的压力。",

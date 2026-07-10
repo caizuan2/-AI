@@ -19,6 +19,34 @@ function escapeRegExp(value: string) {
 
 const userChatHeadingTitlePattern = USER_CHAT_HEADING_TITLES.map(escapeRegExp).join("|");
 const inlineHeadingTitleRegex = new RegExp(`(#{1,4}\\s*(?:${userChatHeadingTitlePattern})\\s*[：:]?)\\s+`, "g");
+const supportedHtmlTagPattern = /&lt;\s*(\/?)\s*(ul|ol|li|p|br|strong|b|em|i)\b(?:[^&<>]|&(?!gt;))*?\s*(\/?)\s*&gt;/gi;
+
+function decodeSupportedHtmlTags(value: string) {
+  return value
+    .replace(supportedHtmlTagPattern, (_match, slash: string, tagName: string, selfClosing: string) => (
+      `<${slash ? "/" : ""}${tagName.toLowerCase()}${selfClosing ? "/" : ""}>`
+    ))
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&#39;|&apos;/gi, "'");
+}
+
+function normalizeHtmlFragments(value: string) {
+  return decodeSupportedHtmlTags(value)
+    .replace(/<\s*(?:ul|ol)\b[^>]*>/gi, "\n")
+    .replace(/<\s*\/\s*(?:ul|ol)\s*>/gi, "\n")
+    .replace(/<\s*li\b[^>]*>/gi, "\n- ")
+    .replace(/<\s*\/\s*li\s*>/gi, "\n")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\s*p\b[^>]*>/gi, "\n\n")
+    .replace(/<\s*\/\s*p\s*>/gi, "\n\n")
+    .replace(/<\s*(?:strong|b)\b[^>]*>/gi, "**")
+    .replace(/<\s*\/\s*(?:strong|b)\s*>/gi, "**")
+    .replace(/<\s*(?:em|i)\b[^>]*>/gi, "*")
+    .replace(/<\s*\/\s*(?:em|i)\s*>/gi, "*")
+    .replace(/<\s*\/?\s*[A-Za-z][A-Za-z0-9:-]*(?:\s+[^<>]*)?\s*\/?\s*>/g, "");
+}
 
 export function normalizeUserChatMarkdown(value: string) {
   let text = value
@@ -30,7 +58,7 @@ export function normalizeUserChatMarkdown(value: string) {
     return "";
   }
 
-  text = text
+  text = normalizeHtmlFragments(text)
     .replace(/[ \t]+/g, " ")
     .replace(/\s*(?:-{3,}|—{3,})\s*/g, "\n\n---\n\n")
     .replace(/([^\n])\s+(#{1,4}\s+)/g, "$1\n\n$2")
