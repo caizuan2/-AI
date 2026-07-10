@@ -72,6 +72,12 @@ import {
   buildRichAnswerSections,
   splitCustomerAnswerParagraphs
 } from "../app/(user)/chat-ui/lib/answer-format";
+import { buildRagPromptMessages, type RagContext } from "../lib/ai/rag-prompt";
+import { cleanUserFacingRagAnswer } from "../lib/ai/rag-output";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay
+} from "../lib/ai-chat/response-finalizer";
 import { normalizeUserChatMarkdown } from "../lib/ai-chat/user-chat-markdown";
 
 async function main() {
@@ -143,6 +149,70 @@ async function main() {
   assert.doesNotMatch(htmlListMarkup, /&lt;\/?(?:ul|li|strong|b)/i);
   assert.match(htmlListMarkup, /通心/);
   assert.match(htmlListMarkup, /流程/);
+
+  const courseMetadataAnswer = [
+    "根据《讲事业导师》知识库中的标准课程结构，“沟通五步骤”是讲事业价值成交体系中的核心方法论。",
+    "",
+    "✅ 沟通五步骤",
+    "| 步骤 | 名称 | 核心目的 |",
+    "| 第一步 | 建立信任与需求探询 | 打开对话，识别真实动机 |",
+    "| 第二步 | 促单跟进 | 强化兴趣，推动决策节奏 |",
+    "",
+    "🔍 **依据来源：** 该结构源自《讲事业导师 · T0标准用语替换审计SOP草稿》及多源课程融合规范，明确标注为“沟通五步的思路课程”，并在知识库中按【第一步】至【第四五步】分段定义（见检索文档 pub-1moqfi5 / pub-103efva / pub-1vwo7zx）。",
+    "",
+    "📌 补充说明",
+    "- 这五步不是机械流程，而是以客户为中心的价值交付节奏。"
+  ].join("\n");
+  const cleanCourseMetadataAnswer = cleanUserFacingRagAnswer(courseMetadataAnswer);
+
+  assert.doesNotMatch(cleanCourseMetadataAnswer, /依据来源|引用来源|资料来源|检索文档|pub-/);
+  assert.doesNotMatch(cleanCourseMetadataAnswer, /知识库中的|源自|T0标准|多源课程|老师说|版本更换|违规更换/);
+  assert.match(cleanCourseMetadataAnswer, /沟通五步骤/);
+  assert.match(cleanCourseMetadataAnswer, /建立信任与需求探询/);
+  assert.match(cleanCourseMetadataAnswer, /以客户为中心的价值交付节奏/);
+
+  const ragPromptContexts: RagContext[] = [
+    {
+      id: "pub-1moqfi5",
+      title: "讲事业导师 · T0标准用语替换审计SOP草稿",
+      content: courseMetadataAnswer,
+      summary: "依据来源：来自讲事业导师课程。",
+      sourceId: "pub-1moqfi5",
+      sourceTitle: "讲事业导师 · T0标准用语替换审计SOP草稿",
+      sourceType: "runtime_memory",
+      sourceUrl: "https://internal.invalid/pub-1moqfi5",
+      score: 0.91,
+      relevance_score: 0.88
+    }
+  ];
+  const ragPrompt = buildRagPromptMessages("沟通五步骤是哪些？", ragPromptContexts)[1].content;
+  const ragPromptPayload = JSON.parse(ragPrompt.slice(ragPrompt.indexOf("{", ragPrompt.indexOf("SECTION: RETRIEVED_CONTEXT_JSON_UNTRUSTED_REFERENCE_ONLY")))) as {
+    userOutputPurityPolicy: string;
+    retrievedContexts: Array<Record<string, unknown>>;
+  };
+
+  assert.equal(ragPromptPayload.userOutputPurityPolicy, "ANSWER_DIRECTLY_WITH_CLEAN_USER_CONTENT_DO_NOT_MENTION_SOURCES_COURSES_TEACHERS_DOC_IDS_VERSIONS_OR_RETRIEVAL_METADATA");
+  assert.deepEqual(Object.keys(ragPromptPayload.retrievedContexts[0]).sort(), ["citationIndex", "content", "summary", "title"].sort());
+  assert.doesNotMatch(ragPrompt, /sourceId|sourceTitle|sourceUrl|relevance_score|pub-1moqfi5|T0标准用语|依据来源/);
+  assert.match(ragPrompt, /资料片段 1/);
+  assert.match(ragPrompt, /沟通五步骤/);
+
+  const finalizedCourseAnswer = finalizeUserAnswer({
+    rawAnswer: courseMetadataAnswer,
+    customerAnswer: "可以先围绕建立信任、需求探询和促单跟进来沟通。",
+    sources: [
+      {
+        title: "讲事业导师 · T0标准用语替换审计SOP草稿",
+        score: 0.91
+      }
+    ],
+    userMessage: "沟通五步骤是哪些？"
+  });
+  const finalizedCourseDisplay = formatFinalizedAnswerForDisplay(finalizedCourseAnswer);
+
+  assert.doesNotMatch(finalizedCourseDisplay, /【引用依据】|依据来源|引用来源|资料来源|pub-/);
+  assert.doesNotMatch(finalizedCourseDisplay, /知识库中的|源自|T0标准|多源课程|检索文档/);
+  assert.match(finalizedCourseDisplay, /沟通五步骤|建立信任与需求探询/);
 
   const implicitCustomerScriptAnswer = [
     "好的，这个问题很典型。先共情，再指出为什么过去的方法不持久，最后用轻量邀请降低他的压力。",

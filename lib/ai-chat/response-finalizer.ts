@@ -2,6 +2,7 @@ import {
   getCleanEvidenceSummary,
   sanitizeVisibleText as sanitizeUserVisibleText
 } from "@/lib/ai-chat/visible-output-sanitizer";
+import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import {
   buildRuntimeV2HighDensityAnswer,
   isWeakRuntimeV2Answer
@@ -227,7 +228,7 @@ function firstUseful(...values: string[]) {
 }
 
 function sanitizeFinalText(value: string) {
-  return sanitizeUserVisibleText(stripInternalLabels(value).text);
+  return cleanUserFacingRagAnswer(sanitizeUserVisibleText(stripInternalLabels(value).text));
 }
 
 function sanitizeVisibleList(values: string[]) {
@@ -363,10 +364,7 @@ function buildDisplayMarkdown(answer: FinalizedAnswer) {
     answer.customerReply,
     "",
     "【下一步行动】",
-    answer.nextAction,
-    "",
-    "【引用依据】",
-    answer.evidenceSummary ?? "已参考小董AI大脑🧠中的相关资料。"
+    answer.nextAction
   ].join("\n").trim();
 }
 
@@ -448,7 +446,7 @@ export function finalizeUserAnswer(input: FinalizeUserAnswerInput): FinalizedAns
     keyConclusion,
     suggestedSteps: suggestedSteps.length > 0 ? suggestedSteps : [
       "先共情客户当前顾虑。",
-      "再结合小董AI大脑🧠资料说明价值或使用方式。",
+      "再结合已确认的信息说明价值或使用方式。",
       "最后给出低压力的下一步选择。"
     ],
     customerReply,
@@ -500,10 +498,10 @@ export function finalizeUserAnswer(input: FinalizeUserAnswerInput): FinalizedAns
     nextStep: finalized.nextAction,
     nextAction: finalized.nextActionDetail,
   }, runtimeInput, salesProfile);
-  finalized.freeformAnswer = safe.answer ?? finalized.freeformAnswer;
-  finalized.customerReply = safe.customerCopy ?? finalized.customerReply;
-  finalized.nextAction = safe.nextStep ?? finalized.nextAction;
-  finalized.nextActionDetail = safe.nextAction ?? finalized.nextActionDetail;
+  finalized.freeformAnswer = sanitizeFinalText(safe.answer ?? finalized.freeformAnswer);
+  finalized.customerReply = sanitizeFinalText(safe.customerCopy ?? finalized.customerReply);
+  finalized.nextAction = sanitizeFinalText(safe.nextStep ?? finalized.nextAction);
+  finalized.nextActionDetail = sanitizeFinalText(safe.nextAction ?? finalized.nextActionDetail ?? "");
   finalized.recommendedAction = sanitizeFinalText(finalized.recommendedAction || finalized.nextActionDetail || finalized.nextAction);
   finalized.complianceWarnings = safe.complianceWarnings;
   const salesLearningV3 = buildRuntimeV3GrowthOutput({

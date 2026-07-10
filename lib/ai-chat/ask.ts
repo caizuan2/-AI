@@ -1599,9 +1599,10 @@ export async function handleAiChatAsk(
     source: "ai_chat_ask",
     mode
   }).output;
+  const cleanOutputControlledAnswer = cleanUserFacingRagAnswer(outputControlledAnswer);
 
-  if (outputControlledAnswer !== answer) {
-    answer = outputControlledAnswer;
+  if (cleanOutputControlledAnswer !== answer) {
+    answer = cleanOutputControlledAnswer;
 
     if (providerStatus === "ok") {
       customerAnswer = buildCustomerAnswerFromText(question, answer);
