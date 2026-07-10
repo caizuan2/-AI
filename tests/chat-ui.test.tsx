@@ -933,6 +933,11 @@ async function main() {
     assert.match(readFileSync(routeFile, "utf8"), /requireAiChatAccess/);
   }
 
+  const chatApiSource = readFileSync("app/(user)/chat-ui/api.ts", "utf8");
+
+  assert.match(chatApiSource, /fetch\("\/api\/ai\/chat\/conversations", \{\s*method: "GET",\s*credentials: "include"/);
+  assert.match(chatApiSource, /fetch\(`\/api\/ai\/chat\/history\?\$\{params\.toString\(\)\}`, \{\s*method: "GET",\s*credentials: "include"/);
+
   const schemaText = readFileSync("prisma/schema.prisma", "utf8");
   const migrationText = readFileSync("prisma/migrations/20260607140000_add_quick_action_categories/migration.sql", "utf8");
   const adminQuickActionsRoute = readFileSync("app/api/admin/quick-actions/route.ts", "utf8");
