@@ -108,6 +108,9 @@ importers:
       autoprefixer:
         specifier: ^10.4.20
         version: 10.5.0(postcss@8.5.15)
+      effect:
+        specifier: ^3.21.0
+        version: 3.21.0
       electron:
         specifier: ^42.3.3
         version: 42.3.3
