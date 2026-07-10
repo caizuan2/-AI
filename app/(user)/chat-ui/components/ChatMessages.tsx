@@ -186,6 +186,7 @@ export function getUserMessageCopyText(message: Pick<ChatMessageView, "content" 
   }
 
   const names = normalizeMessageAttachments(message.attachments)
+    .filter((attachment) => !isImageAttachment(attachment))
     .map((attachment, index) => attachment.name || attachment.filename || `附件 ${index + 1}`)
     .filter(Boolean);
 
@@ -226,11 +227,13 @@ function isImageAttachment(attachment: UserAttachment) {
 }
 
 function UserImageAttachment({
-  name,
-  previewUrls
+  index,
+  previewUrls,
+  compact
 }: {
-  name: string;
+  index: number;
   previewUrls: string[];
+  compact: boolean;
 }) {
   const [activeIndex, setActiveIndex] = React.useState(0);
   const [failed, setFailed] = React.useState(previewUrls.length === 0);
@@ -272,10 +275,16 @@ function UserImageAttachment({
 
   if (failed || !previewUrl) {
     return (
-      <div className="max-w-[260px] rounded-2xl border border-slate-200 bg-slate-100 px-3 py-3 text-xs font-medium text-slate-500">
-        图片加载失败
-        <span className="mt-1 block truncate text-slate-400">{name}</span>
-        <span className="mt-1 block truncate text-slate-400">图片预览不可用</span>
+      <div
+        className={cn(
+          "flex items-center justify-center rounded-2xl border border-white/40 bg-white/90 px-3 py-3 text-center text-xs font-medium text-slate-500 shadow-sm",
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+        )}
+      >
+        <span>
+          <ImageIcon className="mx-auto mb-1 h-4 w-4" aria-hidden="true" />
+          图片预览不可用
+        </span>
       </div>
     );
   }
@@ -285,27 +294,37 @@ function UserImageAttachment({
       <button
         type="button"
         onClick={() => setPreviewOpen(true)}
-        className="block max-w-[260px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-        aria-label={`打开图片预览 ${name}`}
+        className={cn(
+          "block overflow-hidden rounded-2xl border border-white/40 bg-white/90 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-white hover:bg-white",
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+        )}
+        aria-label={`打开图片预览 ${index + 1}`}
+        data-chat-image-thumbnail="true"
         data-fallback-count={previewUrls.length}
       >
-        <span className="block max-h-[260px] overflow-hidden bg-slate-100">
+        <span
+          className={cn(
+            "block overflow-hidden bg-slate-100",
+            compact ? "h-full w-full" : "max-h-[260px] max-w-[min(220px,62vw)] sm:max-w-[260px]"
+          )}
+        >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={previewUrl}
-            alt={name}
-            className="max-h-[260px] w-full object-cover"
+            alt=""
+            className={cn(
+              compact ? "h-full w-full object-cover" : "max-h-[260px] max-w-[min(220px,62vw)] object-contain sm:max-w-[260px]"
+            )}
             onError={handleImageError}
           />
         </span>
-        <span className="block truncate px-2.5 py-1.5">{name}</span>
       </button>
       {previewOpen ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
           role="dialog"
           aria-modal="true"
-          aria-label={`图片预览 ${name}`}
+          aria-label="图片预览"
           onClick={() => setPreviewOpen(false)}
         >
           <button
@@ -323,7 +342,7 @@ function UserImageAttachment({
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={previewUrl}
-            alt={name}
+            alt="图片预览"
             className="max-h-[88vh] max-w-[92vw] rounded-lg bg-white object-contain shadow-2xl"
             onClick={(event) => event.stopPropagation()}
             onError={handleImageError}
@@ -361,8 +380,19 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
     return null;
   }
 
+  const compact = normalizedAttachments.length > 1;
+
   return (
-    <div className="grid max-w-[280px] grid-cols-1 justify-items-end gap-2 sm:max-w-[560px] sm:grid-cols-2">
+    <div
+      className={cn(
+        "grid justify-items-end gap-1.5",
+        compact
+          ? "max-w-[min(220px,68vw)] grid-cols-2 sm:max-w-[352px]"
+          : "max-w-[min(220px,62vw)] grid-cols-1 sm:max-w-[260px]",
+        normalizedAttachments.length > 4 ? "sm:grid-cols-3" : null
+      )}
+      data-chat-attachment-grid={compact ? "multi" : "single"}
+    >
       {normalizedAttachments.map((attachment, index) => {
         const isImage = isImageAttachment(attachment);
         const previewUrls = getAttachmentPreviewUrls(attachment);
@@ -373,9 +403,27 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
           return (
             <UserImageAttachment
               key={attachment.reference_id || attachment.id || `${name}-${index}`}
-              name={name}
+              index={index}
               previewUrls={previewUrls}
+              compact={compact}
             />
+          );
+        }
+
+        if (isImage) {
+          return (
+            <div
+              key={attachment.reference_id || attachment.id || `${name}-${index}`}
+              className={cn(
+                "flex items-center justify-center rounded-2xl border border-white/40 bg-white/90 px-3 py-3 text-center text-xs font-medium text-slate-500 shadow-sm",
+                compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+              )}
+            >
+              <span>
+                <ImageIcon className="mx-auto mb-1 h-4 w-4" aria-hidden="true" />
+                图片预览不可用
+              </span>
+            </div>
           );
         }
 
@@ -426,6 +474,50 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
           </div>
         );
       })}
+    </div>
+  );
+}
+
+function UserMessageBubble({
+  message,
+  content
+}: {
+  message: ChatMessageView;
+  content: string;
+}) {
+  const hasAttachments = normalizeMessageAttachments(message.attachments).length > 0;
+
+  if (!hasAttachments && !content) {
+    return message.pending ? (
+      <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
+        <div className="text-xs text-blue-100">发送中...</div>
+      </div>
+    ) : null;
+  }
+
+  if (!hasAttachments) {
+    return (
+      <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
+        <div className="whitespace-pre-wrap break-words">{content}</div>
+        {message.pending ? (
+          <div className="mt-2 text-xs text-blue-100">发送中...</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 p-2 text-white shadow-sm"
+      data-chat-user-message-bubble="attachments"
+    >
+      <UserMessageAttachments attachments={message.attachments} />
+      {content ? (
+        <div className="mt-2 whitespace-pre-wrap break-words px-2 py-1.5 leading-7">{content}</div>
+      ) : null}
+      {message.pending ? (
+        <div className={cn("px-2 text-xs text-blue-100", content ? "mt-1" : "mt-2")}>发送中...</div>
+      ) : null}
     </div>
   );
 }
@@ -534,15 +626,7 @@ function UserMessageBlock({
             {messageTime}
           </div>
         ) : null}
-        <UserMessageAttachments attachments={message.attachments} />
-        {content ? (
-          <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
-            <div className="whitespace-pre-wrap break-words">{content}</div>
-            {message.pending ? (
-              <div className="mt-2 text-xs text-blue-100">发送中...</div>
-            ) : null}
-          </div>
-        ) : null}
+        <UserMessageBubble message={message} content={content} />
         <UserCommercialIntentBadge message={message} />
         <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
       </div>
