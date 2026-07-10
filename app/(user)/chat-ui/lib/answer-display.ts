@@ -4,6 +4,7 @@ import {
   sanitizeVisibleText
 } from "@/lib/ai-chat/visible-output-sanitizer";
 import { normalizeUserChatMarkdown } from "@/lib/ai-chat/user-chat-markdown";
+import { cleanUserFacingRagAnswer } from "@/lib/ai/rag-output";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 import type { ChatMessageView, ChatSource, FinalizedAnswerView } from "../types";
 
@@ -190,17 +191,17 @@ function getStringArrayField(answer: unknown, keys: string[]) {
 }
 
 export function stripInternalDebugText(text: string) {
-  let cleaned = text.replace(/\u0000/g, "").replace(/\r\n/g, "\n");
+  let cleaned = cleanUserFacingRagAnswer(text.replace(/\u0000/g, "").replace(/\r\n/g, "\n"));
 
   for (const [pattern, replacement] of inlineReplacements) {
     cleaned = cleaned.replace(pattern, replacement);
   }
 
-  return cleaned
+  return cleanUserFacingRagAnswer(cleaned
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line && !internalLinePatterns.some((pattern) => pattern.test(line)))
-    .join("\n");
+    .join("\n"));
 }
 
 export function normalizeAnswerText(text: unknown) {
