@@ -230,6 +230,7 @@ async function main() {
   const cleanCourseMechanismAnswer = cleanUserFacingRagAnswer(courseMechanismAnswer);
 
   assert.doesNotMatch(cleanCourseMechanismAnswer, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
+  assert.match(cleanCourseMechanismAnswer, /沟通五步可以按下面五个阶段理解/);
   assert.match(cleanCourseMechanismAnswer, /讲事业沟通五步/);
   assert.match(cleanCourseMechanismAnswer, /破冰/);
   assert.match(cleanCourseMechanismAnswer, /促单跟进/);
@@ -247,6 +248,7 @@ async function main() {
   ])[1].content;
 
   assert.doesNotMatch(courseMechanismPrompt, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构|pub-course-mechanism/);
+  assert.match(courseMechanismPrompt, /沟通五步可以按下面五个阶段理解/);
   assert.match(courseMechanismPrompt, /讲事业沟通五步/);
   assert.match(courseMechanismPrompt, /破冰/);
 
@@ -269,6 +271,7 @@ async function main() {
   assert.doesNotMatch(courseMechanismMarkup, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
   assert.match(courseMechanismMarkup, /复制答案/);
   assert.match(courseMechanismMarkup, /复制话术/);
+  assert.match(courseMechanismMarkup, /沟通五步可以按下面五个阶段理解/);
   assert.match(courseMechanismMarkup, /讲事业沟通五步/);
   assert.match(courseMechanismMarkup, /你现在是想先了解这五步怎么用/);
 
