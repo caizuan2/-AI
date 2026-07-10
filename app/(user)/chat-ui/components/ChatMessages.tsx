@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy, FileText, Image as ImageIcon, Pencil, User } from "lucide-react";
+import { Check, Copy, FileText, Image as ImageIcon, Pencil, User, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { sanitizeVisibleText } from "@/lib/ai-chat/visible-output-sanitizer";
 import { ChatMessageRenderer } from "@/app/(user)/app/components/chat/message-renderer";
@@ -81,7 +81,7 @@ function looksLikeImageUrl(value: string) {
 function normalizeAttachmentImageUrl(value: unknown) {
   const text = getStringValue(value).replace(/\\/g, "/");
 
-  if (!text || text.startsWith("data:") && !text.startsWith("data:image/")) {
+  if (!text || (text.startsWith("data:") && !text.startsWith("data:image/"))) {
     return "";
   }
 
@@ -107,33 +107,75 @@ function normalizeAttachmentImageUrl(value: unknown) {
     return fileName ? `/uploads/${fileName}` : text;
   }
 
-  return text;
+  return "";
 }
 
-function getAttachmentPreviewUrl(attachment: UserAttachment) {
-  const metadata = attachment.metadata ?? {};
-  const directUrl = (
-    normalizeAttachmentImageUrl(attachment.previewUrl) ||
-    normalizeAttachmentImageUrl(attachment.url) ||
-    normalizeAttachmentImageUrl(attachment.publicUrl) ||
-    normalizeAttachmentImageUrl(attachment.fileUrl) ||
-    normalizeAttachmentImageUrl(attachment.downloadUrl) ||
-    normalizeAttachmentImageUrl(attachment.src) ||
-    normalizeAttachmentImageUrl(attachment.dataUrl) ||
-    normalizeAttachmentImageUrl(attachment.path) ||
-    normalizeAttachmentImageUrl(attachment.storagePath) ||
-    normalizeAttachmentImageUrl(metadata.url) ||
-    normalizeAttachmentImageUrl(metadata.publicUrl) ||
-    normalizeAttachmentImageUrl(metadata.fileUrl) ||
-    normalizeAttachmentImageUrl(metadata.downloadUrl) ||
-    normalizeAttachmentImageUrl(metadata.previewUrl) ||
-    normalizeAttachmentImageUrl(metadata.src) ||
-    normalizeAttachmentImageUrl(metadata.dataUrl) ||
-    normalizeAttachmentImageUrl(metadata.path) ||
-    normalizeAttachmentImageUrl(metadata.storagePath)
-  );
+function normalizeAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
 
-  return directUrl || getCachedChatAttachmentPreviewUrl(attachment);
+  if (
+    !text ||
+    text.startsWith("http://") ||
+    text.startsWith("https://") ||
+    text.startsWith("blob:") ||
+    text.startsWith("data:") ||
+    text.startsWith("/")
+  ) {
+    return "";
+  }
+
+  return `/api/ai/chat/attachments/download?key=${encodeURIComponent(text)}`;
+}
+
+function appendUnique(values: string[], value: string) {
+  if (value && !values.includes(value)) {
+    values.push(value);
+  }
+}
+
+export function getAttachmentPreviewUrls(attachment: UserAttachment) {
+  const metadata = getRecordValue(attachment.metadata);
+  const record = getRecordValue(attachment);
+  const urls: string[] = [];
+  const pushImageUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentImageUrl(value));
+  const pushDownloadUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentDownloadUrl(value));
+
+  [
+    attachment.previewUrl,
+    attachment.url,
+    attachment.publicUrl,
+    attachment.fileUrl,
+    attachment.downloadUrl,
+    attachment.src,
+    attachment.dataUrl,
+    attachment.path,
+    metadata.url,
+    metadata.publicUrl,
+    metadata.fileUrl,
+    metadata.downloadUrl,
+    metadata.previewUrl,
+    metadata.src,
+    metadata.dataUrl,
+    metadata.path
+  ].forEach(pushImageUrl);
+
+  [
+    attachment.storagePath,
+    record.storageKey,
+    record.blobKey,
+    record.key,
+    metadata.storagePath,
+    metadata.storageKey,
+    metadata.blobKey,
+    metadata.key
+  ].forEach((value) => {
+    pushImageUrl(value);
+    pushDownloadUrl(value);
+  });
+
+  appendUnique(urls, getCachedChatAttachmentPreviewUrl(attachment) || "");
+
+  return urls;
 }
 
 export function getUserMessageCopyText(message: Pick<ChatMessageView, "content" | "attachments">) {
@@ -154,13 +196,15 @@ export async function copyUserMessageToClipboard(content: string, clipboard: Pic
   await clipboard.writeText(content);
 }
 
-function looksLikeImageFileName(value: string) {
-  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(value.trim().split("?")[0]?.split("#")[0] ?? "");
+function looksLikeImageFileName(value: unknown) {
+  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(getStringValue(value).split("?")[0]?.split("#")[0] ?? "");
 }
 
 function isImageAttachment(attachment: UserAttachment) {
   const mimeType = attachment.mimeType || attachment.mime_type || "";
-  const previewUrl = getAttachmentPreviewUrl(attachment);
+  const metadata = getRecordValue(attachment.metadata);
+  const record = getRecordValue(attachment);
+  const previewUrls = getAttachmentPreviewUrls(attachment);
   const fileName = getStringValue(attachment.name) || getStringValue(attachment.filename);
 
   return (
@@ -168,48 +212,125 @@ function isImageAttachment(attachment: UserAttachment) {
     attachment.type === "gallery_photo" ||
     attachment.type === "camera_photo" ||
     mimeType.startsWith("image/") ||
-    looksLikeImageUrl(previewUrl) ||
-    looksLikeImageFileName(fileName)
+    previewUrls.some(looksLikeImageUrl) ||
+    looksLikeImageFileName(fileName) ||
+    looksLikeImageFileName(attachment.storagePath) ||
+    looksLikeImageFileName(record.storageKey) ||
+    looksLikeImageFileName(record.blobKey) ||
+    looksLikeImageFileName(record.key) ||
+    looksLikeImageFileName(metadata.storagePath) ||
+    looksLikeImageFileName(metadata.storageKey) ||
+    looksLikeImageFileName(metadata.blobKey) ||
+    looksLikeImageFileName(metadata.key)
   );
 }
 
 function UserImageAttachment({
   name,
-  previewUrl
+  previewUrls
 }: {
   name: string;
-  previewUrl: string;
+  previewUrls: string[];
 }) {
-  const [failed, setFailed] = React.useState(false);
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [failed, setFailed] = React.useState(previewUrls.length === 0);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const fallbackKey = previewUrls.join("\n");
+  const previewUrl = previewUrls[activeIndex] ?? "";
 
-  if (failed) {
+  React.useEffect(() => {
+    setActiveIndex(0);
+    setFailed(previewUrls.length === 0);
+    setPreviewOpen(false);
+  }, [fallbackKey, previewUrls.length]);
+
+  React.useEffect(() => {
+    if (!previewOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPreviewOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewOpen]);
+
+  function handleImageError() {
+    if (activeIndex + 1 < previewUrls.length) {
+      setActiveIndex((index) => index + 1);
+      return;
+    }
+
+    setFailed(true);
+    setPreviewOpen(false);
+  }
+
+  if (failed || !previewUrl) {
     return (
       <div className="max-w-[260px] rounded-2xl border border-slate-200 bg-slate-100 px-3 py-3 text-xs font-medium text-slate-500">
         图片加载失败
         <span className="mt-1 block truncate text-slate-400">{name}</span>
+        <span className="mt-1 block truncate text-slate-400">图片预览不可用</span>
       </div>
     );
   }
 
   return (
-    <a
-      href={previewUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="block max-w-[260px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-      aria-label={`打开图片预览 ${name}`}
-    >
-      <span className="block max-h-[260px] overflow-hidden bg-slate-100">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={previewUrl}
-          alt={name}
-          className="max-h-[260px] w-full object-cover"
-          onError={() => setFailed(true)}
-        />
-      </span>
-      <span className="block truncate px-2.5 py-1.5">{name}</span>
-    </a>
+    <>
+      <button
+        type="button"
+        onClick={() => setPreviewOpen(true)}
+        className="block max-w-[260px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+        aria-label={`打开图片预览 ${name}`}
+        data-fallback-count={previewUrls.length}
+      >
+        <span className="block max-h-[260px] overflow-hidden bg-slate-100">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt={name}
+            className="max-h-[260px] w-full object-cover"
+            onError={handleImageError}
+          />
+        </span>
+        <span className="block truncate px-2.5 py-1.5">{name}</span>
+      </button>
+      {previewOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`图片预览 ${name}`}
+          onClick={() => setPreviewOpen(false)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-white/95 px-3 py-2 text-sm font-medium text-slate-900 shadow-lg transition hover:bg-white"
+            aria-label="关闭图片预览"
+            onClick={(event) => {
+              event.stopPropagation();
+              setPreviewOpen(false);
+            }}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            关闭
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt={name}
+            className="max-h-[88vh] max-w-[92vw] rounded-lg bg-white object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            onError={handleImageError}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -244,7 +365,8 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
     <div className="grid max-w-[280px] grid-cols-1 justify-items-end gap-2 sm:max-w-[560px] sm:grid-cols-2">
       {normalizedAttachments.map((attachment, index) => {
         const isImage = isImageAttachment(attachment);
-        const previewUrl = getAttachmentPreviewUrl(attachment);
+        const previewUrls = getAttachmentPreviewUrls(attachment);
+        const previewUrl = previewUrls[0] ?? "";
         const name = attachment.name || attachment.filename || `附件 ${index + 1}`;
 
         if (isImage && previewUrl) {
@@ -252,7 +374,7 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
             <UserImageAttachment
               key={attachment.reference_id || attachment.id || `${name}-${index}`}
               name={name}
-              previewUrl={previewUrl}
+              previewUrls={previewUrls}
             />
           );
         }
@@ -507,10 +629,12 @@ export function ChatMessages({
 
       for (const message of messagesRef.current) {
         for (const attachment of normalizeMessageAttachments(message.attachments)) {
-          const previewUrl = getAttachmentPreviewUrl(attachment);
+          const previewUrls = getAttachmentPreviewUrls(attachment);
 
-          if (previewUrl.startsWith("blob:")) {
-            blobUrls.add(previewUrl);
+          for (const previewUrl of previewUrls) {
+            if (previewUrl.startsWith("blob:")) {
+              blobUrls.add(previewUrl);
+            }
           }
         }
       }

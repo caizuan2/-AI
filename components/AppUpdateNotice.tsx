@@ -75,6 +75,67 @@ function getStorage() {
   }
 }
 
+const appliedWebReleaseStoragePrefix = "xiaodongai.appliedWebRelease";
+
+function getWebReleaseIdentity(latest: AppUpdateResult["latest"]) {
+  if (!latest) {
+    return "";
+  }
+
+  if (latest.web_release_sha) {
+    return latest.web_release_sha;
+  }
+
+  if (latest.version || latest.build) {
+    return `${latest.version || ""}:${latest.build || 0}`;
+  }
+
+  return "";
+}
+
+function getAppliedWebReleaseKey(appKind: AppKind) {
+  return `${appliedWebReleaseStoragePrefix}.${appKind}`;
+}
+
+function readAppliedWebRelease(appKind: AppKind, storage = getStorage()) {
+  try {
+    return storage?.getItem(getAppliedWebReleaseKey(appKind)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeAppliedWebRelease(appKind: AppKind, latest: AppUpdateResult["latest"], storage = getStorage()) {
+  const identity = getWebReleaseIdentity(latest);
+
+  if (!identity) {
+    return;
+  }
+
+  try {
+    storage?.setItem(getAppliedWebReleaseKey(appKind), identity);
+  } catch {
+    // Storage can be unavailable in some WebView privacy modes.
+  }
+}
+
+function hasAppliedWebRelease(
+  appKind: AppKind,
+  latest: AppUpdateResult["latest"],
+  currentWebReleaseSha?: string,
+  storage = getStorage()
+) {
+  const latestSha = latest?.web_release_sha ?? "";
+
+  if (latestSha && currentWebReleaseSha && latestSha === currentWebReleaseSha) {
+    return true;
+  }
+
+  const identity = getWebReleaseIdentity(latest);
+
+  return Boolean(identity && readAppliedWebRelease(appKind, storage) === identity);
+}
+
 function clearLegacyForceUpdateState() {
   if (typeof window === "undefined") {
     return;
@@ -241,11 +302,16 @@ export function AppUpdateNotice({
         return;
       }
 
+      const storage = getStorage();
       const snoozeWebReleaseSha = result.updateKind === "web" ? result.latest.web_release_sha ?? "" : "";
+
+      if (result.updateKind === "web" && hasAppliedWebRelease(appKind, result.latest, currentWebReleaseSha, storage)) {
+        return;
+      }
 
       if (
         !result.forceUpdate &&
-        shouldSkipUpdateNotice(appKind, result.latest.build, getStorage(), Date.now(), snoozeWebReleaseSha)
+        shouldSkipUpdateNotice(appKind, result.latest.build, storage, Date.now(), snoozeWebReleaseSha)
       ) {
         return;
       }
@@ -283,12 +349,17 @@ export function AppUpdateNotice({
       try {
         await runWebContentRefresh(setInstallState);
 
-        if (!reloadCurrentWebShell()) {
-          throw new Error("当前应用刷新失败，请关闭后重新打开小董AI。");
-        }
-
+        writeAppliedWebRelease(appKind, activeUpdate.latest);
         setUpdate(null);
         setInstallState(idleInstallState);
+
+        if (typeof window !== "undefined") {
+          window.setTimeout(() => {
+            reloadCurrentWebShell();
+          }, 80);
+        } else {
+          reloadCurrentWebShell();
+        }
       } catch (error) {
         setInstallState({
           phase: "error",

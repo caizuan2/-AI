@@ -468,6 +468,10 @@ async function main() {
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /reloadCurrentWebShell/);
   assert.match(appUpdateNotice, /runWebContentRefresh/);
+  assert.match(appUpdateNotice, /xiaodongai\.appliedWebRelease/);
+  assert.match(appUpdateNotice, /hasAppliedWebRelease/);
+  assert.match(appUpdateNotice, /writeAppliedWebRelease/);
+  assert.match(appUpdateNotice, /window\.setTimeout\(\(\) => \{/);
   assert.doesNotMatch(appUpdateNotice, /triggerBrowserDownload|downloadWithBrowserFetch|createObjectURL/);
 
   const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");

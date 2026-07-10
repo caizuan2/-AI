@@ -52,6 +52,7 @@ import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
 import {
   ChatMessages,
   copyUserMessageToClipboard,
+  getAttachmentPreviewUrls,
   getUserMessageCopyText
 } from "../app/(user)/chat-ui/components/ChatMessages";
 import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
@@ -699,6 +700,9 @@ async function main() {
   assert.match(chatInputSource, /disabled:cursor-not-allowed/);
   assert.match(chatInputSource, /<SendHorizontal className="h-4 w-4"/);
   assert.match(chatInputSource, /<Plus className="h-6 w-6" strokeWidth=\{2\.2\}/);
+  assert.match(chatInputSource, /const submittedAttachments = attachmentsRef\.current/);
+  assert.match(chatInputSource, /shouldClearOptimistically/);
+  assert.match(chatInputSource, /setAttachments\(\(current\) => \(current\.length === 0 \? submittedAttachments : current\)\)/);
   assert.doesNotMatch(chatInputSource, /border-2 border-slate-950/);
 
   const chatInputReadyMarkup = renderToStaticMarkup(
@@ -1073,7 +1077,11 @@ async function main() {
   assert.match(chatMessagesSource, /getCurrentChatUserInitial\(currentUser\)/);
   assert.match(chatMessagesSource, /alt="当前用户头像"/);
   assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
-  assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
+  assert.match(chatMessagesSource, /getAttachmentPreviewUrls/);
+  assert.match(chatMessagesSource, /data-fallback-count=\{previewUrls\.length\}/);
+  assert.match(chatMessagesSource, /onError=\{handleImageError\}/);
+  assert.match(chatMessagesSource, /activeIndex \+ 1 < previewUrls\.length/);
+  assert.match(chatMessagesSource, /关闭图片预览/);
   assert.match(chatMessagesSource, /attachment\.src/);
   assert.match(chatMessagesSource, /attachment\.dataUrl/);
   assert.match(chatMessagesSource, /attachment\.fileUrl/);
@@ -1228,6 +1236,7 @@ async function main() {
   );
 
   assert.match(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
+  assert.match(historyImageMarkup, /data-fallback-count/);
   assert.match(historyImageMarkup, /blob:history-preview-url/);
   assert.match(historyImageMarkup, /打开图片预览 url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/url-photo\.jpg/);
@@ -1264,6 +1273,28 @@ async function main() {
   assert.match(historyImageMarkup, /2KB/);
   assert.match(historyImageMarkup, /contract\.pdf/);
   assert.match(historyImageMarkup, /文件暂不可预览/);
+
+  const fallbackUrls = getAttachmentPreviewUrls({
+    id: "fallback-attachment",
+    type: "image",
+    name: "fallback.png",
+    previewUrl: "blob:expired-preview",
+    publicUrl: "https://cdn.example.com/fallback.png",
+    storagePath: "user_1/2026/07/fallback.png",
+    metadata: {
+      storagePath: "user_1/2026/07/fallback-metadata.png"
+    }
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.equal(fallbackUrls[0], "blob:expired-preview");
+  assert.ok(fallbackUrls.includes("https://cdn.example.com/fallback.png"));
+  assert.ok(fallbackUrls.includes("/uploads/fallback.png"));
+  assert.ok(fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1%2F2026%2F07%2Ffallback.png"));
+  assert.ok(fallbackUrls.includes("/uploads/fallback-metadata.png"));
+  assert.ok(
+    fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1%2F2026%2F07%2Ffallback-metadata.png")
+  );
+
   const stringAttachmentsMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
