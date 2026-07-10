@@ -212,7 +212,65 @@ async function main() {
 
   assert.doesNotMatch(finalizedCourseDisplay, /【引用依据】|依据来源|引用来源|资料来源|pub-/);
   assert.doesNotMatch(finalizedCourseDisplay, /知识库中的|源自|T0标准|多源课程|检索文档/);
-  assert.match(finalizedCourseDisplay, /沟通五步骤|建立信任与需求探询/);
+  assert.match(finalizedCourseDisplay, /处理建议|可直接复制给客户/);
+
+  const courseMechanismAnswer = [
+    "沟通五步是所有课程（思路课、梦想家园、六大价值、市场赋能等）必须严格遵循的底层标准化框架，已写死为机制，不可拆分或跳步。具体如下：",
+    "",
+    "✅ 讲事业沟通五步（标准结构）",
+    "| 步骤 | 名称 | 核心要点 |",
+    "| 第一步 | 破冰 | 建立信任感，消除陌生与防备 |",
+    "| 第二步 | 促单跟进 | 通过开放式提问，引导对方说出真实顾虑 |",
+    "| 第三步 | 讲事业通心 + 流程 + 注意事项 | 链接个人梦想、家庭责任和成长渴望 |",
+    "| 第四五步 | 锁定问题 + 扎口袋成交 | 聚焦顾虑，推动下一步行动 |",
+    "",
+    "客户话术",
+    "你现在是想先了解这五步怎么用在具体场景里，还是已经有某个沟通卡点，想我们一起拆解？"
+  ].join("\n");
+  const cleanCourseMechanismAnswer = cleanUserFacingRagAnswer(courseMechanismAnswer);
+
+  assert.doesNotMatch(cleanCourseMechanismAnswer, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
+  assert.match(cleanCourseMechanismAnswer, /讲事业沟通五步/);
+  assert.match(cleanCourseMechanismAnswer, /破冰/);
+  assert.match(cleanCourseMechanismAnswer, /促单跟进/);
+  assert.match(cleanCourseMechanismAnswer, /讲事业通心/);
+  assert.match(cleanCourseMechanismAnswer, /扎口袋成交/);
+
+  const courseMechanismPrompt = buildRagPromptMessages("读取知识库沟通五步都是什么", [
+    {
+      id: "course-mechanism",
+      title: "讲事业导师",
+      content: courseMechanismAnswer,
+      sourceId: "pub-course-mechanism",
+      sourceTitle: "讲事业导师课程机制"
+    }
+  ])[1].content;
+
+  assert.doesNotMatch(courseMechanismPrompt, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构|pub-course-mechanism/);
+  assert.match(courseMechanismPrompt, /讲事业沟通五步/);
+  assert.match(courseMechanismPrompt, /破冰/);
+
+  const courseMechanismMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: courseMechanismAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={courseMechanismAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.doesNotMatch(courseMechanismMarkup, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
+  assert.match(courseMechanismMarkup, /复制答案/);
+  assert.match(courseMechanismMarkup, /复制话术/);
+  assert.match(courseMechanismMarkup, /讲事业沟通五步/);
+  assert.match(courseMechanismMarkup, /你现在是想先了解这五步怎么用/);
 
   const implicitCustomerScriptAnswer = [
     "好的，这个问题很典型。先共情，再指出为什么过去的方法不持久，最后用轻量邀请降低他的压力。",
