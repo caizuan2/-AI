@@ -78,11 +78,15 @@ function namespaceMatches(inputValue: string, entryValue: string, sameKb: boolea
     return true;
   }
 
-  if (sameKb && inputValue === "default") {
+  if (inputValue === entryValue) {
     return true;
   }
 
-  return inputValue === entryValue;
+  if (hasAliasOverlap(inputValue, entryValue)) {
+    return true;
+  }
+
+  return sameKb;
 }
 
 function entryScopeMatch(entry: MemoryIndexEntry, input: RuntimeMemorySearchInput): ScopeMatchResult {
@@ -101,7 +105,8 @@ function entryScopeMatch(entry: MemoryIndexEntry, input: RuntimeMemorySearchInpu
     scopeEquals(requestedKb, entry.knowledgeBaseId) ||
     scopeEquals(requestedKb, entry.kbId) ||
     hasAliasOverlap(requestedKb, entry.knowledgeBaseId) ||
-    hasAliasOverlap(requestedKb, entry.kbId);
+    hasAliasOverlap(requestedKb, entry.kbId) ||
+    hasAliasOverlap(requestedKb, entry.namespace);
   const sameAgent =
     scopeEquals(requestedAgent, entryAgent) ||
     scopeEquals(requestedAgent, entry.agentId) ||
