@@ -136,6 +136,9 @@ const webReleaseSha = process.env.WEB_RELEASE_SHA
   || process.env.NEXT_PUBLIC_WEB_RELEASE_SHA
   || process.env.NEXT_PUBLIC_RELEASE_SHA
   || readGitSha();
+const adminWebReleaseSha = process.env.ADMIN_WEB_RELEASE_SHA
+  || getCurrentVersion(adminExisting).web_release_sha
+  || "";
 writeVersionReleaseSha(webReleaseSha);
 
 const userVersion = buildVersion("user", userExisting, {
@@ -147,7 +150,7 @@ const userVersion = buildVersion("user", userExisting, {
 }, updatedAt);
 
 const adminVersion = buildVersion("admin", adminExisting, {
-  web_release_sha: webReleaseSha,
+  web_release_sha: adminWebReleaseSha,
   web_url: process.env.ADMIN_WEB_URL || "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
   apk_url: getCurrentVersion(adminExisting).apk_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
   exe_url: getCurrentVersion(adminExisting).exe_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
