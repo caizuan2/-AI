@@ -319,9 +319,24 @@ export function ChatInput({
   }, [resizeTextarea, value]);
 
   async function submitCurrentMessage() {
-    const submitted = await onSubmit(attachments);
+    const submittedAttachments = attachmentsRef.current;
+    const shouldClearOptimistically = canSend && submittedAttachments.length > 0;
 
-    if (submitted !== false) {
+    if (shouldClearOptimistically) {
+      setAttachments([]);
+    }
+
+    const submitted = await onSubmit(submittedAttachments);
+
+    if (submitted === false) {
+      if (shouldClearOptimistically) {
+        setAttachments((current) => (current.length === 0 ? submittedAttachments : current));
+      }
+
+      return;
+    }
+
+    if (!shouldClearOptimistically) {
       setAttachments([]);
     }
   }
