@@ -48,14 +48,39 @@ function readGitSha() {
   }
 }
 
+function normalizeValue(value) {
+  if (typeof value !== "string") {
+    return "";
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") {
+    return "";
+  }
+
+  return trimmed;
+}
+
+function pickValue(...values) {
+  for (const value of values) {
+    const normalized = normalizeValue(value);
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
 function writeVersionReleaseSha(webReleaseSha) {
-  if (!webReleaseSha) {
+  const normalizedReleaseSha = normalizeValue(webReleaseSha);
+  if (!normalizedReleaseSha) {
     return;
   }
 
   const nextVersionInfo = {
     ...versionInfo,
-    web_release_sha: webReleaseSha
+    web_release_sha: normalizedReleaseSha
   };
   const nextContent = `${JSON.stringify(nextVersionInfo, null, 2)}\n`;
 
@@ -63,7 +88,7 @@ function writeVersionReleaseSha(webReleaseSha) {
     fs.writeFileSync(versionPath, nextContent, "utf8");
   }
 
-  versionInfo.web_release_sha = webReleaseSha;
+  versionInfo.web_release_sha = normalizedReleaseSha;
 }
 
 function hasCurrentVersion(existing) {
@@ -81,11 +106,11 @@ function buildVersion(appKey, existingApp, urls, updatedAt) {
     rollout: 100,
     minimum_build: Number(previous.minimum_build) || 100,
     force_update: previous.force_update === true,
-    web_release_sha: urls.web_release_sha || previous.web_release_sha || "",
-    web_url: urls.web_url || previous.web_url || "",
-    apk_url: urls.apk_url || previous.apk_url || "",
-    exe_url: urls.exe_url || previous.exe_url || "",
-    download_page: urls.download_page || previous.download_page || "",
+    web_release_sha: pickValue(urls.web_release_sha, previous.web_release_sha),
+    web_url: pickValue(urls.web_url, previous.web_url),
+    apk_url: pickValue(urls.apk_url, previous.apk_url),
+    exe_url: pickValue(urls.exe_url, previous.exe_url),
+    download_page: pickValue(urls.download_page, previous.download_page),
     changelog: Array.isArray(previous.changelog) ? previous.changelog : [],
     created_at: updatedAt
   };
@@ -132,13 +157,18 @@ const apkAsset = process.env.APK_ASSET || "ai-knowledge-chat-latest.apk";
 const exeAsset = process.env.EXE_ASSET || "ai-knowledge-chat-latest.exe";
 const userExisting = existing.apps?.user;
 const adminExisting = existing.apps?.admin;
-const webReleaseSha = process.env.WEB_RELEASE_SHA
-  || process.env.NEXT_PUBLIC_WEB_RELEASE_SHA
-  || process.env.NEXT_PUBLIC_RELEASE_SHA
-  || readGitSha();
-const adminWebReleaseSha = process.env.ADMIN_WEB_RELEASE_SHA
-  || getCurrentVersion(adminExisting).web_release_sha
-  || "";
+const webReleaseSha = pickValue(
+  process.env.WEB_RELEASE_SHA,
+  process.env.NEXT_PUBLIC_WEB_RELEASE_SHA,
+  process.env.NEXT_PUBLIC_RELEASE_SHA,
+  readGitSha()
+);
+const adminWebReleaseSha = pickValue(
+  process.env.ADMIN_WEB_RELEASE_SHA,
+  getCurrentVersion(adminExisting).web_release_sha,
+  existing.admin?.web_release_sha,
+  existing.apps?.admin?.versions?.[0]?.web_release_sha
+);
 writeVersionReleaseSha(webReleaseSha);
 
 const userVersion = buildVersion("user", userExisting, {
