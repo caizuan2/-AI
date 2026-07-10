@@ -859,7 +859,8 @@ export async function submitChatBehaviorFeedback(input: ChatBehaviorFeedbackInpu
 
 export async function fetchConversations() {
   const response = await fetch("/api/ai/chat/conversations", {
-    method: "GET"
+    method: "GET",
+    credentials: "include"
   });
 
   return readApiResponse<ConversationsResponse>(response);
@@ -868,7 +869,8 @@ export async function fetchConversations() {
 export async function fetchConversationHistory(conversationId: string) {
   const params = new URLSearchParams({ conversation_id: conversationId });
   const response = await fetch(`/api/ai/chat/history?${params.toString()}`, {
-    method: "GET"
+    method: "GET",
+    credentials: "include"
   });
 
   return readApiResponse<HistoryResponse>(response);
