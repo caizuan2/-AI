@@ -245,7 +245,7 @@ function LoginForm() {
             inputMode="tel"
             autoComplete="tel"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13352833702"
+            placeholder="请输入手机号"
           />
         </span>
       </label>
