@@ -488,6 +488,46 @@ async function main() {
   assert.match(splitNumberedScriptCards[2].text, /我约你大概20分钟/);
   assert.doesNotMatch(splitNumberedScriptCards[2].text, /第1条|第2条/);
 
+  const globalPreciseScriptAnswer = [
+    "方案A：先肯定对方资源，再提出你的渠道价值。",
+    "",
+    "话术",
+    "模板：X总，看您这边是源头直供，资源确实不错。我们这边也有一批稳定的终端代理和经销商，一直想找这种一手资源对接。想请教下，针对我们渠道这边的合作，除了供货价，有没有专门的扶持政策？方便的话发个合作方案我先看看？",
+    "",
+    "• 核心作用：一句话就把角色反转——你不是求着买货的，你是他有价值的资源方。方案B：通过问“门槛”来降低对方的预期。",
+    "• 思路：不拒绝，但明确告诉他“我们不走零售逻辑”。通过问门槛，让对方意识到你不是散户，需要拿出诚意。",
+    "",
+    "话术",
+    "模板：X总，您那边主要做批发的话，合作门槛和结算方式是什么样的？我们这边拿货量相对稳定，但需要先明确合作规则，才好往下对接。",
+    "",
+    "• 核心作用：让话题从“你买不买”变成“你门槛是什么”，掌控对话节奏。方案C：拖着，先加好友再聊。",
+    "• 思路：不深入，不拒绝，先建联，后面用生活化内容慢慢养。",
+    "",
+    "客户话术",
+    "1. 如果对方给了方案/报价：别说“价格高了”或“折扣不够”。你要回：“方案我仔细看了，整体不错。有几个细节我整理一下，下次跟您细聊。”——目的是进入“细节商讨”阶段，而不是“价格辩论”阶段。",
+    "",
+    "2. 如果对方没回：2-3天后，别发“在吗/考虑得怎么样”，发一段生活视频，配一句：“刚忙完，X总，您上次说的那个XX产品，我帮朋友问一下，还有吗？”——用生活内容和具体需求双重破冰。提醒你的伙伴一句话：对付这类上游业务，你的价值不在于你多懂产品，而在于你手上有没有终端客户资源。"
+  ].join("\n");
+  const globalPreciseScriptSegments = splitNaturalAnswerForCustomerScriptCards(globalPreciseScriptAnswer);
+  const globalPreciseScriptCards = globalPreciseScriptSegments.filter((segment) => segment.kind === "customerScript");
+  const globalPreciseScriptCardText = globalPreciseScriptCards.map((segment) => segment.text).join("\n\n");
+
+  assert.equal(globalPreciseScriptCards.length, 4);
+  assert.match(globalPreciseScriptCards[0].text, /^X总，看您这边是源头直供/);
+  assert.doesNotMatch(globalPreciseScriptCards[0].text, /模板|核心作用|思路|方案B|方案C/);
+  assert.match(globalPreciseScriptCards[1].text, /^X总，您那边主要做批发的话/);
+  assert.match(globalPreciseScriptCards[2].text, /方案我仔细看了，整体不错/);
+  assert.match(globalPreciseScriptCards[3].text, /刚忙完，X总/);
+  assert.doesNotMatch(globalPreciseScriptCardText, /核心作用|思路|方案B|方案C|目的是|价格辩论|细节商讨|提醒你的伙伴/);
+  assert.equal(
+    globalPreciseScriptSegments.some((segment) => segment.kind === "markdown" && /核心作用/.test(segment.text)),
+    true
+  );
+  assert.equal(
+    globalPreciseScriptSegments.some((segment) => segment.kind === "markdown" && /提醒你的伙伴/.test(segment.text)),
+    true
+  );
+
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
   assert.match(chatUiPageSource, /<ClientAuthGate>/);
