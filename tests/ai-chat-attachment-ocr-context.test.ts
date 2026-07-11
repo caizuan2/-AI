@@ -293,6 +293,67 @@ async function main() {
   assert.equal(wechatScreenshotResult.provider_status, "ok");
   assert.match(wechatScreenshotResult.answer, /产后体重/);
 
+  const wechatRoleFake = createFakeDb();
+  const wechatRoleOcrText = [
+    "我(右侧)：那你们都是怎么出售的呀，有销售团队吗",
+    "客户(左侧)：主要是代工生产，自主产品主要是对接的是经销商",
+    "客户(左侧)：基本上不怎么零售",
+    "我(右侧)：批发吗",
+    "客户(左侧)：对，主要是批发",
+    "我(右侧)：您是业务经理",
+    "客户(左侧)：是的",
+    "我(右侧)：厉害那你有很大的团队啦",
+    "客户(左侧)：是的",
+    "我(右侧)：您这个经理可不是一般人呢",
+    "我(右侧)：又帅又年轻前途无量呀",
+    "客户(左侧)：过奖了，您这边主要是做什么的"
+  ].join("\n");
+  const wechatRoleResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "帮我看看这个该怎么回，给我具体思路和话术",
+    mode: "expert",
+    attachments: [
+      {
+        type: "image",
+        name: "wechat-role.png",
+        filename: "wechat-role.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "ok",
+          ocrText: wechatRoleOcrText
+        }
+      }
+    ]
+  }, {
+    db: wechatRoleFake.db,
+    providerConfigured: true,
+    answerProvider: async ({ businessExecutionContext, contexts }) => {
+      const context = businessExecutionContext ?? "";
+
+      assert.match(context, /\[WECHAT_SCREENSHOT_ROLE_RULES\]/);
+      assert.match(context, /左侧头像\/白色气泡\/标注为客户\(左侧\)的是客户/);
+      assert.match(context, /右侧头像\/绿色气泡\/标注为我\(右侧\)的是用户本人/);
+      assert.match(context, /角色绝对不能反/);
+      assert.match(context, /不要把右侧绿色气泡当成客户说的话/);
+      assert.match(context, /回答目标必须是客户最后一条左侧\/客户\(左侧\)消息/);
+      assert.match(context, /客户\(左侧\)：过奖了，您这边主要是做什么的/);
+      assert.equal(contexts.some((item) => item.sourceType === "attachment_ocr"), true);
+
+      return {
+        answer: "客户最后问的是“您这边主要是做什么的”。建议别急着讲产品，先用一句轻松自然的自我介绍接住，再反问对方业务方向，继续建立连接。",
+        providerUsed: "test",
+        modelUsed: "test-model",
+        fallbackUsed: false
+      };
+    }
+  });
+
+  assert.equal(wechatRoleResult.provider_status, "ok");
+  assert.match(wechatRoleResult.answer, /客户最后问的是/);
+  assert.match(wechatRoleResult.answer, /您这边主要是做什么的/);
+
   const missingOcrFake = createFakeDb();
   let missingOcrProviderCalled = false;
   const missingOcrResult = await handleAiChatAsk({
