@@ -183,7 +183,7 @@ function isCustomerScriptContextOnlyLine(line: string) {
 function isCustomerScriptAnalysisLine(line: string) {
   const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
 
-  return /^(?:核心技巧|技巧|核心策略|策略|沟通策略|使用技巧|关键点|关键提醒|为什么有效|为什么这样说|话术背后的策略|背后的策略|使用建议|注意事项|执行要点|原则|低压力推进的关键原则)(?:$|[：:（(、\s])/.test(normalized);
+  return /^(?:核心作用|作用|核心技巧|技巧|核心策略|策略|沟通策略|使用技巧|关键点|关键提醒|为什么有效|为什么这样说|话术背后的策略|背后的策略|使用建议|注意事项|执行要点|原则|低压力推进的关键原则|思路|分析|方案(?:[A-ZＡ-Ｚ一二三四五六七八九十\d])?|目的|提醒(?:你|您)?的?(?:伙伴|同伴)?一句话)(?:$|[：:（(、\s])/.test(normalized);
 }
 
 function parseCustomerScriptHeading(line: string) {
@@ -277,9 +277,66 @@ function isLikelyCustomerScriptQuote(text: string) {
   }
 
   const hasDirectAddress = /姐|哥|兄弟|姐妹|宝|您好|你好|您|你/.test(normalized);
-  const hasConversationTone = /理解|别急|不用担心|我帮你|我们|一起|可以|先|调整|回复|感觉|情况|问题|身体/.test(normalized);
+  const hasConversationTone = /理解|别急|不用担心|我帮你|我们|一起|可以|先|调整|回复|感觉|情况|问题|身体|方案|合作|资源|对接|门槛|细节|方便|聊|看看|产品|客户/.test(normalized);
 
   return hasDirectAddress && hasConversationTone;
+}
+
+function stripCustomerScriptListPrefix(line: string) {
+  return line
+    .trim()
+    .replace(/^>\s*/, "")
+    .replace(/^[-*+•·‣▪▫]\s+/, "")
+    .replace(/^\d+[.、]\s*/, "")
+    .replace(/^[一二三四五六七八九十]+[.、]\s*/, "")
+    .trim();
+}
+
+function trimCustomerScriptMetaSuffix(text: string) {
+  return text
+    .replace(/\s*(?:——|--|—)\s*(?:目的|目的是|核心作用|核心技巧|思路|策略|用意|提醒|关键点)[\s\S]*$/, "")
+    .replace(/\s*(?:目的|目的是|核心作用|核心技巧|思路|策略|用意|提醒|关键点)[：:][\s\S]*$/, "")
+    .trim();
+}
+
+function isUsableCustomerScriptText(text: string) {
+  const normalized = text.replace(/\s+/g, "");
+
+  return normalized.length >= 8
+    && !/^(?:核心作用|核心技巧|思路|策略|目的|目的是|方案[A-ZＡ-Ｚ一二三四五六七八九十\d]|适合|阶段|提醒你的伙伴|提醒您?的伙伴)[：:]/.test(normalized)
+    && !/(?:价格辩论|细节商讨)/.test(normalized);
+}
+
+function extractLabeledCustomerScriptLine(line: string) {
+  const normalized = stripCustomerScriptListPrefix(line);
+  const match = normalized.match(/^(?:模板|话术模板|参考模板|示例话术)\s*[：:]\s*([\s\S]+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const text = trimCustomerScriptMetaSuffix(match[1]);
+  return isUsableCustomerScriptText(text) ? text : null;
+}
+
+function extractDirectedCustomerScriptQuotes(line: string) {
+  const normalized = stripCustomerScriptListPrefix(line);
+  const scripts: string[] = [];
+  const directivePattern =
+    /(?:你要回|您要回|你可以回|您可以回|可以回|直接回|回复|回他|回她|回客户|配一句|发一句|发一段|补一句|加一句|这样(?:说|回复)|可以这样(?:说|回复)|建议这样(?:说|回复))\s*[：:，,]?\s*[“"]([\s\S]{8,1200}?)[”"]/g;
+  let match = directivePattern.exec(normalized);
+
+  while (match) {
+    const text = trimCustomerScriptMetaSuffix(match[1]);
+
+    if (isUsableCustomerScriptText(text)) {
+      scripts.push(text);
+    }
+
+    match = directivePattern.exec(normalized);
+  }
+
+  return scripts;
 }
 
 function parseCustomerScriptLeadIn(line: string) {
@@ -374,6 +431,13 @@ function cleanCustomerScriptText(text: string) {
       continue;
     }
 
+    const directedQuotes = extractDirectedCustomerScriptQuotes(line);
+
+    if (directedQuotes.length > 0) {
+      lines.push(...directedQuotes);
+      continue;
+    }
+
     const quoteLine = extractCustomerQuoteLine(line);
 
     if (quoteLine && isLikelyCustomerScriptQuote(quoteLine.text)) {
@@ -381,11 +445,22 @@ function cleanCustomerScriptText(text: string) {
       continue;
     }
 
+    const labeledScriptLine = extractLabeledCustomerScriptLine(line);
+
+    if (labeledScriptLine) {
+      lines.push(labeledScriptLine);
+      continue;
+    }
+
     if (isCustomerScriptContextOnlyLine(line) || isCustomerScriptAnalysisLine(line)) {
       continue;
     }
 
-    lines.push(line);
+    const cleaned = trimCustomerScriptMetaSuffix(line);
+
+    if (isUsableCustomerScriptText(cleaned)) {
+      lines.push(cleaned);
+    }
   }
 
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -479,6 +554,17 @@ function splitMarkdownScriptHeadings(markdown: string) {
       continue;
     }
 
+    const directedQuoteScripts = extractDirectedCustomerScriptQuotes(line);
+
+    if (!activeScript && pendingScriptTitle && directedQuoteScripts.length > 0) {
+      const scriptTitle = pendingScriptTitle;
+
+      markdownLines.push(line);
+      flushMarkdown();
+      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(segments, scriptTitle, script));
+      continue;
+    }
+
     const quoteLine = extractCustomerQuoteLine(line);
 
     if (
@@ -507,6 +593,16 @@ function splitMarkdownScriptHeadings(markdown: string) {
         lines: [line]
       };
       pendingScriptTitle = null;
+      continue;
+    }
+
+    if (activeScript && directedQuoteScripts.length > 0) {
+      const scriptTitle = activeScript.title;
+
+      flushScript();
+      markdownLines.push(line);
+      flushMarkdown();
+      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(segments, scriptTitle, script));
       continue;
     }
 
