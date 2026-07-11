@@ -343,7 +343,7 @@ export default function LoginPage() {
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">登录小董AI</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              用手机号登录，进入你的 AI 业务助手。上传客户对话、输入业务问题，系统将调用企业知识库并生成可执行回复方案。
+              用手机号登录，进入你的AI沟通助手。上传客户对话、输入沟通问题，小董AI大脑🧠生成可执行回复方案。
             </p>
           </div>
 
