@@ -451,6 +451,43 @@ async function main() {
     true
   );
 
+  const preciseReferenceScriptAnswer = [
+    "✅ 动作2：勾起好奇心，让ta主动想来聊",
+    "客户看完资料后，ta可能已经产生兴趣，但不知道该怎么开口。你可以主动抛一个低门槛、有价值感的问题，让ta觉得“这个人在认真帮我”。",
+    "",
+    "话术",
+    "参考（跟进 + 价值感）：",
+    "“视频里提到的不囤货、不用辞职的模式，其实很多宝妈做起来之后一个月能多出几千到上万的零花钱。我身边就有几个真实案例，你要是看完觉得有意思，我可以具体说说她们是怎么开始的。”",
+    "• 核心技巧：用“真实案例”具体说“创造悬念”，让客户产生“想继续听”的冲动。"
+  ].join("\n");
+  const preciseReferenceScriptSegments = splitNaturalAnswerForCustomerScriptCards(preciseReferenceScriptAnswer);
+  const preciseReferenceScriptCards = preciseReferenceScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(preciseReferenceScriptCards.length, 1);
+  assert.match(preciseReferenceScriptCards[0].text, /视频里提到的不囤货/);
+  assert.doesNotMatch(preciseReferenceScriptCards[0].text, /参考|核心技巧|真实案例”具体说/);
+  assert.equal(
+    preciseReferenceScriptSegments.some((segment) => segment.kind === "markdown" && /核心技巧/.test(segment.text)),
+    true
+  );
+
+  const splitNumberedScriptAnswer = [
+    "四、如果你现在要发给客户的完整话术（直接复制可用）",
+    "",
+    "第1条（资料发完后，当晚或第二天发）：“姐姐，刚发你的视频你抽空看一下就好。主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。看完有啥想法随便问我。” 第2条（如果ta回复了或你主动跟进）：“视频里提到的不囤货、不用辞职的模式，其实很多宝妈做起来之后一个月多个几千到上万的零花钱很常见。我身边就有几个真实案例，你要是看完觉得有意思，我可以具体说说她们是怎么开始的。” 第3条（如果ta说没或没回，直接约时间）：“我约你大概20分钟，我帮你把视频里的重点过一遍，再结合你的情况看看这个事能不能做、怎么做，比你自己研究有效率多了。你看明天上午还是下午方便？”"
+  ].join("\n");
+  const splitNumberedScriptSegments = splitNaturalAnswerForCustomerScriptCards(splitNumberedScriptAnswer);
+  const splitNumberedScriptCards = splitNumberedScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(splitNumberedScriptCards.length, 3);
+  assert.match(splitNumberedScriptCards[0].title, /第1条/);
+  assert.match(splitNumberedScriptCards[0].text, /刚发你的视频/);
+  assert.doesNotMatch(splitNumberedScriptCards[0].text, /第2条|第3条/);
+  assert.match(splitNumberedScriptCards[1].text, /不囤货、不用辞职/);
+  assert.doesNotMatch(splitNumberedScriptCards[1].text, /第1条|第3条/);
+  assert.match(splitNumberedScriptCards[2].text, /我约你大概20分钟/);
+  assert.doesNotMatch(splitNumberedScriptCards[2].text, /第1条|第2条/);
+
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
   assert.match(chatUiPageSource, /<ClientAuthGate>/);

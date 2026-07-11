@@ -66,6 +66,9 @@ async function main() {
   assert.equal(calls.length, 1);
   assert.match(String(calls[0].input), /\/chat\/completions$/);
   assert.match(String(calls[0].init?.body), /image_url/);
+  assert.match(String(calls[0].init?.body), /左侧头像\/白色气泡=客户/);
+  assert.match(String(calls[0].init?.body), /右侧头像\/绿色气泡=我\/用户/);
+  assert.match(String(calls[0].init?.body), /客户\(左侧\).*我\(右侧\)/);
 
   const metadata = createChatImageOcrMetadata(ocrResult);
 
