@@ -109,7 +109,7 @@ function RegisterForm() {
             inputMode="tel"
             autoComplete="tel"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13352833702"
+            placeholder="请输入手机号"
           />
         </span>
       </label>
@@ -190,7 +190,7 @@ export default function RegisterPage() {
             创建小董AI用户账号
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            注册后使用超级管理员发放的卡密激活，即可使用用户端 GPT OS。
+            注册后使用指导老师发放的卡密激活，即可使用小董AI。
           </p>
         </div>
       </section>
@@ -215,7 +215,7 @@ export default function RegisterPage() {
             <p className="text-sm font-medium text-teal-700">创建账号</p>
             <h2 className="mt-2 text-3xl font-semibold text-ink">创建小董AI用户账号</h2>
             <p className="mt-2 text-sm leading-6 text-muted">
-              注册后使用超级管理员发放的卡密激活，即可使用用户端 GPT OS。
+              注册后使用指导老师发放的卡密激活，即可使用小董AI。
             </p>
           </div>
 
