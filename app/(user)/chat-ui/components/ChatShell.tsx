@@ -539,7 +539,7 @@ export function ChatShell() {
     ruleDecision: ruleChatModeDecision,
     manualMode: manualChatMode
   }), [manualChatMode, remoteChatModeDecision, ruleChatModeDecision]);
-  const inputPlaceholder = "发送消息给小董AI...";
+  const inputPlaceholder = "问问 小董AI";
 
   const refreshCurrentUser = React.useCallback(async (options: { cacheBust?: boolean } = {}) => {
     const result = await fetchCurrentChatUser(options);

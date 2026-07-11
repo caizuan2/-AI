@@ -167,7 +167,7 @@ export function SelectedAttachmentList({
 export function ChatInput({
   value,
   loading,
-  placeholder = "发送消息给小董AI...",
+  placeholder = "问问 小董AI",
   onValueChange,
   onSubmit,
   onCancel,

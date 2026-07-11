@@ -540,7 +540,7 @@ async function main() {
   assert.match(shellMarkup, /新建对话/);
   assert.doesNotMatch(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
-  assert.match(shellMarkup, /发送消息/);
+  assert.match(shellMarkup, /问问 小董AI/);
   assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
   assert.doesNotMatch(shellMarkup, /11:54/);
   assert.doesNotMatch(shellMarkup, /⌁/);
