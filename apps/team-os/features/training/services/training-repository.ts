@@ -9,6 +9,7 @@ import {
 } from "@prisma/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
+import { notifyTrainingCompletedBestEffort } from "@/apps/team-os/services/notification";
 import {
   assertTrainingCourseEditor,
   assertTrainingManager,
@@ -851,8 +852,22 @@ export async function saveTrainingEvaluation(input: {
       },
       data: { status: record.status === "COMPLETED" ? "COMPLETED" : "IN_PROGRESS" }
     });
-    return { evaluation, record };
+    return {
+      evaluation,
+      record,
+      becameCompleted: record.status === "COMPLETED" && current?.status !== "COMPLETED"
+    };
   });
+  if (saved.becameCompleted) {
+    await notifyTrainingCompletedBestEffort({
+      companyId: input.context.companyId,
+      courseId: input.context.course.id,
+      courseTitle: input.context.course.title,
+      employeeUserId: input.userId,
+      score: saved.record.score,
+      becameCompleted: true
+    });
+  }
   return {
     evaluation: serializeEvaluation(saved.evaluation),
     record: serializeRecord(saved.record),

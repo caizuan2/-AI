@@ -3,7 +3,8 @@ import "server-only";
 import {
   Prisma,
   type CustomerAIProfile,
-  type CustomerFollowUp
+  type CustomerFollowUp,
+  type CustomerRiskLevel
 } from "@prisma/client";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
@@ -540,6 +541,7 @@ export interface LoadedCustomerAnalysisContext {
   expectedCustomerUpdatedAt: string;
   expectedLatestFollowUpId?: string;
   expectedProfileUpdatedAt?: string;
+  previousRiskLevel?: CustomerRiskLevel;
 }
 
 export async function loadCustomerAnalysisContext(
@@ -568,7 +570,7 @@ export async function loadCustomerAnalysisContext(
       notes: true,
       updatedAt: true,
       aiProfile: {
-        select: { updatedAt: true }
+        select: { updatedAt: true, riskLevel: true }
       },
       followUps: {
         select: {
@@ -628,7 +630,10 @@ export async function loadCustomerAnalysisContext(
     expectedCustomerUpdatedAt: customer.updatedAt.toISOString(),
     ...(customer.followUps[0] ? { expectedLatestFollowUpId: customer.followUps[0].id } : {}),
     ...(customer.aiProfile
-      ? { expectedProfileUpdatedAt: customer.aiProfile.updatedAt.toISOString() }
+      ? {
+          expectedProfileUpdatedAt: customer.aiProfile.updatedAt.toISOString(),
+          previousRiskLevel: customer.aiProfile.riskLevel
+        }
       : {})
   };
 }

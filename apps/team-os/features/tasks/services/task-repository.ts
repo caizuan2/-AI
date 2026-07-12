@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma, type TaskSubmission } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { ForbiddenError, NotFoundError, ValidationError } from "@/lib/errors";
+import { notifyTaskCompletedBestEffort } from "@/apps/team-os/services/notification";
 import type {
   CreateTaskInput,
   SubmitTaskInput,
@@ -148,7 +149,7 @@ export async function submitTaskEvidence(
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const submission = await prisma.$transaction(async (transaction) => {
+      const result = await prisma.$transaction(async (transaction) => {
         const task = await transaction.task.findFirst({
           where: {
             id: taskId,
@@ -158,7 +159,10 @@ export async function submitTaskEvidence(
             id: true,
             status: true,
             targetCount: true,
-            deadline: true
+            deadline: true,
+            creatorId: true,
+            title: true,
+            team: { select: { companyId: true } }
           }
         });
 
@@ -187,20 +191,38 @@ export async function submitTaskEvidence(
         const completedCount = await transaction.taskSubmission.count({
           where: { taskId: task.id }
         });
+        const becameCompleted = completedCount >= task.targetCount;
 
         await transaction.task.update({
           where: { id: task.id },
           data: {
-            status: completedCount >= task.targetCount ? "COMPLETED" : "IN_PROGRESS"
+            status: becameCompleted ? "COMPLETED" : "IN_PROGRESS"
           }
         });
 
-        return created;
+        return {
+          submission: created,
+          completionEvent: becameCompleted
+            ? {
+                companyId: task.team.companyId,
+                taskId: task.id,
+                taskTitle: task.title,
+                creatorId: task.creatorId,
+                completedByUserId: userId
+              }
+            : null
+        };
       }, {
         isolationLevel: Prisma.TransactionIsolationLevel.Serializable
       });
 
-      return toSubmissionRecord(submission);
+      if (result.completionEvent) {
+        await notifyTaskCompletedBestEffort({
+          ...result.completionEvent,
+          becameCompleted: true
+        });
+      }
+      return toSubmissionRecord(result.submission);
     } catch (error) {
       const shouldRetry = error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034";
       if (!shouldRetry || attempt === 2) {

@@ -6,6 +6,7 @@ import {
   generateFollowUpSuggestion
 } from "@/apps/team-os/services/customer-ai";
 import { getIndustryKnowledgeContext } from "@/apps/team-os/services/knowledge-context";
+import { notifyCrmRiskDetectedBestEffort } from "@/apps/team-os/services/notification";
 import {
   loadCustomerAnalysisContext,
   saveCustomerAnalysis
@@ -64,6 +65,15 @@ export async function analyzeCustomerForUser(
     profile,
     suggestion
   });
+  if (savedProfile.riskLevel === "HIGH" && context.previousRiskLevel !== "HIGH") {
+    await notifyCrmRiskDetectedBestEffort({
+      companyId: context.companyId,
+      customerId: context.customerId,
+      maskedCustomerName: context.customer.name,
+      ownerId: context.ownerId,
+      riskLevel: savedProfile.riskLevel
+    });
+  }
 
   return {
     profile: savedProfile,

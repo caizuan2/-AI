@@ -1,5 +1,6 @@
 import {
   BarChart3,
+  BellRing,
   Bot,
   BookOpenCheck,
   Building2,
@@ -25,6 +26,12 @@ export const teamOsNavigation = [
     icon: Building2,
     href: "/team-os/company",
     activePaths: ["/team-os/company", "/team-os/subscription", "/team-os/usage"]
+  },
+  {
+    label: "消息中心",
+    icon: BellRing,
+    href: "/team-os/notifications",
+    activePaths: ["/team-os/notifications", "/team-os/integrations"]
   },
   { label: "设置", icon: Settings }
 ] as const;

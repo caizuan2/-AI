@@ -214,6 +214,33 @@ enum SubscriptionPlanStatus {
   DISABLED
 }
 
+enum NotificationType {
+  TASK
+  AI_COACH
+  CRM
+  TRAINING
+  SYSTEM
+}
+
+enum NotificationReadStatus {
+  UNREAD
+  READ
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WECHAT
+  DINGTALK
+  FEISHU
+}
+
+enum IntegrationProvider {
+  WECHAT_WORK
+  DINGTALK
+  FEISHU
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -557,6 +584,50 @@ model FeaturePermission {
   @@unique([planId, featureKey], map: "team_os_feature_permissions_plan_id_feature_key_key")
   @@index([featureKey, enabled], map: "team_os_feature_permissions_feature_key_enabled_idx")
   @@map("team_os_feature_permissions")
+}
+
+model Notification {
+  id         String                 @id @default(cuid())
+  companyId  String                 @map("company_id")
+  teamId     String?                @map("team_id")
+  userId     String                 @map("user_id")
+  type       NotificationType
+  title      String
+  content    String                 @db.Text
+  readStatus NotificationReadStatus @default(UNREAD) @map("read_status")
+  source     String
+  createdAt  DateTime               @default(now()) @map("created_at")
+
+  @@index([companyId, userId, createdAt], map: "team_os_notifications_company_id_user_id_created_at_idx")
+  @@index([companyId, teamId, createdAt], map: "team_os_notifications_company_id_team_id_created_at_idx")
+  @@index([userId, readStatus, createdAt], map: "team_os_notifications_user_id_read_status_created_at_idx")
+  @@index([companyId, type, createdAt], map: "team_os_notifications_company_id_type_created_at_idx")
+  @@map("team_os_notifications")
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String              @map("user_id")
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  @@unique([userId, channel], map: "team_os_notification_preferences_user_id_channel_key")
+  @@map("team_os_notification_preferences")
+}
+
+model IntegrationConfig {
+  id        String              @id @default(cuid())
+  companyId String              @map("company_id")
+  provider  IntegrationProvider
+  enabled   Boolean             @default(false)
+  config    Json
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  @@unique([companyId, provider], map: "team_os_integration_configs_company_id_provider_key")
+  @@index([provider, enabled], map: "team_os_integration_configs_provider_enabled_idx")
+  @@map("team_os_integration_configs")
 }
 
 model Task {

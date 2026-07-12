@@ -15,6 +15,7 @@ import type {
   CoachTeamRole
 } from "@/apps/team-os/features/ai-coach/types";
 import { analyzeConversation } from "@/apps/team-os/services/ai-coach";
+import { notifyAiCoachReportGeneratedBestEffort } from "@/apps/team-os/services/notification";
 
 const TEAM_VIEW_ROLES = new Set<CoachTeamRole>(["TEAM_OWNER", "TEAM_MANAGER", "TRAINER"]);
 const SKILL_ORDER: ReadonlyArray<{ key: CoachSkillKey; label: string }> = [
@@ -446,6 +447,16 @@ export async function analyzeAndSaveConversation(
     try {
       const saved = await createReportTransaction(userId, input, serviceResult.analysis);
       const report = await serializeReport(saved.report);
+      if (!saved.reused) {
+        await notifyAiCoachReportGeneratedBestEffort({
+          companyId: context.teamCompanyId,
+          teamId: input.teamId,
+          reportId: report.id,
+          employeeUserId: userId,
+          score: report.score,
+          reused: false
+        });
+      }
       return {
         reportId: report.id,
         report,
