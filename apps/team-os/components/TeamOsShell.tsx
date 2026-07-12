@@ -22,7 +22,7 @@ export function TeamOsShell({ children, user }: { children: ReactNode; user: Tea
 
           <div className="mt-auto rounded-xl border border-white/10 bg-white/5 p-3">
             <p className="text-xs text-slate-400">当前版本</p>
-            <p className="mt-1 text-sm font-medium">Phase 1 · v0.2.0</p>
+            <p className="mt-1 text-sm font-medium">Phase 2 · v0.3.0</p>
           </div>
         </aside>
 

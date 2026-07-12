@@ -143,6 +143,7 @@ model TeamOrganization {
   members     TeamMember[]
   invitations TeamInvitation[]
   tasks       Task[]
+  analysisReports EmployeeAnalysisReport[]
 
   @@index([companyId], map: "team_organizations_company_id_idx")
   @@index([ownerId], map: "team_organizations_owner_id_idx")
@@ -218,12 +219,49 @@ model TaskSubmission {
   createdAt   DateTime             @default(now()) @map("created_at")
   updatedAt   DateTime             @updatedAt @map("updated_at")
   task        Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  analysisReport EmployeeAnalysisReport?
 
   @@index([taskId], map: "task_submissions_task_id_idx")
   @@index([userId], map: "task_submissions_user_id_idx")
   @@index([status], map: "task_submissions_status_idx")
   @@index([createdAt], map: "task_submissions_created_at_idx")
   @@map("task_submissions")
+}
+
+model EmployeeAnalysisReport {
+  id           String               @id @default(cuid())
+  userId       String               @map("user_id")
+  teamId       String               @map("team_id")
+  submissionId String?              @unique @map("submission_id")
+  score        Int
+  summary      String               @db.Text
+  problems     String[]             @default([])
+  suggestions  String[]             @default([])
+  trainingPlan String               @map("training_plan") @db.Text
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+  team         TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  submission   TaskSubmission?      @relation(fields: [submissionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  skillScores  EmployeeSkillScore[]
+
+  @@index([userId, createdAt], map: "employee_analysis_reports_user_id_created_at_idx")
+  @@index([teamId, createdAt], map: "employee_analysis_reports_team_id_created_at_idx")
+  @@map("employee_analysis_reports")
+}
+
+model EmployeeSkillScore {
+  id        String                 @id @default(cuid())
+  reportId  String                 @map("report_id")
+  userId    String                 @map("user_id")
+  skillName String                 @map("skill_name")
+  score     Int
+  level     String
+  createdAt DateTime               @default(now()) @map("created_at")
+  report    EmployeeAnalysisReport @relation(fields: [reportId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([reportId, skillName])
+  @@index([userId, createdAt], map: "employee_skill_scores_user_id_created_at_idx")
+  @@map("employee_skill_scores")
 }
 
 model Tenant {

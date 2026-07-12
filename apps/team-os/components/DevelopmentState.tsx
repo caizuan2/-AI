@@ -34,7 +34,7 @@ export function DevelopmentState() {
             <p className="text-sm font-medium text-indigo-300">AI-native team operations</p>
             <h2 className="mt-2 text-2xl font-semibold sm:text-3xl">功能开发中</h2>
             <p className="mt-3 max-w-xl text-sm leading-6 text-slate-300">
-              任务中心、AI 教练、AI CRM、培训中心和数据中心将在下一阶段接入。
+              任务中心、组织管理与 AI 教练已进入独立业务阶段，AI CRM、培训中心和数据中心将继续逐步接入。
             </p>
           </div>
         </CardContent>
