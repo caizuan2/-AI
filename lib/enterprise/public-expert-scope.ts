@@ -13,6 +13,9 @@ type PublicExpertScopeSeed = {
   agentId: string;
 };
 
+const CAREER_EXPERT_AGENT_ID = "expert-career";
+const CAREER_EXPERT_KNOWLEDGE_BASE_ID = "kb-business-coach";
+
 function compactAliases(values: string[]): string[] {
   return Array.from(new Set(values.map((item) => item.trim()).filter(Boolean)));
 }
@@ -43,7 +46,7 @@ const PUBLIC_EXPERT_SCOPE_SEEDS: PublicExpertScopeSeed[] = [
     agentId: "expert-health"
   },
   {
-    aliases: fixedScopeAliases("expert-career", "kb-business-coach", [
+    aliases: fixedScopeAliases(CAREER_EXPERT_AGENT_ID, CAREER_EXPERT_KNOWLEDGE_BASE_ID, [
       "expert-business",
       "expert-agent-expert-career",
       "agent-expert-career",
@@ -72,8 +75,8 @@ const PUBLIC_EXPERT_SCOPE_SEEDS: PublicExpertScopeSeed[] = [
       "business-coach",
       "career-mentor"
     ]),
-    knowledgeBaseId: "kb-business-coach",
-    agentId: "expert-career"
+    knowledgeBaseId: CAREER_EXPERT_KNOWLEDGE_BASE_ID,
+    agentId: CAREER_EXPERT_AGENT_ID
   },
   {
     aliases: fixedScopeAliases("expert-kks", "kb-kks-slim", [
