@@ -2,6 +2,7 @@ import {
   BarChart3,
   Bot,
   BookOpenCheck,
+  Building2,
   GraduationCap,
   Home,
   ListTodo,
@@ -19,5 +20,11 @@ export const teamOsNavigation = [
   { label: "AI CRM", icon: UsersRound, href: "/team-os/crm" },
   { label: "培训中心", icon: GraduationCap, href: "/team-os/training" },
   { label: "数据中心", icon: BarChart3, href: "/team-os/analytics" },
+  {
+    label: "企业中心",
+    icon: Building2,
+    href: "/team-os/company",
+    activePaths: ["/team-os/company", "/team-os/subscription", "/team-os/usage"]
+  },
   { label: "设置", icon: Settings }
 ] as const;

@@ -24,7 +24,12 @@ export function TeamOsNavigation({ mobile = false }: { mobile?: boolean }) {
       {items.map((item) => {
         const Icon = item.icon;
         const href = "href" in item ? item.href : null;
-        const active = href ? isActive(pathname, href) : false;
+        const activePaths = "activePaths" in item
+          ? item.activePaths
+          : href
+            ? [href]
+            : [];
+        const active = activePaths.some((path) => isActive(pathname, path));
         const className = mobile
           ? `flex min-h-16 min-w-[4.5rem] flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] ${active ? "text-indigo-700" : "text-slate-500"}`
           : `flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition ${active ? "bg-white/10 text-white" : href ? "text-slate-400 hover:bg-white/5 hover:text-white" : "cursor-not-allowed text-slate-600"}`;
