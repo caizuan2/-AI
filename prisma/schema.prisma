@@ -102,6 +102,19 @@ enum TeamRole {
   TEAM_MEMBER
 }
 
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskSubmissionStatus {
+  SUBMITTED
+  REVIEWING
+  ANALYZED
+}
+
 model TeamOrganization {
   id        String       @id @default(cuid())
   companyId String       @map("company_id")
@@ -109,6 +122,7 @@ model TeamOrganization {
   createdAt DateTime     @default(now()) @map("created_at")
   updatedAt DateTime     @updatedAt @map("updated_at")
   members   TeamMember[]
+  tasks     Task[]
 
   @@index([companyId], map: "team_organizations_company_id_idx")
   @@map("team_organizations")
@@ -126,6 +140,47 @@ model TeamMember {
   @@index([teamId], map: "team_members_team_id_idx")
   @@index([userId], map: "team_members_user_id_idx")
   @@map("team_members")
+}
+
+model Task {
+  id          String           @id @default(cuid())
+  title       String
+  description String           @db.Text
+  creatorId   String           @map("creator_id")
+  teamId      String           @map("team_id")
+  deadline    DateTime
+  targetCount Int              @default(1) @map("target_count")
+  status      TaskStatus       @default(PENDING)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  team        TeamOrganization @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  submissions TaskSubmission[]
+
+  @@index([teamId], map: "team_tasks_team_id_idx")
+  @@index([creatorId], map: "team_tasks_creator_id_idx")
+  @@index([status], map: "team_tasks_status_idx")
+  @@index([deadline], map: "team_tasks_deadline_idx")
+  @@map("team_tasks")
+}
+
+model TaskSubmission {
+  id          String               @id @default(cuid())
+  taskId      String               @map("task_id")
+  userId      String               @map("user_id")
+  content     String               @db.Text
+  images      String[]             @default([])
+  attachments String[]             @default([])
+  summary     String               @db.Text
+  status      TaskSubmissionStatus @default(SUBMITTED)
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  task        Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([taskId], map: "task_submissions_task_id_idx")
+  @@index([userId], map: "task_submissions_user_id_idx")
+  @@index([status], map: "task_submissions_status_idx")
+  @@index([createdAt], map: "task_submissions_created_at_idx")
+  @@map("task_submissions")
 }
 
 model Tenant {

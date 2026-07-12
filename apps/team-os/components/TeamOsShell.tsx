@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Building2, CircleUserRound, Sparkles } from "lucide-react";
-import { teamOsNavigation } from "@/apps/team-os/utils/navigation";
+import { TeamOsNavigation } from "@/apps/team-os/features/tasks/components/TeamOsNavigation";
 import type { TeamOsUser } from "@/apps/team-os/types";
 
 export function TeamOsShell({ children, user }: { children: ReactNode; user: TeamOsUser }) {
@@ -18,27 +18,11 @@ export function TeamOsShell({ children, user }: { children: ReactNode; user: Tea
             </div>
           </div>
 
-          <nav className="mt-9 space-y-1" aria-label="AI Team OS 主导航">
-            {teamOsNavigation.map((item, index) => {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.label}
-                  className={`flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium ${
-                    index === 0 ? "bg-white/10 text-white" : "text-slate-400"
-                  }`}
-                  aria-current={index === 0 ? "page" : undefined}
-                >
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {item.label}
-                </div>
-              );
-            })}
-          </nav>
+          <TeamOsNavigation />
 
           <div className="mt-auto rounded-xl border border-white/10 bg-white/5 p-3">
             <p className="text-xs text-slate-400">当前版本</p>
-            <p className="mt-1 text-sm font-medium">Phase 0 · v0.1.0</p>
+            <p className="mt-1 text-sm font-medium">Phase 1 · v0.2.0</p>
           </div>
         </aside>
 
@@ -67,19 +51,9 @@ export function TeamOsShell({ children, user }: { children: ReactNode; user: Tea
             </div>
           </header>
 
-          <main className="px-4 py-8 sm:px-6 lg:px-8">{children}</main>
+          <main className="px-4 pb-24 pt-8 sm:px-6 lg:px-8 lg:pb-8">{children}</main>
 
-          <nav className="fixed inset-x-0 bottom-0 grid grid-cols-4 border-t border-slate-200 bg-white px-2 pb-[env(safe-area-inset-bottom)] lg:hidden" aria-label="AI Team OS 移动导航">
-            {teamOsNavigation.slice(0, 4).map((item, index) => {
-              const Icon = item.icon;
-              return (
-                <div key={item.label} className={`flex min-h-16 flex-col items-center justify-center gap-1 text-xs ${index === 0 ? "text-indigo-700" : "text-slate-500"}`}>
-                  <Icon className="h-4 w-4" aria-hidden="true" />
-                  {item.label}
-                </div>
-              );
-            })}
-          </nav>
+          <TeamOsNavigation mobile />
         </div>
       </div>
     </div>
