@@ -12,12 +12,12 @@ function isActive(pathname: string, href: string) {
 
 export function TeamOsNavigation({ mobile = false }: { mobile?: boolean }) {
   const pathname = usePathname();
-  const items = mobile ? teamOsNavigation.slice(0, 5) : teamOsNavigation;
+  const items = mobile ? teamOsNavigation.slice(0, 6) : teamOsNavigation;
 
   return (
     <nav
       className={mobile
-        ? "fixed inset-x-0 bottom-0 z-40 grid grid-cols-5 border-t border-slate-200 bg-white px-1 pb-[env(safe-area-inset-bottom)] lg:hidden"
+        ? "fixed inset-x-0 bottom-0 z-40 grid grid-cols-6 border-t border-slate-200 bg-white px-1 pb-[env(safe-area-inset-bottom)] lg:hidden"
         : "mt-9 space-y-1"}
       aria-label={mobile ? "AI Team OS 移动导航" : "AI Team OS 主导航"}
     >

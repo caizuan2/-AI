@@ -123,6 +123,41 @@ enum IndustryStandardStatus {
   DISABLED
 }
 
+enum CustomerStage {
+  LEAD
+  CONTACTED
+  INTERESTED
+  NEGOTIATING
+  CUSTOMER
+  LOST
+}
+
+enum CustomerLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerFollowUpType {
+  CHAT
+  CALL
+  MEETING
+  OTHER
+}
+
+enum CustomerRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerIntent {
+  HIGH_INTENT
+  HESITANT
+  REGULAR
+  CHURN_RISK
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -149,7 +184,9 @@ model TeamOrganization {
   invitations TeamInvitation[]
   tasks       Task[]
   analysisReports EmployeeAnalysisReport[]
+  customers   Customer[]
 
+  @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
   @@index([ownerId], map: "team_organizations_owner_id_idx")
   @@index([status], map: "team_organizations_status_idx")
@@ -218,6 +255,66 @@ model CoachRule {
   @@unique([companyId, name], map: "coach_rules_company_id_name_key")
   @@index([companyId, createdAt], map: "coach_rules_company_id_created_at_idx")
   @@map("coach_rules")
+}
+
+model Customer {
+  id        String        @id @default(cuid())
+  companyId String        @map("company_id")
+  teamId    String        @map("team_id")
+  ownerId   String        @map("owner_id")
+  name      String
+  phone     String?
+  wechat    String?
+  source    String
+  tags      String[]      @default([])
+  stage     CustomerStage @default(LEAD)
+  level     CustomerLevel @default(LOW)
+  notes     String        @default("") @db.Text
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  team      TeamOrganization @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  followUps CustomerFollowUp[]
+  aiProfile CustomerAIProfile?
+
+  @@index([companyId, teamId, updatedAt], map: "crm_customers_company_id_team_id_updated_at_idx")
+  @@index([companyId, ownerId, updatedAt], map: "crm_customers_company_id_owner_id_updated_at_idx")
+  @@index([companyId, stage, level, updatedAt], map: "crm_customers_company_id_stage_level_updated_at_idx")
+  @@index([companyId, phone], map: "crm_customers_company_id_phone_idx")
+  @@index([companyId, wechat], map: "crm_customers_company_id_wechat_idx")
+  @@index([tags], type: Gin, map: "crm_customers_tags_idx")
+  @@map("crm_customers")
+}
+
+model CustomerFollowUp {
+  id           String               @id @default(cuid())
+  customerId   String               @map("customer_id")
+  userId       String               @map("user_id")
+  content      String               @db.Text
+  type         CustomerFollowUpType
+  summary      String               @default("") @db.Text
+  nextPlan     String               @default("") @map("next_plan") @db.Text
+  aiSuggestion String               @default("") @map("ai_suggestion") @db.Text
+  createdAt    DateTime             @default(now()) @map("created_at")
+  customer     Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([customerId, createdAt], map: "customer_follow_ups_customer_id_created_at_idx")
+  @@index([userId, createdAt], map: "customer_follow_ups_user_id_created_at_idx")
+  @@map("customer_follow_ups")
+}
+
+model CustomerAIProfile {
+  id                  String            @id @default(cuid())
+  customerId          String            @unique @map("customer_id")
+  intent              CustomerIntent
+  painPoints          String[]          @default([]) @map("pain_points")
+  riskLevel           CustomerRiskLevel @map("risk_level")
+  purchaseProbability Int               @map("purchase_probability")
+  nextAction          String            @map("next_action") @db.Text
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  customer            Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("customer_ai_profiles")
 }
 
 model Task {
