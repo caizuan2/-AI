@@ -7,6 +7,7 @@ import type {
   AnalyzeConversationInput,
   CoachAnalysisOptions,
   CoachDashboardData,
+  CoachMatchedStandard,
   CoachReport,
   CoachSkillKey,
   CoachSkillScore,
@@ -30,6 +31,38 @@ type ReportRecord = Prisma.EmployeeAnalysisReportGetPayload<{
     skillScores: true;
   };
 }>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toMatchedStandards(value: Prisma.JsonValue | null): CoachMatchedStandard[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item) => {
+    if (
+      !isRecord(item) ||
+      typeof item.standardId !== "string" ||
+      typeof item.category !== "string" ||
+      typeof item.title !== "string" ||
+      typeof item.version !== "number" ||
+      typeof item.evidence !== "string" ||
+      typeof item.gap !== "string"
+    ) {
+      return [];
+    }
+    return [{
+      standardId: item.standardId,
+      category: item.category,
+      title: item.title,
+      version: item.version,
+      evidence: item.evidence,
+      gap: item.gap
+    }];
+  });
+}
 
 function displayName(user: { id: string; name: string | null; email: string | null; phone: string }) {
   return user.name?.trim() || user.email?.trim() || user.phone || user.id;
@@ -64,10 +97,14 @@ async function serializeReport(report: ReportRecord): Promise<CoachReport> {
     teamName: report.team.name,
     submissionId: report.submissionId ?? undefined,
     score: report.score,
+    ...(report.industryScore === null ? {} : { industryScore: report.industryScore }),
     summary: report.summary,
     problems: report.problems,
     suggestions: report.suggestions,
     trainingPlan: report.trainingPlan,
+    matchedStandards: toMatchedStandards(report.matchedStandards),
+    ...(report.coachFeedback ? { coachFeedback: report.coachFeedback } : {}),
+    ...(report.improvementPlan ? { improvementPlan: report.improvementPlan } : {}),
     skills: toSkillScores(report.skillScores),
     createdAt: report.createdAt.toISOString(),
     updatedAt: report.updatedAt.toISOString()
@@ -241,22 +278,13 @@ async function loadSelfAnalysisContext(userId: string, input: AnalyzeConversatio
     throw new ForbiddenError("只能分析当前登录员工自己的沟通记录。");
   }
 
-  const [user, membership] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: userId },
-      select: { tenantId: true }
-    }),
-    prisma.teamMember.findUnique({
-      where: { teamId_userId: { teamId: input.teamId, userId } },
-      select: {
-        status: true,
-        team: { select: { id: true, companyId: true, status: true } }
-      }
-    })
-  ]);
-  if (!user) {
-    throw new NotFoundError("当前用户不存在。");
-  }
+  const membership = await prisma.teamMember.findUnique({
+    where: { teamId_userId: { teamId: input.teamId, userId } },
+    select: {
+      status: true,
+      team: { select: { id: true, companyId: true, status: true } }
+    }
+  });
   if (!membership || membership.status !== "ACTIVE" || membership.team.status !== "ACTIVE") {
     throw new ForbiddenError("当前账号不是该团队的有效成员。");
   }
@@ -284,7 +312,6 @@ async function loadSelfAnalysisContext(userId: string, input: AnalyzeConversatio
   }
 
   return {
-    actorTenantId: user.tenantId,
     teamCompanyId: membership.team.companyId,
     conversation
   };
@@ -341,10 +368,21 @@ async function createReportTransaction(
         teamId: input.teamId,
         submissionId: input.submissionId,
         score: analysis.score,
+        industryScore: analysis.industryScore,
         summary: analysis.summary,
         problems: analysis.problems,
         suggestions: analysis.suggestions,
         trainingPlan: analysis.trainingPlan,
+        matchedStandards: analysis.matchedStandards.map((standard) => ({
+          standardId: standard.standardId,
+          category: standard.category,
+          title: standard.title,
+          version: standard.version,
+          evidence: standard.evidence,
+          gap: standard.gap
+        })),
+        coachFeedback: analysis.coachFeedback,
+        improvementPlan: analysis.improvementPlan,
         skillScores: {
           create: analysis.skills.map((skill) => ({
             userId,
@@ -400,7 +438,6 @@ export async function analyzeAndSaveConversation(
     ...input,
     conversation: context.conversation,
     actorUserId: userId,
-    actorTenantId: context.actorTenantId,
     teamCompanyId: context.teamCompanyId,
     requestId
   });

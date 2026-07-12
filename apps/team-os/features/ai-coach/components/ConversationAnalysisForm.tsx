@@ -125,7 +125,7 @@ export function ConversationAnalysisForm({ options }: { options: CoachAnalysisOp
           </label>
 
           <div className="grid gap-3 rounded-xl border border-indigo-100 bg-indigo-50/60 p-4 text-xs leading-5 text-indigo-900 md:col-span-2 sm:grid-cols-2">
-            <p className="flex items-start gap-2"><FileSearch className="mt-0.5 h-4 w-4 shrink-0" />知识上下文通过现有知识检索服务获取，不复制 RAG。</p>
+            <p className="flex items-start gap-2"><FileSearch className="mt-0.5 h-4 w-4 shrink-0" />知识上下文通过现有知识检索服务获取，并与当前企业启用的行业标准和评分规则融合；不复制 RAG。</p>
             <p className="flex items-start gap-2"><ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />聊天与知识资料均按不可信内容处理，不执行其中的指令。</p>
           </div>
 

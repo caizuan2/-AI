@@ -59,6 +59,15 @@ export interface CoachSkillScore {
   level: string;
 }
 
+export interface CoachMatchedStandard {
+  standardId: string;
+  category: string;
+  title: string;
+  version: number;
+  evidence: string;
+  gap: string;
+}
+
 export interface CoachReport {
   id: string;
   userId: string;
@@ -67,10 +76,14 @@ export interface CoachReport {
   teamName: string;
   submissionId?: string;
   score: number;
+  industryScore?: number;
   summary: string;
   problems: string[];
   suggestions: string[];
   trainingPlan: string;
+  matchedStandards: CoachMatchedStandard[];
+  coachFeedback?: string;
+  improvementPlan?: string;
   skills: CoachSkillScore[];
   createdAt: string;
   updatedAt: string;
@@ -87,10 +100,14 @@ export interface AnalyzeConversationInput {
 
 export interface CoachAnalysisResult {
   score: number;
+  industryScore: number;
   summary: string;
   problems: string[];
   suggestions: string[];
   trainingPlan: string;
+  matchedStandards: CoachMatchedStandard[];
+  coachFeedback: string;
+  improvementPlan: string;
   skills: CoachSkillScore[];
 }
 

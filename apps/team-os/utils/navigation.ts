@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bot,
+  BookOpenCheck,
   GraduationCap,
   Home,
   ListTodo,
@@ -14,6 +15,7 @@ export const teamOsNavigation = [
   { label: "任务中心", icon: ListTodo, href: "/team-os/tasks" },
   { label: "组织管理", icon: Network, href: "/team-os/organization" },
   { label: "AI 教练", icon: Bot, href: "/team-os/ai-coach" },
+  { label: "行业教练", icon: BookOpenCheck, href: "/team-os/industry-coach" },
   { label: "AI CRM", icon: UsersRound },
   { label: "培训中心", icon: GraduationCap },
   { label: "数据中心", icon: BarChart3 },

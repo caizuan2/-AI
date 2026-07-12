@@ -27,7 +27,7 @@ export function AiCoachDashboardPage() {
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-sm font-medium text-indigo-700">AI 员工教练系统</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">AI 教练中心</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">用五维销售能力模型分析客户沟通，生成可执行的员工成长建议。</p></div>
+        <div><p className="text-sm font-medium text-indigo-700">AI 员工教练系统</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">AI 教练中心</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">用五维销售能力模型对照企业知识与行业标准，生成可执行的员工成长建议。</p></div>
         <div className="flex flex-wrap gap-3">
           <Link href="/team-os/ai-coach/team" className="focus-ring inline-flex h-11 items-center justify-center rounded-lg border border-line bg-white px-4 text-sm font-semibold text-ink hover:bg-slate-50">团队成长</Link>
           <Link href="/team-os/ai-coach/analyze" className="focus-ring inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"><Bot className="h-4 w-4" />提交分析</Link>
@@ -49,7 +49,7 @@ export function AiCoachDashboardPage() {
           </div>
 
           {data.analyzedCount === 0 ? (
-            <AiCoachEmptyState title="今日还没有成长报告" description="提交一段客户沟通记录，AI 将结合员工可访问知识生成五维评分和训练计划。" action={<Link href="/team-os/ai-coach/analyze" className="focus-ring inline-flex h-10 items-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white">开始首次分析</Link>} />
+            <AiCoachEmptyState title="今日还没有成长报告" description="提交一段客户沟通记录，AI 将结合员工可访问知识、行业标准和评分规则生成专业报告。" action={<Link href="/team-os/ai-coach/analyze" className="focus-ring inline-flex h-10 items-center rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white">开始首次分析</Link>} />
           ) : (
             <div className="grid gap-6 lg:grid-cols-2">
               <Card>

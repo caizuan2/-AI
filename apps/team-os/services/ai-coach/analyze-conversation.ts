@@ -15,7 +15,6 @@ import {
 
 export interface AnalyzeConversationServiceInput extends AnalyzeConversationInput {
   actorUserId: string;
-  actorTenantId: string | null;
   teamCompanyId: string;
   requestId?: string;
 }
@@ -41,12 +40,15 @@ export async function analyzeConversation(
   const knowledgeContext = await knowledgeContextService.getAccessibleContext({
     conversation: input.conversation,
     actorUserId: input.actorUserId,
-    actorTenantId: input.actorTenantId,
-    teamCompanyId: input.teamCompanyId
+    teamCompanyId: input.teamCompanyId,
+    teamId: input.teamId,
+    requestId: input.requestId
   });
   const analysis = await provider.analyze({
     conversation: input.conversation,
     knowledgeContext: knowledgeContext.promptContext,
+    industryStandards: knowledgeContext.standards,
+    coachRules: knowledgeContext.coachRules,
     screenshotCount: input.screenshotUrls.length,
     screenshotOrigins: getScreenshotOrigins(input.screenshotUrls),
     provider: input.provider,

@@ -118,6 +118,11 @@ enum TeamInvitationStatus {
   EXPIRED
 }
 
+enum IndustryStandardStatus {
+  ACTIVE
+  DISABLED
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -186,6 +191,35 @@ model TeamInvitation {
   @@map("team_invitations")
 }
 
+model IndustryStandard {
+  id        String                 @id @default(cuid())
+  companyId String                 @map("company_id")
+  category  String
+  title     String
+  content   String                 @db.Text
+  version   Int                    @default(1)
+  status    IndustryStandardStatus @default(ACTIVE)
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+
+  @@unique([companyId, category, title, version], map: "industry_standards_company_id_category_title_version_key")
+  @@index([companyId, status, updatedAt], map: "industry_standards_company_id_status_updated_at_idx")
+  @@map("industry_standards")
+}
+
+model CoachRule {
+  id          String   @id @default(cuid())
+  companyId   String   @map("company_id")
+  name        String
+  description String   @db.Text
+  rules       Json
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, name], map: "coach_rules_company_id_name_key")
+  @@index([companyId, createdAt], map: "coach_rules_company_id_created_at_idx")
+  @@map("coach_rules")
+}
+
 model Task {
   id          String           @id @default(cuid())
   title       String
@@ -229,20 +263,24 @@ model TaskSubmission {
 }
 
 model EmployeeAnalysisReport {
-  id           String               @id @default(cuid())
-  userId       String               @map("user_id")
-  teamId       String               @map("team_id")
-  submissionId String?              @unique @map("submission_id")
-  score        Int
-  summary      String               @db.Text
-  problems     String[]             @default([])
-  suggestions  String[]             @default([])
-  trainingPlan String               @map("training_plan") @db.Text
-  createdAt    DateTime             @default(now()) @map("created_at")
-  updatedAt    DateTime             @updatedAt @map("updated_at")
-  team         TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
-  submission   TaskSubmission?      @relation(fields: [submissionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  skillScores  EmployeeSkillScore[]
+  id               String               @id @default(cuid())
+  userId           String               @map("user_id")
+  teamId           String               @map("team_id")
+  submissionId     String?              @unique @map("submission_id")
+  score            Int
+  industryScore    Int?                 @map("industry_score")
+  summary          String               @db.Text
+  problems         String[]             @default([])
+  suggestions      String[]             @default([])
+  trainingPlan     String               @map("training_plan") @db.Text
+  matchedStandards Json?                @map("matched_standards")
+  coachFeedback    String?              @map("coach_feedback") @db.Text
+  improvementPlan  String?              @map("improvement_plan") @db.Text
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+  team             TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  submission       TaskSubmission?      @relation(fields: [submissionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  skillScores      EmployeeSkillScore[]
 
   @@index([userId, createdAt], map: "employee_analysis_reports_user_id_created_at_idx")
   @@index([teamId, createdAt], map: "employee_analysis_reports_team_id_created_at_idx")
