@@ -95,6 +95,39 @@ enum LicenseStatus {
   revoked
 }
 
+enum TeamRole {
+  TEAM_OWNER
+  TEAM_MANAGER
+  TRAINER
+  TEAM_MEMBER
+}
+
+model TeamOrganization {
+  id        String       @id @default(cuid())
+  companyId String       @map("company_id")
+  name      String
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+  members   TeamMember[]
+
+  @@index([companyId], map: "team_organizations_company_id_idx")
+  @@map("team_organizations")
+}
+
+model TeamMember {
+  id        String           @id @default(cuid())
+  teamId    String           @map("team_id")
+  userId    String           @map("user_id")
+  role      TeamRole         @default(TEAM_MEMBER)
+  createdAt DateTime         @default(now()) @map("created_at")
+  team      TeamOrganization @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([teamId], map: "team_members_team_id_idx")
+  @@index([userId], map: "team_members_user_id_idx")
+  @@map("team_members")
+}
+
 model Tenant {
   id             String              @id @default(cuid())
   name           String
