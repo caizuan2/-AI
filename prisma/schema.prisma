@@ -102,6 +102,22 @@ enum TeamRole {
   TEAM_MEMBER
 }
 
+enum TeamOrganizationStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TeamMemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TeamInvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -116,15 +132,21 @@ enum TaskSubmissionStatus {
 }
 
 model TeamOrganization {
-  id        String       @id @default(cuid())
-  companyId String       @map("company_id")
-  name      String
-  createdAt DateTime     @default(now()) @map("created_at")
-  updatedAt DateTime     @updatedAt @map("updated_at")
-  members   TeamMember[]
-  tasks     Task[]
+  id          String                 @id @default(cuid())
+  companyId   String                 @map("company_id")
+  name        String
+  description String                 @default("") @db.Text
+  ownerId     String                 @map("owner_id")
+  status      TeamOrganizationStatus @default(ACTIVE)
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  members     TeamMember[]
+  invitations TeamInvitation[]
+  tasks       Task[]
 
   @@index([companyId], map: "team_organizations_company_id_idx")
+  @@index([ownerId], map: "team_organizations_owner_id_idx")
+  @@index([status], map: "team_organizations_status_idx")
   @@map("team_organizations")
 }
 
@@ -133,13 +155,34 @@ model TeamMember {
   teamId    String           @map("team_id")
   userId    String           @map("user_id")
   role      TeamRole         @default(TEAM_MEMBER)
+  status    TeamMemberStatus @default(ACTIVE)
   createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
   team      TeamOrganization @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@unique([teamId, userId])
   @@index([teamId], map: "team_members_team_id_idx")
   @@index([userId], map: "team_members_user_id_idx")
+  @@index([status], map: "team_members_status_idx")
   @@map("team_members")
+}
+
+model TeamInvitation {
+  id         String               @id @default(cuid())
+  teamId     String               @map("team_id")
+  email      String
+  role       TeamRole             @default(TEAM_MEMBER)
+  inviteCode String               @unique @map("invite_code")
+  status     TeamInvitationStatus @default(PENDING)
+  expiresAt  DateTime             @map("expires_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
+  team       TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([teamId], map: "team_invitations_team_id_idx")
+  @@index([email], map: "team_invitations_email_idx")
+  @@index([status], map: "team_invitations_status_idx")
+  @@index([expiresAt], map: "team_invitations_expires_at_idx")
+  @@map("team_invitations")
 }
 
 model Task {

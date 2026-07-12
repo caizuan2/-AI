@@ -37,7 +37,7 @@ export function TeamOsShell({ children, user }: { children: ReactNode; user: Tea
                 <div className="hidden items-center gap-2 text-sm text-slate-600 sm:flex">
                   <Building2 className="h-4 w-4" aria-hidden="true" />
                   <span>当前企业</span>
-                  <span className="font-semibold text-slate-900">AI Team OS 演示企业</span>
+                  <span className="font-semibold text-slate-900">请在组织管理中选择</span>
                 </div>
                 <div className="h-7 w-px bg-slate-200" />
                 <div className="flex items-center gap-2">
