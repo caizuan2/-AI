@@ -17,6 +17,7 @@ import type {
   IngestMemoryPanelSummary,
   IngestMemoryRecallCandidate
 } from "@/lib/enterprise/ingest-memory-types";
+import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 
 type IngestMemoryPanelProps = {
   activeAgent: IngestChatAgent;
@@ -150,6 +151,10 @@ export function IngestMemoryPanel({
   const [publishResult, setPublishResult] = useState<MemoryPublishResult | null>(null);
   const [runtimeTestResult, setRuntimeTestResult] = useState<RuntimeMemoryTestResult | null>(null);
   const knowledgeBaseId = activeAgent.knowledgeBaseId ?? undefined;
+  const runtimeScope = useMemo(() => resolvePublicExpertScope({
+    agentId: activeAgent.id,
+    knowledgeBaseId
+  }), [activeAgent.id, knowledgeBaseId]);
   const query = useMemo(() => new URLSearchParams({
     agentId: activeAgent.id,
     ...(knowledgeBaseId ? { knowledgeBaseId } : {})
@@ -428,6 +433,13 @@ export function IngestMemoryPanel({
     setError("");
 
     try {
+      if (!runtimeScope) {
+        throw new Error("当前 Agent 尚未绑定固定知识库，无法测试运行时命中。");
+      }
+
+      const runtimeQuery = summary.recentTopics[0]
+        || summary.memories[0]?.title
+        || activeAgent.name;
       const data = await readJson<RuntimeMemoryTestResult>(await fetch("/api/runtime/memory/search", {
         method: "POST",
         credentials: "include",
@@ -435,11 +447,11 @@ export function IngestMemoryPanel({
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          query: "33循环和77循环怎么选",
-          knowledgeBaseId: "kb-kks-slim",
-          agentId: "expert-kks",
-          namespace: "kb-kks-slim",
-          tenantId: "default",
+          query: runtimeQuery,
+          knowledgeBaseId: runtimeScope.knowledgeBaseId,
+          agentId: runtimeScope.agentId,
+          namespace: runtimeScope.namespace,
+          tenantId: runtimeScope.tenantId,
           limit: 5
         })
       }));
@@ -448,7 +460,9 @@ export function IngestMemoryPanel({
       onToast?.({
         type: data.memoryApplied ? "success" : "info",
         title: data.memoryApplied ? "运行时记忆已命中" : "运行时暂未命中",
-        description: data.usedMemoryIds?.length ? `命中 ${data.usedMemoryIds.length} 条。` : data.warnings?.[0] ?? "当前没有 KKS/33/77 可用索引。"
+        description: data.usedMemoryIds?.length
+          ? `当前 Agent 命中 ${data.usedMemoryIds.length} 条。`
+          : data.warnings?.[0] ?? "当前 Agent 暂无可用索引。"
       });
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "运行时命中测试失败。");
