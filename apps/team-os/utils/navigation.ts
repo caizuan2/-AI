@@ -17,7 +17,7 @@ export const teamOsNavigation = [
   { label: "AI 教练", icon: Bot, href: "/team-os/ai-coach" },
   { label: "行业教练", icon: BookOpenCheck, href: "/team-os/industry-coach" },
   { label: "AI CRM", icon: UsersRound, href: "/team-os/crm" },
-  { label: "培训中心", icon: GraduationCap },
+  { label: "培训中心", icon: GraduationCap, href: "/team-os/training" },
   { label: "数据中心", icon: BarChart3 },
   { label: "设置", icon: Settings }
 ] as const;

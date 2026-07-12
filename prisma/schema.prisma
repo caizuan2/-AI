@@ -158,6 +158,38 @@ enum CustomerIntent {
   CHURN_RISK
 }
 
+enum TrainingCourseCategory {
+  PRODUCT
+  SALES
+  CUSTOMER_SERVICE
+  MANAGEMENT
+  OTHER
+}
+
+enum TrainingCourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum TrainingCourseStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TrainingRecordStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+enum TrainingAssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -185,6 +217,7 @@ model TeamOrganization {
   tasks       Task[]
   analysisReports EmployeeAnalysisReport[]
   customers   Customer[]
+  trainingAssignments TrainingAssignment[]
 
   @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
@@ -315,6 +348,81 @@ model CustomerAIProfile {
   customer            Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("customer_ai_profiles")
+}
+
+model TrainingCourse {
+  id          String                 @id @default(cuid())
+  companyId   String                 @map("company_id")
+  title       String
+  description String                 @db.Text
+  category    TrainingCourseCategory
+  content     String                 @db.Text
+  level       TrainingCourseLevel
+  status      TrainingCourseStatus   @default(ACTIVE)
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  records     TrainingRecord[]
+  assignments TrainingAssignment[]
+  evaluations AITrainingEvaluation[]
+
+  @@unique([id, companyId], map: "training_courses_id_company_id_key")
+  @@unique([companyId, title], map: "training_courses_company_id_title_key")
+  @@index([companyId, status, updatedAt], map: "training_courses_company_id_status_updated_at_idx")
+  @@index([companyId, category, level, status], map: "training_courses_company_id_category_level_status_idx")
+  @@map("training_courses")
+}
+
+model TrainingRecord {
+  id          String               @id @default(cuid())
+  courseId    String               @map("course_id")
+  userId      String               @map("user_id")
+  score       Int                  @default(0)
+  status      TrainingRecordStatus @default(STARTED)
+  completedAt DateTime?            @map("completed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  course      TrainingCourse       @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([courseId, userId], map: "training_records_course_id_user_id_key")
+  @@index([userId, status, createdAt], map: "training_records_user_id_status_created_at_idx")
+  @@index([courseId, status], map: "training_records_course_id_status_idx")
+  @@map("training_records")
+}
+
+model TrainingAssignment {
+  id         String                   @id @default(cuid())
+  courseId   String                   @map("course_id")
+  companyId  String                   @map("company_id")
+  teamId     String                   @map("team_id")
+  userId     String                   @map("user_id")
+  assignedBy String                   @map("assigned_by")
+  deadline   DateTime
+  status     TrainingAssignmentStatus @default(ASSIGNED)
+  createdAt  DateTime                 @default(now()) @map("created_at")
+  course     TrainingCourse           @relation(fields: [courseId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  team       TeamOrganization         @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([courseId, teamId, userId], map: "training_assignments_course_id_team_id_user_id_key")
+  @@index([userId, status, deadline], map: "training_assignments_user_id_status_deadline_idx")
+  @@index([companyId, teamId, status, deadline], map: "training_assignments_company_id_team_id_status_deadline_idx")
+  @@index([assignedBy, createdAt], map: "training_assignments_assigned_by_created_at_idx")
+  @@index([courseId, status], map: "training_assignments_course_id_status_idx")
+  @@map("training_assignments")
+}
+
+model AITrainingEvaluation {
+  id        String         @id @default(cuid())
+  userId    String         @map("user_id")
+  courseId  String         @map("course_id")
+  question  String         @db.Text
+  answer    String         @db.Text
+  score     Int
+  feedback  String         @db.Text
+  createdAt DateTime       @default(now()) @map("created_at")
+  course    TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt], map: "ai_training_evaluations_user_id_created_at_idx")
+  @@index([courseId, createdAt], map: "ai_training_evaluations_course_id_created_at_idx")
+  @@map("ai_training_evaluations")
 }
 
 model Task {
