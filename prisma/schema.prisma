@@ -190,6 +190,13 @@ enum TrainingAssignmentStatus {
   CANCELLED
 }
 
+enum BusinessMetricType {
+  TASK
+  CRM
+  TRAINING
+  AI_USAGE
+}
+
 enum TaskStatus {
   PENDING
   IN_PROGRESS
@@ -423,6 +430,55 @@ model AITrainingEvaluation {
   @@index([userId, createdAt], map: "ai_training_evaluations_user_id_created_at_idx")
   @@index([courseId, createdAt], map: "ai_training_evaluations_course_id_created_at_idx")
   @@map("ai_training_evaluations")
+}
+
+model AnalyticsSnapshot {
+  id                     String   @id @default(cuid())
+  companyId              String   @map("company_id")
+  date                   DateTime @db.Date
+  taskCompletionRate     Float?   @map("task_completion_rate")
+  customerConversionRate Float?   @map("customer_conversion_rate")
+  employeeAverageScore   Float?   @map("employee_average_score")
+  trainingCompletionRate Float?   @map("training_completion_rate")
+  aiUsageCount           Int?     @map("ai_usage_count")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, date], map: "analytics_snapshots_company_id_date_key")
+  @@index([date], map: "analytics_snapshots_date_idx")
+  @@map("analytics_snapshots")
+}
+
+model EmployeeGrowthMetric {
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  teamId        String   @map("team_id")
+  userId        String   @map("user_id")
+  date          DateTime @db.Date
+  skillScore    Float?   @map("skill_score")
+  taskScore     Float?   @map("task_score")
+  trainingScore Float?   @map("training_score")
+  customerScore Float?   @map("customer_score")
+  growthLevel   String   @map("growth_level")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, teamId, userId, date], map: "employee_growth_metrics_company_id_team_id_user_id_date_key")
+  @@index([companyId, teamId, date], map: "employee_growth_metrics_company_id_team_id_date_idx")
+  @@index([userId, date], map: "employee_growth_metrics_user_id_date_idx")
+  @@map("employee_growth_metrics")
+}
+
+model BusinessMetric {
+  id          String             @id @default(cuid())
+  companyId   String             @map("company_id")
+  metricType  BusinessMetricType @map("metric_type")
+  metricValue Float              @map("metric_value")
+  date        DateTime           @db.Date
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@unique([companyId, metricType, date], map: "business_metrics_company_id_metric_type_date_key")
+  @@index([metricType, date], map: "business_metrics_metric_type_date_idx")
+  @@index([date], map: "business_metrics_date_idx")
+  @@map("business_metrics")
 }
 
 model Task {

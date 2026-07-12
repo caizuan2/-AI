@@ -17,7 +17,7 @@ export function TeamOsNavigation({ mobile = false }: { mobile?: boolean }) {
   return (
     <nav
       className={mobile
-        ? "fixed inset-x-0 bottom-0 z-40 grid grid-cols-[repeat(7,minmax(0,1fr))] border-t border-slate-200 bg-white px-1 pb-[env(safe-area-inset-bottom)] lg:hidden"
+        ? "fixed inset-x-0 bottom-0 z-40 flex overflow-x-auto overscroll-x-contain border-t border-slate-200 bg-white px-1 pb-[env(safe-area-inset-bottom)] lg:hidden"
         : "mt-9 space-y-1"}
       aria-label={mobile ? "AI Team OS 移动导航" : "AI Team OS 主导航"}
     >
@@ -26,7 +26,7 @@ export function TeamOsNavigation({ mobile = false }: { mobile?: boolean }) {
         const href = "href" in item ? item.href : null;
         const active = href ? isActive(pathname, href) : false;
         const className = mobile
-          ? `flex min-h-16 min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-0.5 text-[11px] ${active ? "text-indigo-700" : "text-slate-500"}`
+          ? `flex min-h-16 min-w-[4.5rem] flex-1 flex-col items-center justify-center gap-1 rounded-lg px-1 text-[11px] ${active ? "text-indigo-700" : "text-slate-500"}`
           : `flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium transition ${active ? "bg-white/10 text-white" : href ? "text-slate-400 hover:bg-white/5 hover:text-white" : "cursor-not-allowed text-slate-600"}`;
         const content = (
           <>
