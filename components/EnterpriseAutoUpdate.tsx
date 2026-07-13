@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { ADMIN_APP_KIND, USER_APP_KIND, type AppKind } from "@/lib/app-version";
 
-const locallyManagedPaths = ["/chat-ui", "/ingest"];
+const locallyManagedPaths = ["/chat-ui", "/app", "/ingest"];
 
 function isLocallyManaged(pathname: string) {
   return locallyManagedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));

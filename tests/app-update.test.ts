@@ -16,7 +16,10 @@ import {
 import { detectPlatform, openLink, resolveDownload } from "../lib/update-core";
 import { normalizeAppStoreManifest } from "../lib/app-store";
 import { checkCurrentAppUpdate, getCurrentAppVersion } from "../lib/update-checker";
-import { AppUpdateNoticeDialog } from "../components/AppUpdateNotice";
+import {
+  AppUpdateNoticeDialog,
+  promoteUnappliedWebReleaseUpdate
+} from "../components/AppUpdateNotice";
 import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
 
@@ -180,6 +183,50 @@ async function main() {
   assert.equal(webContentUpdate.hasUpdate, true);
   assert.equal(webContentUpdate.forceUpdate, false);
   assert.equal(webContentUpdate.updateKind, "web");
+
+  const currentWebContent = await checkAppUpdate({
+    appKind: "user",
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+    currentWebReleaseSha: webManifest.user.web_release_sha,
+    fetcher: createFetch(webManifest)
+  });
+  assert.equal(currentWebContent.hasUpdate, false);
+  assert.equal(currentWebContent.updateKind, "none");
+
+  const appliedWebRelease = new Map<string, string>();
+  const appliedWebReleaseStorage = {
+    getItem: (key: string) => appliedWebRelease.get(key) ?? null,
+    setItem: (key: string, value: string) => appliedWebRelease.set(key, value)
+  };
+  const announcedWebContent = promoteUnappliedWebReleaseUpdate(
+    currentWebContent,
+    "user",
+    appliedWebReleaseStorage
+  );
+  assert.equal(announcedWebContent.hasUpdate, true);
+  assert.equal(announcedWebContent.forceUpdate, false);
+  assert.equal(announcedWebContent.updateKind, "web");
+
+  const unchangedAdminContent = promoteUnappliedWebReleaseUpdate(
+    currentWebContent,
+    "admin",
+    appliedWebReleaseStorage
+  );
+  assert.equal(unchangedAdminContent.hasUpdate, false);
+  assert.equal(unchangedAdminContent.updateKind, "none");
+
+  appliedWebRelease.set(
+    "xiaodongai.appliedWebRelease.user",
+    webManifest.user.web_release_sha ?? ""
+  );
+  const acknowledgedWebContent = promoteUnappliedWebReleaseUpdate(
+    currentWebContent,
+    "user",
+    appliedWebReleaseStorage
+  );
+  assert.equal(acknowledgedWebContent.hasUpdate, false);
+  assert.equal(acknowledgedWebContent.updateKind, "none");
 
   const nativeWebShellUpdate = await checkAppUpdate({
     appKind: "user",
@@ -471,6 +518,7 @@ async function main() {
   assert.match(appUpdateNotice, /xiaodongai\.appliedWebRelease/);
   assert.match(appUpdateNotice, /hasAppliedWebRelease/);
   assert.match(appUpdateNotice, /writeAppliedWebRelease/);
+  assert.match(appUpdateNotice, /promoteUnappliedWebReleaseUpdate/);
   assert.match(appUpdateNotice, /window\.setTimeout\(\(\) => \{/);
   assert.doesNotMatch(appUpdateNotice, /triggerBrowserDownload|downloadWithBrowserFetch|createObjectURL/);
 
@@ -487,6 +535,7 @@ async function main() {
   const enterpriseAutoUpdate = readFileSync("components/EnterpriseAutoUpdate.tsx", "utf8");
   assert.match(enterpriseAutoUpdate, /AppUpdateNotice/);
   assert.match(enterpriseAutoUpdate, /\/chat-ui/);
+  assert.match(enterpriseAutoUpdate, /\/app/);
   assert.match(enterpriseAutoUpdate, /\/ingest/);
   assert.match(readFileSync("app/layout.tsx", "utf8"), /EnterpriseAutoUpdate/);
   assert.match(readFileSync("electron/preload.cjs", "utf8"), /appVersion/);
