@@ -25,6 +25,17 @@ import {
   buildNoKnowledgeCustomerAnswer
 } from "@/lib/ai-chat/customer-answer";
 import {
+  CAREER_MENTOR_POLICY_VERSION,
+  CAREER_MENTOR_RETRIEVAL_TOP_K,
+  buildCareerMentorBusinessContext,
+  buildCareerMentorRetrievalQuery,
+  buildCareerMentorRetrievalQueries,
+  cleanCareerMentorUserAnswer,
+  extractCareerMentorCustomerAnswer,
+  isCareerMentorScope,
+  prioritizeCareerMentorChunks
+} from "@/lib/ai-chat/career-mentor";
+import {
   finalizeUserAnswer,
   formatFinalizedAnswerForDisplay
 } from "@/lib/ai-chat/response-finalizer";
@@ -1241,7 +1252,6 @@ export async function handleAiChatAsk(
   const enableDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
   const attachments = validateAttachments(input.attachments);
-  const ragQueryContext = buildRagQueryContext(question, input, attachments);
   const businessContext = readBusinessExecutionContext(input);
   const knowledgeSelectionContext = readKnowledgeBaseSelectionContext(input);
   const selectedKnowledgeScope = knowledgeSelectionContext?.scope ?? null;
@@ -1263,11 +1273,25 @@ export async function handleAiChatAsk(
   const attachmentTextBlocks = buildAttachmentTextBlocks(attachments);
   const attachmentTextContext = buildAttachmentTextContext(attachmentTextBlocks);
   const requiresAttachmentOcr = shouldRequireAttachmentOcr(question, input, attachments);
-  const businessExecutionContext = [
-    knowledgeSelectionContext?.prompt,
-    businessContext?.prompt,
-    attachmentTextContext
-  ].filter(Boolean).join("\n\n") || null;
+  const careerMentorEnabled = isCareerMentorScope({
+    agentId: agentScope.agentId,
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace
+  });
+  const ragQueryContext = careerMentorEnabled
+    ? buildCareerMentorRetrievalQuery(question, attachmentTextBlocks)
+    : buildRagQueryContext(question, input, attachments);
+  const careerMentorBusinessContext = careerMentorEnabled
+    ? buildCareerMentorBusinessContext(question, attachmentTextBlocks)
+    : null;
+  const effectiveBusinessContext = careerMentorEnabled ? null : businessContext;
+  const businessExecutionContext = careerMentorEnabled
+    ? [careerMentorBusinessContext, attachmentTextContext].filter(Boolean).join("\n\n") || null
+    : [
+        knowledgeSelectionContext?.prompt,
+        effectiveBusinessContext?.prompt,
+        attachmentTextContext
+      ].filter(Boolean).join("\n\n") || null;
   let osContext = os_core.process({
     query: question,
     userId: actor.id,
@@ -1278,6 +1302,16 @@ export async function handleAiChatAsk(
     reasoningRequested: enableDeepThinking || needsReasoningModel(question),
     reasoningAvailable: isGptOsReasoningAvailable(),
   });
+
+  if (careerMentorEnabled && osContext.rag.topK < CAREER_MENTOR_RETRIEVAL_TOP_K) {
+    osContext = {
+      ...osContext,
+      rag: {
+        ...osContext.rag,
+        topK: CAREER_MENTOR_RETRIEVAL_TOP_K
+      }
+    };
+  }
 
   if (osContext.rag.promptInjectionRisk) {
     await writeAuditLog(db, actor, "CHAT_BLOCKED_UNSAFE_INPUT", null, {
@@ -1303,10 +1337,18 @@ export async function handleAiChatAsk(
           knowledgeSelection: knowledgeSelectionContext.metadata
         }
       : {}),
-    ...(businessContext
+    ...(effectiveBusinessContext
       ? {
-          businessExecution: businessContext.metadata,
+          businessExecution: effectiveBusinessContext.metadata,
           businessExecutionPrompt: businessExecutionContext
+        }
+      : {}),
+    ...(careerMentorEnabled
+      ? {
+          careerMentorPolicy: {
+            version: CAREER_MENTOR_POLICY_VERSION,
+            applied: true
+          }
         }
       : {})
   });
@@ -1399,7 +1441,10 @@ export async function handleAiChatAsk(
   }
 
   const topK = osContext.rag.topK;
-  const dbChunks = await retrieveRelevantChunks(ragQueryContext, {
+  const dbQueryContexts = careerMentorEnabled
+    ? buildCareerMentorRetrievalQueries(question, attachmentTextBlocks)
+    : [ragQueryContext];
+  const dbChunkGroups = await Promise.all(dbQueryContexts.map((query) => retrieveRelevantChunks(query, {
     userId: actor.id,
     tenantId: scopedTenantId,
     appType: "user_app",
@@ -1410,10 +1455,11 @@ export async function handleAiChatAsk(
     topK,
     knowledgeScope: selectedKnowledgeScope,
     db
-  });
+  })));
+  const dbChunks = dbChunkGroups.flat();
   const runtimeMemoryResult = hasExplicitAgentScope
     ? await searchRuntimeMemories({
-        query: question,
+        query: careerMentorEnabled ? ragQueryContext : question,
         knowledgeBaseId: agentScope.knowledgeBaseId,
         agentId: agentScope.agentId,
         namespace: explicitRuntimeNamespace,
@@ -1441,7 +1487,14 @@ export async function handleAiChatAsk(
     namespace: explicitRuntimeNamespace ?? agentScope.namespace,
     tenantId: scopedTenantId,
   }));
-  const chunks = mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
+  const chunks = careerMentorEnabled
+    ? prioritizeCareerMentorChunks({
+        chunks: [...runtimeMemoryChunks, ...dbChunks],
+        question,
+        supportingContext: attachmentTextBlocks,
+        topK
+      })
+    : mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
   const attachmentOcrContext = buildAttachmentOcrContext(attachmentTextBlocks);
   const contexts = [
     ...buildRagContext(chunks),
@@ -1533,7 +1586,10 @@ export async function handleAiChatAsk(
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
-        customerAnswer = buildCustomerAnswerFromText(question, answer);
+        answer = careerMentorEnabled ? cleanCareerMentorUserAnswer(answer) : answer;
+        customerAnswer = careerMentorEnabled
+          ? extractCareerMentorCustomerAnswer(answer) || buildCustomerAnswerFromText(question, answer)
+          : buildCustomerAnswerFromText(question, answer);
         providerStatus = "ok";
         providerUsed = providerResult.providerUsed;
         modelUsed = providerResult.modelUsed;
@@ -1564,7 +1620,7 @@ export async function handleAiChatAsk(
     }
   }
 
-  const businessMetadata = businessContext?.metadata as JsonObject | undefined;
+  const businessMetadata = effectiveBusinessContext?.metadata as JsonObject | undefined;
   const primaryAction = readNestedJsonObject(businessMetadata, "primaryAction");
   const autoSalesAgentMetadata = readNestedJsonObject(businessMetadata, "autoSalesAgent") ?? null;
 
@@ -1604,13 +1660,18 @@ export async function handleAiChatAsk(
     source: "ai_chat_ask",
     mode
   }).output;
-  const cleanOutputControlledAnswer = cleanUserFacingRagAnswer(outputControlledAnswer);
+  const globallyCleanOutputControlledAnswer = cleanUserFacingRagAnswer(outputControlledAnswer);
+  const cleanOutputControlledAnswer = careerMentorEnabled
+    ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer)
+    : globallyCleanOutputControlledAnswer;
 
   if (cleanOutputControlledAnswer !== answer) {
     answer = cleanOutputControlledAnswer;
 
     if (providerStatus === "ok") {
-      customerAnswer = buildCustomerAnswerFromText(question, answer);
+      customerAnswer = careerMentorEnabled
+        ? extractCareerMentorCustomerAnswer(answer) || customerAnswer
+        : buildCustomerAnswerFromText(question, answer);
     }
   }
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
@@ -1720,9 +1781,9 @@ export async function handleAiChatAsk(
           knowledgeSelection: knowledgeSelectionContext.metadata
         }
       : {}),
-    ...(businessContext
+    ...(effectiveBusinessContext
       ? {
-          businessExecution: businessContext.metadata,
+          businessExecution: effectiveBusinessContext.metadata,
           businessExecutionPrompt: businessExecutionContext
         }
       : {}),
