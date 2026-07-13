@@ -1,6 +1,11 @@
 import { createMemoryMergePlan, findSimilarMemoryDrafts } from "@/lib/enterprise/ingest-memory-draft-merger";
 import { updateAgentLearningFromConversation } from "@/lib/enterprise/ingest-agent-learning-loop";
 import {
+  canonicalizeCareerMemoryDraft,
+  createCareerMemoryDraftDedupKey,
+  resolveCareerMemoryScope
+} from "@/lib/enterprise/ingest-memory-career-scope";
+import {
   appendAgentLearningEvent,
   listMemoryDrafts,
   loadAgentLearningEvents,
@@ -15,14 +20,37 @@ import type {
   IngestMemoryPanelSummary
 } from "@/lib/enterprise/ingest-memory-types";
 
-export async function persistMemoryExtraction(input: {
+let careerMemoryPersistenceQueue: Promise<void> = Promise.resolve();
+
+async function persistMemoryExtractionInternal(input: {
   extraction: IngestMemoryExtractionResult;
   source: IngestMemoryExtractionInput;
-}) {
+}, careerScope: NonNullable<ReturnType<typeof resolveCareerMemoryScope>> | null) {
   const savedDrafts: IngestMemoryItem[] = [];
+  const existingDedupKeys = careerScope
+    ? new Set((await listMemoryDrafts({
+        agentId: careerScope.agentId,
+        knowledgeBaseId: careerScope.knowledgeBaseId,
+        ownerAdminId: input.source.ownerAdminId,
+        ownerUserId: input.source.ownerUserId
+      }))
+        .map(createCareerMemoryDraftDedupKey)
+        .filter((key): key is string => Boolean(key)))
+    : null;
 
   for (const draft of input.extraction.draftCandidates) {
-    savedDrafts.push(await saveMemoryDraft(draft));
+    const nextDraft = careerScope ? canonicalizeCareerMemoryDraft(draft) : draft;
+    const dedupKey = careerScope ? createCareerMemoryDraftDedupKey(nextDraft) : null;
+
+    if (dedupKey && existingDedupKeys?.has(dedupKey)) {
+      continue;
+    }
+
+    savedDrafts.push(await saveMemoryDraft(nextDraft));
+
+    if (dedupKey) {
+      existingDedupKeys?.add(dedupKey);
+    }
   }
 
   const learningState = updateAgentLearningFromConversation({
@@ -47,12 +75,35 @@ export async function persistMemoryExtraction(input: {
     source: "admin-ingest-memory-layer-v1"
   };
 
-  await appendAgentLearningEvent(event);
+  if (!careerScope || savedDrafts.length > 0) {
+    await appendAgentLearningEvent(event);
+  }
 
   return {
     savedDrafts,
     learningState
   };
+}
+
+export async function persistMemoryExtraction(input: {
+  extraction: IngestMemoryExtractionResult;
+  source: IngestMemoryExtractionInput;
+}) {
+  const careerScope = resolveCareerMemoryScope(input.source);
+
+  if (!careerScope) {
+    return persistMemoryExtractionInternal(input, null);
+  }
+
+  const persistence = careerMemoryPersistenceQueue.then(() => (
+    persistMemoryExtractionInternal(input, careerScope)
+  ));
+  careerMemoryPersistenceQueue = persistence.then(
+    () => undefined,
+    () => undefined
+  );
+
+  return persistence;
 }
 
 export async function buildAgentLearningState(input: {
