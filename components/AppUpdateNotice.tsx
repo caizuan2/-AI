@@ -7,7 +7,7 @@ import {
   snoozeUpdateNotice,
   type AppUpdateResult
 } from "@/lib/app-update";
-import { type AppKind } from "@/lib/app-version";
+import { USER_APP_KIND, type AppKind } from "@/lib/app-version";
 import { checkCurrentAppUpdate } from "@/lib/update-checker";
 import { detectPlatform, openLink, resolveDownload, type UpdatePlatform } from "@/lib/update-core";
 import { UpdateModal } from "@/components/UpdateModal";
@@ -50,6 +50,11 @@ interface AppUpdateNoticeProps {
   currentWebReleaseSha?: string;
 }
 
+export interface UpdateNoticeStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
 interface AppUpdateNoticeDialogProps {
   appKind: AppKind;
   update: AppUpdateResult & { latest: NonNullable<AppUpdateResult["latest"]> };
@@ -67,7 +72,7 @@ const idleInstallState: UpdateInstallState = {
   message: ""
 };
 
-function getStorage() {
+function getStorage(): UpdateNoticeStorage | undefined {
   try {
     return typeof window !== "undefined" ? window.localStorage : undefined;
   } catch {
@@ -98,10 +103,14 @@ function getAppliedWebReleaseKey(appKind: AppKind) {
 }
 
 function readAppliedWebRelease(appKind: AppKind, storage = getStorage()) {
+  if (!storage) {
+    return null;
+  }
+
   try {
-    return storage?.getItem(getAppliedWebReleaseKey(appKind)) ?? "";
+    return storage.getItem(getAppliedWebReleaseKey(appKind)) ?? "";
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -125,15 +134,46 @@ function hasAppliedWebRelease(
   currentWebReleaseSha?: string,
   storage = getStorage()
 ) {
-  const latestSha = latest?.web_release_sha ?? "";
+  const identity = getWebReleaseIdentity(latest);
+  const appliedIdentity = readAppliedWebRelease(appKind, storage);
 
-  if (latestSha && currentWebReleaseSha && latestSha === currentWebReleaseSha) {
-    return true;
+  if (appliedIdentity !== null) {
+    return Boolean(identity && appliedIdentity === identity);
   }
 
-  const identity = getWebReleaseIdentity(latest);
+  const latestSha = latest?.web_release_sha ?? "";
 
-  return Boolean(identity && readAppliedWebRelease(appKind, storage) === identity);
+  return Boolean(latestSha && currentWebReleaseSha && latestSha === currentWebReleaseSha);
+}
+
+export function promoteUnappliedWebReleaseUpdate(
+  result: AppUpdateResult,
+  appKind: AppKind,
+  storage: UpdateNoticeStorage | undefined
+) {
+  if (
+    appKind !== USER_APP_KIND
+    || !result.latest
+    || !result.latest.web_release_sha
+    || result.updateKind === "package"
+    || result.forceUpdate
+  ) {
+    return result;
+  }
+
+  const identity = getWebReleaseIdentity(result.latest);
+  const appliedIdentity = readAppliedWebRelease(appKind, storage);
+
+  if (!identity || appliedIdentity === null || appliedIdentity === identity) {
+    return result;
+  }
+
+  return {
+    ...result,
+    hasUpdate: true,
+    forceUpdate: false,
+    updateKind: "web" as const
+  };
 }
 
 function clearLegacyForceUpdateState() {
@@ -291,18 +331,19 @@ export function AppUpdateNotice({
     async function checkUpdate() {
       clearLegacyForceUpdateState();
 
-      const result = await checkCurrentAppUpdate({
+      const checkedUpdate = await checkCurrentAppUpdate({
         appKind,
         currentVersion,
         currentBuild,
         currentWebReleaseSha
       });
+      const storage = getStorage();
+      const result = promoteUnappliedWebReleaseUpdate(checkedUpdate, appKind, storage);
 
       if (cancelled || !result.hasUpdate || !result.latest) {
         return;
       }
 
-      const storage = getStorage();
       const snoozeWebReleaseSha = result.updateKind === "web" ? result.latest.web_release_sha ?? "" : "";
 
       if (result.updateKind === "web" && hasAppliedWebRelease(appKind, result.latest, currentWebReleaseSha, storage)) {
