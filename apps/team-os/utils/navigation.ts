@@ -10,7 +10,8 @@ import {
   ListTodo,
   Network,
   Settings,
-  UsersRound
+  UsersRound,
+  Workflow
 } from "lucide-react";
 
 export const teamOsNavigation = [
@@ -23,6 +24,12 @@ export const teamOsNavigation = [
     icon: BrainCircuit,
     href: "/team-os/copilot/employee",
     activePaths: ["/team-os/copilot"]
+  },
+  {
+    label: "自动化工作流",
+    icon: Workflow,
+    href: "/team-os/workflow",
+    activePaths: ["/team-os/workflow"]
   },
   { label: "行业教练", icon: BookOpenCheck, href: "/team-os/industry-coach" },
   { label: "AI CRM", icon: UsersRound, href: "/team-os/crm" },

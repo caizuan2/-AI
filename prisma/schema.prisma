@@ -229,6 +229,50 @@ enum AIRecommendationStatus {
   COMPLETED
 }
 
+enum WorkflowTriggerType {
+  TASK
+  CRM
+  AI_COACH
+  TRAINING
+  ANALYTICS
+  SYSTEM
+}
+
+enum WorkflowEventType {
+  TASK_COMPLETED
+  TASK_OVERDUE
+  CRM_RISK_FOUND
+  EMPLOYEE_SCORE_LOW
+  TRAINING_FINISHED
+  BUSINESS_METRIC_ALERT
+  SYSTEM_TRIGGERED
+}
+
+enum WorkflowDefinitionStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum WorkflowExecutionStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum WorkflowExecutionMode {
+  TEST
+  PRODUCTION
+}
+
+enum WorkflowActionType {
+  CREATE_TASK
+  SEND_NOTIFICATION
+  ASSIGN_TRAINING
+  CREATE_FOLLOWUP
+  GENERATE_REPORT
+}
+
 enum TenantCompanyStatus {
   ACTIVE
   DISABLED
@@ -301,6 +345,7 @@ model TeamOrganization {
   analysisReports EmployeeAnalysisReport[]
   customers   Customer[]
   trainingAssignments TrainingAssignment[]
+  workflowDefinitions WorkflowDefinition[]
 
   @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
@@ -608,6 +653,72 @@ model AITaskRecommendation {
   @@index([companyId, userId, status, createdAt], map: "ai_task_recs_company_user_status_created_idx")
   @@index([companyId, teamId, role, status], map: "ai_task_recommendations_company_id_team_id_role_status_idx")
   @@map("ai_task_recommendations")
+}
+
+model WorkflowDefinition {
+  id           String                   @id @default(cuid())
+  companyId    String                   @map("company_id")
+  teamId       String?                  @map("team_id")
+  name         String
+  description  String                   @db.Text
+  triggerType  WorkflowTriggerType      @map("trigger_type")
+  eventType    WorkflowEventType        @map("event_type")
+  status       WorkflowDefinitionStatus @default(ACTIVE)
+  config       Json
+  createdBy    String                   @map("created_by")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  actions      WorkflowAction[]
+  executions   WorkflowExecution[]
+  team         TeamOrganization?        @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([id, companyId], map: "workflow_definitions_id_company_id_key")
+  @@index([companyId, status, eventType, updatedAt], map: "workflow_defs_company_status_event_updated_idx")
+  @@index([companyId, teamId, status], map: "workflow_defs_company_team_status_idx")
+  @@index([createdBy, updatedAt], map: "workflow_defs_created_by_updated_at_idx")
+  @@map("workflow_definitions")
+}
+
+model WorkflowAction {
+  id         String             @id @default(cuid())
+  workflowId String             @map("workflow_id")
+  companyId  String             @map("company_id")
+  actionType WorkflowActionType @map("action_type")
+  config     Json
+  order      Int                @map("action_order")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  workflow   WorkflowDefinition @relation(fields: [workflowId, companyId], references: [id, companyId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([companyId, workflowId, order], map: "workflow_actions_company_workflow_order_key")
+  @@index([companyId, actionType], map: "workflow_actions_company_action_type_idx")
+  @@map("workflow_actions")
+}
+
+model WorkflowExecution {
+  id             String                  @id @default(cuid())
+  workflowId     String                  @map("workflow_id")
+  companyId      String                  @map("company_id")
+  teamId         String?                 @map("team_id")
+  triggeredBy    String?                 @map("triggered_by")
+  eventId        String                  @map("event_id")
+  idempotencyKey String                  @map("idempotency_key")
+  eventType      WorkflowEventType       @map("event_type")
+  mode           WorkflowExecutionMode
+  triggerData    Json                    @map("trigger_data")
+  status         WorkflowExecutionStatus @default(RUNNING)
+  decision       Json?
+  result         Json?
+  error          Json?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  finishedAt     DateTime?               @map("finished_at")
+  workflow       WorkflowDefinition      @relation(fields: [workflowId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([companyId, workflowId, idempotencyKey], map: "workflow_execs_company_workflow_idempotency_key")
+  @@index([companyId, status, createdAt], map: "workflow_execs_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "workflow_execs_company_team_status_created_idx")
+  @@index([workflowId, createdAt], map: "workflow_execs_workflow_created_idx")
+  @@map("workflow_executions")
 }
 
 model TenantCompany {
