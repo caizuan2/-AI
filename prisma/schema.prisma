@@ -273,6 +273,33 @@ enum WorkflowActionType {
   GENERATE_REPORT
 }
 
+enum KnowledgeCandidateSourceType {
+  CHAT
+  CRM
+  AI_COACH
+  TRAINING
+  WORKFLOW
+}
+
+enum KnowledgeCandidateStatus {
+  PENDING
+  REVIEWING
+  APPROVED
+  REJECTED
+}
+
+enum KnowledgeFeedbackType {
+  GOOD
+  BAD
+  MISSING
+}
+
+enum KnowledgeOptimizationStatus {
+  PENDING
+  APPLIED
+  REJECTED
+}
+
 enum TenantCompanyStatus {
   ACTIVE
   DISABLED
@@ -346,6 +373,9 @@ model TeamOrganization {
   customers   Customer[]
   trainingAssignments TrainingAssignment[]
   workflowDefinitions WorkflowDefinition[]
+  knowledgeCandidates KnowledgeCandidate[]
+  knowledgeFeedback KnowledgeFeedback[]
+  knowledgeOptimizations KnowledgeOptimization[]
 
   @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
@@ -719,6 +749,67 @@ model WorkflowExecution {
   @@index([companyId, teamId, status, createdAt], map: "workflow_execs_company_team_status_created_idx")
   @@index([workflowId, createdAt], map: "workflow_execs_workflow_created_idx")
   @@map("workflow_executions")
+}
+
+model KnowledgeCandidate {
+  id                   String                       @id @default(cuid())
+  companyId            String                       @map("company_id")
+  teamId               String?                      @map("team_id")
+  sourceType           KnowledgeCandidateSourceType @map("source_type")
+  sourceId             String                       @map("source_id")
+  title                String
+  content              String                       @db.Text
+  category             String
+  status               KnowledgeCandidateStatus     @default(PENDING)
+  reviewedBy           String?                      @map("reviewed_by")
+  reviewedAt           DateTime?                    @map("reviewed_at")
+  publishedKnowledgeId String?                      @map("published_knowledge_id")
+  reviewNote           String?                      @map("review_note") @db.Text
+  createdAt            DateTime                     @default(now()) @map("created_at")
+  updatedAt            DateTime                     @updatedAt @map("updated_at")
+  team                 TeamOrganization?            @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_candidates_team_company_fkey")
+
+  @@unique([companyId, sourceType, sourceId], map: "knowledge_candidates_company_source_key")
+  @@index([companyId, status, createdAt], map: "knowledge_candidates_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "knowledge_candidates_company_team_status_created_idx")
+  @@index([publishedKnowledgeId], map: "knowledge_candidates_published_id_idx")
+  @@map("team_os_knowledge_candidates")
+}
+
+model KnowledgeFeedback {
+  id           String                @id @default(cuid())
+  companyId    String                @map("company_id")
+  teamId       String?               @map("team_id")
+  userId       String                @map("user_id")
+  question     String                @db.Text
+  answer       String                @db.Text
+  feedbackType KnowledgeFeedbackType @map("feedback_type")
+  comment      String                @default("") @db.Text
+  createdAt    DateTime              @default(now()) @map("created_at")
+  team         TeamOrganization?     @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_feedback_team_company_fkey")
+
+  @@index([companyId, feedbackType, createdAt], map: "knowledge_feedback_company_type_created_idx")
+  @@index([companyId, teamId, createdAt], map: "knowledge_feedback_company_team_created_idx")
+  @@index([userId, createdAt], map: "knowledge_feedback_user_created_idx")
+  @@map("team_os_knowledge_feedback")
+}
+
+model KnowledgeOptimization {
+  id          String                      @id @default(cuid())
+  companyId   String                      @map("company_id")
+  teamId      String?                     @map("team_id")
+  knowledgeId String                      @map("knowledge_id")
+  suggestion  String                      @db.Text
+  suggestionKey String                    @map("suggestion_key")
+  status      KnowledgeOptimizationStatus @default(PENDING)
+  createdAt   DateTime                    @default(now()) @map("created_at")
+  team        TeamOrganization?           @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_optimizations_team_company_fkey")
+
+  @@unique([companyId, suggestionKey], map: "knowledge_optimizations_company_key_key")
+  @@index([companyId, status, createdAt], map: "knowledge_optimizations_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "knowledge_optimizations_company_team_status_created_idx")
+  @@index([knowledgeId], map: "knowledge_optimizations_knowledge_id_idx")
+  @@map("team_os_knowledge_optimizations")
 }
 
 model TenantCompany {

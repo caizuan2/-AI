@@ -5,6 +5,7 @@ import {
   Bot,
   BookOpenCheck,
   Building2,
+  Database,
   GraduationCap,
   Home,
   ListTodo,
@@ -30,6 +31,12 @@ export const teamOsNavigation = [
     icon: Workflow,
     href: "/team-os/workflow",
     activePaths: ["/team-os/workflow"]
+  },
+  {
+    label: "企业 AI 大脑",
+    icon: Database,
+    href: "/team-os/ai-brain",
+    activePaths: ["/team-os/ai-brain"]
   },
   { label: "行业教练", icon: BookOpenCheck, href: "/team-os/industry-coach" },
   { label: "AI CRM", icon: UsersRound, href: "/team-os/crm" },
