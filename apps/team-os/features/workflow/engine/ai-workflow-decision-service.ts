@@ -2,7 +2,8 @@ import "server-only";
 
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import type { ChatProviderName } from "@/lib/ai/types";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import { evaluateWorkflowRules } from "@/apps/team-os/features/workflow/rules/decision-rules";
 import type {
   HydratedWorkflowEvent,
@@ -86,7 +87,7 @@ export class AIWorkflowDecisionService {
       logger.warn("team_os_workflow_ai_decision_fallback", {
         requestId: input.requestId,
         eventType: input.event.eventType,
-        error: toSafeErrorLog(error)
+        error: toTeamOsSafeErrorMetadata(error)
       });
       return baseline;
     }

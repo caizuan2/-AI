@@ -3,6 +3,7 @@ import "server-only";
 import { searchKnowledgeChunks, type KnowledgeSearchResponse } from "@/lib/knowledge/search";
 import { getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
+import { teamOsProductionLogger } from "@/apps/team-os/features/production/services/production-logger";
 
 const CORE_INGEST_PATH = "/api/core/ingest";
 const KNOWLEDGE_OPTIMIZE_PATH = "/api/admin/knowledge/optimize";
@@ -161,6 +162,16 @@ function makeError(input: {
   safeToRetry: boolean;
   requestDispatched: boolean;
 }): KnowledgeBaseAdapterError {
+  teamOsProductionLogger.warn("knowledge_call", {
+    module: "KNOWLEDGE",
+    requestId: input.requestId
+  }, {
+    outcome: "error",
+    code: input.code,
+    httpStatus: input.httpStatus ?? null,
+    safeToRetry: input.safeToRetry,
+    requestDispatched: input.requestDispatched
+  });
   return {
     ok: false,
     success: false,
@@ -174,6 +185,13 @@ function makeError(input: {
 }
 
 function makeSuccess<T>(data: T, httpStatus: number, requestId: string): KnowledgeBaseAdapterSuccess<T> {
+  teamOsProductionLogger.info("knowledge_call", {
+    module: "KNOWLEDGE",
+    requestId
+  }, {
+    outcome: "success",
+    httpStatus
+  });
   return {
     ok: true,
     success: true,
@@ -424,6 +442,16 @@ export async function searchKnowledgeBase(
   input: KnowledgeBaseSearchInput
 ): Promise<KnowledgeBaseAdapterResult<KnowledgeSearchResponse>> {
   const requestId = input.requestId?.trim() || `ai-brain-search-${Date.now()}`;
+  teamOsProductionLogger.info("knowledge_call", {
+    module: "KNOWLEDGE",
+    requestId,
+    userId: input.actorUserId,
+    companyId: input.companyId
+  }, {
+    operation: "search",
+    outcome: "started",
+    topK: input.topK ?? null
+  });
   const tenantError = await verifyActorTenant({
     actorUserId: input.actorUserId,
     companyId: input.companyId,
@@ -503,6 +531,16 @@ export async function publishKnowledgeCandidateToKnowledgeBase(
   input: PublishKnowledgeCandidateInput
 ): Promise<KnowledgeBaseAdapterResult<PublishedKnowledgeCandidate>> {
   const requestId = getRequestIdFromHeaders(input.request.headers);
+  teamOsProductionLogger.info("knowledge_call", {
+    module: "KNOWLEDGE",
+    requestId,
+    userId: input.actorUserId,
+    companyId: input.companyId
+  }, {
+    operation: "publish_candidate",
+    outcome: "started",
+    candidateId: input.candidateId
+  });
   const tenantError = await verifyActorTenant({
     actorUserId: input.actorUserId,
     companyId: input.companyId,
@@ -632,6 +670,15 @@ export async function fetchKnowledgeBaseOptimization(
   input: FetchKnowledgeOptimizationInput
 ): Promise<KnowledgeBaseAdapterResult<KnowledgeOptimizationPayload>> {
   const requestId = getRequestIdFromHeaders(input.request.headers);
+  teamOsProductionLogger.info("knowledge_call", {
+    module: "KNOWLEDGE",
+    requestId,
+    userId: input.actorUserId,
+    companyId: input.companyId
+  }, {
+    operation: "fetch_optimization",
+    outcome: "started"
+  });
   const tenantError = await verifyActorTenant({
     actorUserId: input.actorUserId,
     companyId: input.companyId,

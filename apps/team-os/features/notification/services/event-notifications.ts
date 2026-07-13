@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { logger } from "@/lib/logger";
 import { notificationGateway } from "@/apps/team-os/features/notification/services/notification-gateway";
 import { NOTIFICATION_CHANNELS, type NotificationType } from "@/apps/team-os/features/notification/types";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 
 interface BestEffortResult {
   createdCount: number;
@@ -115,7 +116,10 @@ async function bestEffort(event: string, operation: () => Promise<BestEffortResu
     });
     return await Promise.race([operation(), timeout]);
   } catch (error) {
-    logger.warn("team_os_notification_event_failed", { event, error });
+    logger.warn("team_os_notification_event_failed", {
+      event,
+      error: toTeamOsSafeErrorMetadata(error)
+    });
     return { createdCount: 0, skipped: false };
   } finally {
     if (timer) clearTimeout(timer);

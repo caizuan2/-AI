@@ -3,7 +3,8 @@ import "server-only";
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import { AIError } from "@/lib/errors";
 import type { ChatProviderName } from "@/lib/ai/types";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import {
   normalizeTrainingCourseContentInput,
   normalizeTrainingEvaluationInput,
@@ -255,7 +256,7 @@ async function runWithValidatedFallback<T>(input: {
         requestId: input.requestId,
         operation: input.operation,
         provider,
-        error: toSafeErrorLog(error)
+        error: toTeamOsSafeErrorMetadata(error)
       });
     }
   }

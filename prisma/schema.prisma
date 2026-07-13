@@ -379,6 +379,7 @@ model TeamOrganization {
 
   @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
+  @@index([companyId, status, createdAt], map: "team_organizations_company_status_created_idx")
   @@index([ownerId], map: "team_organizations_owner_id_idx")
   @@index([status], map: "team_organizations_status_idx")
   @@map("team_organizations")
@@ -396,7 +397,9 @@ model TeamMember {
 
   @@unique([teamId, userId])
   @@index([teamId], map: "team_members_team_id_idx")
+  @@index([teamId, status, createdAt], map: "team_members_team_status_created_idx")
   @@index([userId], map: "team_members_user_id_idx")
+  @@index([userId, status, createdAt], map: "team_members_user_status_created_idx")
   @@index([status], map: "team_members_status_idx")
   @@map("team_members")
 }
@@ -413,6 +416,7 @@ model TeamInvitation {
   team       TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([teamId], map: "team_invitations_team_id_idx")
+  @@index([teamId, status, expiresAt], map: "team_invitations_team_status_expires_idx")
   @@index([email], map: "team_invitations_email_idx")
   @@index([status], map: "team_invitations_status_idx")
   @@index([expiresAt], map: "team_invitations_expires_at_idx")
@@ -840,6 +844,7 @@ model TenantSubscription {
   plan      SubscriptionPlan         @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([companyId, status, endDate], map: "team_os_tenant_subscriptions_company_id_status_end_date_idx")
+  @@index([companyId, createdAt], map: "team_os_tenant_subscriptions_company_created_idx")
   @@index([planId, status], map: "team_os_tenant_subscriptions_plan_id_status_idx")
   @@index([status, endDate], map: "team_os_tenant_subscriptions_status_end_date_idx")
   @@map("team_os_tenant_subscriptions")
@@ -932,6 +937,7 @@ model Task {
   submissions TaskSubmission[]
 
   @@index([teamId], map: "team_tasks_team_id_idx")
+  @@index([teamId, status, deadline, createdAt], map: "team_tasks_team_status_deadline_created_idx")
   @@index([creatorId], map: "team_tasks_creator_id_idx")
   @@index([status], map: "team_tasks_status_idx")
   @@index([deadline], map: "team_tasks_deadline_idx")
@@ -954,6 +960,7 @@ model TaskSubmission {
 
   @@index([taskId], map: "task_submissions_task_id_idx")
   @@index([userId], map: "task_submissions_user_id_idx")
+  @@index([userId, createdAt], map: "task_submissions_user_created_idx")
   @@index([status], map: "task_submissions_status_idx")
   @@index([createdAt], map: "task_submissions_created_at_idx")
   @@map("task_submissions")

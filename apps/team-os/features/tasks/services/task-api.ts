@@ -1,7 +1,7 @@
 import "server-only";
 
 import { NextResponse } from "next/server";
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
@@ -14,14 +14,10 @@ import {
   parseSubmitTaskInput,
   parseTaskListScope
 } from "@/apps/team-os/features/tasks/utils/task-input";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
+import { readTeamOsJson as readJson } from "@/apps/team-os/features/production/services/production-http";
 
-async function readJson(request: Request) {
-  try {
-    return await request.json() as unknown;
-  } catch {
-    return null;
-  }
-}
+const apiError = createTeamOsApiErrorHandler("TASKS");
 
 export async function handleTaskList(request: Request) {
   try {

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import type {
   CreateNotificationInput,
   IntegrationProvider,
@@ -91,7 +92,7 @@ export class NotificationGateway {
             companyId: normalized.companyId,
             userId: normalized.userId,
             type: normalized.type,
-            error
+            error: toTeamOsSafeErrorMetadata(error)
           });
           attempts.push({ channel, status: "FAILED", reason: "站内通知创建失败。" });
         }
@@ -125,7 +126,7 @@ export class NotificationGateway {
           companyId: normalized.companyId,
           userId: normalized.userId,
           provider: providerName,
-          error
+          error: toTeamOsSafeErrorMetadata(error)
         });
         attempts.push({ channel, status: "FAILED", reason: "第三方通知发送失败。" });
       }

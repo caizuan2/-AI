@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
 import { RateLimitError, ValidationError } from "@/lib/errors";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -26,8 +26,10 @@ import {
   saveNotificationPreferencesForViewer,
   testIntegrationForViewer
 } from "@/apps/team-os/services/notification";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
 
 const MAX_BODY_BYTES = 32 * 1024;
+const apiError = createTeamOsApiErrorHandler("NOTIFICATION");
 const MAX_IDENTIFIER_LENGTH = 191;
 const MAX_PAGE = 10_000;
 const MAX_PAGE_SIZE = 100;

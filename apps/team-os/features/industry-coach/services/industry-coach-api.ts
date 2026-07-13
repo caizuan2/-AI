@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
@@ -14,14 +14,10 @@ import {
   parseCreateIndustryStandardInput,
   parseIndustryCompanyId
 } from "@/apps/team-os/features/industry-coach/utils/industry-coach-input";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
+import { readTeamOsJson as readJson } from "@/apps/team-os/features/production/services/production-http";
 
-async function readJson(request: Request) {
-  try {
-    return await request.json() as unknown;
-  } catch {
-    return null;
-  }
-}
+const apiError = createTeamOsApiErrorHandler("INDUSTRY_COACH");
 
 function requestedCompanyId(request: Request) {
   return parseIndustryCompanyId(new URL(request.url).searchParams.get("companyId"));

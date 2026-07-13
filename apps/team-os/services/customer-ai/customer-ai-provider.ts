@@ -3,7 +3,10 @@ import "server-only";
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import { AIError } from "@/lib/errors";
 import type { ChatProviderName } from "@/lib/ai/types";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import {
+  teamOsProductionLogger,
+  toTeamOsSafeErrorMetadata
+} from "@/apps/team-os/features/production/services/production-logger";
 import {
   buildAnalyzeCustomerPrompt,
   buildFollowUpSuggestionPrompt
@@ -146,14 +149,26 @@ async function runWithValidatedFallback<T>(input: {
         maxTokens: input.maxTokens,
         requestId: input.requestId
       });
-      return input.parse(response.text);
-    } catch (error) {
-      lastError = error;
-      logger.warn("customer_ai.provider_attempt_failed", {
-        requestId: input.requestId,
+      const parsed = input.parse(response.text);
+      teamOsProductionLogger.info("ai_call", {
+        module: "AI",
+        requestId: input.requestId
+      }, {
         operation: input.operation,
         provider,
-        error: toSafeErrorLog(error)
+        outcome: "success"
+      });
+      return parsed;
+    } catch (error) {
+      lastError = error;
+      teamOsProductionLogger.warn("ai_call", {
+        module: "AI",
+        requestId: input.requestId
+      }, {
+        operation: input.operation,
+        provider,
+        outcome: "failed",
+        error: toTeamOsSafeErrorMetadata(error)
       });
     }
   }

@@ -15,6 +15,7 @@ import type {
   AnalyzeCustomerInput,
   AnalyzeCustomerResult
 } from "@/apps/team-os/features/crm/types";
+import { teamOsProductionLogger } from "@/apps/team-os/features/production/services/production-logger";
 
 function buildKnowledgeQuery(
   context: Awaited<ReturnType<typeof loadCustomerAnalysisContext>>
@@ -74,6 +75,19 @@ export async function analyzeCustomerForUser(
       riskLevel: savedProfile.riskLevel
     });
   }
+
+  teamOsProductionLogger.info("crm_operation", {
+    module: "CRM",
+    requestId,
+    userId,
+    companyId: context.companyId,
+    teamId: context.knowledgeAuthorizationTeamId
+  }, {
+    operation: "analyze_customer",
+    customerId: context.customerId,
+    outcome: "success",
+    knowledgeContextMode: knowledgeContext.mode
+  });
 
   return {
     profile: savedProfile,

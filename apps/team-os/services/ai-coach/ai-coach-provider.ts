@@ -2,7 +2,8 @@ import "server-only";
 
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import { AIError } from "@/lib/errors";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import {
   buildSalesCoachAnalysisPrompt,
   type SalesCoachPromptRule,
@@ -198,7 +199,7 @@ class GatewayAiCoachProvider implements AiCoachProvider {
         logger.warn("ai_coach.provider_attempt_failed", {
           requestId: input.requestId,
           provider,
-          error: toSafeErrorLog(error)
+          error: toTeamOsSafeErrorMetadata(error)
         });
       }
     }

@@ -1,7 +1,8 @@
 import "server-only";
 
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
 import { checkPersistentRateLimit } from "@/lib/rate-limit";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import { executeWorkflow } from "@/apps/team-os/features/workflow/engine/workflow-engine";
 import {
   assertCanExecuteWorkflow,
@@ -81,7 +82,7 @@ export class EventBus {
           requestId: input.requestId,
           companyId: workflow.companyId,
           workflowId: workflow.id,
-          error: toSafeErrorLog(error)
+          error: toTeamOsSafeErrorMetadata(error)
         });
       }
     }

@@ -1,7 +1,8 @@
 import "server-only";
 
 import { prisma } from "@/lib/prisma";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import { notificationGateway } from "@/apps/team-os/features/notification/services/notification-gateway";
 import type { CopilotAccessScope } from "@/apps/team-os/features/copilot/services/copilot-access";
 import type {
@@ -72,7 +73,7 @@ export async function notifyNewCopilotInsights(input: {
         companyId: input.scope.context.companyId,
         assistantRole: input.scope.context.assistantRole,
         sourceKey: candidate.sourceKey,
-        error: toSafeErrorLog(error)
+        error: toTeamOsSafeErrorMetadata(error)
       });
     }
   }

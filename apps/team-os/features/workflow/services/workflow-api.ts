@@ -1,8 +1,8 @@
 import "server-only";
 
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
-import { RateLimitError, ValidationError } from "@/lib/errors";
+import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -29,23 +29,14 @@ import {
   parseWorkflowListQuery
 } from "@/apps/team-os/features/workflow/utils/workflow-input";
 import type { WorkflowExecutionMode } from "@/apps/team-os/features/workflow/types";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
+import { readTeamOsJson } from "@/apps/team-os/features/production/services/production-http";
 
 const MAX_BODY_BYTES = 32 * 1024;
+const apiError = createTeamOsApiErrorHandler("WORKFLOW");
 
 async function readJson(request: Request) {
-  const length = Number(request.headers.get("content-length") ?? "0");
-  if (Number.isFinite(length) && length > MAX_BODY_BYTES) {
-    throw new ValidationError("请求内容不能超过 32 KiB。");
-  }
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
-    throw new ValidationError("请求内容不能超过 32 KiB。");
-  }
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw new ValidationError("请求体必须是合法 JSON 对象。");
-  }
+  return readTeamOsJson(request, { maxBytes: MAX_BODY_BYTES });
 }
 
 function searchParams(request: Request) {

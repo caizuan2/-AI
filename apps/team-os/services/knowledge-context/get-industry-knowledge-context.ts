@@ -2,9 +2,10 @@ import "server-only";
 
 import { ForbiddenError } from "@/lib/errors";
 import { searchKnowledgeChunks } from "@/lib/knowledge/search";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
 import { prisma } from "@/lib/prisma";
 import { parseCoachRuleRules } from "@/apps/team-os/features/industry-coach/utils/industry-coach-input";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 
 export type IndustryKnowledgeContextMode =
   | "knowledge-and-industry-standards"
@@ -179,7 +180,7 @@ export async function getIndustryKnowledgeContext(input: {
           requestId: input.requestId,
           companyId: input.companyId,
           teamId: input.teamId,
-          error: toSafeErrorLog(error)
+          error: toTeamOsSafeErrorMetadata(error)
         });
         return { response: null, failed: true };
       })

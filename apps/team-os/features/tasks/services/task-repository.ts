@@ -69,7 +69,11 @@ function toSubmissionRecord(submission: TaskSubmission): TaskSubmissionRecord {
 
 export async function listTasksForUser(userId: string, scope: TaskListScope): Promise<TaskListData> {
   const memberships = await prisma.teamMember.findMany({
-    where: { userId },
+    where: {
+      userId,
+      status: "ACTIVE",
+      team: { status: "ACTIVE" }
+    },
     select: {
       role: true,
       team: { select: { id: true, name: true } }
@@ -106,12 +110,12 @@ export async function listTasksForUser(userId: string, scope: TaskListScope): Pr
 }
 
 export async function createTaskForManager(userId: string, input: CreateTaskInput): Promise<TaskListItem> {
-  const membership = await prisma.teamMember.findUnique({
+  const membership = await prisma.teamMember.findFirst({
     where: {
-      teamId_userId: {
-        teamId: input.teamId,
-        userId
-      }
+      teamId: input.teamId,
+      userId,
+      status: "ACTIVE",
+      team: { status: "ACTIVE" }
     },
     select: { role: true }
   });
@@ -153,7 +157,10 @@ export async function submitTaskEvidence(
         const task = await transaction.task.findFirst({
           where: {
             id: taskId,
-            team: { members: { some: { userId } } }
+            team: {
+              status: "ACTIVE",
+              members: { some: { userId, status: "ACTIVE" } }
+            }
           },
           select: {
             id: true,

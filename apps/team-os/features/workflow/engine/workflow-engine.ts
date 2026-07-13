@@ -12,6 +12,35 @@ import type {
   WorkflowDefinitionRecord,
   WorkflowExecutionMode
 } from "@/apps/team-os/features/workflow/types";
+import { teamOsProductionLogger } from "@/apps/team-os/features/production/services/production-logger";
+
+async function finishWorkflowExecutionWithLog(
+  finishInput: Parameters<typeof finishWorkflowExecution>[0],
+  context: {
+    workflow: WorkflowDefinitionRecord;
+    event: HydratedWorkflowEvent;
+    mode: WorkflowExecutionMode;
+    triggeredBy?: string;
+    requestId?: string;
+  }
+) {
+  const execution = await finishWorkflowExecution(finishInput);
+  const level = finishInput.status === "FAILED" ? "warn" : "info";
+  teamOsProductionLogger[level]("workflow_execution", {
+    module: "WORKFLOW",
+    requestId: context.requestId,
+    userId: context.triggeredBy ?? context.workflow.createdBy,
+    companyId: context.workflow.companyId,
+    teamId: context.event.teamId ?? context.workflow.scopeTeamId
+  }, {
+    workflowId: context.workflow.id,
+    executionId: finishInput.executionId,
+    eventType: context.event.eventType,
+    mode: context.mode,
+    outcome: finishInput.status
+  });
+  return execution;
+}
 
 export async function executeWorkflow(input: {
   workflow: WorkflowDefinitionRecord;
@@ -32,7 +61,22 @@ export async function executeWorkflow(input: {
     triggeredBy: input.triggeredBy,
     mode: input.mode
   });
-  if (!claim.claimed) return claim.execution;
+  if (!claim.claimed) {
+    teamOsProductionLogger.info("workflow_execution", {
+      module: "WORKFLOW",
+      requestId: input.requestId,
+      userId: input.triggeredBy ?? input.workflow.createdBy,
+      companyId: input.workflow.companyId,
+      teamId: input.event.teamId ?? input.workflow.scopeTeamId
+    }, {
+      workflowId: input.workflow.id,
+      executionId: claim.execution.id,
+      eventType: input.event.eventType,
+      mode: input.mode,
+      outcome: "IDEMPOTENT_REPLAY"
+    });
+    return claim.execution;
+  }
 
   const decision = await aiWorkflowDecisionService.decide({
     event: input.event,
@@ -63,7 +107,7 @@ export async function executeWorkflow(input: {
             status: "FAILED" as const,
             summary: appError.message.slice(0, 500)
           });
-          return finishWorkflowExecution({
+          return finishWorkflowExecutionWithLog({
             executionId: claim.execution.id,
             companyId: input.workflow.companyId,
             status: "FAILED",
@@ -77,17 +121,17 @@ export async function executeWorkflow(input: {
               actionType: action.actionType,
               at: new Date().toISOString()
             }
-          });
+          }, input);
         }
       }
     }
-    return finishWorkflowExecution({
+    return finishWorkflowExecutionWithLog({
       executionId: claim.execution.id,
       companyId: input.workflow.companyId,
       status: "SKIPPED",
       decision,
       result: { decision, actions: preflightResults }
-    });
+    }, input);
   }
 
   const actionResults = [];
@@ -112,7 +156,7 @@ export async function executeWorkflow(input: {
         status: "FAILED" as const,
         summary: appError.message.slice(0, 500)
       });
-      return finishWorkflowExecution({
+      return finishWorkflowExecutionWithLog({
         executionId: claim.execution.id,
         companyId: input.workflow.companyId,
         status: "FAILED",
@@ -126,17 +170,17 @@ export async function executeWorkflow(input: {
           actionType: action.actionType,
           at: new Date().toISOString()
         }
-      });
+      }, input);
     }
   }
 
-  return finishWorkflowExecution({
+  return finishWorkflowExecutionWithLog({
     executionId: claim.execution.id,
     companyId: input.workflow.companyId,
     status: "SUCCESS",
     decision,
     result: { decision, actions: actionResults }
-  });
+  }, input);
 }
 
 export class WorkflowEngine {

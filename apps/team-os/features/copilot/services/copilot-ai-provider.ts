@@ -2,7 +2,8 @@ import "server-only";
 
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import type { ChatProviderName } from "@/lib/ai/types";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import type { CopilotAgent } from "@/apps/team-os/features/copilot/agents/types";
 import type {
   CopilotChatMessage,
@@ -97,7 +98,7 @@ export async function generateCopilotAnswer(input: {
       logger.warn("team_os_copilot_provider_failed", {
         requestId: input.requestId,
         assistantRole: input.agent.role,
-        error: toSafeErrorLog(error)
+        error: toTeamOsSafeErrorMetadata(error)
       });
     }
   }

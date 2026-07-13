@@ -1,0 +1,146 @@
+name: AI Team OS Production Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_android_shell:
+        description: Build an unsigned Android technical-validation APK
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - "apps/team-os/**"
+      - "apps/team-os-mobile/**"
+      - "app/team-os/**"
+      - "app/api/team-os/**"
+      - "prisma/**"
+      - ".env.production.example"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-compose.production.yml"
+      - "RELEASE_CHECKLIST.md"
+      - "docs/ai-team-os-production-deployment.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ai-team-os-production-readiness.yml"
+  push:
+    branches:
+      - feature-ai-team-os
+    tags:
+      - "ai-team-os-phase*-stable"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-team-os-production-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.12.4"
+  DATABASE_URL: "postgresql://ci_user:ci_password@127.0.0.1:5432/ci_database?schema=public"
+  DIRECT_URL: "postgresql://ci_user:ci_password@127.0.0.1:5432/ci_database?schema=public"
+
+jobs:
+  web-readiness:
+    name: Web, Prisma, and Team OS contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema
+        run: pnpm exec prisma validate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run Team OS contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm test:team-os:production
+          pnpm exec tsx apps/team-os/features/workflow/tests/workflow-contract.test.ts
+          pnpm exec tsx apps/team-os/features/copilot/tests/copilot-contract.test.ts
+          pnpm exec tsx apps/team-os/features/ai-brain/tests/ai-brain-contract.test.ts
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Check Compose syntax without printing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .env.production.example .env.production
+          docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
+          rm -f .env.production
+
+      - name: Validate Dockerfile
+        run: docker build --check --file Dockerfile .
+
+      - name: Report generated build metadata only
+        if: always()
+        shell: bash
+        run: |
+          echo "The existing prebuild may update root version metadata in the ephemeral runner."
+          git status --short
+
+  flutter-quality:
+    name: Flutter shell static validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/team-os-mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Verify release base URL contract
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_android_shell }}
+        run: >-
+          flutter build apk --release
+          --dart-define=TEAM_OS_BASE_URL=https://team-os.example.com
+
+      - name: Mark technical build as non-distributable
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_android_shell }}
+        run: >-
+          echo "Unsigned or placeholder-identifier artifacts are technical validation only and must not be published."

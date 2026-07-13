@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
@@ -33,14 +33,10 @@ import {
   parseUpdateTrainingRecordInput,
   parseUpsertTrainingCourseInput
 } from "@/apps/team-os/features/training/utils/training-input";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
+import { readTeamOsJson as readJson } from "@/apps/team-os/features/production/services/production-http";
 
-async function readJson(request: Request) {
-  try {
-    return await request.json() as unknown;
-  } catch {
-    return null;
-  }
-}
+const apiError = createTeamOsApiErrorHandler("TRAINING");
 
 async function enforceAiRateLimit(
   request: Request,

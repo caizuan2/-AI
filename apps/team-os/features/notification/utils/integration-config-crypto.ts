@@ -4,23 +4,26 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { ConfigError, ValidationError } from "@/lib/errors";
 import type { IntegrationProvider } from "@/apps/team-os/features/notification/types";
 import { normalizePlainIntegrationConfig } from "@/apps/team-os/features/notification/utils/notification-input";
+import { isValidTeamOsEncryptionKey } from "@/apps/team-os/features/production/services/environment";
 
 const VERSION = "v1";
 
 function encryptionKey() {
-  const configured = process.env.TEAM_OS_INTEGRATION_ENCRYPTION_KEY?.trim();
+  const legacy = process.env.TEAM_OS_INTEGRATION_ENCRYPTION_KEY?.trim();
+  const primary = process.env.ENCRYPTION_KEY?.trim();
+  if (legacy && primary && legacy !== primary) {
+    throw new ConfigError("企业连接加密密钥配置冲突，已拒绝读取或保存连接凭据。");
+  }
+  const configured = legacy || primary;
   if (!configured) {
     throw new ConfigError("企业连接加密密钥未配置，已拒绝保存连接凭据。");
   }
-  const candidates = [
-    Buffer.from(configured, "base64url"),
-    /^[0-9a-fA-F]{64}$/.test(configured) ? Buffer.from(configured, "hex") : Buffer.alloc(0)
-  ];
-  const key = candidates.find((candidate) => candidate.length === 32);
-  if (!key) {
+  if (!isValidTeamOsEncryptionKey(configured)) {
     throw new ConfigError("企业连接加密密钥格式无效，必须提供 32 字节 base64url 或 64 位十六进制密钥。");
   }
-  return key;
+  return /^[0-9a-fA-F]{64}$/.test(configured)
+    ? Buffer.from(configured, "hex")
+    : Buffer.from(configured, "base64url");
 }
 
 function additionalAuthenticatedData(context: { companyId: string; provider: IntegrationProvider }) {

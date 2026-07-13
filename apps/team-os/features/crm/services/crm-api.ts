@@ -1,6 +1,6 @@
 import "server-only";
 
-import { apiError, apiSuccess, databaseConfigError } from "@/lib/api-response";
+import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireUserAppAccess } from "@/lib/auth/guards";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
@@ -20,14 +20,10 @@ import {
   parseCustomerId,
   parseCustomerListFilters
 } from "@/apps/team-os/features/crm/utils/crm-input";
+import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
+import { readTeamOsJson as readJson } from "@/apps/team-os/features/production/services/production-http";
 
-async function readJson(request: Request) {
-  try {
-    return await request.json() as unknown;
-  } catch {
-    return null;
-  }
-}
+const apiError = createTeamOsApiErrorHandler("CRM");
 
 export async function handleCrmCustomersGet(request: Request) {
   try {

@@ -3,7 +3,8 @@ import "server-only";
 import { chatWithFallback, getProviderReadiness } from "@/lib/ai/providers";
 import type { ChatProviderName } from "@/lib/ai/types";
 import { AIError } from "@/lib/errors";
-import { logger, toSafeErrorLog } from "@/lib/logger";
+import { logger } from "@/lib/logger";
+import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
 import { buildBusinessInsightPrompt } from "@/apps/team-os/services/analytics/analytics-prompts";
 import type {
   AnalyticsAiProvider,
@@ -100,7 +101,7 @@ class GatewayAnalyticsAiProvider implements AnalyticsAiProvider {
         logger.warn("analytics_ai.provider_attempt_failed", {
           requestId: input.requestId,
           provider,
-          error: toSafeErrorLog(error)
+          error: toTeamOsSafeErrorMetadata(error)
         });
       }
     }
