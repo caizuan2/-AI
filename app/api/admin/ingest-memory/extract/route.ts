@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 import { extractMemoriesFromConversation } from "@/lib/enterprise/ingest-memory-extractor";
+import {
+  canonicalizeCareerMemoryExtractionInput,
+  canonicalizeCareerMemoryExtractionResult
+} from "@/lib/enterprise/ingest-memory-career-scope";
 import { persistMemoryExtraction } from "@/lib/enterprise/ingest-memory-panel-service";
 import { AppError, ValidationError } from "@/lib/errors";
 import type { IngestMemoryConversationMessage } from "@/lib/enterprise/ingest-memory-types";
@@ -58,12 +62,15 @@ export async function POST(request: Request) {
       targetType: "admin_ingest_memory_extract"
     });
 
-    const source = {
+    const rawSource = {
       ...readBody(await request.json()),
       ownerAdminId: actor.id,
       ownerUserId: actor.id
     };
-    const extraction = extractMemoriesFromConversation(source);
+    const source = canonicalizeCareerMemoryExtractionInput(rawSource);
+    const extraction = canonicalizeCareerMemoryExtractionResult(
+      extractMemoriesFromConversation(rawSource)
+    );
     const persisted = await persistMemoryExtraction({
       extraction,
       source
