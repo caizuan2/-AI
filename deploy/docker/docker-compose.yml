@@ -1,0 +1,190 @@
+name: ai-team-os
+
+services:
+  # The only default service. It binds to loopback so Nginx remains the sole
+  # public ingress and cannot replace the existing knowledge-app listener.
+  team-os:
+    image: ${TEAM_OS_IMAGE:-ai-team-os:1.0.0}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.production
+      target: runtime
+      args:
+        WEB_RELEASE_SHA: ${WEB_RELEASE_SHA:-unreleased}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://team-os.example.com}
+    environment:
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      PORT: 3000
+      TEAM_OS_ENVIRONMENT: ${TEAM_OS_ENVIRONMENT:-production}
+      WEB_RELEASE_SHA: ${WEB_RELEASE_SHA:-unreleased}
+      CHAT_AVATAR_UPLOAD_DIR: /app/public/uploads
+      DATABASE_URL: ${DATABASE_URL:-}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-}
+      APP_URL: ${APP_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      QWEN_BASE_URL: ${QWEN_BASE_URL:-}
+      QWEN_MODEL: ${QWEN_MODEL:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-}
+      TEAM_OS_INTEGRATION_ENCRYPTION_KEY: ${TEAM_OS_INTEGRATION_ENCRYPTION_KEY:-}
+      LICENSE_SECRET: ${LICENSE_SECRET:-}
+      NETLIFY_BLOBS_SITE_ID: ${NETLIFY_BLOBS_SITE_ID:-}
+      NETLIFY_BLOBS_TOKEN: ${NETLIFY_BLOBS_TOKEN:-}
+    user: "1000:1000"
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${TEAM_OS_BIND_ADDRESS:-127.0.0.1}:${TEAM_OS_PORT:-3022}:3000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      # Next.js image/incremental cache needs a bounded writable path while the
+      # rest of the application filesystem remains read-only.
+      - /app/.next/cache:size=128m,uid=1000,gid=1000,mode=0750
+    volumes:
+      - team_os_storage:/app/storage
+      - team_os_uploads:/app/public/uploads
+    networks:
+      public_egress:
+        gw_priority: 1
+      private_data:
+        gw_priority: 0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/team-os/status')
+          .then((response) => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "10"
+
+  # An explicit one-shot migration tool. It is never started by the default
+  # `docker compose up` and is invoked only after a successful backup.
+  migrate:
+    image: ${TEAM_OS_MIGRATION_IMAGE:-ai-team-os-migration:1.0.0}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile.production
+      target: migration
+    profiles: ["tools"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL:-}
+      DIRECT_URL: ${DIRECT_URL:-}
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      public_egress:
+        gw_priority: 1
+      private_data:
+        gw_priority: 0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  # Opt-in local fallback only. Alibaba Cloud production should normally use
+  # RDS PostgreSQL/pgvector. No database port is published to the host.
+  postgres:
+    image: pgvector/pgvector@sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc
+    profiles: ["database"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ai_team_os}
+      POSTGRES_USER: ${POSTGRES_USER:-ai_team_os}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - private_data
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # Reserved for future cache/queue work. The guard deliberately refuses to
+  # start the opt-in service without an explicit password.
+  redis:
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    profiles: ["cache"]
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        test -n "$${REDIS_PASSWORD:-}" || {
+          echo 'REDIS_PASSWORD is required when the cache profile is enabled' >&2;
+          exit 1;
+        };
+        exec redis-server --appendonly yes --requirepass "$${REDIS_PASSWORD}"
+    volumes:
+      - redis_data:/data
+    networks:
+      - private_data
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - redis-cli --no-auth-warning -a "$${REDIS_PASSWORD}" ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  # External network access for RDS, model APIs, and HTTPS dependencies.
+  public_egress:
+  # Private east-west traffic for the optional bundled data services.
+  private_data:
+    internal: true
+
+volumes:
+  team_os_storage:
+  team_os_uploads:
+  postgres_data:
+  redis_data:

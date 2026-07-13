@@ -30,6 +30,7 @@
     "test:license": "tsx scripts/license-smoke-test.ts",
     "test:production-license": "node scripts/production-smoke-test.js",
     "test:team-os:production": "tsx apps/team-os/features/production/tests/production-contract.test.ts",
+    "test:team-os:deployment": "node deploy/scripts/verify-deployment.mjs",
     "team-os:env:check": "tsx apps/team-os/features/production/scripts/check-environment.ts",
     "debug:health": "node scripts/debug-health.js",
     "postinstall": "prisma generate",

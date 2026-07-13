@@ -16,6 +16,8 @@ on:
       - "app/api/team-os/**"
       - "prisma/**"
       - ".env.production.example"
+      - ".env.production.template"
+      - "deploy/**"
       - ".dockerignore"
       - "Dockerfile"
       - "docker-compose.production.yml"
@@ -29,6 +31,7 @@ on:
       - feature-ai-team-os
     tags:
       - "ai-team-os-phase*-stable"
+      - "ai-team-os-phase13-production-release-ready"
 
 permissions:
   contents: read
@@ -82,6 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           pnpm test:team-os:production
+          pnpm test:team-os:deployment
           pnpm exec tsx apps/team-os/features/workflow/tests/workflow-contract.test.ts
           pnpm exec tsx apps/team-os/features/copilot/tests/copilot-contract.test.ts
           pnpm exec tsx apps/team-os/features/ai-brain/tests/ai-brain-contract.test.ts
@@ -89,16 +93,43 @@ jobs:
       - name: Production build
         run: pnpm build
 
-      - name: Check Compose syntax without printing secrets
+      - name: Check shell and Compose contracts
         shell: bash
         run: |
           set -euo pipefail
+          bash -n deploy/scripts/deploy.sh
+          bash -n deploy/scripts/backup.sh
+          bash -n deploy/scripts/rollback.sh
+          bash -n deploy/scripts/load-env.sh
+          bash -n deploy/scripts/test-env-loader.sh
+          bash deploy/scripts/test-env-loader.sh
           cp .env.production.example .env.production
+          trap 'rm -f .env.production' EXIT
           docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
-          rm -f .env.production
+          docker compose --env-file .env.production.template -f deploy/docker/docker-compose.yml config --quiet
 
-      - name: Validate Dockerfile
-        run: docker build --check --file Dockerfile .
+      - name: Validate production Dockerfiles
+        run: |
+          docker build --check --file Dockerfile .
+          docker build --check --file deploy/docker/Dockerfile.production .
+
+      - name: Validate Team OS Nginx configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          mkdir -p "$temp_dir/tls" "$temp_dir/updates"
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -subj '/CN=team-os.example.com' \
+            -keyout "$temp_dir/tls/privkey.pem" \
+            -out "$temp_dir/tls/fullchain.pem" >/dev/null 2>&1
+          cp deploy/VERSION_CHECK.json "$temp_dir/updates/VERSION_CHECK.json"
+          docker run --rm \
+            -v "$PWD/deploy/nginx/ai-team-os.conf:/etc/nginx/conf.d/ai-team-os.conf:ro" \
+            -v "$temp_dir/tls:/etc/ai-team-os/tls:ro" \
+            -v "$temp_dir/updates:/var/www/ai-team-os/updates:ro" \
+            nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 nginx -t
 
       - name: Report generated build metadata only
         if: always()

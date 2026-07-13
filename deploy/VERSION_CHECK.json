@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "product": "AI Team OS",
+  "updatedAt": "2026-07-13T00:00:00Z",
+  "web": {
+    "version": "1.0.0",
+    "buildNumber": "2026071301",
+    "releaseDate": "2026-07-13",
+    "environment": "production"
+  },
+  "platforms": {
+    "android": {
+      "currentVersion": "0.1.0",
+      "latestVersion": "0.1.0",
+      "latestBuild": 1,
+      "minimumBuild": 1,
+      "forceUpdate": false,
+      "releaseStatus": "unpublished",
+      "releaseNotes": [
+        "Phase 13 deployment manifest contract; no distributable signed package is published."
+      ],
+      "downloadUrl": null,
+      "sha256": null,
+      "publishedAt": null
+    },
+    "windows": {
+      "currentVersion": "0.1.0",
+      "latestVersion": "0.1.0",
+      "latestBuild": 1,
+      "minimumBuild": 1,
+      "forceUpdate": false,
+      "releaseStatus": "unpublished",
+      "releaseNotes": [
+        "Phase 13 deployment manifest contract; no distributable signed package is published."
+      ],
+      "downloadUrl": null,
+      "sha256": null,
+      "publishedAt": null
+    },
+    "macos": {
+      "currentVersion": "0.1.0",
+      "latestVersion": "0.1.0",
+      "latestBuild": 1,
+      "minimumBuild": 1,
+      "forceUpdate": false,
+      "releaseStatus": "unpublished",
+      "releaseNotes": [
+        "Phase 13 deployment manifest contract; no distributable signed package is published."
+      ],
+      "downloadUrl": null,
+      "sha256": null,
+      "publishedAt": null
+    }
+  }
+}

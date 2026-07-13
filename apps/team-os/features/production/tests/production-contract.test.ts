@@ -14,13 +14,22 @@ import {
 } from "@/apps/team-os/features/production/services/error-handler";
 import { readTeamOsJson } from "@/apps/team-os/features/production/services/production-http";
 import { toTeamOsSafeErrorMetadata } from "@/apps/team-os/features/production/services/production-logger";
-import { TEAM_OS_RELEASE, getTeamOsRuntimeEnvironment } from "@/apps/team-os/features/production/version";
+import {
+  TEAM_OS_RELEASE,
+  getTeamOsRuntimeEnvironment,
+  getTeamOsVersionInfo
+} from "@/apps/team-os/features/production/version";
 
 assert.equal(TEAM_OS_RELEASE.version, "1.0.0");
 assert.equal(TEAM_OS_RELEASE.buildNumber, "2026071301");
 assert.equal(TEAM_OS_RELEASE.releaseDate, "2026-07-13");
 assert.equal(getTeamOsRuntimeEnvironment({ NODE_ENV: "production" }), "production");
 assert.equal(getTeamOsRuntimeEnvironment({ TEAM_OS_ENVIRONMENT: "staging" }), "staging");
+assert.equal(
+  getTeamOsVersionInfo({ TEAM_OS_ENVIRONMENT: "production", WEB_RELEASE_SHA: "a".repeat(40) }).releaseSha,
+  "a".repeat(40)
+);
+assert.equal(getTeamOsVersionInfo({ WEB_RELEASE_SHA: "unreleased" }).releaseSha, "unknown");
 
 const encryptionKey = "a".repeat(64);
 assert.equal(isValidTeamOsEncryptionKey(encryptionKey), true);

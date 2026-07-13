@@ -34,8 +34,14 @@ export function getTeamOsRuntimeEnvironment(
 export function getTeamOsVersionInfo(
   env: Record<string, string | undefined> = process.env
 ) {
+  const configuredReleaseSha = (env.WEB_RELEASE_SHA ?? "").trim().toLowerCase();
+  const releaseSha = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(configuredReleaseSha)
+    ? configuredReleaseSha
+    : "unknown";
+
   return {
     ...TEAM_OS_RELEASE,
-    environment: getTeamOsRuntimeEnvironment(env)
+    environment: getTeamOsRuntimeEnvironment(env),
+    releaseSha
   } as const;
 }
