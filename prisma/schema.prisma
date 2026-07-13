@@ -197,6 +197,38 @@ enum BusinessMetricType {
   AI_USAGE
 }
 
+enum AIAssistantRole {
+  EMPLOYEE_ASSISTANT
+  MANAGER_ASSISTANT
+  OWNER_ASSISTANT
+}
+
+enum AIInsightType {
+  TASK
+  CRM
+  TRAINING
+  TEAM
+  BUSINESS
+}
+
+enum AIInsightPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AIInsightStatus {
+  ACTIVE
+  DISMISSED
+  RESOLVED
+}
+
+enum AIRecommendationStatus {
+  ACTIVE
+  DISMISSED
+  COMPLETED
+}
+
 enum TenantCompanyStatus {
   ACTIVE
   DISABLED
@@ -523,6 +555,59 @@ model BusinessMetric {
   @@index([metricType, date], map: "business_metrics_metric_type_date_idx")
   @@index([date], map: "business_metrics_date_idx")
   @@map("business_metrics")
+}
+
+model AIAssistantSession {
+  id           String          @id @default(cuid())
+  companyId    String          @map("company_id")
+  userId       String          @map("user_id")
+  role         AIAssistantRole
+  conversation Json
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  @@unique([companyId, userId, role], map: "ai_assistant_sessions_company_id_user_id_role_key")
+  @@index([companyId, role, updatedAt], map: "ai_assistant_sessions_company_id_role_updated_at_idx")
+  @@index([userId, updatedAt], map: "ai_assistant_sessions_user_id_updated_at_idx")
+  @@map("ai_assistant_sessions")
+}
+
+model AIInsight {
+  id           String            @id @default(cuid())
+  companyId    String            @map("company_id")
+  teamId       String?           @map("team_id")
+  targetUserId String            @map("target_user_id")
+  role         AIAssistantRole
+  sourceKey    String            @map("source_key")
+  type         AIInsightType
+  title        String
+  content      String            @db.Text
+  priority     AIInsightPriority
+  status       AIInsightStatus   @default(ACTIVE)
+  notifiedAt   DateTime?         @map("notified_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+
+  @@unique([companyId, targetUserId, role, sourceKey], map: "ai_insights_company_id_target_user_id_role_source_key_key")
+  @@index([companyId, targetUserId, status, createdAt], map: "ai_insights_company_id_target_user_id_status_created_at_idx")
+  @@index([companyId, teamId, role, priority], map: "ai_insights_company_id_team_id_role_priority_idx")
+  @@map("ai_insights")
+}
+
+model AITaskRecommendation {
+  id             String                 @id @default(cuid())
+  companyId      String                 @map("company_id")
+  teamId         String?                @map("team_id")
+  userId         String                 @map("user_id")
+  role           AIAssistantRole
+  source         String
+  recommendation String                 @db.Text
+  status         AIRecommendationStatus @default(ACTIVE)
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  @@unique([companyId, userId, role, source], map: "ai_task_recommendations_company_id_user_id_role_source_key")
+  @@index([companyId, userId, status, createdAt], map: "ai_task_recs_company_user_status_created_idx")
+  @@index([companyId, teamId, role, status], map: "ai_task_recommendations_company_id_team_id_role_status_idx")
+  @@map("ai_task_recommendations")
 }
 
 model TenantCompany {

@@ -1,6 +1,7 @@
 import {
   BarChart3,
   BellRing,
+  BrainCircuit,
   Bot,
   BookOpenCheck,
   Building2,
@@ -17,6 +18,12 @@ export const teamOsNavigation = [
   { label: "任务中心", icon: ListTodo, href: "/team-os/tasks" },
   { label: "组织管理", icon: Network, href: "/team-os/organization" },
   { label: "AI 教练", icon: Bot, href: "/team-os/ai-coach" },
+  {
+    label: "企业 Copilot",
+    icon: BrainCircuit,
+    href: "/team-os/copilot/employee",
+    activePaths: ["/team-os/copilot"]
+  },
   { label: "行业教练", icon: BookOpenCheck, href: "/team-os/industry-coach" },
   { label: "AI CRM", icon: UsersRound, href: "/team-os/crm" },
   { label: "培训中心", icon: GraduationCap, href: "/team-os/training" },
