@@ -59,6 +59,7 @@ import {
 import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarDrawer";
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
+import { isCareerMentorMessage } from "../app/(user)/app/components/chat/message-renderer";
 import {
   ProductAnswerView,
   splitNaturalAnswerForCustomerScriptCards
@@ -81,6 +82,50 @@ import {
 import { normalizeUserChatMarkdown } from "../lib/ai-chat/user-chat-markdown";
 
 async function main() {
+  const messageBase = {
+    id: "scope-check",
+    role: "assistant" as const,
+    content: "回答正文",
+    created_at: "2026-07-14T00:00:00.000Z"
+  };
+
+  assert.equal(isCareerMentorMessage({
+    ...messageBase,
+    metadata: {
+      knowledgeSelection: {
+        agentId: "expert-career",
+        knowledgeBaseId: "kb-business-coach"
+      }
+    }
+  }), true);
+  assert.equal(isCareerMentorMessage({
+    ...messageBase,
+    metadata: {
+      knowledgeSelection: {
+        agentId: "expert-kks",
+        knowledgeBaseId: "kb-kks-slim"
+      }
+    }
+  }), false);
+  assert.equal(isCareerMentorMessage({
+    ...messageBase,
+    metadata: {
+      knowledgeSelection: {
+        agentId: "expert-health",
+        knowledgeBaseId: "kb-business-coach"
+      }
+    }
+  }), false);
+  assert.equal(isCareerMentorMessage({
+    ...messageBase,
+    metadata: {
+      knowledgeSelection: {
+        agentId: "expert-career",
+        knowledgeBaseId: "kb-kks-slim"
+      }
+    }
+  }), false);
+
   const naturalCustomerScriptAnswer = [
     "好的，我先保留完整分析。这类场景重点不是马上替伙伴下结论，而是先让他把客户画像、当前动作和真正卡住的点说清楚。",
     "如果一开始只给一个很泛的答案，伙伴拿去对客户沟通时会缺少抓手，所以回答里需要保留判断逻辑、提问顺序和可直接复制的沟通话术。",
@@ -117,6 +162,129 @@ async function main() {
   assert.match(naturalScriptMarkup, /话术一（通用版）/);
   assert.match(naturalScriptMarkup, /收到。您先把客户的基本情况说一下/);
   assert.match(naturalScriptMarkup, /使用前建议/);
+
+  const careerMentorGroundingFallback = [
+    "## 可复制给客户",
+    "",
+    "本轮没有检索到可逐字核对的同阶段客户话术。请补充客户原话、当前阶段或对应资料后再生成。"
+  ].join("\n");
+  const careerMentorFallbackSegments = splitNaturalAnswerForCustomerScriptCards(
+    careerMentorGroundingFallback,
+    { careerMentorMode: true }
+  );
+
+  assert.equal(careerMentorFallbackSegments.some((segment) => segment.kind === "customerScript"), false);
+  assert.match(careerMentorFallbackSegments[0]?.text ?? "", /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(careerMentorFallbackSegments[0]?.text ?? "", /## 可复制给客户\s+客户话术$/);
+
+  const structuredCustomerReply = "姐姐，刚发你的视频你抽空看一下就好。主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。";
+  const naturalAnswerWithoutScript = [
+    "判断",
+    "当前客户已经收到资料，下一步应先确认是否看过，再用开放式问题收集反馈。",
+    "",
+    "回复思路",
+    "保持轻量跟进，不催促，也不要跳过当前阶段。"
+  ].join("\n");
+  const sharedNonCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "瘦身KKS",
+        rawContent: naturalAnswerWithoutScript,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={naturalAnswerWithoutScript}
+      sources={[]}
+    />
+  );
+
+  assert.match(sharedNonCareerMarkup, /当前客户已经收到资料/);
+  assert.doesNotMatch(sharedNonCareerMarkup, /复制话术|bg-emerald-50\/70/);
+
+  const structuredFallbackMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: naturalAnswerWithoutScript,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={naturalAnswerWithoutScript}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.match(structuredFallbackMarkup, /当前客户已经收到资料/);
+  assert.match(structuredFallbackMarkup, /保持轻量跟进/);
+  assert.match(structuredFallbackMarkup, /可直接复制给客户/);
+  assert.match(structuredFallbackMarkup, /复制话术/);
+  assert.match(structuredFallbackMarkup, /姐姐，刚发你的视频你抽空看一下就好/);
+  assert.match(structuredFallbackMarkup, /bg-emerald-50\/70/);
+
+  const normalizedDuplicateAnswer = [
+    "判断",
+    "客户已经收到资料，可以轻量确认反馈。",
+    "",
+    `姐姐，刚发你的视频，你抽空看一下就好！主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。`
+  ].join("\n");
+  const normalizedDuplicateMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: normalizedDuplicateAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={normalizedDuplicateAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.match(normalizedDuplicateMarkup, /姐姐，刚发你的视频/);
+  assert.doesNotMatch(normalizedDuplicateMarkup, /复制话术|bg-emerald-50\/70/);
+
+  const groundedCareerAnswer = [
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "完整正文继续显示。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> ${structuredCustomerReply}`
+  ].join("\n");
+  const groundedCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: groundedCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={groundedCareerAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.match(groundedCareerMarkup, /完整正文继续显示/);
+  assert.match(groundedCareerMarkup, /复制话术/);
+  assert.match(groundedCareerMarkup, /bg-emerald-50\/70/);
 
   const htmlListAnswer = [
     "第三步｜讲事业通心 + 流程 + 注意事项｜三位一体完成认知建设｜",

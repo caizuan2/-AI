@@ -101,6 +101,48 @@ function getString(value: unknown) {
   return isLostHistoryAnswerText(text) ? "" : text;
 }
 
+const CAREER_MENTOR_AGENT_IDS = new Set([
+  "expert-career",
+  "expert-business",
+  "expert-agent-expert-career",
+  "agent-expert-career",
+  "讲事业导师",
+  "事业导师",
+  "business-coach",
+  "career-mentor"
+]);
+
+const CAREER_MENTOR_KNOWLEDGE_BASE_IDS = new Set([
+  "kb-business-coach",
+  "kb-career-mentor",
+  "kb:expert-agent-expert-career",
+  "讲事业导师",
+  "事业导师",
+  "business-coach",
+  "career-mentor"
+]);
+
+export function isCareerMentorMessage(message: ChatMessageView) {
+  const metadata = getRecord(message.metadata);
+  const selection = getRecord(metadata.knowledgeSelection);
+  const activeKnowledgeBase = getRecord(selection.activeKnowledgeBase);
+  const agentId = getString(
+    selection.agentId
+    ?? selection.expert_id
+    ?? activeKnowledgeBase.agentId
+    ?? activeKnowledgeBase.expert_id
+  ).toLowerCase();
+  const knowledgeBaseId = getString(
+    selection.knowledgeBaseId
+    ?? selection.kb_id
+    ?? activeKnowledgeBase.knowledgeBaseId
+    ?? activeKnowledgeBase.kb_id
+  ).toLowerCase();
+
+  return CAREER_MENTOR_AGENT_IDS.has(agentId)
+    && CAREER_MENTOR_KNOWLEDGE_BASE_IDS.has(knowledgeBaseId);
+}
+
 const LOST_HISTORY_ANSWER_PATTERNS = [
   "这条历史消息没有保留可直接展示的最终正文",
   "这条历史消息没有保留可展示的最终正文",
@@ -1400,6 +1442,7 @@ function RagSources({
 
 export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, streaming = false }: ChatMessageRendererProps) {
   const isStreaming = streaming || Boolean(message.pending);
+  const careerMentorMode = isCareerMentorMessage(message);
   const finalizedAnswer = getFinalizedAnswer(message);
   const finalAnswer = isDevDebug ? getFinalAnswer(finalizedAnswer) : "";
   const businessSchemaGuard = getRecord(
@@ -1447,6 +1490,7 @@ export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, str
           evidenceSummary={ragHitState.evidenceSummary}
           confidence={message.confidence}
           streaming={isStreaming}
+          careerMentorMode={careerMentorMode}
         />
 
         {isDevDebug ? (

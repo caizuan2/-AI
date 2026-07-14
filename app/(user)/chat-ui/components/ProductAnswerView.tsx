@@ -35,6 +35,7 @@ interface ProductAnswerViewProps {
   evidenceSummary?: string | null;
   confidence?: RagConfidence | null;
   streaming?: boolean;
+  careerMentorMode?: boolean;
   className?: string;
 }
 
@@ -186,7 +187,7 @@ function isCustomerScriptAnalysisLine(line: string) {
   return /^(?:核心作用|作用|核心技巧|技巧|核心策略|策略|沟通策略|使用技巧|关键点|关键提醒|为什么有效|为什么这样说|话术背后的策略|背后的策略|使用建议|注意事项|执行要点|原则|低压力推进的关键原则|思路|分析|方案(?:[A-ZＡ-Ｚ一二三四五六七八九十\d])?|目的|提醒(?:你|您)?的?(?:伙伴|同伴)?一句话)(?:$|[：:（(、\s])/.test(normalized);
 }
 
-function parseCustomerScriptHeading(line: string) {
+function parseCustomerScriptHeading(line: string, strictHeading = false) {
   const normalized = normalizeScriptHeadingText(line);
 
   if (!normalized) {
@@ -215,8 +216,9 @@ function parseCustomerScriptHeading(line: string) {
   const hasScriptWord = /话术|客户回复|回复文案|沟通文案|私聊发送|微信发送|外发文案/i.test(normalized);
   const hasScriptIntent = /复制|粘贴|直接|客户|微信|私聊|发送|发给|外发|对外|沟通/i.test(normalized);
   const isStrategyHeading = /背后|策略|要点|原则|思路|说明|分析|注意事项|使用建议/i.test(normalized);
+  const isHeadingLike = normalized.length <= 36 && !/[。！？!?]/.test(normalized);
 
-  if (hasScriptWord && hasScriptIntent && !isStrategyHeading) {
+  if (hasScriptWord && hasScriptIntent && !isStrategyHeading && (!strictHeading || isHeadingLike)) {
     return {
       title: normalized.length <= 28 ? normalized : "客户话术",
       firstLine: ""
@@ -498,7 +500,25 @@ function appendCustomerScriptSegment(segments: NaturalAnswerSegment[], title: st
   });
 }
 
-function splitMarkdownScriptHeadings(markdown: string) {
+function normalizeCustomerScriptDedupeText(text: string) {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\s#>*_`~[\]{}()（）【】《》“”‘’"'：:，,。.!！?？；;、\\/\-]+/g, "");
+}
+
+function hasNormalizedCustomerScriptOverlap(first: string, second: string) {
+  const firstKey = normalizeCustomerScriptDedupeText(first);
+  const secondKey = normalizeCustomerScriptDedupeText(second);
+
+  if (firstKey.length < 8 || secondKey.length < 8) {
+    return false;
+  }
+
+  return firstKey === secondKey || firstKey.includes(secondKey) || secondKey.includes(firstKey);
+}
+
+function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
   const segments: NaturalAnswerSegment[] = [];
   const markdownLines: string[] = [];
   let activeScript: { title: string; lines: string[] } | null = null;
@@ -541,7 +561,7 @@ function splitMarkdownScriptHeadings(markdown: string) {
       continue;
     }
 
-    const scriptHeading = parseCustomerScriptHeading(line);
+    const scriptHeading = parseCustomerScriptHeading(line, strictHeading);
 
     if (scriptHeading) {
       flushScript();
@@ -654,7 +674,10 @@ function splitMarkdownScriptHeadings(markdown: string) {
 const inlineCustomerScriptPattern =
   /(^|\n|[ \t。；;，,])(?:[✅☑️]\s*)?(?:[（(]\s*)?((?:标准(?:回应|回复)(?:要点|话术)?|标准回复(?:话术)?|客户(?:可复制)?话术|客户回复|对外话术|外发话术|回复文案|沟通文案|可直接(?:复制)?(?:发给|给)客户|复制给客户|直接复制(?:使用)?|您可以这样发给客户|可以这样发给客户)(?:[（(][^）)]{0,36}(?:可直接(?:复制)?(?:发给|给)客户|微信|私聊|发送|外发)[^）)]{0,36}[）)])?)(?:\s*[）)])?\s*[：:，,]\s*[“"]([\s\S]{8,1200}?)[”"]/g;
 
-export function splitNaturalAnswerForCustomerScriptCards(text: string): NaturalAnswerSegment[] {
+export function splitNaturalAnswerForCustomerScriptCards(
+  text: string,
+  options: { careerMentorMode?: boolean } = {}
+): NaturalAnswerSegment[] {
   const segments: NaturalAnswerSegment[] = [];
   let lastIndex = 0;
   inlineCustomerScriptPattern.lastIndex = 0;
@@ -665,13 +688,19 @@ export function splitNaturalAnswerForCustomerScriptCards(text: string): NaturalA
     const boundary = match[1] ?? "";
     const index = match.index + boundary.length;
 
-    splitMarkdownScriptHeadings(text.slice(lastIndex, index)).forEach((segment) => segments.push(segment));
+    splitMarkdownScriptHeadings(
+      text.slice(lastIndex, index),
+      options.careerMentorMode === true
+    ).forEach((segment) => segments.push(segment));
     appendCustomerScriptSegment(segments, match[2] || "客户话术", match[3] || "");
     lastIndex = match.index + match[0].length;
     match = inlineCustomerScriptPattern.exec(text);
   }
 
-  splitMarkdownScriptHeadings(text.slice(lastIndex)).forEach((segment) => segments.push(segment));
+  splitMarkdownScriptHeadings(
+    text.slice(lastIndex),
+    options.careerMentorMode === true
+  ).forEach((segment) => segments.push(segment));
 
   return segments.length > 0 ? segments : [{ kind: "markdown", text }];
 }
@@ -718,14 +747,19 @@ function markdownComponents() {
 function CustomerScriptInlineCard({
   title,
   text,
-  index
+  index,
+  highlighted = false
 }: {
   title: string;
   text: string;
   index: number;
+  highlighted?: boolean;
 }) {
   return (
-    <section className="not-prose my-3 rounded-2xl border border-emerald-100 bg-white px-4 py-3 shadow-sm shadow-emerald-950/5">
+    <section className={cn(
+      "not-prose my-3 rounded-2xl border border-emerald-100 px-4 py-3 shadow-sm shadow-emerald-950/5",
+      highlighted ? "bg-emerald-50/70" : "bg-white"
+    )}>
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-900">
           <MessageSquareText className="h-4 w-4 text-emerald-600" aria-hidden="true" />
@@ -761,6 +795,7 @@ export function ProductAnswerView({
   evidenceSummary: _evidenceSummary,
   confidence: _confidence,
   streaming = false,
+  careerMentorMode = false,
   className
 }: ProductAnswerViewProps) {
   void _confidence;
@@ -783,8 +818,21 @@ export function ProductAnswerView({
     [answerForDisplay, rawAnswerText]
   );
   const naturalAnswerSegments = React.useMemo(
-    () => naturalAnswerText ? splitNaturalAnswerForCustomerScriptCards(naturalAnswerText) : [],
-    [naturalAnswerText]
+    () => naturalAnswerText
+      ? splitNaturalAnswerForCustomerScriptCards(naturalAnswerText, { careerMentorMode })
+      : [],
+    [careerMentorMode, naturalAnswerText]
+  );
+  const structuredCustomerReply = answerForDisplay?.customerReply?.trim() ?? "";
+  const naturalCustomerScripts = naturalAnswerSegments
+    .filter((segment): segment is Extract<NaturalAnswerSegment, { kind: "customerScript" }> => segment.kind === "customerScript")
+    .map((segment) => segment.text);
+  const shouldAppendStructuredCustomerReply = Boolean(
+    careerMentorMode
+    && naturalAnswerText
+    && structuredCustomerReply
+    && naturalCustomerScripts.length === 0
+    && !hasNormalizedCustomerScriptOverlap(naturalAnswerText, structuredCustomerReply)
   );
   const display = React.useMemo(
     () => naturalAnswerText ? null : buildProductAnswerDisplay(answerForDisplay, sources, Boolean(hasRagHit)),
@@ -827,6 +875,7 @@ export function ProductAnswerView({
                   title={segment.title}
                   text={segment.text}
                   index={index}
+                  highlighted={careerMentorMode}
                 />
               ) : (
                 <div
@@ -839,6 +888,14 @@ export function ProductAnswerView({
                 </div>
               )
             ))}
+            {shouldAppendStructuredCustomerReply ? (
+              <CustomerScriptInlineCard
+                title="可直接复制给客户"
+                text={structuredCustomerReply}
+                index={naturalAnswerSegments.length}
+                highlighted
+              />
+            ) : null}
           </div>
         </section>
       </article>
