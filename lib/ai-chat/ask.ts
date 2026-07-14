@@ -33,7 +33,8 @@ import {
   cleanCareerMentorUserAnswer,
   extractCareerMentorCustomerAnswer,
   isCareerMentorScope,
-  prioritizeCareerMentorChunks
+  prioritizeCareerMentorChunks,
+  resolveCareerMentorTurnContext
 } from "@/lib/ai-chat/career-mentor";
 import {
   finalizeUserAnswer,
@@ -1278,20 +1279,6 @@ export async function handleAiChatAsk(
     knowledgeBaseId: agentScope.knowledgeBaseId,
     namespace: agentScope.namespace
   });
-  const ragQueryContext = careerMentorEnabled
-    ? buildCareerMentorRetrievalQuery(question, attachmentTextBlocks)
-    : buildRagQueryContext(question, input, attachments);
-  const careerMentorBusinessContext = careerMentorEnabled
-    ? buildCareerMentorBusinessContext(question, attachmentTextBlocks)
-    : null;
-  const effectiveBusinessContext = careerMentorEnabled ? null : businessContext;
-  const businessExecutionContext = careerMentorEnabled
-    ? [careerMentorBusinessContext, attachmentTextContext].filter(Boolean).join("\n\n") || null
-    : [
-        knowledgeSelectionContext?.prompt,
-        effectiveBusinessContext?.prompt,
-        attachmentTextContext
-      ].filter(Boolean).join("\n\n") || null;
   let osContext = os_core.process({
     query: question,
     userId: actor.id,
@@ -1324,6 +1311,37 @@ export async function handleAiChatAsk(
   const conversation = await getOrCreateConversation(db, actor, conversationId, question, mode);
   const normalizedConversationId = String(conversation.id);
   const recentConversation = await loadRecentConversation(db, actor, normalizedConversationId);
+  const careerMentorTurnContext = careerMentorEnabled
+    ? resolveCareerMentorTurnContext({
+        question,
+        supportingContext: attachmentTextBlocks,
+        recentConversation
+      })
+    : null;
+  const careerMentorScenarioQuestion = careerMentorTurnContext?.scenarioQuestion ?? question;
+  const careerMentorSupportingContext = careerMentorTurnContext?.supportingContext ?? attachmentTextBlocks;
+  const ragQueryContext = careerMentorEnabled
+    ? buildCareerMentorRetrievalQuery(careerMentorScenarioQuestion, careerMentorSupportingContext)
+    : buildRagQueryContext(question, input, attachments);
+  const careerMentorBusinessContext = careerMentorEnabled
+    ? buildCareerMentorBusinessContext(
+        careerMentorScenarioQuestion,
+        careerMentorSupportingContext,
+        {
+          continuationRequest: careerMentorTurnContext?.continuationRequested
+            ? question
+            : null
+        }
+      )
+    : null;
+  const effectiveBusinessContext = careerMentorEnabled ? null : businessContext;
+  const businessExecutionContext = careerMentorEnabled
+    ? [careerMentorBusinessContext, attachmentTextContext].filter(Boolean).join("\n\n") || null
+    : [
+        knowledgeSelectionContext?.prompt,
+        effectiveBusinessContext?.prompt,
+        attachmentTextContext
+      ].filter(Boolean).join("\n\n") || null;
   await saveUserMessage(db, actor, normalizedConversationId, question, attachments, {
     mode,
     enableDeepThinking,
@@ -1347,7 +1365,11 @@ export async function handleAiChatAsk(
       ? {
           careerMentorPolicy: {
             version: CAREER_MENTOR_POLICY_VERSION,
-            applied: true
+            applied: true,
+            continuationRequested: careerMentorTurnContext?.continuationRequested ?? false,
+            conversationContextApplied: careerMentorTurnContext?.conversationContextApplied ?? false,
+            currentStage: careerMentorTurnContext?.currentStage ?? "unknown",
+            resolvedStage: careerMentorTurnContext?.resolvedStage ?? "unknown"
           }
         }
       : {})
@@ -1442,7 +1464,7 @@ export async function handleAiChatAsk(
 
   const topK = osContext.rag.topK;
   const dbQueryContexts = careerMentorEnabled
-    ? buildCareerMentorRetrievalQueries(question, attachmentTextBlocks)
+    ? buildCareerMentorRetrievalQueries(careerMentorScenarioQuestion, careerMentorSupportingContext)
     : [ragQueryContext];
   const dbChunkGroups = await Promise.all(dbQueryContexts.map((query) => retrieveRelevantChunks(query, {
     userId: actor.id,
@@ -1490,8 +1512,8 @@ export async function handleAiChatAsk(
   const chunks = careerMentorEnabled
     ? prioritizeCareerMentorChunks({
         chunks: [...runtimeMemoryChunks, ...dbChunks],
-        question,
-        supportingContext: attachmentTextBlocks,
+        question: careerMentorScenarioQuestion,
+        supportingContext: careerMentorSupportingContext,
         topK
       })
     : mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
@@ -1560,7 +1582,7 @@ export async function handleAiChatAsk(
 
   if (contexts.length > 0) {
     customerAnswer = buildCustomerAnswerFromChunks({
-      question,
+      question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
       chunks,
       confidence,
       mode
@@ -1589,8 +1611,8 @@ export async function handleAiChatAsk(
         answer = careerMentorEnabled
           ? cleanCareerMentorUserAnswer(answer, {
               chunks,
-              question,
-              supportingContext: attachmentTextBlocks
+              question: careerMentorScenarioQuestion,
+              supportingContext: careerMentorSupportingContext
             })
           : answer;
         customerAnswer = careerMentorEnabled
@@ -1670,8 +1692,8 @@ export async function handleAiChatAsk(
   const cleanOutputControlledAnswer = careerMentorEnabled
     ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer, {
         chunks,
-        question,
-        supportingContext: attachmentTextBlocks
+        question: careerMentorScenarioQuestion,
+        supportingContext: careerMentorSupportingContext
       })
     : globallyCleanOutputControlledAnswer;
 
