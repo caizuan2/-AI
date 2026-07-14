@@ -847,9 +847,10 @@ function CustomerScriptInlineCard({
       className={cn(
         "not-prose my-3 rounded-2xl border px-4 py-3 shadow-sm",
         careerAi
-          ? "border-teal-200 bg-teal-50/70 shadow-teal-950/5"
-          : "border-emerald-100 shadow-emerald-950/5",
-        careerKnowledge ? "bg-emerald-50/70" : !careerAi ? "bg-white" : ""
+          ? "border-teal-200 bg-white shadow-teal-950/5"
+          : careerKnowledge
+            ? "border-emerald-200 bg-white shadow-emerald-950/5"
+            : "border-emerald-100 bg-white shadow-emerald-950/5"
       )}
     >
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">

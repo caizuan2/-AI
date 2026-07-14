@@ -226,7 +226,8 @@ async function main() {
   assert.match(structuredFallbackMarkup, /可直接复制给客户/);
   assert.match(structuredFallbackMarkup, /复制话术/);
   assert.match(structuredFallbackMarkup, /姐姐，刚发你的视频你抽空看一下就好/);
-  assert.match(structuredFallbackMarkup, /bg-emerald-50\/70/);
+  assert.match(structuredFallbackMarkup, /data-script-origin="career-knowledge"/);
+  assert.match(structuredFallbackMarkup, /border-emerald-200 bg-white shadow-emerald-950\/5/);
 
   const normalizedDuplicateAnswer = [
     "判断",
@@ -284,7 +285,7 @@ async function main() {
 
   assert.match(groundedCareerMarkup, /完整正文继续显示/);
   assert.match(groundedCareerMarkup, /复制话术/);
-  assert.match(groundedCareerMarkup, /bg-emerald-50\/70/);
+  assert.match(groundedCareerMarkup, /border-emerald-200 bg-white shadow-emerald-950\/5/);
 
   const adaptiveCareerReply = "姐，资料你先按自己的节奏看，看完告诉我你最想先了解哪一部分，我按你的关注点跟你说。";
   const dualLayerCareerAnswer = [
@@ -354,9 +355,10 @@ async function main() {
   assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply));
   assert.match(dualLayerCareerMarkup, new RegExp(structuredCustomerReply));
   assert.match(dualLayerCareerMarkup, /data-script-origin="career-ai"/);
-  assert.match(dualLayerCareerMarkup, /border-teal-200 bg-teal-50\/70/);
+  assert.match(dualLayerCareerMarkup, /border-teal-200 bg-white shadow-teal-950\/5/);
   assert.match(dualLayerCareerMarkup, /data-script-origin="career-knowledge"/);
-  assert.match(dualLayerCareerMarkup, /border-emerald-100 shadow-emerald-950\/5 bg-emerald-50\/70/);
+  assert.match(dualLayerCareerMarkup, /border-emerald-200 bg-white shadow-emerald-950\/5/);
+  assert.doesNotMatch(dualLayerCareerMarkup, /bg-teal-50\/70|bg-emerald-50\/70/);
   assert.equal((dualLayerCareerMarkup.match(/复制话术/g) ?? []).length, 2);
   assert.ok(
     dualLayerCareerMarkup.indexOf("data-script-origin=\"career-ai\"")
