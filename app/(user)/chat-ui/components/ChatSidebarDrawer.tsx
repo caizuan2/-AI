@@ -487,7 +487,7 @@ export function ChatSidebarDrawer({
           <div className="mt-5 border-t border-slate-200" />
 
           <div className="min-h-0 flex-1 overflow-y-auto py-2">
-            {loading ? (
+            {loading && items.length === 0 ? (
               <div className="space-y-3 pt-2">
                 {Array.from({ length: 6 }).map((_, index) => (
                   <div key={index} className="h-10 animate-pulse rounded-xl bg-slate-100" />

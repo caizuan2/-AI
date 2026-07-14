@@ -6,6 +6,7 @@ import {
   askChat,
   changeCurrentUserPassword,
   fetchConversationHistory,
+  fetchConversations,
   fetchQuickActionCategories,
   uploadChatAttachment,
   updateCurrentUserAvatar,
@@ -883,6 +884,15 @@ async function main() {
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /historyLoadError/);
+  assert.match(chatShellSource, /conversationListRequestIdRef/);
+  assert.match(chatShellSource, /conversationListAbortRef/);
+  assert.match(chatShellSource, /conversationListInFlightRef/);
+  assert.match(chatShellSource, /window\.addEventListener\("online", recoverConversationList\)/);
+  assert.match(chatShellSource, /window\.addEventListener\("pageshow", recoverConversationList\)/);
+  assert.match(chatShellSource, /document\.addEventListener\("visibilitychange", handleConversationListVisibilityChange\)/);
+  assert.match(chatShellSource, /window\.removeEventListener\("online", recoverConversationList\)/);
+  assert.match(chatShellSource, /loadConversations\(\{ background: true, force: true \}\)/);
+  assert.match(chatShellSource, /conversationListAbortRef\.current\?\.abort\(\)/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -974,6 +984,7 @@ async function main() {
   assert.match(drawerSource, /key=\{item\.id\}/);
   assert.match(drawerSource, /onSelect\(item\.id\)/);
   assert.match(drawerSource, /const active = item\.id === activeConversationId/);
+  assert.match(drawerSource, /loading && items\.length === 0/);
   assert.doesNotMatch(drawerSource, /setActiveConversationId|selectedConversationId/);
 
   const activeDrawerMarkup = renderToStaticMarkup(
@@ -1013,6 +1024,82 @@ async function main() {
   assert.match(activeDrawerMarkup, /第二条历史/);
   assert.match(activeDrawerMarkup, /border-blue-200 bg-blue-50/);
   assert.match(activeDrawerMarkup, /lucide-check/);
+
+  const refreshingDrawerMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[
+        {
+          id: "conv_refreshing",
+          title: "后台刷新仍保留的历史",
+          mode: "fast",
+          metadata: null,
+          message_count: 2,
+          created_at: "2026-07-14T09:00:00.000Z",
+          updated_at: "2026-07-14T09:01:00.000Z"
+        }
+      ]}
+      activeConversationId={null}
+      open
+      loading
+      currentUser={null}
+      userName="蔡姑"
+      userDescription="13360587600"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(refreshingDrawerMarkup, /后台刷新仍保留的历史/);
+  assert.doesNotMatch(refreshingDrawerMarkup, /animate-pulse/);
+
+  const initialLoadingDrawerMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[]}
+      activeConversationId={null}
+      open
+      loading
+      currentUser={null}
+      userName="蔡姑"
+      userDescription="13360587600"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(initialLoadingDrawerMarkup, /animate-pulse/);
+
+  const staleDrawerWithErrorMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[
+        {
+          id: "conv_stale",
+          title: "失败时保留的历史",
+          mode: "expert",
+          metadata: null,
+          message_count: 3,
+          created_at: "2026-07-14T10:00:00.000Z",
+          updated_at: "2026-07-14T10:01:00.000Z"
+        }
+      ]}
+      activeConversationId={null}
+      open
+      loading={false}
+      loadError="历史会话暂时无法加载，请稍后重试。"
+      currentUser={null}
+      userName="蔡姑"
+      userDescription="13360587600"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+      onRetryLoad={() => undefined}
+    />
+  );
+
+  assert.match(staleDrawerWithErrorMarkup, /失败时保留的历史/);
+  assert.match(staleDrawerWithErrorMarkup, /历史会话暂时无法加载/);
+  assert.match(staleDrawerWithErrorMarkup, /aria-label="重试加载历史会话"/);
 
   const drawerWithAvatarMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -1996,6 +2083,157 @@ async function main() {
   assert.equal(calls.at(-1)?.init?.method, "GET");
   assert.equal(historyResult.conversation.id, "conv_2");
   assert.equal(historyResult.messages[0].content, "联创历史问题");
+
+  globalThis.fetch = originalFetch;
+  calls.length = 0;
+
+  const conversationListPayload = {
+    ok: true,
+    success: true,
+    data: {
+      conversations: [
+        {
+          id: "conv_retry_success",
+          title: "重试后加载成功",
+          mode: "fast",
+          metadata: null,
+          message_count: 1,
+          created_at: "2026-07-14T11:00:00.000Z",
+          updated_at: "2026-07-14T11:01:00.000Z"
+        }
+      ]
+    }
+  };
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    if (calls.length === 1) {
+      return new Response(JSON.stringify({
+        ok: false,
+        error: { message: "服务繁忙" }
+      }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return new Response(JSON.stringify(conversationListPayload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const retriedConversationList = await fetchConversations({ timeoutMs: 50 });
+
+  assert.equal(calls.length, 2);
+  assert.equal(retriedConversationList.conversations[0].id, "conv_retry_success");
+  assert.equal(calls[0].init?.method, "GET");
+  assert.equal(calls[0].init?.credentials, "include");
+  assert.equal(calls[0].init?.cache, "no-store");
+  assert.equal(calls[0].init?.signal instanceof AbortSignal, true);
+
+  calls.length = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: false,
+      error: { message: "请先登录" }
+    }), {
+      status: 401,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    fetchConversations({ timeoutMs: 50 }),
+    /请先登录后再继续使用小董AI助手/
+  );
+  assert.equal(calls.length, 1);
+
+  calls.length = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Response(JSON.stringify({
+      ok: false,
+      error: { message: "服务繁忙，请稍后重试" }
+    }), {
+      status: 429,
+      headers: {
+        "Content-Type": "application/json",
+        "Retry-After": "60"
+      }
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    fetchConversations({ timeoutMs: 50 }),
+    /服务繁忙，请稍后重试/
+  );
+  assert.equal(calls.length, 1);
+
+  calls.length = 0;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    if (calls.length === 1) {
+      throw new TypeError("network unavailable");
+    }
+
+    return new Response(JSON.stringify(conversationListPayload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  }) as typeof fetch;
+
+  const networkRetriedConversationList = await fetchConversations({ timeoutMs: 50 });
+
+  assert.equal(calls.length, 2);
+  assert.equal(networkRetriedConversationList.conversations.length, 1);
+
+  calls.length = 0;
+  const externalConversationAbortController = new AbortController();
+
+  externalConversationAbortController.abort();
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    throw new Error("aborted request must not reach fetch");
+  }) as typeof fetch;
+
+  await assert.rejects(
+    fetchConversations({
+      signal: externalConversationAbortController.signal,
+      timeoutMs: 50
+    }),
+    (requestError: unknown) => requestError instanceof DOMException && requestError.name === "AbortError"
+  );
+  assert.equal(calls.length, 0);
+
+  calls.length = 0;
+  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+
+    return new Promise<Response>((_resolve, reject) => {
+      const signal = init?.signal;
+
+      if (signal?.aborted) {
+        reject(new DOMException("aborted", "AbortError"));
+        return;
+      }
+
+      signal?.addEventListener("abort", () => {
+        reject(new DOMException("aborted", "AbortError"));
+      }, { once: true });
+    });
+  }) as typeof fetch;
+
+  await assert.rejects(
+    fetchConversations({ timeoutMs: 5 }),
+    /历史会话加载超时/
+  );
+  assert.equal(calls.length, 1);
 
   globalThis.fetch = originalFetch;
   calls.length = 0;

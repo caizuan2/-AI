@@ -85,6 +85,11 @@ const CHAT_MESSAGE_TOP_OFFSET = 16;
 const CHAT_MESSAGE_TOP_TOLERANCE = 8;
 const IMAGE_ONLY_DEFAULT_PROMPT = "请识别图片内容并给出回复建议。";
 
+type LoadConversationsOptions = {
+  background?: boolean;
+  force?: boolean;
+};
+
 type LinkDialogState = {
   kind: "share" | "group-chat";
   conversationId?: string;
@@ -486,6 +491,11 @@ export function ChatShell() {
   const [scrollFocusMessageId, setScrollFocusMessageId] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
+  const conversationListRequestIdRef = React.useRef(0);
+  const conversationListAbortRef = React.useRef<AbortController | null>(null);
+  const conversationListInFlightRef = React.useRef(false);
+  const conversationListHasSucceededRef = React.useRef(false);
+  const conversationLoadErrorRef = React.useRef<string | null>(null);
   const activeAskAbortRef = React.useRef<AbortController | null>(null);
   const chatModeClassifyAbortRef = React.useRef<AbortController | null>(null);
   const activeUserIdentityRef = React.useRef<string | null>(null);
@@ -553,19 +563,58 @@ export function ChatShell() {
     return nextUser;
   }, []);
 
-  const loadConversations = React.useCallback(async () => {
-    setConversationLoading(true);
+  const loadConversations = React.useCallback(async (options: LoadConversationsOptions = {}) => {
+    if (conversationListInFlightRef.current && !options.force) {
+      return;
+    }
+
+    if (options.force) {
+      conversationListAbortRef.current?.abort();
+    }
+
+    const requestId = conversationListRequestIdRef.current + 1;
+    const controller = new AbortController();
+    const background = options.background ?? conversationListHasSucceededRef.current;
+
+    conversationListRequestIdRef.current = requestId;
+    conversationListAbortRef.current = controller;
+    conversationListInFlightRef.current = true;
+    conversationLoadErrorRef.current = null;
+
+    if (!background) {
+      setConversationLoading(true);
+    }
+
     setConversationLoadError(null);
 
     try {
-      const result = await fetchConversations();
+      const result = await fetchConversations({ signal: controller.signal });
 
+      if (conversationListRequestIdRef.current !== requestId) {
+        return;
+      }
+
+      conversationListHasSucceededRef.current = true;
       setConversations(result.conversations);
     } catch (requestError) {
+      if (
+        conversationListRequestIdRef.current !== requestId ||
+        (requestError instanceof DOMException && requestError.name === "AbortError")
+      ) {
+        return;
+      }
+
       console.warn("[chat-ui] conversation list load failed", requestError);
-      setConversationLoadError("历史会话暂时无法加载，请稍后重试。");
+      const loadError = "历史会话暂时无法加载，请稍后重试。";
+
+      conversationLoadErrorRef.current = loadError;
+      setConversationLoadError(loadError);
     } finally {
-      setConversationLoading(false);
+      if (conversationListRequestIdRef.current === requestId) {
+        conversationListAbortRef.current = null;
+        conversationListInFlightRef.current = false;
+        setConversationLoading(false);
+      }
     }
   }, []);
 
@@ -611,6 +660,10 @@ export function ChatShell() {
 
     return () => {
       mounted = false;
+      conversationListAbortRef.current?.abort();
+      conversationListAbortRef.current = null;
+      conversationListRequestIdRef.current += 1;
+      conversationListInFlightRef.current = false;
     };
   }, []);
 
@@ -635,8 +688,44 @@ export function ChatShell() {
       setPinnedConversationIds(readPinnedConversationIds(pinnedConversationStorageKey));
     }
 
-    void loadConversations();
+    void loadConversations({ force: previousUserIdentity !== nextUserIdentity });
   }, [currentUserLoaded, currentUserIdentity, pinnedConversationStorageKey, loadConversations]);
+
+  React.useEffect(() => {
+    if (!currentUserLoaded || !currentUserIdentity) {
+      return;
+    }
+
+    function recoverConversationList() {
+      if (
+        !conversationLoadErrorRef.current ||
+        conversationListInFlightRef.current ||
+        navigator.onLine === false
+      ) {
+        return;
+      }
+
+      void loadConversations({
+        background: conversationListHasSucceededRef.current
+      });
+    }
+
+    function handleConversationListVisibilityChange() {
+      if (document.visibilityState === "visible") {
+        recoverConversationList();
+      }
+    }
+
+    window.addEventListener("online", recoverConversationList);
+    window.addEventListener("pageshow", recoverConversationList);
+    document.addEventListener("visibilitychange", handleConversationListVisibilityChange);
+
+    return () => {
+      window.removeEventListener("online", recoverConversationList);
+      window.removeEventListener("pageshow", recoverConversationList);
+      document.removeEventListener("visibilitychange", handleConversationListVisibilityChange);
+    };
+  }, [currentUserIdentity, currentUserLoaded, loadConversations]);
 
   React.useEffect(() => {
     if (!currentUserLoaded || !currentUserIdentity) {
@@ -887,6 +976,12 @@ export function ChatShell() {
   function clearChatSessionState(options: { clearPinned?: boolean } = {}) {
     activeAskAbortRef.current?.abort();
     activeAskAbortRef.current = null;
+    conversationListAbortRef.current?.abort();
+    conversationListAbortRef.current = null;
+    conversationListRequestIdRef.current += 1;
+    conversationListInFlightRef.current = false;
+    conversationListHasSucceededRef.current = false;
+    conversationLoadErrorRef.current = null;
     pendingScrollToUserMessageIdRef.current = null;
     pendingScrollToBottomRef.current = false;
     setScrollFocusMessageId(null);
@@ -1905,7 +2000,7 @@ export function ChatShell() {
 
       setConversationId(result.conversation_id);
       setMode(normalizeChatMode(result.mode));
-      void loadConversations();
+      void loadConversations({ background: true, force: true });
       return true;
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === "AbortError") {
@@ -2047,7 +2142,7 @@ export function ChatShell() {
           onClose={closeSidebarManually}
           onNewChat={handleNewChat}
           onSelect={handleSelectConversation}
-          onRetryLoad={loadConversations}
+          onRetryLoad={() => loadConversations({ force: true })}
           onScan={handleScan}
           onScanFileSelected={handleScanFileSelected}
           onMessages={handleMessages}

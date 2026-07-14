@@ -1,4 +1,5 @@
 import { os_core } from "@/gpt-os/core/os_core";
+import { Prisma } from "@prisma/client";
 import type { GptOsCostMode } from "@/gpt-os/core/model_router";
 import { evaluateEvolutionHealth } from "@/gpt-os/core/evolution_engine";
 import {
@@ -2158,6 +2159,18 @@ function serializeConversation(conversation: ConversationRecord) {
   };
 }
 
+function serializeConversationListItem(conversation: ConversationRecord) {
+  return {
+    id: String(conversation.id),
+    title: String(conversation.title ?? "新会话"),
+    mode: normalizeAiChatMode(conversation.mode),
+    metadata: null,
+    message_count: Number(conversation._count?.messages ?? 0),
+    created_at: toIsoString(conversation.createdAt),
+    updated_at: toIsoString(conversation.updatedAt)
+  };
+}
+
 function readSerializedText(value: unknown) {
   if (typeof value !== "string") {
     return "";
@@ -2269,13 +2282,32 @@ export async function listAiChatConversations(actor: AiChatActor, db: AiChatDb =
   const conversations = await db.conversation.findMany({
     where: {
       userId: actor.id,
-      type: "CHAT"
+      type: "CHAT",
+      OR: [
+        {
+          metadata: {
+            path: ["conversationControl", "deletedAt"],
+            equals: Prisma.AnyNull
+          }
+        },
+        {
+          metadata: {
+            path: ["conversationControl", "deletedAt"],
+            equals: ""
+          }
+        }
+      ]
     },
     orderBy: {
       updatedAt: "desc"
     },
     take: 50,
-    include: {
+    select: {
+      id: true,
+      title: true,
+      mode: true,
+      createdAt: true,
+      updatedAt: true,
       _count: {
         select: {
           messages: true
@@ -2285,9 +2317,7 @@ export async function listAiChatConversations(actor: AiChatActor, db: AiChatDb =
   });
 
   return {
-    conversations: conversations
-      .filter((conversation) => !isConversationSoftDeleted(conversation.metadata))
-      .map(serializeConversation)
+    conversations: conversations.map(serializeConversationListItem)
   };
 }
 

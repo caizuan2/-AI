@@ -857,13 +857,147 @@ export async function submitChatBehaviorFeedback(input: ChatBehaviorFeedbackInpu
   return readApiResponse(response).catch(() => null);
 }
 
-export async function fetchConversations() {
-  const response = await fetch("/api/ai/chat/conversations", {
-    method: "GET",
-    credentials: "include"
-  });
+const CONVERSATION_LIST_REQUEST_TIMEOUT_MS = 12_000;
+const CONVERSATION_LIST_MAX_ATTEMPTS = 2;
+const CONVERSATION_LIST_RETRY_DELAY_MS = 300;
+const CONVERSATION_LIST_MAX_RETRY_DELAY_MS = 2_000;
 
-  return readApiResponse<ConversationsResponse>(response);
+type FetchConversationsOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+function createConversationListAbortError() {
+  return new DOMException("历史会话请求已取消。", "AbortError");
+}
+
+function createConversationListTimeoutError() {
+  const error = new Error("历史会话加载超时，请稍后重试。");
+
+  error.name = "ConversationListTimeoutError";
+  return error;
+}
+
+function shouldRetryConversationListStatus(status: number) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function shouldRetryConversationListError(error: unknown) {
+  return error instanceof TypeError;
+}
+
+function getConversationListRetryDelayMs(response?: Response) {
+  const retryAfter = response?.headers.get("retry-after")?.trim();
+
+  if (!retryAfter) {
+    return CONVERSATION_LIST_RETRY_DELAY_MS;
+  }
+
+  const seconds = Number(retryAfter);
+  const parsedDelay = Number.isFinite(seconds)
+    ? seconds * 1_000
+    : Date.parse(retryAfter) - Date.now();
+
+  if (!Number.isFinite(parsedDelay)) {
+    return CONVERSATION_LIST_RETRY_DELAY_MS;
+  }
+
+  if (parsedDelay > CONVERSATION_LIST_MAX_RETRY_DELAY_MS) {
+    return null;
+  }
+
+  return Math.max(0, Math.floor(parsedDelay));
+}
+
+function waitForConversationListRetry(delayMs: number, signal?: AbortSignal) {
+  if (signal?.aborted) {
+    return Promise.reject(createConversationListAbortError());
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const handleAbort = () => {
+      globalThis.clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", handleAbort);
+      reject(createConversationListAbortError());
+    };
+    const timeoutId = globalThis.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, delayMs);
+
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+export async function fetchConversations(options: FetchConversationsOptions = {}) {
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(1, Math.floor(options.timeoutMs ?? CONVERSATION_LIST_REQUEST_TIMEOUT_MS))
+    : CONVERSATION_LIST_REQUEST_TIMEOUT_MS;
+
+  for (let attempt = 0; attempt < CONVERSATION_LIST_MAX_ATTEMPTS; attempt += 1) {
+    if (options.signal?.aborted) {
+      throw createConversationListAbortError();
+    }
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const handleExternalAbort = () => controller.abort();
+    const timeoutId = globalThis.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    options.signal?.addEventListener("abort", handleExternalAbort, { once: true });
+
+    try {
+      const response = await fetch("/api/ai/chat/conversations", {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: controller.signal
+      });
+
+      if (
+        attempt + 1 < CONVERSATION_LIST_MAX_ATTEMPTS &&
+        shouldRetryConversationListStatus(response.status)
+      ) {
+        const retryDelayMs = getConversationListRetryDelayMs(response);
+
+        if (retryDelayMs !== null) {
+          globalThis.clearTimeout(timeoutId);
+          await response.body?.cancel().catch(() => undefined);
+          await waitForConversationListRetry(retryDelayMs, options.signal);
+          continue;
+        }
+      }
+
+      return await readApiResponse<ConversationsResponse>(response);
+    } catch (requestError) {
+      if (options.signal?.aborted) {
+        throw createConversationListAbortError();
+      }
+
+      const normalizedError = timedOut
+        ? createConversationListTimeoutError()
+        : requestError;
+
+      if (
+        attempt + 1 < CONVERSATION_LIST_MAX_ATTEMPTS &&
+        shouldRetryConversationListError(normalizedError)
+      ) {
+        globalThis.clearTimeout(timeoutId);
+        await waitForConversationListRetry(CONVERSATION_LIST_RETRY_DELAY_MS, options.signal);
+        continue;
+      }
+
+      throw normalizedError;
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      options.signal?.removeEventListener("abort", handleExternalAbort);
+    }
+  }
+
+  throw new Error("历史会话暂时无法加载，请稍后重试。");
 }
 
 export async function fetchConversationHistory(conversationId: string) {
