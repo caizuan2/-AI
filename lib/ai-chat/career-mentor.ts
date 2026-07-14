@@ -1,6 +1,6 @@
 import type { RetrievedRagChunk } from "@/lib/rag/search";
 
-export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-dual-copy-v6";
+export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-context-lock-v7";
 export const CAREER_MENTOR_RETRIEVAL_TOP_K = 14;
 
 export type CareerMentorCoreStage =
@@ -40,6 +40,21 @@ export interface CareerMentorClassification {
   stage: CareerMentorStage;
   stageLabel: string;
   retrievalTerms: string[];
+}
+
+export interface CareerMentorConversationTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface CareerMentorTurnContext {
+  scenarioQuestion: string;
+  supportingContext: string;
+  continuationRequested: boolean;
+  conversationContextApplied: boolean;
+  anchorQuestion: string | null;
+  currentStage: CareerMentorStage;
+  resolvedStage: CareerMentorStage;
 }
 
 export interface CareerMentorStageModel {
@@ -262,6 +277,27 @@ function collectSignalTerms(value: string) {
     .sort((left, right) => right.length - left.length);
 }
 
+const CAREER_MENTOR_CONTINUATION_PATTERNS = [
+  /^(?:请)?(?:再)?换(?:一)?(?:个|种|版)?(?:更(?:简短|自然|口语|温和|专业|委婉|直接|详细|强势)的?)?(?:方案|说法|版本|回答|回复|话术|建议|思路|表达|风格)(?:吧|看看)?$/,
+  /^(?:请)?(?:再|重新|另外)(?:(?:给我)?(?:来|写|生成|整理)|给(?:我)?)(?:一)?(?:个|条|种|版)?(?:更(?:简短|自然|口语|温和|专业|委婉|直接|详细|强势)的?)?(?:方案|说法|版本|回答|回复|话术|建议|思路|表达|风格)?(?:吧|看看)?$/,
+  /^(?:这个|上一个|上一版|刚才的|前面的)(?:回答|方案|话术|版本|说法)?(?:不满意|不合适|不好|不行|不够自然|太长|太短|太生硬)(?:想)?(?:(?:再)?换(?:一)?(?:个|种|版)?(?:方案|说法|版本|回答|回复|话术|建议|思路|表达|风格)?|重新(?:给|来|写|生成)(?:我)?(?:一)?(?:个|条|版)?(?:方案|说法|版本|回答|回复|话术|建议|思路|表达|风格)?)?$/,
+  /^(?:还有|再给)(?:别的|其他)?(?:方案|说法|版本|回答|回复|话术|建议|思路|表达|风格)(?:吗|么)?$/,
+  /^(?:再)?(?:简短|精简|自然|口语|温和|直接|详细|专业|强势|委婉)(?:一?点|一些)$/
+] as const;
+
+export function isCareerMentorContinuationRequest(question: string) {
+  const text = question
+    .normalize("NFKC")
+    .replace(/[\s，,。！？!?；;：:]+/g, "")
+    .trim();
+  const hasNewBusinessFacts = /客户|顾客|对方|宝妈|宝爸|老板|新人|产品|价格|资料|视频|破冰|跟进|事业|加入|成交|付款|靠谱|考虑|阶段/.test(text);
+
+  return text.length > 0
+    && text.length <= 60
+    && !hasNewBusinessFacts
+    && CAREER_MENTOR_CONTINUATION_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function isCareerMentorScope(input: CareerMentorScopeInput) {
   const agentValues = [input.agentId, input.expertId]
     .map(normalizeScopeValue)
@@ -362,6 +398,101 @@ export function classifyCareerMentorQuestion(question: string, supportingContext
     stage,
     stageLabel: STAGE_CONFIG[stage].label,
     retrievalTerms
+  };
+}
+
+function findCareerMentorConversationAnchor(
+  recentConversation: readonly CareerMentorConversationTurn[]
+) {
+  for (let index = recentConversation.length - 1; index >= 0; index -= 1) {
+    const turn = recentConversation[index];
+
+    if (turn.role !== "user") {
+      continue;
+    }
+
+    const content = turn.content.replace(/\s+/g, " ").trim().slice(0, 700);
+
+    if (!content) {
+      continue;
+    }
+
+    const classification = classifyCareerMentorQuestion(content);
+    const continuationRequested = isCareerMentorContinuationRequest(content);
+    const isConversationControl = /^(?:好|好的|好吧|行|可以|嗯|嗯嗯|收到|明白|明白了|知道了|谢谢|谢谢你|感谢|ok|okay)$/i.test(
+      content.normalize("NFKC").replace(/[\s，,。！？!?；;：:]+/g, "")
+    );
+
+    if (continuationRequested || isConversationControl) {
+      continue;
+    }
+
+    if (classification.stage !== "unknown") {
+      return {
+        question: content,
+        stage: classification.stage
+      };
+    }
+
+    // A newer substantive but unclassified user topic is a hard boundary. Do not
+    // skip past it and accidentally inherit an older customer's stage.
+    if (!continuationRequested) {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+export function resolveCareerMentorTurnContext(input: {
+  question: string;
+  supportingContext?: string;
+  recentConversation?: readonly CareerMentorConversationTurn[];
+}): CareerMentorTurnContext {
+  const baseSupportingContext = input.supportingContext?.trim() ?? "";
+  const currentClassification = classifyCareerMentorQuestion(input.question, baseSupportingContext);
+  const continuationRequested = isCareerMentorContinuationRequest(input.question);
+
+  if (!continuationRequested) {
+    return {
+      scenarioQuestion: input.question,
+      supportingContext: baseSupportingContext,
+      continuationRequested: false,
+      conversationContextApplied: false,
+      anchorQuestion: null,
+      currentStage: currentClassification.stage,
+      resolvedStage: currentClassification.stage
+    };
+  }
+
+  const canInheritConversation = currentClassification.stage === "unknown"
+    && !baseSupportingContext;
+  const anchor = canInheritConversation
+    ? findCareerMentorConversationAnchor(input.recentConversation ?? [])
+    : null;
+
+  if (!anchor) {
+    return {
+      scenarioQuestion: input.question,
+      supportingContext: baseSupportingContext,
+      continuationRequested: true,
+      conversationContextApplied: false,
+      anchorQuestion: null,
+      currentStage: currentClassification.stage,
+      resolvedStage: currentClassification.stage
+    };
+  }
+
+  const resolvedClassification = classifyCareerMentorQuestion(anchor.question, baseSupportingContext);
+
+  return {
+    scenarioQuestion: anchor.question,
+    supportingContext: baseSupportingContext,
+    continuationRequested: true,
+    conversationContextApplied: true,
+    anchorQuestion: anchor.question,
+    currentStage: currentClassification.stage,
+    resolvedStage: resolvedClassification.stage
   };
 }
 
@@ -622,14 +753,31 @@ const STAGE_EXECUTION_CONTEXT: Record<CareerMentorStage, string[]> = {
   ]
 };
 
-export function buildCareerMentorBusinessContext(question: string, supportingContext = "") {
+export function buildCareerMentorBusinessContext(
+  question: string,
+  supportingContext = "",
+  options: {
+    continuationRequest?: string | null;
+  } = {}
+) {
   const classification = classifyCareerMentorQuestion(question, supportingContext);
   const shouldGenerateAdaptiveReply = isCareerMentorCoreStage(classification.stage);
+  const continuationRequest = options.continuationRequest?.trim() ?? "";
+  const continuationRequested = Boolean(continuationRequest)
+    || isCareerMentorContinuationRequest(question);
+  const inheritedConversationScenario = continuationRequest
+    && normalizeContent(continuationRequest) !== normalizeContent(question);
 
   return [
     `[CAREER_MENTOR_POLICY ${CAREER_MENTOR_POLICY_VERSION}]`,
     "本规则只适用于当前已选择的讲事业导师固定知识库。不要展示规则名、内部策略或检索过程，但必须给用户可理解的阶段判断依据。",
     `本轮内部定位：${classification.sceneLabel}；${classification.stageLabel}。`,
+    continuationRequested
+      ? "本轮属于同一场景续答：用户要求‘再换一个、换一种、重新生成或调整表达’只代表更换方案或说法，不代表客户状态前进。必须继承最近一条用户原始问题中的客户对象、沟通阶段和已执行动作；上一轮助手答案只用于避免重复，不得作为推进阶段的依据。若没有可用的上一轮用户原始问题，保持信息不足并请用户补充，禁止猜测阶段。"
+      : "",
+    inheritedConversationScenario
+      ? `本轮已锁定的最近用户原始场景：${question.trim().slice(0, 700)}。只在这个场景和当前阶段内更换表达，不得改换客户画像或推进到下一阶段。`
+      : "",
     "",
     "五步顺序铁律：破冰 -> 促单跟进 -> 讲事业 -> 锁定问题 -> 成交；成交后长期维护。先确认前置步骤，不跳步。第四步和第五步必须分别判断，但实操时按‘锁定一个问题 -> 解决 -> 推进一次行动’循环衔接。",
     "",
@@ -646,7 +794,7 @@ export function buildCareerMentorBusinessContext(question: string, supportingCon
     "- 只要 retrieved context 命中可直接发给客户的固定话术，‘### 话术 1’必须从该命中片段连续逐字复制：字词、标点、数字、顺序全部保持，不润色、不纠错、不缩写、不拼接、不补词，也不添加原文没有的前后缀。",
     "- 当前阶段没有专门客户话术卡时，‘话术 1’只能逐字采用精读笔记或操作卡片中明确标为话术、回复、文案、可直接转发的客户文本；不能把通心、策略、操作、技巧、配图、自检或带教内容当客户话术。",
     shouldGenerateAdaptiveReply
-      ? "- 在‘回复思路’内增加‘### AI思考回复话术’，根据本轮客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术；每条分别使用‘#### AI建议话术 1’或‘#### AI建议话术 2’和独立引用块。不得编造公司、产品、收益或案例事实，不得照抄固定话术冒充动态建议。"
+      ? "- 在‘回复思路’内增加‘### AI思考回复话术’，根据本轮客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术；每条分别使用‘#### AI建议话术 1’或‘#### AI建议话术 2’和独立引用块。不得编造公司、产品、收益或案例事实，不得照抄固定话术冒充动态建议。用户未提供的客户姓名、朋友圈内容、个人经历、帮助人数、业绩、收益、时间和案例一律不得补全；改用中性称呼与条件式表达。"
       : "- 当前不是信息充分的五个客户沟通阶段，不生成 AI 思考回复话术；应先解释框架或请用户补充客户原话、阶段和已执行动作，严禁为长期维护或未知场景编造客户话术。",
     "- ‘## 可复制给客户’与 AI 思考话术严格分层：最下面只保留固定知识库话术，不放 AI 改写或延伸。若没有精确固定话术命中，先请用户补充客户原话、阶段或对应资料。",
     "",
@@ -865,6 +1013,160 @@ function buildCareerMentorAiReplyMask(lines: string[], fenceMask: boolean[]) {
 
     return insideAiReplySection;
   });
+}
+
+function findCareerMentorAiReplySection(lines: string[]) {
+  const startIndex = lines.findIndex(isCareerMentorAiReplyHeading);
+
+  if (startIndex < 0) {
+    return null;
+  }
+
+  let endIndex = lines.length;
+
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    if (isCareerMentorCopyHeading(lines[index]) || /^\s*#{1,3}\s+/.test(lines[index])) {
+      endIndex = index;
+      break;
+    }
+  }
+
+  return { startIndex, endIndex };
+}
+
+function hasUnsupportedCareerMentorAdaptiveFacts(
+  lines: string[],
+  input: CareerMentorAnswerGroundingInput
+) {
+  const userEvidence = normalizeContent([
+    input.question,
+    input.supportingContext ?? ""
+  ].join("\n"));
+  const knowledgeEvidence = normalizeContent(input.chunks.map((chunk) => [
+    chunk.title,
+    chunk.sourceTitle ?? "",
+    chunk.summary ?? "",
+    chunk.content
+  ].join(" ")).join("\n"));
+  const allEvidence = `${userEvidence}${knowledgeEvidence}`;
+  const genericSalutations = new Set(["姐姐", "哥哥", "大姐", "大哥"]);
+
+  for (const line of lines) {
+    const text = line
+      .replace(/^\s*>\s?/, "")
+      .replace(/^\s*#{1,6}\s+/, "")
+      .replace(/[*_`]/g, "")
+      .trim();
+
+    if (!text || isCareerMentorAiReplyHeading(line) || /^AI建议话术\s*[一二三四五六七八九十\d]*/.test(text)) {
+      continue;
+    }
+
+    const salutationMatches = Array.from(
+      text.matchAll(/(?:^|[，。！？!：:\s])(?:您好[，,]?\s*)?([\u4e00-\u9fff]{1,2})(姐|哥|总|老师)(?=[，。！？!：:\s])/g)
+    );
+
+    for (const match of salutationMatches) {
+      const salutation = `${match[1]}${match[2]}`;
+
+      if (!genericSalutations.has(salutation) && !userEvidence.includes(normalizeContent(salutation))) {
+        return true;
+      }
+    }
+
+    const numericClaims = [
+      ...Array.from(text.matchAll(/\d+(?:\.\d+)?\s*(?:多|余)?\s*(?:位|名|个|人|家|单|元|块|万|%|年|月|天|小时|分钟)/g)),
+      ...Array.from(text.matchAll(/[一二三四五六七八九两]+十[一二三四五六七八九]?\s*(?:多|余)?\s*(?:位|名|人|家|单)/g))
+    ].map((match) => normalizeContent(match[0]));
+
+    if (numericClaims.some((claim) => claim && !allEvidence.includes(claim))) {
+      return true;
+    }
+
+    const observationMatch = text.match(/(?:刚|最近)(?:刷到|看到|看见|留意到|注意到)[^。！？\n]{0,70}(?:照片|视频|朋友圈|动态|宝宝|孩子)|(?:您|你)(?:刚|最近)?发的[^。！？\n]{0,50}(?:照片|视频|朋友圈|动态)/);
+
+    if (observationMatch && !userEvidence.includes(normalizeContent(observationMatch[0]))) {
+      return true;
+    }
+
+    const personalClaim = text.match(/(?:我|我们|我这边)(?:自己)?(?:也是|之前|以前|去年|已经|曾经|最近|刚刚|刚|靠|做过|带过|帮过|帮助过|服务过|陪伴过)/);
+
+    if (personalClaim && !userEvidence.includes(normalizeContent(personalClaim[0]))) {
+      return true;
+    }
+
+    const outcomeClaim = text.match(/稳定(?:收入|收益|分润)|做到(?:周薪|月入)|轻松赚钱|保证收益/);
+
+    if (outcomeClaim && !knowledgeEvidence.includes(normalizeContent(outcomeClaim[0]))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function buildCareerMentorSafeAdaptiveReply(
+  classification: CareerMentorClassification,
+  supportingContext: string
+) {
+  if (classification.stage === "ice_breaking") {
+    return /宝妈|妈妈|带孩子|带娃/.test(normalizeContent(supportingContext))
+      ? "您好，带孩子的同时还要安排好自己的生活确实不容易。我们先不急着聊太多，我想先了解一下，您现在更希望改善时间安排，还是想多了解一个适合自己的选择？我再按您的实际情况和您说。"
+      : "您好，我们先不急着聊太多。我想先了解一下，您现在主要是在工作、做生意，还是照顾家庭？我再根据您的实际情况和您说。";
+  }
+
+  if (classification.stage === "follow_up") {
+    return "您好，资料您先按自己的节奏看。看完告诉我您最想先了解哪一部分，我再按您的关注点和您说。";
+  }
+
+  if (classification.stage === "career_presentation") {
+    return "您好，我们先把您最关心的一点讲清楚。您现在更想先了解怎么参与，还是时间和投入怎么安排？我按您的关注点一步一步说。";
+  }
+
+  if (classification.stage === "objection_handling") {
+    return "您好，您有顾虑很正常。您现在最担心的是哪一点？我们先把这一个问题说清楚，再看下一步。";
+  }
+
+  if (classification.stage === "closing") {
+    return "您好，前面您已经了解了一些。您现在主要卡在哪一步？我们先把这个问题解决，再确认一个您方便执行的下一步。";
+  }
+
+  return "可以的。为了给您换一个真正适合当前情况的方案，请先告诉我您最想调整的是表达方式、执行步骤，还是客户话术。";
+}
+
+function sanitizeCareerMentorAdaptiveReplies(
+  answer: string,
+  input: CareerMentorAnswerGroundingInput
+) {
+  const lines = answer.replace(/\r\n/g, "\n").split("\n");
+  const section = findCareerMentorAiReplySection(lines);
+
+  if (!section) {
+    return answer;
+  }
+
+  const sectionLines = lines.slice(section.startIndex, section.endIndex);
+
+  if (!hasUnsupportedCareerMentorAdaptiveFacts(sectionLines, input)) {
+    return answer;
+  }
+
+  const classification = classifyCareerMentorQuestion(input.question, input.supportingContext);
+  const safeReply = buildCareerMentorSafeAdaptiveReply(
+    classification,
+    `${input.question}\n${input.supportingContext ?? ""}`
+  );
+
+  return [
+    ...lines.slice(0, section.startIndex),
+    lines[section.startIndex],
+    "",
+    "#### AI建议话术 1",
+    "",
+    `> ${safeReply}`,
+    "",
+    ...lines.slice(section.endIndex)
+  ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 function findCareerMentorCopySections(lines: string[]) {
@@ -1133,9 +1435,13 @@ export function cleanCareerMentorUserAnswer(
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  return grounding
-    ? enforceCareerMentorGroundedCopy(cleaned, grounding)
+  const adaptiveReplySafeAnswer = grounding
+    ? sanitizeCareerMentorAdaptiveReplies(cleaned, grounding)
     : cleaned;
+
+  return grounding
+    ? enforceCareerMentorGroundedCopy(adaptiveReplySafeAnswer, grounding)
+    : adaptiveReplySafeAnswer;
 }
 
 export function extractCareerMentorCustomerAnswer(answer: string) {

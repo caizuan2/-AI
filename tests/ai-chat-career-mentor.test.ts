@@ -9,8 +9,10 @@ import {
   classifyCareerMentorQuestion,
   cleanCareerMentorUserAnswer,
   extractCareerMentorCustomerAnswer,
+  isCareerMentorContinuationRequest,
   isCareerMentorScope,
-  prioritizeCareerMentorChunks
+  prioritizeCareerMentorChunks,
+  resolveCareerMentorTurnContext
 } from "../lib/ai-chat/career-mentor";
 import type { RetrievedRagChunk } from "../lib/rag/search";
 
@@ -189,6 +191,100 @@ function main() {
     "objection_handling"
   );
 
+  assert.equal(isCareerMentorContinuationRequest("再换一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("换一种更自然的说法"), true);
+  assert.equal(isCareerMentorContinuationRequest("换一种更强势的说法"), true);
+  assert.equal(isCareerMentorContinuationRequest("这个回答不满意，重新给一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("再给我一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("重新给我一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("另外给我一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("客户现在说贵，怎么办？"), false);
+  assert.equal(isCareerMentorContinuationRequest("客户说再换一个产品"), false);
+  assert.equal(isCareerMentorContinuationRequest("换一个阶段"), false);
+  assert.equal(isCareerMentorContinuationRequest("再换一个方案，客户现在说贵"), false);
+
+  const resolvedIceBreakingFollowUp = resolveCareerMentorTurnContext({
+    question: "再换一个方案",
+    recentConversation: [
+      {
+        role: "user",
+        content: "客户是宝妈，应该怎么破冰，给我一些建议"
+      },
+      {
+        role: "assistant",
+        content: "上一版长正文里提到了第三步讲事业，但这不代表客户阶段已经变化。"
+      }
+    ]
+  });
+
+  assert.equal(resolvedIceBreakingFollowUp.continuationRequested, true);
+  assert.equal(resolvedIceBreakingFollowUp.conversationContextApplied, true);
+  assert.equal(resolvedIceBreakingFollowUp.currentStage, "unknown");
+  assert.equal(resolvedIceBreakingFollowUp.resolvedStage, "ice_breaking");
+  assert.equal(resolvedIceBreakingFollowUp.anchorQuestion, "客户是宝妈，应该怎么破冰，给我一些建议");
+  assert.equal(resolvedIceBreakingFollowUp.scenarioQuestion, "客户是宝妈，应该怎么破冰，给我一些建议");
+  assert.equal(resolvedIceBreakingFollowUp.supportingContext, "");
+
+  const repeatedFollowUp = resolveCareerMentorTurnContext({
+    question: "再来一个",
+    recentConversation: [
+      { role: "user", content: "客户是宝妈，应该怎么破冰，给我一些建议" },
+      { role: "assistant", content: "第一版回答。" },
+      { role: "user", content: "再换一个方案" },
+      { role: "assistant", content: "第二版回答。" }
+    ]
+  });
+
+  assert.equal(repeatedFollowUp.conversationContextApplied, true);
+  assert.equal(repeatedFollowUp.anchorQuestion, "客户是宝妈，应该怎么破冰，给我一些建议");
+  assert.equal(repeatedFollowUp.resolvedStage, "ice_breaking");
+
+  const explicitCurrentObjection = resolveCareerMentorTurnContext({
+    question: "客户现在说贵，换个回答",
+    recentConversation: [
+      { role: "user", content: "客户是宝妈，应该怎么破冰，给我一些建议" },
+      { role: "assistant", content: "上一版破冰回答。" }
+    ]
+  });
+
+  assert.equal(explicitCurrentObjection.currentStage, "objection_handling");
+  assert.equal(explicitCurrentObjection.resolvedStage, "objection_handling");
+  assert.equal(explicitCurrentObjection.conversationContextApplied, false);
+
+  const noHistoryFollowUp = resolveCareerMentorTurnContext({
+    question: "再换一个方案",
+    recentConversation: []
+  });
+
+  assert.equal(noHistoryFollowUp.conversationContextApplied, false);
+  assert.equal(noHistoryFollowUp.resolvedStage, "unknown");
+
+  const newerUnknownTopicStopsOldInheritance = resolveCareerMentorTurnContext({
+    question: "再换一个方案",
+    recentConversation: [
+      { role: "user", content: "客户是宝妈，应该怎么破冰，给我一些建议" },
+      { role: "assistant", content: "上一版破冰回答。" },
+      { role: "user", content: "帮我写一条朋友圈文案" },
+      { role: "assistant", content: "朋友圈文案回答。" }
+    ]
+  });
+
+  assert.equal(newerUnknownTopicStopsOldInheritance.conversationContextApplied, false);
+  assert.equal(newerUnknownTopicStopsOldInheritance.resolvedStage, "unknown");
+
+  const newAttachmentPreventsOldConversationInheritance = resolveCareerMentorTurnContext({
+    question: "再换一个方案",
+    supportingContext: "新上传截图中的客户原话：我觉得价格有点贵。",
+    recentConversation: [
+      { role: "user", content: "客户是宝妈，应该怎么破冰，给我一些建议" },
+      { role: "assistant", content: "上一版破冰回答。" }
+    ]
+  });
+
+  assert.equal(newAttachmentPreventsOldConversationInheritance.conversationContextApplied, false);
+  assert.equal(newAttachmentPreventsOldConversationInheritance.resolvedStage, "objection_handling");
+  assert.equal(newAttachmentPreventsOldConversationInheritance.scenarioQuestion, "再换一个方案");
+
   const retrievalQuery = buildCareerMentorRetrievalQuery(question);
 
   assert.match(retrievalQuery, /宝妈/);
@@ -204,6 +300,16 @@ function main() {
   assert.equal(retrievalQueries.length, 2);
   assert.equal(retrievalQueries[0], question);
   assert.match(retrievalQueries[1], /促单跟进/);
+
+  const inheritedRetrievalQueries = buildCareerMentorRetrievalQueries(
+    resolvedIceBreakingFollowUp.scenarioQuestion,
+    resolvedIceBreakingFollowUp.supportingContext
+  );
+
+  assert.match(inheritedRetrievalQueries[0], /宝妈.*破冰/);
+  assert.doesNotMatch(inheritedRetrievalQueries[0], /再换一个方案/);
+  assert.match(inheritedRetrievalQueries[1], /第一步.*破冰.*精准共鸣/);
+  assert.doesNotMatch(inheritedRetrievalQueries[1], /第三步.*讲事业/);
 
   const policy = buildCareerMentorBusinessContext(question);
 
@@ -228,6 +334,18 @@ function main() {
   assert.match(policy, /不得编造公司、产品、收益或案例事实/);
   assert.match(policy, /最下面只保留固定知识库话术，不放 AI 改写或延伸/);
   assert.match(policy, /没有精确固定话术命中，先请用户补充/);
+  assert.match(policy, /客户姓名、朋友圈内容、个人经历、帮助人数、业绩、收益、时间和案例一律不得补全/);
+
+  const followUpPolicy = buildCareerMentorBusinessContext(
+    resolvedIceBreakingFollowUp.scenarioQuestion,
+    resolvedIceBreakingFollowUp.supportingContext,
+    { continuationRequest: "再换一个方案" }
+  );
+
+  assert.match(followUpPolicy, /同一场景续答/);
+  assert.match(followUpPolicy, /只代表更换方案或说法，不代表客户状态前进/);
+  assert.match(followUpPolicy, /第一步：破冰/);
+  assert.match(followUpPolicy, /客户是宝妈，应该怎么破冰/);
   assert.match(policy, /不得省略流程或动态话术/);
   assert.match(policy, /完整 DeepSeek\/GPT 风格 Markdown 正文/);
   assert.doesNotMatch(policy, /业务问题 客户问题 成交 回复 处理建议/);
@@ -525,6 +643,58 @@ function main() {
     }),
     groundedFullBody
   );
+
+  const sanitizedInventedAdaptiveReply = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第一步破冰。",
+    "",
+    "## 回复思路",
+    "完整正文继续保留，只处理不可靠的动态话术。",
+    "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1",
+    "",
+    "> 您好，李姐！刚刷到您发的宝宝第一次自己吃饭的照片。我们最近帮20多位宝妈实现了稳定分润。",
+    "",
+    "### 推荐执行流程",
+    "",
+    "1. 完整流程正文不能被动态话术清洗删除。",
+    "",
+    "## 可复制给客户",
+    "",
+    "### 话术 1",
+    "",
+    "> 这是一条未经知识校验的固定话术。"
+  ].join("\n"), {
+    chunks: [],
+    question: resolvedIceBreakingFollowUp.scenarioQuestion,
+    supportingContext: resolvedIceBreakingFollowUp.supportingContext
+  });
+
+  assert.match(sanitizedInventedAdaptiveReply, /完整正文继续保留/);
+  assert.match(sanitizedInventedAdaptiveReply, /### AI思考回复话术/);
+  assert.match(sanitizedInventedAdaptiveReply, /#### AI建议话术 1/);
+  assert.match(sanitizedInventedAdaptiveReply, /带孩子的同时还要安排好自己的生活/);
+  assert.match(sanitizedInventedAdaptiveReply, /### 推荐执行流程/);
+  assert.match(sanitizedInventedAdaptiveReply, /完整流程正文不能被动态话术清洗删除/);
+  assert.doesNotMatch(sanitizedInventedAdaptiveReply, /李姐|宝宝第一次自己吃饭|20多位|稳定分润/);
+  assert.match(extractCareerMentorCustomerAnswer(sanitizedInventedAdaptiveReply), /^姐\/哥，我们这个事业很简单/);
+
+  const providedCustomerNameIsPreserved = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第一步破冰。",
+    "",
+    "## 回复思路",
+    "### AI思考回复话术",
+    "#### AI建议话术 1",
+    "> 李姐，先不急着聊太多，我想先了解一下您现在最关心什么。"
+  ].join("\n"), {
+    chunks: [],
+    question: "客户叫李姐，是宝妈，怎么破冰"
+  });
+
+  assert.match(providedCustomerNameIsPreserved, /李姐，先不急着聊太多/);
 
   const formatDriftAiHeadingAnswer = cleanCareerMentorUserAnswer([
     "## 判断",
