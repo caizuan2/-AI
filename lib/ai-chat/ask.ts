@@ -1586,9 +1586,15 @@ export async function handleAiChatAsk(
         });
 
         answer = cleanUserFacingRagAnswer(providerResult.answer);
-        answer = careerMentorEnabled ? cleanCareerMentorUserAnswer(answer) : answer;
+        answer = careerMentorEnabled
+          ? cleanCareerMentorUserAnswer(answer, {
+              chunks,
+              question,
+              supportingContext: attachmentTextBlocks
+            })
+          : answer;
         customerAnswer = careerMentorEnabled
-          ? extractCareerMentorCustomerAnswer(answer) || buildCustomerAnswerFromText(question, answer)
+          ? extractCareerMentorCustomerAnswer(answer)
           : buildCustomerAnswerFromText(question, answer);
         providerStatus = "ok";
         providerUsed = providerResult.providerUsed;
@@ -1662,7 +1668,11 @@ export async function handleAiChatAsk(
   }).output;
   const globallyCleanOutputControlledAnswer = cleanUserFacingRagAnswer(outputControlledAnswer);
   const cleanOutputControlledAnswer = careerMentorEnabled
-    ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer)
+    ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer, {
+        chunks,
+        question,
+        supportingContext: attachmentTextBlocks
+      })
     : globallyCleanOutputControlledAnswer;
 
   if (cleanOutputControlledAnswer !== answer) {
@@ -1670,9 +1680,14 @@ export async function handleAiChatAsk(
 
     if (providerStatus === "ok") {
       customerAnswer = careerMentorEnabled
-        ? extractCareerMentorCustomerAnswer(answer) || customerAnswer
+        ? extractCareerMentorCustomerAnswer(answer)
         : buildCustomerAnswerFromText(question, answer);
     }
+  }
+
+  if (careerMentorEnabled) {
+    customerAnswer = extractCareerMentorCustomerAnswer(answer);
+    finalizedAnswer.customerReply = customerAnswer;
   }
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
   const visibleModelFeedbackEvent: ModelFeedbackEvent = {
