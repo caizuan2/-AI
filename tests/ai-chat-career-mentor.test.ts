@@ -222,14 +222,18 @@ function main() {
   assert.match(policy, /字词、标点、数字、顺序全部保持/);
   assert.match(policy, /不润色、不纠错、不缩写、不拼接、不补词/);
   assert.match(policy, /内部使用\/绝不发给客户.*严禁进入话术卡/);
-  assert.match(policy, /话术 2.*话术 3.*为可选项.*只能排在话术 1 后/);
-  assert.match(policy, /没有精确话术命中，不输出 AI 话术/);
-  assert.match(policy, /每段使用引用块并保持独立/);
+  assert.match(policy, /### AI思考回复话术/);
+  assert.match(policy, /#### AI建议话术 1.*#### AI建议话术 2/);
+  assert.match(policy, /客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术/);
+  assert.match(policy, /不得编造公司、产品、收益或案例事实/);
+  assert.match(policy, /最下面只保留固定知识库话术，不放 AI 改写或延伸/);
+  assert.match(policy, /没有精确固定话术命中，先请用户补充/);
+  assert.match(policy, /不得省略流程或动态话术/);
   assert.match(policy, /完整 DeepSeek\/GPT 风格 Markdown 正文/);
   assert.doesNotMatch(policy, /业务问题 客户问题 成交 回复 处理建议/);
-  assert.ok(policy.length <= 2350);
-  assert.match(policy.slice(-140), /绿色复制卡片/);
-  assert.match(policy.slice(-140), /不得在用户端显示/);
+  assert.ok(policy.length <= 2700);
+  assert.match(policy.slice(-160), /最下方绿色复制卡片/);
+  assert.match(policy.slice(-160), /不得混入 AI 改写/);
 
   const objectionPolicy = buildCareerMentorBusinessContext("客户说贵、还说不靠谱，怎么办？");
 
@@ -252,11 +256,27 @@ function main() {
   assert.match(presentationPolicy, /说明如何成为经营者/);
   assert.match(presentationPolicy, /七条注意事项/);
 
+  const frameworkPolicy = buildCareerMentorBusinessContext("沟通五步骤是什么？");
+
+  assert.match(frameworkPolicy, /按五步完整说明：破冰建立信任并发资料；促单跟进持续展示价值；讲事业完成通心与客户讲解；锁定问题用公式解决疑虑；成交把认可转为行动/);
+  assert.match(frameworkPolicy, /不生成 AI 思考回复话术/);
+  assert.match(frameworkPolicy, /不要输出‘### AI思考回复话术’/);
+  assert.doesNotMatch(frameworkPolicy, /不得省略流程或动态话术/);
+
   const maintenancePolicy = buildCareerMentorBusinessContext("客户成交以后，怎么长期维护关系？");
 
   assert.match(maintenancePolicy, /成交后：长期客户维护/);
   assert.match(maintenancePolicy, /没有完整维护 SOP/);
   assert.match(maintenancePolicy, /不能编造复购、售后话术/);
+  assert.match(maintenancePolicy, /不生成 AI 思考回复话术/);
+  assert.doesNotMatch(maintenancePolicy, /不得省略流程或动态话术/);
+
+  const unknownPolicy = buildCareerMentorBusinessContext("还没成交，客户先问售后怎么办？");
+
+  assert.match(unknownPolicy, /请用户补充客户原话、阶段和已执行动作/);
+  assert.match(unknownPolicy, /不生成 AI 思考回复话术/);
+  assert.match(unknownPolicy, /严禁为长期维护或未知场景编造客户话术/);
+  assert.doesNotMatch(unknownPolicy, /不得省略流程或动态话术/);
 
   const objectionRetrievalQuery = buildCareerMentorRetrievalQuery("客户说贵怎么办？");
   const closingRetrievalQuery = buildCareerMentorRetrievalQuery("客户认可但是不加入？");
@@ -472,6 +492,11 @@ function main() {
     "完整 DeepSeek/GPT 正文与代码块必须保留。",
     "```",
     "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1",
+    "> 姐，资料你先按自己的节奏看，看完告诉我你最想先了解哪一部分，我按你的关注点跟你说。",
+    "",
     "## 可复制给客户",
     "### 话术 1",
     `> “${exactKnowledgeScript}”`,
@@ -485,7 +510,47 @@ function main() {
 
   assert.match(groundedFullBody, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(groundedFullBody, /完整 DeepSeek\/GPT 正文与代码块必须保留/);
+  assert.match(groundedFullBody, /### AI思考回复话术/);
+  assert.match(groundedFullBody, /#### AI建议话术 1/);
+  assert.match(groundedFullBody, /资料你先按自己的节奏看/);
+  assert.doesNotMatch(groundedFullBody, /这是依据同阶段知识生成的可选变体/);
+  assert.equal((groundedFullBody.match(/## 可复制给客户/g) ?? []).length, 1);
+  assert.equal((groundedFullBody.match(/### 话术 1/g) ?? []).length, 1);
+  assert.ok(groundedFullBody.indexOf("### AI思考回复话术") < groundedFullBody.indexOf("## 可复制给客户"));
   assert.equal(extractCareerMentorCustomerAnswer(groundedFullBody).startsWith(exactKnowledgeScript), true);
+  assert.equal(
+    cleanCareerMentorUserAnswer(groundedFullBody, {
+      chunks: [groundedChunk],
+      question: "客户已经看了资料但没有行动，接下来怎么办？"
+    }),
+    groundedFullBody
+  );
+
+  const formatDriftAiHeadingAnswer = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "### AI思考回复话术",
+    "#### 话术 1",
+    "> 姐，资料你先按自己的节奏看，看完告诉我你最想了解哪一部分。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(formatDriftAiHeadingAnswer, /### AI思考回复话术/);
+  assert.match(formatDriftAiHeadingAnswer, /#### 话术 1/);
+  assert.match(formatDriftAiHeadingAnswer, /资料你先按自己的节奏看/);
+  assert.ok(
+    formatDriftAiHeadingAnswer.indexOf("#### 话术 1")
+      < formatDriftAiHeadingAnswer.indexOf("## 可复制给客户")
+  );
+  assert.equal(extractCareerMentorCustomerAnswer(formatDriftAiHeadingAnswer), exactKnowledgeScript);
 
   const negativeInstructionPreserved = cleanCareerMentorUserAnswer([
     "## 判断",

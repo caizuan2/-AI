@@ -286,6 +286,149 @@ async function main() {
   assert.match(groundedCareerMarkup, /复制话术/);
   assert.match(groundedCareerMarkup, /bg-emerald-50\/70/);
 
+  const adaptiveCareerReply = "姐，资料你先按自己的节奏看，看完告诉我你最想先了解哪一部分，我按你的关注点跟你说。";
+  const dualLayerCareerAnswer = [
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "完整处理逻辑继续显示，不改变原有正文结构。",
+    "",
+    "### 推荐执行流程",
+    "1. 先确认客户是否已经看过资料。",
+    "2. 再根据客户反馈推进下一步。",
+    "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1",
+    `> ${adaptiveCareerReply}`,
+    "",
+    "## 可复制给客户",
+    "",
+    "### 话术 1",
+    `> ${structuredCustomerReply}`
+  ].join("\n");
+  const dualLayerSegments = splitNaturalAnswerForCustomerScriptCards(
+    dualLayerCareerAnswer,
+    { careerMentorMode: true }
+  );
+  const dualLayerScriptSegments = dualLayerSegments.filter(
+    (segment): segment is Extract<(typeof dualLayerSegments)[number], { kind: "customerScript" }> => segment.kind === "customerScript"
+  );
+
+  assert.deepEqual(
+    dualLayerScriptSegments.map((segment) => segment.variant),
+    ["careerAi", "careerKnowledge"]
+  );
+  assert.deepEqual(
+    dualLayerScriptSegments.map((segment) => segment.title),
+    ["AI建议话术 1", "话术 1"]
+  );
+  assert.deepEqual(
+    dualLayerScriptSegments.map((segment) => segment.text),
+    [adaptiveCareerReply, structuredCustomerReply]
+  );
+  assert.equal(dualLayerScriptSegments.some((segment) => segment.text.startsWith(">")), false);
+
+  const dualLayerCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: dualLayerCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={dualLayerCareerAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.match(dualLayerCareerMarkup, /当前阶段：第二步促单跟进/);
+  assert.match(dualLayerCareerMarkup, /完整处理逻辑继续显示/);
+  assert.match(dualLayerCareerMarkup, /推荐执行流程/);
+  assert.match(dualLayerCareerMarkup, /AI思考回复话术/);
+  assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply));
+  assert.match(dualLayerCareerMarkup, new RegExp(structuredCustomerReply));
+  assert.match(dualLayerCareerMarkup, /data-script-origin="career-ai"/);
+  assert.match(dualLayerCareerMarkup, /border-teal-200 bg-teal-50\/70/);
+  assert.match(dualLayerCareerMarkup, /data-script-origin="career-knowledge"/);
+  assert.match(dualLayerCareerMarkup, /border-emerald-100 shadow-emerald-950\/5 bg-emerald-50\/70/);
+  assert.equal((dualLayerCareerMarkup.match(/复制话术/g) ?? []).length, 2);
+  assert.ok(
+    dualLayerCareerMarkup.indexOf("data-script-origin=\"career-ai\"")
+      < dualLayerCareerMarkup.indexOf("data-script-origin=\"career-knowledge\"")
+  );
+
+  const legacyPlainSectionSegments = splitNaturalAnswerForCustomerScriptCards([
+    "回复思路",
+    "AI思考回复话术",
+    "话术 1",
+    `> ${adaptiveCareerReply}`,
+    "可复制给客户（固定知识库话术）",
+    "话术 1",
+    `> ${structuredCustomerReply}`
+  ].join("\n"), { careerMentorMode: true }).filter(
+    (segment): segment is Extract<(typeof dualLayerSegments)[number], { kind: "customerScript" }> => segment.kind === "customerScript"
+  );
+
+  assert.deepEqual(
+    legacyPlainSectionSegments.map((segment) => segment.variant),
+    ["careerAi", "careerKnowledge"]
+  );
+
+  const adaptiveOnlyCareerAnswer = [
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "### AI思考回复话术",
+    "#### AI建议话术 1",
+    `> ${adaptiveCareerReply}`
+  ].join("\n");
+  const adaptiveOnlyCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: adaptiveOnlyCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={adaptiveOnlyCareerAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.match(adaptiveOnlyCareerMarkup, /data-script-origin="career-ai"/);
+  assert.match(adaptiveOnlyCareerMarkup, /data-script-origin="career-knowledge"/);
+  assert.equal((adaptiveOnlyCareerMarkup.match(/复制话术/g) ?? []).length, 2);
+
+  const nonCareerDualLayerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "瘦身KKS",
+        rawContent: dualLayerCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={dualLayerCareerAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.doesNotMatch(nonCareerDualLayerMarkup, /data-script-origin="career-(?:ai|knowledge)"/);
+  assert.doesNotMatch(nonCareerDualLayerMarkup, /bg-teal-50\/70|bg-emerald-50\/70/);
+
   const htmlListAnswer = [
     "第三步｜讲事业通心 + 流程 + 注意事项｜三位一体完成认知建设｜",
     "<ul><li><strong>通心</strong>：唤醒内在动力（如“为什么现在是改变的好时机？”）</li><li><strong>流程</strong>：清晰呈现事业路径（入门→成长→复制→收获）</li><li><strong>注意事项</strong>：提前划清边界，增强可信度</li></ul>",

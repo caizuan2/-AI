@@ -1,6 +1,6 @@
 import type { RetrievedRagChunk } from "@/lib/rag/search";
 
-export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-copy-first-v5";
+export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-dual-copy-v6";
 export const CAREER_MENTOR_RETRIEVAL_TOP_K = 14;
 
 export type CareerMentorCoreStage =
@@ -624,6 +624,7 @@ const STAGE_EXECUTION_CONTEXT: Record<CareerMentorStage, string[]> = {
 
 export function buildCareerMentorBusinessContext(question: string, supportingContext = "") {
   const classification = classifyCareerMentorQuestion(question, supportingContext);
+  const shouldGenerateAdaptiveReply = isCareerMentorCoreStage(classification.stage);
 
   return [
     `[CAREER_MENTOR_POLICY ${CAREER_MENTOR_POLICY_VERSION}]`,
@@ -641,19 +642,24 @@ export function buildCareerMentorBusinessContext(question: string, supportingCon
     "- 隐藏测试提问、预期输出、管理员、投喂端、课程、源文件、ID、版本和检索说明。保留完整 DeepSeek/GPT 风格 Markdown 正文，不能只回答一句或只给话术卡。",
     "",
     "知识库原话优先铁律：",
-    "- ‘回复思路/推荐执行流程’优先采用当前阶段命中的精读笔记和一线人员操作卡片；‘可复制给客户’优先采用同阶段、同客户场景的客户可复制话术卡片，包括模型中逐字固化的四份客户话术卡原文。操作卡片中标明‘内部使用/绝不发给客户’的内容严禁进入话术卡。",
+    "- ‘回复思路/推荐执行流程’优先采用当前阶段命中的精读笔记和一线人员操作卡片；‘可复制给客户’只采用同阶段、同客户场景的固定知识库话术，包括模型中逐字固化的四份客户话术卡原文。操作卡片中标明‘内部使用/绝不发给客户’的内容严禁进入话术卡。",
     "- 只要 retrieved context 命中可直接发给客户的固定话术，‘### 话术 1’必须从该命中片段连续逐字复制：字词、标点、数字、顺序全部保持，不润色、不纠错、不缩写、不拼接、不补词，也不添加原文没有的前后缀。",
     "- 当前阶段没有专门客户话术卡时，‘话术 1’只能逐字采用精读笔记或操作卡片中明确标为话术、回复、文案、可直接转发的客户文本；不能把通心、策略、操作、技巧、配图、自检或带教内容当客户话术。",
-    "- ‘### 话术 2’和‘### 话术 3’为可选项，只能排在话术 1 后，才可依据同阶段命中知识生成；不得把 AI 生成内容提前或冒充为话术 1。若没有精确话术命中，不输出 AI 话术，先请用户补充客户原话、阶段或对应资料。",
+    shouldGenerateAdaptiveReply
+      ? "- 在‘回复思路’内增加‘### AI思考回复话术’，根据本轮客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术；每条分别使用‘#### AI建议话术 1’或‘#### AI建议话术 2’和独立引用块。不得编造公司、产品、收益或案例事实，不得照抄固定话术冒充动态建议。"
+      : "- 当前不是信息充分的五个客户沟通阶段，不生成 AI 思考回复话术；应先解释框架或请用户补充客户原话、阶段和已执行动作，严禁为长期维护或未知场景编造客户话术。",
+    "- ‘## 可复制给客户’与 AI 思考话术严格分层：最下面只保留固定知识库话术，不放 AI 改写或延伸。若没有精确固定话术命中，先请用户补充客户原话、阶段或对应资料。",
     "",
     "最终输出必须严格使用以下三个一级 Markdown 标题，顺序固定，不增加其他一级标题：",
     "## 判断",
     "依次写明‘当前阶段：’‘调用步骤：’‘判断依据：’，明确为什么调用这一步。",
     "## 回复思路",
-    "先说明处理逻辑，再用‘### 推荐执行流程’给出可执行步骤；不得省略流程。",
+    shouldGenerateAdaptiveReply
+      ? "先说明处理逻辑，再用‘### 推荐执行流程’给出可执行步骤；流程后必须输出‘### AI思考回复话术’，并用‘#### AI建议话术 1’和可选的‘#### AI建议话术 2’给出可复制的动态回复。不得省略流程或动态话术。"
+      : "先说明处理逻辑，再用‘### 推荐执行流程’给出当前可执行步骤；不要输出‘### AI思考回复话术’，先完成框架说明或信息补充。",
     "## 可复制给客户",
-    "只放真正可以发给客户的话。先写逐字命中的‘### 话术 1’；有需要时再写‘### 话术 2/3’。每段使用引用块并保持独立，便于生成绿色复制卡片；不得在用户端显示‘知识库原话’‘AI 生成’等内部标签。"
-  ].join("\n").slice(0, 2350);
+    "只放逐字命中的固定知识库话术，使用‘### 话术 1’和独立引用块，生成最下方绿色复制卡片；不得混入 AI 改写，不得在用户端显示内部检索标签。"
+  ].join("\n").slice(0, 2700);
 }
 
 export interface CareerMentorAnswerGroundingInput {
@@ -832,8 +838,38 @@ function isCareerMentorFirstScriptHeading(line: string) {
   return /^\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*(?:话术\s*(?:1|一|①)|第一条话术)\s*(?:\*{1,2}|_{1,2})?\s*(?:[：:].*)?$/i.test(line);
 }
 
+function isCareerMentorAiReplyHeading(line: string) {
+  return /^\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*AI思考回复话术\s*(?:\*{1,2}|_{1,2})?\s*(?:[（(、:].*)?$/i.test(line);
+}
+
+function buildCareerMentorAiReplyMask(lines: string[], fenceMask: boolean[]) {
+  let insideAiReplySection = false;
+
+  return lines.map((line, index) => {
+    if (fenceMask[index]) {
+      return false;
+    }
+
+    if (isCareerMentorAiReplyHeading(line)) {
+      insideAiReplySection = true;
+      return true;
+    }
+
+    if (
+      insideAiReplySection
+      && (isCareerMentorCopyHeading(line) || /^\s*#{1,2}\s+/.test(line))
+    ) {
+      insideAiReplySection = false;
+      return false;
+    }
+
+    return insideAiReplySection;
+  });
+}
+
 function findCareerMentorCopySections(lines: string[]) {
   const fenceMask = buildCareerMentorFenceMask(lines);
+  const aiReplyMask = buildCareerMentorAiReplyMask(lines, fenceMask);
   const startIndexes = lines
     .map((line, index) => (!fenceMask[index] && isCareerMentorCopyHeading(line) ? index : -1))
     .filter((index) => index >= 0);
@@ -868,6 +904,7 @@ function findCareerMentorCopySections(lines: string[]) {
   const orphanScriptIndexes = lines
     .map((line, index) => (
       !fenceMask[index]
+      && !aiReplyMask[index]
       && isCareerMentorFirstScriptHeading(line)
       && !explicitSections.some((section) => index > section.startIndex && index < section.endIndex)
         ? index
@@ -1033,6 +1070,7 @@ export function enforceCareerMentorGroundedCopy(
     input.question,
     input.supportingContext
   );
+  let groundedFixedScript = "";
 
   if (copySections.length === 1) {
     const [copySection] = copySections;
@@ -1051,8 +1089,16 @@ export function enforceCareerMentorGroundedCopy(
       );
 
     if (isGrounded) {
-      return answer.trim();
+      groundedFixedScript = script;
     }
+  }
+
+  if (groundedFixedScript) {
+    return replaceCareerMentorCopySections(
+      lines,
+      copySections,
+      buildCareerMentorCanonicalCopySection(groundedFixedScript)
+    );
   }
 
   if (canonicalCopy) {
