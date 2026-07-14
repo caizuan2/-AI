@@ -23,6 +23,326 @@ export interface ChatUiResetState {
   error: string | null;
 }
 
+export const CHAT_DRAFT_CONVERSATION_PREFIX = "draft:";
+
+export type ChatConversationRunPhase =
+  | "uploading"
+  | "generating"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface ChatConversationRun {
+  requestId: string;
+  viewId: string;
+  serverConversationId: string | null;
+  phase: ChatConversationRunPhase;
+  mode: ChatMode;
+  messages: ChatMessageView[];
+  localUserMessageId: string;
+  localAssistantMessageId: string;
+  finalMessageId: string | null;
+  title: string;
+  error: string | null;
+  startedAt: number;
+  updatedAt: number;
+}
+
+export interface ChatConversationRunState {
+  byRequestId: Record<string, ChatConversationRun>;
+  latestRequestByViewId: Record<string, string>;
+}
+
+export type ChatConversationRunAction =
+  | {
+      type: "run/start";
+      run: ChatConversationRun;
+    }
+  | {
+      type: "run/update-messages";
+      requestId: string;
+      messages: ChatMessageView[];
+      updatedAt: number;
+    }
+  | {
+      type: "run/mark-generating";
+      requestId: string;
+      mode: ChatMode;
+      updatedAt: number;
+    }
+  | {
+      type: "run/complete";
+      requestId: string;
+      conversationId: string;
+      mode: ChatMode;
+      finalMessageId: string;
+      messages: ChatMessageView[];
+      updatedAt: number;
+    }
+  | {
+      type: "run/fail" | "run/cancel";
+      requestId: string;
+      messages: ChatMessageView[];
+      error: string | null;
+      updatedAt: number;
+    }
+  | {
+      type: "run/drop";
+      requestId: string;
+    }
+  | {
+      type: "run/clear";
+    };
+
+export interface ChatConversationHistoryMergeResult {
+  messages: ChatMessageView[];
+  source: "history" | "runtime";
+  dropRequestId: string | null;
+}
+
+export function createEmptyChatConversationRunState(): ChatConversationRunState {
+  return {
+    byRequestId: {},
+    latestRequestByViewId: {}
+  };
+}
+
+export function createDraftConversationId(requestId: string) {
+  return `${CHAT_DRAFT_CONVERSATION_PREFIX}${requestId}`;
+}
+
+export function isDraftConversationId(value: string | null | undefined) {
+  return typeof value === "string" && value.startsWith(CHAT_DRAFT_CONVERSATION_PREFIX);
+}
+
+export function isChatConversationRunBusy(run: ChatConversationRun | null | undefined) {
+  return run?.phase === "uploading" || run?.phase === "generating";
+}
+
+export function getLatestChatConversationRun(
+  state: ChatConversationRunState,
+  viewId: string | null | undefined
+) {
+  if (!viewId) {
+    return null;
+  }
+
+  const requestId = state.latestRequestByViewId[viewId];
+
+  return requestId ? state.byRequestId[requestId] ?? null : null;
+}
+
+export function getLatestChatConversationRuns(state: ChatConversationRunState) {
+  const seen = new Set<string>();
+  const runs: ChatConversationRun[] = [];
+
+  for (const requestId of Object.values(state.latestRequestByViewId)) {
+    if (seen.has(requestId)) {
+      continue;
+    }
+
+    const run = state.byRequestId[requestId];
+
+    if (run) {
+      seen.add(requestId);
+      runs.push(run);
+    }
+  }
+
+  return runs;
+}
+
+function removeChatConversationRun(
+  state: ChatConversationRunState,
+  requestId: string
+): ChatConversationRunState {
+  const run = state.byRequestId[requestId];
+
+  if (!run) {
+    return state;
+  }
+
+  const byRequestId = { ...state.byRequestId };
+  const latestRequestByViewId = { ...state.latestRequestByViewId };
+
+  delete byRequestId[requestId];
+
+  if (latestRequestByViewId[run.viewId] === requestId) {
+    delete latestRequestByViewId[run.viewId];
+  }
+
+  return {
+    byRequestId,
+    latestRequestByViewId
+  };
+}
+
+function canUpdateChatConversationRun(state: ChatConversationRunState, run: ChatConversationRun) {
+  return isChatConversationRunBusy(run) && state.latestRequestByViewId[run.viewId] === run.requestId;
+}
+
+export function chatConversationRunReducer(
+  state: ChatConversationRunState,
+  action: ChatConversationRunAction
+): ChatConversationRunState {
+  if (action.type === "run/clear") {
+    return createEmptyChatConversationRunState();
+  }
+
+  if (action.type === "run/drop") {
+    return removeChatConversationRun(state, action.requestId);
+  }
+
+  if (action.type === "run/start") {
+    const previousRequestId = state.latestRequestByViewId[action.run.viewId];
+    const baseState = previousRequestId
+      ? removeChatConversationRun(state, previousRequestId)
+      : state;
+
+    return {
+      byRequestId: {
+        ...baseState.byRequestId,
+        [action.run.requestId]: action.run
+      },
+      latestRequestByViewId: {
+        ...baseState.latestRequestByViewId,
+        [action.run.viewId]: action.run.requestId
+      }
+    };
+  }
+
+  const run = state.byRequestId[action.requestId];
+
+  if (!run || !canUpdateChatConversationRun(state, run)) {
+    return state;
+  }
+
+  if (action.type === "run/update-messages") {
+    return {
+      ...state,
+      byRequestId: {
+        ...state.byRequestId,
+        [run.requestId]: {
+          ...run,
+          messages: action.messages,
+          updatedAt: action.updatedAt
+        }
+      }
+    };
+  }
+
+  if (action.type === "run/mark-generating") {
+    return {
+      ...state,
+      byRequestId: {
+        ...state.byRequestId,
+        [run.requestId]: {
+          ...run,
+          phase: "generating",
+          mode: action.mode,
+          updatedAt: action.updatedAt
+        }
+      }
+    };
+  }
+
+  if (action.type === "run/complete") {
+    const latestRequestByViewId = { ...state.latestRequestByViewId };
+
+    if (latestRequestByViewId[run.viewId] === run.requestId) {
+      delete latestRequestByViewId[run.viewId];
+    }
+    latestRequestByViewId[action.conversationId] = run.requestId;
+
+    return {
+      byRequestId: {
+        ...state.byRequestId,
+        [run.requestId]: {
+          ...run,
+          viewId: action.conversationId,
+          serverConversationId: action.conversationId,
+          phase: "completed",
+          mode: action.mode,
+          messages: action.messages,
+          finalMessageId: action.finalMessageId,
+          error: null,
+          updatedAt: action.updatedAt
+        }
+      },
+      latestRequestByViewId
+    };
+  }
+
+  const phase = action.type === "run/cancel" ? "cancelled" : "failed";
+
+  return {
+    ...state,
+    byRequestId: {
+      ...state.byRequestId,
+      [run.requestId]: {
+        ...run,
+        phase,
+        messages: action.messages,
+        error: action.error,
+        updatedAt: action.updatedAt
+      }
+    }
+  };
+}
+
+export function updateChatConversationRunMessages(
+  state: ChatConversationRunState,
+  requestId: string,
+  updater: (messages: ChatMessageView[]) => ChatMessageView[],
+  updatedAt = Date.now()
+) {
+  const run = state.byRequestId[requestId];
+
+  if (!run || !canUpdateChatConversationRun(state, run)) {
+    return state;
+  }
+
+  return chatConversationRunReducer(state, {
+    type: "run/update-messages",
+    requestId,
+    messages: updater(run.messages),
+    updatedAt
+  });
+}
+
+export function mergeConversationHistoryWithRun(input: {
+  historyMessages: ChatMessageView[];
+  run: ChatConversationRun | null;
+}): ChatConversationHistoryMergeResult {
+  const { historyMessages, run } = input;
+
+  if (!run) {
+    return {
+      messages: historyMessages,
+      source: "history",
+      dropRequestId: null
+    };
+  }
+
+  if (
+    run.phase === "completed" &&
+    run.finalMessageId &&
+    historyMessages.some((message) => message.id === run.finalMessageId)
+  ) {
+    return {
+      messages: historyMessages,
+      source: "history",
+      dropRequestId: run.requestId
+    };
+  }
+
+  return {
+    messages: run.messages,
+    source: "runtime",
+    dropRequestId: null
+  };
+}
+
 export function normalizeChatMode(value: unknown): ChatMode {
   return value === "expert" ? "expert" : "fast";
 }

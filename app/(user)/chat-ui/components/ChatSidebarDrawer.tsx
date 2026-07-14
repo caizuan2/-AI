@@ -89,17 +89,22 @@ type SidebarItem = {
   updatedAt: string;
   mode?: "fast" | "expert";
   mock?: boolean;
+  draft?: boolean;
+  generating?: boolean;
 };
 
 function buildSidebarItems(conversations: ChatConversation[]): SidebarItem[] {
   return conversations.map((conversation, index) => {
     const title = sanitizeVisibleText(conversation.title || "") || `小董AI对话 ${index + 1}`;
+    const runPhase = conversation.metadata?.localRunPhase;
 
     return {
       id: conversation.id,
       title,
       updatedAt: conversation.updated_at,
-      mode: conversation.mode
+      mode: conversation.mode,
+      draft: conversation.metadata?.localDraft === true,
+      generating: runPhase === "uploading" || runPhase === "generating"
     };
   });
 }
@@ -302,8 +307,12 @@ export function ChatSidebarDrawer({
   }
 
   function handleConversationAction(action: SidebarConversationAction, item: SidebarItem) {
-    if (item.mock) {
-      onNewChat();
+    if (item.mock || item.draft || item.generating) {
+      if (item.mock) {
+        onNewChat();
+      }
+
+      setOpenMenuId(null);
       return;
     }
 
@@ -350,7 +359,7 @@ export function ChatSidebarDrawer({
             </span>
             {conversations.length > 0 ? (
               <span className="mt-0.5 block text-xs text-slate-400">
-                {formatConversationTime(item.updatedAt)}
+                {item.generating ? "生成中" : formatConversationTime(item.updatedAt)}
               </span>
             ) : null}
           </span>
@@ -358,7 +367,7 @@ export function ChatSidebarDrawer({
             <Check className="h-4 w-4 shrink-0 text-blue-600" aria-hidden="true" />
           ) : null}
         </button>
-        {!item.mock ? (
+        {!item.mock && !item.draft && !item.generating ? (
           <button
             type="button"
             onClick={(event) => {

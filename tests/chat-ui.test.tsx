@@ -866,8 +866,9 @@ async function main() {
   assert.match(chatShellSource, /已打开通知面板/);
   assert.match(chatShellSource, /historyRequestIdRef/);
   assert.match(chatShellSource, /setConversationId\(nextConversationId\)/);
-  assert.match(chatShellSource, /fetchConversationHistory\(nextConversationId\)/);
-  assert.match(chatShellSource, /setMessages\(Array\.isArray\(history\.messages\)/);
+  assert.match(chatShellSource, /fetchConversationHistory\(nextConversationId,\s*\{/);
+  assert.match(chatShellSource, /mergeConversationHistoryWithRun\(\{/);
+  assert.match(chatShellSource, /setMessages\(mergedHistory\.messages\)/);
   assert.match(chatShellSource, /uploadChatAttachments\(attachments\)/);
   assert.ok(
     chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChatStream({")
@@ -876,10 +877,14 @@ async function main() {
   assert.match(chatShellSource, /const canSubmit = Boolean\(text\) \|\| hasImageAttachment/);
   assert.match(chatShellSource, /const askText = text \|\| IMAGE_ONLY_DEFAULT_PROMPT/);
   assert.match(chatShellSource, /text: askText/);
-  assert.match(chatShellSource, /createUserMessage\(text, uploadedAttachments\)/);
+  assert.match(chatShellSource, /createUserMessage\(text, attachments\)/);
   assert.doesNotMatch(chatShellSource, /文件上传失败，请重新选择后再发送/);
   assert.doesNotMatch(chatShellSource, /请先输入问题，再随问题一起发送附件/);
-  assert.match(chatShellSource, /inputCleared/);
+  assert.match(chatShellSource, /askControllerByRequestIdRef/);
+  assert.match(chatShellSource, /createDraftConversationId\(requestId\)/);
+  assert.match(chatShellSource, /updateConversationRunMessages\(requestId/);
+  assert.match(chatShellSource, /activeConversationIdRef\.current === sourceViewId/);
+  assert.match(chatShellSource, /messages=\{visibleMessages\}/);
   assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
@@ -893,6 +898,18 @@ async function main() {
   assert.match(chatShellSource, /window\.removeEventListener\("online", recoverConversationList\)/);
   assert.match(chatShellSource, /loadConversations\(\{ background: true, force: true \}\)/);
   assert.match(chatShellSource, /conversationListAbortRef\.current\?\.abort\(\)/);
+  const selectConversationSource = chatShellSource.slice(
+    chatShellSource.indexOf("async function handleSelectConversation"),
+    chatShellSource.indexOf("function handleNewChat")
+  );
+  const newChatSource = chatShellSource.slice(
+    chatShellSource.indexOf("function handleNewChat"),
+    chatShellSource.indexOf("function setActionInfo")
+  );
+
+  assert.doesNotMatch(selectConversationSource, /askControllerByRequestIdRef/);
+  assert.doesNotMatch(newChatSource, /askControllerByRequestIdRef/);
+  assert.match(chatShellSource, /function abortActiveAsk[\s\S]*?activeController\.abort\(\)/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -985,6 +1002,8 @@ async function main() {
   assert.match(drawerSource, /onSelect\(item\.id\)/);
   assert.match(drawerSource, /const active = item\.id === activeConversationId/);
   assert.match(drawerSource, /loading && items\.length === 0/);
+  assert.match(drawerSource, /runPhase === "uploading" \|\| runPhase === "generating"/);
+  assert.match(drawerSource, /!item\.mock && !item\.draft && !item\.generating/);
   assert.doesNotMatch(drawerSource, /setActiveConversationId|selectedConversationId/);
 
   const activeDrawerMarkup = renderToStaticMarkup(
@@ -1362,13 +1381,13 @@ async function main() {
   assert.match(chatShellText, /stableAvatarUrl = immediateAvatarUrl === null \? null : immediateAvatarUrl \|\| readStoredAvatarUrl\(user\) \|\| refreshedAvatarUrl/);
   assert.match(chatShellText, /mergeCurrentUserAvatar\(\{[\s\S]*stableAvatarUrl\)/);
   assert.match(avatarDialogSource, /rawValue && !\/\^\(\?:https\?:\|data:\|blob:\|\\\/\)\/i\.test\(rawValue\)/);
-  assert.match(chatShellText, /pendingScrollToUserMessageIdRef\.current = nextUserMessage\.id/);
-  assert.match(chatShellText, /setScrollFocusMessageId\(nextUserMessage\.id\)/);
+  assert.match(chatShellText, /pendingScrollToUserMessageIdRef\.current = optimisticUserMessage\.id/);
+  assert.match(chatShellText, /setScrollFocusMessageId\(optimisticUserMessage\.id\)/);
   assert.match(chatShellText, /scrollChatMessageToTop\(targetMessageId, "auto"\)/);
   assert.match(chatShellText, /PROMPT_HISTORY_RAIL_MARK_COUNT/);
   assert.match(chatShellText, /type PromptHistoryItem =/);
   assert.match(chatShellText, /function buildPromptHistoryItems\(messages: ChatMessageView\[\]\): PromptHistoryItem\[\]/);
-  assert.match(chatShellText, /const promptHistory = React\.useMemo\(\(\) => buildPromptHistoryItems\(messages\), \[messages\]\)/);
+  assert.match(chatShellText, /const promptHistory = React\.useMemo\(\(\) => buildPromptHistoryItems\(visibleMessages\), \[visibleMessages\]\)/);
   assert.match(chatShellText, /if \(prompts\.length === 0\) \{\s*return null;/);
   assert.match(chatShellText, /<PromptHistoryRail prompts=\{promptHistory\}/);
   assert.match(chatShellText, /aria-label="提示词记录条"/);
@@ -2077,10 +2096,16 @@ async function main() {
     });
   }) as typeof fetch;
 
-  const historyResult = await fetchConversationHistory("conv_2");
+  const historyController = new AbortController();
+  const historyResult = await fetchConversationHistory("conv_2", {
+    signal: historyController.signal
+  });
 
   assert.equal(String(calls.at(-1)?.input), "/api/ai/chat/history?conversation_id=conv_2");
   assert.equal(calls.at(-1)?.init?.method, "GET");
+  assert.equal(calls.at(-1)?.init?.credentials, "include");
+  assert.equal(calls.at(-1)?.init?.cache, "no-store");
+  assert.equal(calls.at(-1)?.init?.signal, historyController.signal);
   assert.equal(historyResult.conversation.id, "conv_2");
   assert.equal(historyResult.messages[0].content, "联创历史问题");
 

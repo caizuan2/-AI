@@ -1000,11 +1000,20 @@ export async function fetchConversations(options: FetchConversationsOptions = {}
   throw new Error("历史会话暂时无法加载，请稍后重试。");
 }
 
-export async function fetchConversationHistory(conversationId: string) {
+type FetchConversationHistoryOptions = {
+  signal?: AbortSignal;
+};
+
+export async function fetchConversationHistory(
+  conversationId: string,
+  options: FetchConversationHistoryOptions = {}
+) {
   const params = new URLSearchParams({ conversation_id: conversationId });
   const response = await fetch(`/api/ai/chat/history?${params.toString()}`, {
     method: "GET",
-    credentials: "include"
+    credentials: "include",
+    cache: "no-store",
+    signal: options.signal
   });
 
   return readApiResponse<HistoryResponse>(response);

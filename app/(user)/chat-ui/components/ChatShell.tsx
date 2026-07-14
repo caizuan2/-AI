@@ -29,14 +29,25 @@ import {
 } from "../api";
 import type { AskChatStreamEvent, ConversationActionResponse } from "../api";
 import {
+  chatConversationRunReducer,
+  createDraftConversationId,
+  createEmptyChatConversationRunState,
   createNewChatState,
   createUserMessage,
+  getLatestChatConversationRun,
+  getLatestChatConversationRuns,
   getChatUserAvatarStorageKey,
   getCurrentChatUserAvatarUrl,
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
+  isChatConversationRunBusy,
+  isDraftConversationId,
+  mergeConversationHistoryWithRun,
   normalizeCurrentChatUserAvatarUrl,
-  normalizeChatMode
+  normalizeChatMode,
+  updateChatConversationRunMessages,
+  type ChatConversationRunAction,
+  type ChatConversationRunState
 } from "../chat-ui-state";
 import {
   detectChatMode,
@@ -84,6 +95,20 @@ const CHAT_SCROLL_BOTTOM_THRESHOLD = 96;
 const CHAT_MESSAGE_TOP_OFFSET = 16;
 const CHAT_MESSAGE_TOP_TOLERANCE = 8;
 const IMAGE_ONLY_DEFAULT_PROMPT = "请识别图片内容并给出回复建议。";
+
+function createChatRunRequestId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createOptimisticConversationTitle(text: string) {
+  const normalized = text.replace(/\s+/g, " ").trim();
+
+  return normalized.slice(0, 28) || "新会话";
+}
 
 type LoadConversationsOptions = {
   background?: boolean;
@@ -463,10 +488,12 @@ export function ChatShell() {
   const [conversations, setConversations] = React.useState<ChatConversation[]>([]);
   const [pinnedConversationIds, setPinnedConversationIds] = React.useState<Set<string>>(() => new Set());
   const [messages, setMessages] = React.useState<ChatMessageView[]>([]);
+  const [conversationRunState, setConversationRunState] = React.useState<ChatConversationRunState>(() => (
+    createEmptyChatConversationRunState()
+  ));
   const [input, setInput] = React.useState("");
   const [inputAttachments, setInputAttachments] = React.useState<ChatAttachmentDraft[]>([]);
   const [manualChatMode, setManualChatMode] = React.useState<ChatModeKey | null>(null);
-  const [loading, setLoading] = React.useState(false);
   const [historyLoading, setHistoryLoading] = React.useState(false);
   const [conversationLoading, setConversationLoading] = React.useState(true);
   const [conversationLoadError, setConversationLoadError] = React.useState<string | null>(null);
@@ -496,7 +523,10 @@ export function ChatShell() {
   const conversationListInFlightRef = React.useRef(false);
   const conversationListHasSucceededRef = React.useRef(false);
   const conversationLoadErrorRef = React.useRef<string | null>(null);
-  const activeAskAbortRef = React.useRef<AbortController | null>(null);
+  const activeConversationIdRef = React.useRef<string | null>(null);
+  const conversationRunStateRef = React.useRef<ChatConversationRunState>(conversationRunState);
+  const askControllerByRequestIdRef = React.useRef(new Map<string, AbortController>());
+  const historyAbortRef = React.useRef<AbortController | null>(null);
   const chatModeClassifyAbortRef = React.useRef<AbortController | null>(null);
   const activeUserIdentityRef = React.useRef<string | null>(null);
   const pendingScrollToUserMessageIdRef = React.useRef<string | null>(null);
@@ -505,11 +535,59 @@ export function ChatShell() {
   const currentUserAccount = getCurrentChatUserDisplayAccount(currentUser);
   const currentUserIdentity = getChatUserStorageIdentity(currentUser);
   const pinnedConversationStorageKey = getPinnedConversationStorageKey(currentUser);
-  const promptHistory = React.useMemo(() => buildPromptHistoryItems(messages), [messages]);
+  const activeConversationRun = React.useMemo(() => (
+    getLatestChatConversationRun(conversationRunState, conversationId)
+  ), [conversationId, conversationRunState]);
+  const visibleMessages = activeConversationRun?.messages ?? messages;
+  const loading = isChatConversationRunBusy(activeConversationRun);
+  const promptHistory = React.useMemo(() => buildPromptHistoryItems(visibleMessages), [visibleMessages]);
   const visibleConversations = React.useMemo(() => {
-    const originalIndex = new Map(conversations.map((conversation, index) => [conversation.id, index]));
+    const latestRuns = getLatestChatConversationRuns(conversationRunState);
+    const runByViewId = new Map(latestRuns.map((run) => [run.viewId, run]));
+    const mergedConversations = conversations.map((conversation) => {
+      const run = runByViewId.get(conversation.id);
 
-    return [...conversations].sort((left, right) => {
+      if (!run) {
+        return conversation;
+      }
+
+      return {
+        ...conversation,
+        metadata: {
+          ...(conversation.metadata ?? {}),
+          localConversationRun: true,
+          localDraft: false,
+          localRunPhase: run.phase
+        },
+        updated_at: new Date(run.updatedAt).toISOString()
+      };
+    });
+    const knownConversationIds = new Set(mergedConversations.map((conversation) => conversation.id));
+
+    for (const run of latestRuns) {
+      if (knownConversationIds.has(run.viewId)) {
+        continue;
+      }
+
+      mergedConversations.push({
+        id: run.viewId,
+        title: run.title,
+        mode: run.mode,
+        metadata: {
+          localConversationRun: true,
+          localDraft: isDraftConversationId(run.viewId),
+          localRunPhase: run.phase
+        },
+        message_count: run.messages.length,
+        created_at: new Date(run.startedAt).toISOString(),
+        updated_at: new Date(run.updatedAt).toISOString()
+      });
+      knownConversationIds.add(run.viewId);
+    }
+
+    const originalIndex = new Map(mergedConversations.map((conversation, index) => [conversation.id, index]));
+
+    return mergedConversations.sort((left, right) => {
       const leftPinned = pinnedConversationIds.has(left.id);
       const rightPinned = pinnedConversationIds.has(right.id);
 
@@ -523,7 +601,7 @@ export function ChatShell() {
 
       return new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime();
     });
-  }, [conversations, pinnedConversationIds]);
+  }, [conversationRunState, conversations, pinnedConversationIds]);
   const inputHasImage = inputAttachments.some(isImageLikeAttachment);
   const inputHasAttachment = inputAttachments.length > 0;
   const activeKnowledgeBase = React.useMemo(() => getActiveKnowledgeBase(selectedKnowledgeBases), [selectedKnowledgeBases]);
@@ -550,6 +628,42 @@ export function ChatShell() {
     manualMode: manualChatMode
   }), [manualChatMode, remoteChatModeDecision, ruleChatModeDecision]);
   const inputPlaceholder = "问问 小董AI";
+
+  const setActiveConversationView = React.useCallback((nextConversationId: string | null) => {
+    activeConversationIdRef.current = nextConversationId;
+    setConversationId(nextConversationId);
+  }, []);
+
+  const applyConversationRunAction = React.useCallback((action: ChatConversationRunAction) => {
+    const currentState = conversationRunStateRef.current;
+    const nextState = chatConversationRunReducer(currentState, action);
+
+    if (nextState === currentState) {
+      return currentState;
+    }
+
+    conversationRunStateRef.current = nextState;
+    setConversationRunState(nextState);
+    return nextState;
+  }, []);
+
+  const updateConversationRunMessages = React.useCallback((
+    requestId: string,
+    updater: (current: ChatMessageView[]) => ChatMessageView[]
+  ) => {
+    const nextState = updateChatConversationRunMessages(
+      conversationRunStateRef.current,
+      requestId,
+      updater
+    );
+
+    if (nextState !== conversationRunStateRef.current) {
+      conversationRunStateRef.current = nextState;
+      setConversationRunState(nextState);
+    }
+
+    return nextState.byRequestId[requestId] ?? null;
+  }, []);
 
   const refreshCurrentUser = React.useCallback(async (options: { cacheBust?: boolean } = {}) => {
     const result = await fetchCurrentChatUser(options);
@@ -689,6 +803,8 @@ export function ChatShell() {
     }
 
     void loadConversations({ force: previousUserIdentity !== nextUserIdentity });
+    // Session cleanup is intentionally driven only by authenticated identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUserLoaded, currentUserIdentity, pinnedConversationStorageKey, loadConversations]);
 
   React.useEffect(() => {
@@ -753,10 +869,10 @@ export function ChatShell() {
 
     setShowScrollToBottom(Boolean(
       scrollContainer &&
-      messages.length > 0 &&
+      visibleMessages.length > 0 &&
       !isChatScrollNearBottom(scrollContainer)
     ));
-  }, [messages.length]);
+  }, [visibleMessages.length]);
 
   const scrollChatToBottom = React.useCallback((behavior: ScrollBehavior = "smooth") => {
     const scrollContainer = scrollRef.current;
@@ -844,13 +960,13 @@ export function ChatShell() {
     const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
 
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, scrollFocusMessageId, scrollChatMessageToTop, scrollChatToBottom, updateScrollToBottomVisibility]);
+  }, [visibleMessages, scrollFocusMessageId, scrollChatMessageToTop, scrollChatToBottom, updateScrollToBottomVisibility]);
 
   React.useEffect(() => {
     const frame = window.requestAnimationFrame(updateScrollToBottomVisibility);
 
     return () => window.cancelAnimationFrame(frame);
-  }, [loading, messages, updateScrollToBottomVisibility]);
+  }, [loading, updateScrollToBottomVisibility, visibleMessages]);
 
   React.useEffect(() => {
     if (loading || !scrollFocusMessageId || pendingScrollToUserMessageIdRef.current) {
@@ -880,7 +996,11 @@ export function ChatShell() {
   }, [actionFeedback]);
 
   React.useEffect(() => () => {
-    activeAskAbortRef.current?.abort();
+    activeConversationIdRef.current = null;
+    conversationRunStateRef.current = createEmptyChatConversationRunState();
+    askControllerByRequestIdRef.current.forEach((controller) => controller.abort());
+    askControllerByRequestIdRef.current.clear();
+    historyAbortRef.current?.abort();
     chatModeClassifyAbortRef.current?.abort();
   }, []);
 
@@ -961,21 +1081,28 @@ export function ChatShell() {
   }
 
   function abortActiveAsk(message = "已停止生成。") {
-    const activeController = activeAskAbortRef.current;
+    const activeRun = getLatestChatConversationRun(
+      conversationRunStateRef.current,
+      activeConversationIdRef.current
+    );
+    const activeController = activeRun
+      ? askControllerByRequestIdRef.current.get(activeRun.requestId)
+      : null;
 
     if (!activeController) {
       return;
     }
 
     activeController.abort();
-    activeAskAbortRef.current = null;
-    setLoading(false);
     showNotice(message);
   }
 
   function clearChatSessionState(options: { clearPinned?: boolean } = {}) {
-    activeAskAbortRef.current?.abort();
-    activeAskAbortRef.current = null;
+    askControllerByRequestIdRef.current.forEach((controller) => controller.abort());
+    askControllerByRequestIdRef.current.clear();
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
+    applyConversationRunAction({ type: "run/clear" });
     conversationListAbortRef.current?.abort();
     conversationListAbortRef.current = null;
     conversationListRequestIdRef.current += 1;
@@ -986,14 +1113,13 @@ export function ChatShell() {
     pendingScrollToBottomRef.current = false;
     setScrollFocusMessageId(null);
     historyRequestIdRef.current += 1;
-    setConversationId(null);
+    setActiveConversationView(null);
     setConversations([]);
     setMessages([]);
     setInput("");
     setInputAttachments([]);
     setManualChatMode(null);
     setClassifiedChatModeDecision(null);
-    setLoading(false);
     setHistoryLoading(false);
     setConversationLoading(false);
     setConversationLoadError(null);
@@ -1013,49 +1139,100 @@ export function ChatShell() {
   }
 
   async function handleSelectConversation(nextConversationId: string) {
-    activeAskAbortRef.current?.abort();
-    activeAskAbortRef.current = null;
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
     pendingScrollToUserMessageIdRef.current = null;
     setScrollFocusMessageId(null);
     const requestId = historyRequestIdRef.current + 1;
+    const activeRun = getLatestChatConversationRun(
+      conversationRunStateRef.current,
+      nextConversationId
+    );
 
     historyRequestIdRef.current = requestId;
-    setError(null);
+    setError(activeRun?.error ?? null);
     setHistoryLoadError(null);
     setActionFeedback(null);
-    setHistoryLoading(true);
-    setConversationId(nextConversationId);
-    setMessages([]);
+    setActiveConversationView(nextConversationId);
+    setMode(activeRun?.mode ?? mode);
     closeSidebarAfterNavigation();
 
-    try {
-      const history = await fetchConversationHistory(nextConversationId);
-
-      if (historyRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setConversationId(history.conversation.id || nextConversationId);
-      setMode(normalizeChatMode(history.conversation.mode));
-      pendingScrollToBottomRef.current = true;
-      setMessages(Array.isArray(history.messages) ? history.messages : []);
-    } catch {
-      if (historyRequestIdRef.current !== requestId) {
-        return;
-      }
-
-      setHistoryLoadError("历史记录暂时无法加载，请稍后重试。");
+    if (isDraftConversationId(nextConversationId)) {
+      setHistoryLoading(false);
       setMessages([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
+    setHistoryLoading(!activeRun);
+
+    if (!activeRun) {
+      setMessages([]);
+    }
+
+    try {
+      const history = await fetchConversationHistory(nextConversationId, {
+        signal: controller.signal
+      });
+
+      if (
+        controller.signal.aborted ||
+        historyRequestIdRef.current !== requestId ||
+        activeConversationIdRef.current !== nextConversationId
+      ) {
+        return;
+      }
+
+      const latestRun = getLatestChatConversationRun(
+        conversationRunStateRef.current,
+        nextConversationId
+      );
+      const mergedHistory = mergeConversationHistoryWithRun({
+        historyMessages: Array.isArray(history.messages) ? history.messages : [],
+        run: latestRun
+      });
+
+      setMode(latestRun?.mode ?? normalizeChatMode(history.conversation.mode));
+      pendingScrollToBottomRef.current = true;
+      setMessages(mergedHistory.messages);
+
+      if (mergedHistory.dropRequestId) {
+        applyConversationRunAction({
+          type: "run/drop",
+          requestId: mergedHistory.dropRequestId
+        });
+      }
+    } catch (historyError) {
+      if (historyError instanceof DOMException && historyError.name === "AbortError") {
+        return;
+      }
+
+      if (
+        historyRequestIdRef.current !== requestId ||
+        activeConversationIdRef.current !== nextConversationId
+      ) {
+        return;
+      }
+
+      if (!getLatestChatConversationRun(conversationRunStateRef.current, nextConversationId)) {
+        setHistoryLoadError("历史记录暂时无法加载，请稍后重试。");
+        setMessages([]);
+      }
     } finally {
       if (historyRequestIdRef.current === requestId) {
         setHistoryLoading(false);
+      }
+
+      if (historyAbortRef.current === controller) {
+        historyAbortRef.current = null;
       }
     }
   }
 
   function handleNewChat() {
-    activeAskAbortRef.current?.abort();
-    activeAskAbortRef.current = null;
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
     const nextState = createNewChatState();
 
     historyRequestIdRef.current += 1;
@@ -1063,7 +1240,7 @@ export function ChatShell() {
     pendingScrollToBottomRef.current = false;
     setScrollFocusMessageId(null);
     setHistoryLoading(false);
-    setConversationId(nextState.conversationId);
+    setActiveConversationView(nextState.conversationId);
     setMessages(nextState.messages);
     setInput(nextState.input);
     setInputAttachments([]);
@@ -1118,10 +1295,11 @@ export function ChatShell() {
   }
 
   function updateAssistantMessageMetadata(
+    requestId: string,
     messageId: string,
     updater: (metadata: Record<string, unknown>) => Record<string, unknown>
   ) {
-    setMessages((current) => current.map((message) => (
+    updateConversationRunMessages(requestId, (current) => current.map((message) => (
       message.id === messageId
         ? {
             ...message,
@@ -1650,23 +1828,85 @@ export function ChatShell() {
     }
 
     const askText = text || IMAGE_ONLY_DEFAULT_PROMPT;
-
-    setError(null);
-    setActionFeedback(null);
-    setLoading(true);
-    let localUserMessage: ChatMessageView | null = null;
-    let localAssistantMessageId: string | null = null;
-    let inputCleared = false;
+    const requestId = createChatRunRequestId();
+    const sourceConversationId = conversationId && !isDraftConversationId(conversationId)
+      ? conversationId
+      : null;
+    const sourceViewId = conversationId && isDraftConversationId(conversationId)
+      ? conversationId
+      : sourceConversationId ?? createDraftConversationId(requestId);
+    const submittedMode = mode;
     const submittedManualChatMode = manualChatMode;
     const submittedFinalChatModeDecision = finalChatModeDecision;
-    const hasPreviousAssistantResponse = messages.some((message) => (
+    const selectedKnowledgeBasesForSubmit = selectedKnowledgeBases;
+    const activeKnowledgeBaseForSubmit = activeKnowledgeBase;
+    const hasPreviousAssistantResponse = visibleMessages.some((message) => (
       message.role === "assistant" &&
       !message.pending &&
       message.content.trim().length > 0
     ));
+    const abortController = new AbortController();
+    const optimisticUserMessage: ChatMessageView = {
+      ...createUserMessage(text, attachments),
+      id: `local-user-${requestId}`
+    };
+    const optimisticAssistantMessage: ChatMessageView = {
+      id: `local-assistant-${requestId}`,
+      role: "assistant",
+      content: "",
+      sources: null,
+      confidence: null,
+      customer_answer: null,
+      provider_status: null,
+      metadata: {},
+      created_at: "",
+      pending: true
+    };
+    const optimisticMessages = [
+      ...visibleMessages,
+      optimisticUserMessage,
+      optimisticAssistantMessage
+    ];
+
+    setError(null);
+    setActionFeedback(null);
+    applyConversationRunAction({
+      type: "run/start",
+      run: {
+        requestId,
+        viewId: sourceViewId,
+        serverConversationId: sourceConversationId,
+        phase: "uploading",
+        mode: submittedMode,
+        messages: optimisticMessages,
+        localUserMessageId: optimisticUserMessage.id,
+        localAssistantMessageId: optimisticAssistantMessage.id,
+        finalMessageId: null,
+        title: createOptimisticConversationTitle(askText),
+        error: null,
+        startedAt: Date.now(),
+        updatedAt: Date.now()
+      }
+    });
+    askControllerByRequestIdRef.current.set(requestId, abortController);
+
+    if (!sourceConversationId) {
+      setActiveConversationView(sourceViewId);
+    }
+
+    pendingScrollToUserMessageIdRef.current = optimisticUserMessage.id;
+    setScrollFocusMessageId(optimisticUserMessage.id);
+    setInput("");
+    setInputAttachments([]);
+    setManualChatMode(null);
 
     try {
       const uploadedAttachments = await uploadChatAttachments(attachments);
+
+      if (abortController.signal.aborted) {
+        throw new DOMException("Aborted", "AbortError");
+      }
+
       const submitModeDecision = submittedManualChatMode
         ? resolveFinalChatMode({
           ruleDecision: detectChatMode({
@@ -1697,8 +1937,6 @@ export function ChatShell() {
         buildBusinessExecutionPrompt(businessExecution),
         modePromptContext
       ].filter(Boolean).join("\n\n");
-      const activeKnowledgeBaseForSubmit = activeKnowledgeBase;
-      const selectedKnowledgeBasesForSubmit = selectedKnowledgeBases;
       const knowledgeSelectionMetadata = {
         selectedKnowledgeBases: selectedKnowledgeBasesForSubmit,
         activeKnowledgeBase: activeKnowledgeBaseForSubmit,
@@ -1710,8 +1948,9 @@ export function ChatShell() {
         namespace: activeKnowledgeBaseForSubmit?.namespace ?? activeKnowledgeBaseForSubmit?.tenant_id ?? null
       };
 
-      const nextUserMessage = {
-        ...createUserMessage(text, uploadedAttachments),
+      const nextUserMessage: ChatMessageView = {
+        ...optimisticUserMessage,
+        attachments: uploadedAttachments,
         metadata: {
           commercialExecution,
           businessExecution,
@@ -1719,15 +1958,8 @@ export function ChatShell() {
           knowledgeSelection: knowledgeSelectionMetadata
         }
       };
-      const abortController = new AbortController();
       const nextAssistantMessage: ChatMessageView = {
-        id: `local-assistant-${Date.now()}`,
-        role: "assistant",
-        content: "",
-        sources: null,
-        confidence: null,
-        customer_answer: null,
-        provider_status: null,
+        ...optimisticAssistantMessage,
         metadata: {
           commercialExecution,
           businessExecution,
@@ -1735,26 +1967,31 @@ export function ChatShell() {
           finalChatModeDecision: submitModeDecision,
           knowledgeSelection: knowledgeSelectionMetadata
         },
-        created_at: "",
-        pending: true
       };
 
-      localUserMessage = nextUserMessage;
-      localAssistantMessageId = nextAssistantMessage.id;
-      activeAskAbortRef.current = abortController;
-      pendingScrollToUserMessageIdRef.current = nextUserMessage.id;
-      setScrollFocusMessageId(nextUserMessage.id);
-      setInput("");
-      setInputAttachments([]);
-      setManualChatMode(null);
-      inputCleared = true;
-      setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
+      updateConversationRunMessages(requestId, (current) => current.map((message) => {
+        if (message.id === optimisticUserMessage.id) {
+          return nextUserMessage;
+        }
 
-      const result = await askChatStream({
+        if (message.id === optimisticAssistantMessage.id) {
+          return nextAssistantMessage;
+        }
+
+        return message;
+      }));
+      applyConversationRunAction({
+        type: "run/mark-generating",
+        requestId,
+        mode: submittedMode,
+        updatedAt: Date.now()
+      });
+
+      await askChatStream({
         text: askText,
         attachments: uploadedAttachments,
-        conversation_id: conversationId,
-        mode,
+        conversation_id: sourceConversationId,
+        mode: submittedMode,
         userMode: submitModeDecision.mode.key,
         modeSource: submitModeDecision.source,
         modeLabel: submitModeDecision.mode.label,
@@ -1778,13 +2015,13 @@ export function ChatShell() {
       }, {
         signal: abortController.signal,
         onThinking: (content) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             streamThinking: content
           }));
         },
         onRagSearch: (query) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             ragVisualization: {
               ...getMetadataRecord(metadata, "ragVisualization"),
@@ -1794,7 +2031,7 @@ export function ChatShell() {
           }));
         },
         onRagChunk: (event) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => {
             const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
             const chunks = getMetadataArray(ragVisualization, "chunks");
 
@@ -1816,7 +2053,7 @@ export function ChatShell() {
           });
         },
         onRagScore: (event) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => {
             const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
             const scores = getMetadataArray(ragVisualization, "scores");
 
@@ -1836,7 +2073,7 @@ export function ChatShell() {
           });
         },
         onRagSource: (event) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => {
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => {
             const ragVisualization = getMetadataRecord(metadata, "ragVisualization");
             const sources = getMetadataArray(ragVisualization, "sources");
 
@@ -1866,7 +2103,7 @@ export function ChatShell() {
           });
         },
         onRagDone: (event) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             ragVisualization: {
               ...getMetadataRecord(metadata, "ragVisualization"),
@@ -1878,7 +2115,7 @@ export function ChatShell() {
           }));
         },
         onModelSelect: (model) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             modelVisualization: {
               ...getMetadataRecord(metadata, "modelVisualization"),
@@ -1887,7 +2124,7 @@ export function ChatShell() {
           }));
         },
         onModelReason: (reason) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             modelVisualization: {
               ...getMetadataRecord(metadata, "modelVisualization"),
@@ -1896,7 +2133,7 @@ export function ChatShell() {
           }));
         },
         onModelFallback: (chain) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             modelVisualization: {
               ...getMetadataRecord(metadata, "modelVisualization"),
@@ -1905,7 +2142,7 @@ export function ChatShell() {
           }));
         },
         onModelMetrics: (event: Extract<AskChatStreamEvent, { type: "model_metrics" }>) => {
-          updateAssistantMessageMetadata(nextAssistantMessage.id, (metadata) => ({
+          updateAssistantMessageMetadata(requestId, nextAssistantMessage.id, (metadata) => ({
             ...metadata,
             modelVisualization: {
               ...getMetadataRecord(metadata, "modelVisualization"),
@@ -1919,7 +2156,7 @@ export function ChatShell() {
           }));
         },
         onToken: (token) => {
-          setMessages((current) => current.map((message) => (
+          updateConversationRunMessages(requestId, (current) => current.map((message) => (
             message.id === nextAssistantMessage.id
               ? {
                   ...message,
@@ -1930,9 +2167,11 @@ export function ChatShell() {
           )));
         },
         onFinal: (streamResult) => {
-          setConversationId(streamResult.conversation_id);
-          setMode(normalizeChatMode(streamResult.mode));
-          setMessages((current) => current.map((message) => {
+          const currentRun = conversationRunStateRef.current.byRequestId[requestId];
+          const normalizedMode = normalizeChatMode(streamResult.mode);
+          const completedMessages: ChatMessageView[] = (
+            currentRun?.messages ?? [nextUserMessage, nextAssistantMessage]
+          ).map((message): ChatMessageView => {
             if (message.id === nextUserMessage.id) {
               return {
                 ...message,
@@ -1994,73 +2233,114 @@ export function ChatShell() {
             }
 
             return message;
-          }));
+          });
+
+          applyConversationRunAction({
+            type: "run/complete",
+            requestId,
+            conversationId: streamResult.conversation_id,
+            mode: normalizedMode,
+            finalMessageId: streamResult.message_id,
+            messages: completedMessages,
+            updatedAt: Date.now()
+          });
+
+          if (activeConversationIdRef.current === sourceViewId) {
+            void handleSelectConversation(streamResult.conversation_id);
+          }
         }
       });
 
-      setConversationId(result.conversation_id);
-      setMode(normalizeChatMode(result.mode));
       void loadConversations({ background: true, force: true });
       return true;
     } catch (requestError) {
+      const currentRun = conversationRunStateRef.current.byRequestId[requestId];
+      const runViewId = currentRun?.viewId ?? sourceViewId;
+
+      if (currentRun?.phase === "completed") {
+        return true;
+      }
+
       if (requestError instanceof DOMException && requestError.name === "AbortError") {
-        pendingScrollToUserMessageIdRef.current = null;
-        setScrollFocusMessageId(null);
+        const cancelledMessages = (currentRun?.messages ?? optimisticMessages).map((message) => {
+          if (message.id === optimisticUserMessage.id) {
+            return {
+              ...message,
+              pending: false
+            };
+          }
 
-        if (localUserMessage && localAssistantMessageId) {
-          const failedMessageId = localUserMessage.id;
-          const stoppedAssistantId = localAssistantMessageId;
+          if (message.id === optimisticAssistantMessage.id) {
+            return {
+              ...message,
+              content: message.content || "已停止生成。",
+              pending: false
+            };
+          }
 
-          setMessages((current) => current.map((message) => {
-            if (message.id === failedMessageId) {
-              return {
-                ...message,
-                pending: false
-              };
-            }
+          return message;
+        });
 
-            if (message.id === stoppedAssistantId) {
-              return {
-                ...message,
-                content: message.content || "已停止生成。",
-                pending: false
-              };
-            }
+        applyConversationRunAction({
+          type: "run/cancel",
+          requestId,
+          messages: cancelledMessages,
+          error: null,
+          updatedAt: Date.now()
+        });
 
-            return message;
-          }));
+        if (activeConversationIdRef.current === runViewId) {
+          pendingScrollToUserMessageIdRef.current = null;
+          setScrollFocusMessageId(null);
+          showNotice("已停止生成。");
         }
 
-        showNotice("已停止生成。");
         return false;
       }
 
-      if (localUserMessage) {
+      const requestErrorMessage = requestError instanceof Error
+        ? requestError.message
+        : "发送失败，请稍后重试。";
+      const failedMessages = (currentRun?.messages ?? optimisticMessages).map((message) => {
+        if (message.id === optimisticUserMessage.id) {
+          return {
+            ...message,
+            pending: false
+          };
+        }
+
+        if (message.id === optimisticAssistantMessage.id) {
+          return {
+            ...message,
+            content: message.content || "生成失败，请稍后重试。",
+            pending: false
+          };
+        }
+
+        return message;
+      });
+
+      applyConversationRunAction({
+        type: "run/fail",
+        requestId,
+        messages: failedMessages,
+        error: requestErrorMessage,
+        updatedAt: Date.now()
+      });
+
+      if (activeConversationIdRef.current === runViewId) {
         pendingScrollToUserMessageIdRef.current = null;
         setScrollFocusMessageId(null);
-
-        const failedMessageId = localUserMessage.id;
-        const failedAssistantId = localAssistantMessageId;
-
-        setMessages((current) => current.filter((message) => (
-          message.id !== failedMessageId &&
-          message.id !== failedAssistantId
-        )));
-      }
-
-      if (inputCleared) {
         setInput(text);
         setManualChatMode(submittedManualChatMode);
+        setError(requestErrorMessage);
       }
 
-      setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");
       return false;
     } finally {
-      if (activeAskAbortRef.current?.signal.aborted || activeAskAbortRef.current) {
-        activeAskAbortRef.current = null;
+      if (askControllerByRequestIdRef.current.get(requestId) === abortController) {
+        askControllerByRequestIdRef.current.delete(requestId);
       }
-
-      setLoading(false);
     }
   }
 
@@ -2202,13 +2482,13 @@ export function ChatShell() {
               <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
                 {historyLoadError}
               </div>
-            ) : conversationId && messages.length === 0 ? (
+            ) : conversationId && visibleMessages.length === 0 ? (
               <div className="flex min-h-[360px] flex-1 items-center justify-center px-8 text-center text-sm font-semibold text-slate-500">
                 该会话暂无消息
               </div>
             ) : (
               <ChatMessages
-                messages={messages}
+                messages={visibleMessages}
                 loading={loading}
                 mode={mode}
                 onModeChange={setMode}
