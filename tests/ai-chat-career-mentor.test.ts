@@ -112,6 +112,8 @@ function main() {
 
   const decisionTreeCases = [
     ["沟通五步骤是什么？", "framework"],
+    ["讲事业沟通五步骤是什么？", "framework"],
+    ["讲事业导师的五步流程有哪些？", "framework"],
     ["这是刚加上的陌生客户，还不知道我是谁，怎么开始？", "ice_breaking"],
     ["客户不回复怎么办？", "follow_up"],
     ["客户听完事业但没回复，接下来怎么办？", "follow_up"],
@@ -167,6 +169,10 @@ function main() {
   assert.equal(
     classifyCareerMentorQuestion("沟通五步骤里客户说贵怎么办？").stage,
     "objection_handling"
+  );
+  assert.equal(
+    classifyCareerMentorQuestion("讲事业沟通五步骤是什么，客户认可但迟迟不行动在哪一步？").stage,
+    "closing"
   );
   assert.equal(
     classifyCareerMentorQuestion("还没成交，客户先问售后怎么办？").stage,
@@ -282,7 +288,7 @@ function main() {
 
   const knowledgeLayerRanked = prioritizeCareerMentorChunks({
     question: "客户说产品贵，怎么锁定问题？",
-    topK: 2,
+    topK: 14,
     chunks: [
       createChunk({
         chunkId: "generic-exact",
@@ -296,6 +302,13 @@ function main() {
         title: "01_破冰_客户可复制话术卡片_WPS排版版",
         content: "第一步破冰。话术全文：姐/哥，我先简单介绍一下自己。",
         relevanceScore: 0.95
+      }),
+      createChunk({
+        chunkId: "untagged-copy-card",
+        knowledgeItemId: "untagged-copy-item",
+        title: "客户可复制话术卡片",
+        content: "完整话术：这是一条无法证明属于当前步骤的话术。",
+        relevanceScore: 0.94
       }),
       createChunk({
         chunkId: "matching-operator-card",
@@ -316,12 +329,14 @@ function main() {
 
   assert.deepEqual(
     knowledgeLayerRanked.map((chunk) => chunk.chunkId),
-    ["matching-copy-card", "matching-operator-card"]
+    ["matching-copy-card", "matching-operator-card", "generic-exact"]
   );
+  assert.equal(knowledgeLayerRanked.some((chunk) => chunk.chunkId === "wrong-stage-copy-card"), false);
+  assert.equal(knowledgeLayerRanked.some((chunk) => chunk.chunkId === "untagged-copy-card"), false);
 
   const presentationLayerRanked = prioritizeCareerMentorChunks({
     question: "第三步讲事业时，怎么要求客户认真听？",
-    topK: 2,
+    topK: 14,
     chunks: [
       createChunk({
         chunkId: "wrong-objection-copy-card",
@@ -383,7 +398,7 @@ function main() {
     "这段完整正文和代码块都必须保留。",
     "```",
     "",
-    "## 可复制给客户",
+    "## 可复制给客户：",
     "### 话术 1",
     "> “我理解你的顾虑，我们先把价值看清楚。”"
   ].join("\n"));
@@ -402,7 +417,7 @@ function main() {
     "## 回复思路",
     "先共情，再推进。",
     "",
-    "## 可复制给客户",
+    "## 可复制给客户：",
     "### 话术 1",
     "> “姐，我刚忙完一个客户，你有空时看一下就好。”",
     "",
@@ -428,6 +443,235 @@ function main() {
   ].join("\n"));
 
   assert.equal(exactExtractedScript, exactKnowledgeScript);
+
+  const groundedChunk = createChunk({
+    chunkId: "follow-up-copy-grounding",
+    knowledgeItemId: "follow-up-copy-grounding-item",
+    title: "02_讲事业沟通五步·第二步_促单跟进_客户可复制话术卡片_WPS排版版",
+    content: `第二步促单跟进。完整话术：${exactKnowledgeScript}`,
+    relevanceScore: 0.91
+  });
+  const groundedFullBody = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "先按命中知识继续展示价值。",
+    "",
+    "```text",
+    "完整 DeepSeek/GPT 正文与代码块必须保留。",
+    "```",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`,
+    "",
+    "### 话术 2",
+    "> 这是依据同阶段知识生成的可选变体。"
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(groundedFullBody, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(groundedFullBody, /完整 DeepSeek\/GPT 正文与代码块必须保留/);
+  assert.equal(extractCareerMentorCustomerAnswer(groundedFullBody).startsWith(exactKnowledgeScript), true);
+
+  const negativeInstructionPreserved = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "以下是内部分析，不可复制给客户。",
+    "这一段完整正文必须保留。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(negativeInstructionPreserved, /以下是内部分析，不可复制给客户。/);
+  assert.match(negativeInstructionPreserved, /这一段完整正文必须保留。/);
+  assert.equal(extractCareerMentorCustomerAnswer(negativeInstructionPreserved), exactKnowledgeScript);
+
+  const inventedScript = `${exactKnowledgeScript}现在就决定吧。`;
+  const rejectedInventedCopy = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "正文分析必须继续显示。",
+    "",
+    "```text",
+    "正文代码块也必须继续显示。",
+    "```",
+    "",
+    "## 可复制给客户：",
+    "### 话术 1",
+    `> “${inventedScript}”`,
+    "",
+    "### 话术 2",
+    "> 这条 AI 话术也必须一起移除。"
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.doesNotMatch(rejectedInventedCopy, /现在就决定吧|这条 AI 话术也必须一起移除/);
+  assert.match(rejectedInventedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.match(rejectedInventedCopy, /正文分析必须继续显示/);
+  assert.match(rejectedInventedCopy, /```text[\s\S]*正文代码块也必须继续显示[\s\S]*```/);
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedInventedCopy), "");
+
+  const decoratedCopyHeadings = [
+    "## **可复制给客户**",
+    "## 📋 可复制给客户",
+    "## 可复制给客户话术",
+    "## 可直接复制给客户的话术",
+    "## 可复制给客户｜推荐话术",
+    "## 可复制给客户 - 推荐"
+  ];
+
+  for (const copyHeading of decoratedCopyHeadings) {
+    const guardedDecoratedHeading = cleanCareerMentorUserAnswer([
+      "## 判断",
+      "- 当前阶段：第二步促单跟进",
+      "",
+      "## 回复思路",
+      "标题装饰不能绕过硬校验。",
+      "",
+      copyHeading,
+      "### **话术 1**",
+      `> “${inventedScript}”`
+    ].join("\n"), {
+      chunks: [],
+      question: "客户已经看了资料但没有行动，接下来怎么办？"
+    });
+
+    assert.match(guardedDecoratedHeading, /本轮没有检索到可逐字核对的同阶段客户话术/);
+    assert.doesNotMatch(guardedDecoratedHeading, /现在就决定吧/);
+    assert.equal(extractCareerMentorCustomerAnswer(guardedDecoratedHeading), "");
+  }
+
+  const rejectedOrphanScript = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "即使缺少复制区标题，话术 1 也必须进入硬校验。",
+    "",
+    "### 话术 1",
+    `> “${inventedScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(rejectedOrphanScript, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedOrphanScript, /现在就决定吧/);
+  assert.match(rejectedOrphanScript, /即使缺少复制区标题/);
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedOrphanScript), "");
+
+  const rejectedWrongStageCopy = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "继续执行当前阶段。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [createChunk({
+      chunkId: "wrong-stage-grounding",
+      knowledgeItemId: "wrong-stage-grounding-item",
+      title: "01_破冰_客户可复制话术卡片_WPS排版版",
+      content: `第一步破冰。完整话术：${exactKnowledgeScript}`,
+      relevanceScore: 0.99
+    })],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(rejectedWrongStageCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedWrongStageCopy), "");
+
+  const rejectedUntaggedCopy = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "继续执行当前阶段。",
+    "",
+    "可复制给客户（以下话术）：",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [createChunk({
+      chunkId: "untagged-grounding",
+      knowledgeItemId: "untagged-grounding-item",
+      title: "客户可复制话术卡片",
+      content: `完整话术：${exactKnowledgeScript}`,
+      relevanceScore: 0.99
+    })],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(rejectedUntaggedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedUntaggedCopy, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedUntaggedCopy), "");
+
+  const rejectedDuplicateCopySections = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "重复复制区不能绕过硬校验。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`,
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${inventedScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(rejectedDuplicateCopySections, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedDuplicateCopySections, /现在就决定吧/);
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedDuplicateCopySections), "");
+
+  const fencedMarkdownPreserved = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "下面代码块只是 Markdown 格式示例，必须原样保留。",
+    "",
+    "```markdown",
+    "## 可复制给客户",
+    "### 话术 1",
+    "> 代码块中的展示示例。",
+    "```",
+    "",
+    "## 可复制给客户：",
+    "### 话术 1",
+    `> “${inventedScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(fencedMarkdownPreserved, /```markdown[\s\S]*## 可复制给客户[\s\S]*代码块中的展示示例。[\s\S]*```/);
+  assert.match(fencedMarkdownPreserved, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(fencedMarkdownPreserved, /现在就决定吧/);
+  assert.equal(extractCareerMentorCustomerAnswer(fencedMarkdownPreserved), "");
 
   console.log("ai-chat career mentor tests passed");
 }
