@@ -131,7 +131,13 @@ function main() {
     ["客户说可以但是迟迟没付款，怎么办？", "closing"],
     ["客户答应了但一直拖着，怎么办？", "closing"],
     ["客户成交以后，怎么长期维护关系？", "maintenance"],
-    ["客户成交以后怎么维护老客户？", "maintenance"]
+    ["客户成交以后怎么维护老客户？", "maintenance"],
+    ["给客户发我视频资料了，怎么跟进呢", "follow_up"],
+    ["我已经给她发完视频了，下一步呢", "follow_up"],
+    ["还没发资料，怎么跟进", "ice_breaking"],
+    ["还没有给客户发送视频资料，怎么跟进", "ice_breaking"],
+    ["发完资料后客户说贵", "objection_handling"],
+    ["成交后怎么继续跟进", "maintenance"]
   ] as const;
 
   for (const [input, expectedStage] of decisionTreeCases) {
@@ -202,7 +208,8 @@ function main() {
   const policy = buildCareerMentorBusinessContext(question);
 
   assert.match(policy, new RegExp(CAREER_MENTOR_POLICY_VERSION));
-  assert.match(policy, /retrieved context 是唯一业务知识来源/);
+  assert.match(policy, /retrieved context 与本模型已固化的四份客户可复制话术卡是唯一业务知识来源/);
+  assert.match(policy, /逐字固化的四份客户话术卡原文/);
   assert.match(policy, /五步顺序铁律：破冰 -> 促单跟进 -> 讲事业 -> 锁定问题 -> 成交/);
   assert.match(policy, /没有回复不等于拒绝/);
   assert.match(policy, /## 判断/);
@@ -430,6 +437,9 @@ function main() {
   assert.doesNotMatch(customerAnswer, /判断|回复思路|话术 1|话术 2/);
 
   const exactKnowledgeScript = "姐，你先用十五分钟认真看一遍——看完我们再聊1980。";
+  const canonicalFollowUpScript = "姐，我刚忙完一个客户——群里这会又炸了。你看看这才多大一会——各行各业的精英排队咨询的、出单的、晋升的——从早到晚就没停过。你先好好看视频——看完你心里就有数了。";
+  const canonicalConsiderScript = "姐——考虑是正常的，说明你在认真了解这个事情。那你目前主要担心的是什么呢？是担心产品不好呢？还是担心公司不放心呢？还是担心自己能不能做起来？";
+  const canonicalPriceScript = "姐——你除了觉得产品有点贵之外，还有没有其他的顾虑？你一次性说出来——我一次性给你解答。";
   const exactExtractedScript = extractCareerMentorCustomerAnswer([
     "## 判断",
     "客户已完成破冰。",
@@ -497,6 +507,25 @@ function main() {
   assert.match(negativeInstructionPreserved, /这一段完整正文必须保留。/);
   assert.equal(extractCareerMentorCustomerAnswer(negativeInstructionPreserved), exactKnowledgeScript);
 
+  const appendedCanonicalCopy = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "正文原有判断、流程与代码块都不能被重写。",
+    "",
+    "```text",
+    "保留完整 DeepSeek/GPT 正文。",
+    "```"
+  ].join("\n"), {
+    chunks: [],
+    question: "给客户发我视频资料了，怎么跟进呢"
+  });
+
+  assert.match(appendedCanonicalCopy, /正文原有判断、流程与代码块都不能被重写/);
+  assert.match(appendedCanonicalCopy, /```text[\s\S]*保留完整 DeepSeek\/GPT 正文。[\s\S]*```/);
+  assert.equal(extractCareerMentorCustomerAnswer(appendedCanonicalCopy), canonicalFollowUpScript);
+
   const inventedScript = `${exactKnowledgeScript}现在就决定吧。`;
   const rejectedInventedCopy = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -521,10 +550,10 @@ function main() {
   });
 
   assert.doesNotMatch(rejectedInventedCopy, /现在就决定吧|这条 AI 话术也必须一起移除/);
-  assert.match(rejectedInventedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedInventedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.match(rejectedInventedCopy, /正文分析必须继续显示/);
   assert.match(rejectedInventedCopy, /```text[\s\S]*正文代码块也必须继续显示[\s\S]*```/);
-  assert.equal(extractCareerMentorCustomerAnswer(rejectedInventedCopy), "");
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedInventedCopy), canonicalFollowUpScript);
 
   const decoratedCopyHeadings = [
     "## **可复制给客户**",
@@ -551,9 +580,9 @@ function main() {
       question: "客户已经看了资料但没有行动，接下来怎么办？"
     });
 
-    assert.match(guardedDecoratedHeading, /本轮没有检索到可逐字核对的同阶段客户话术/);
+    assert.doesNotMatch(guardedDecoratedHeading, /本轮没有检索到可逐字核对的同阶段客户话术/);
     assert.doesNotMatch(guardedDecoratedHeading, /现在就决定吧/);
-    assert.equal(extractCareerMentorCustomerAnswer(guardedDecoratedHeading), "");
+    assert.equal(extractCareerMentorCustomerAnswer(guardedDecoratedHeading), canonicalFollowUpScript);
   }
 
   const rejectedOrphanScript = cleanCareerMentorUserAnswer([
@@ -570,10 +599,10 @@ function main() {
     question: "客户已经看了资料但没有行动，接下来怎么办？"
   });
 
-  assert.match(rejectedOrphanScript, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedOrphanScript, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.doesNotMatch(rejectedOrphanScript, /现在就决定吧/);
   assert.match(rejectedOrphanScript, /即使缺少复制区标题/);
-  assert.equal(extractCareerMentorCustomerAnswer(rejectedOrphanScript), "");
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedOrphanScript), canonicalFollowUpScript);
 
   const rejectedWrongStageCopy = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -596,8 +625,9 @@ function main() {
     question: "客户已经看了资料但没有行动，接下来怎么办？"
   });
 
-  assert.match(rejectedWrongStageCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
-  assert.equal(extractCareerMentorCustomerAnswer(rejectedWrongStageCopy), "");
+  assert.doesNotMatch(rejectedWrongStageCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedWrongStageCopy, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedWrongStageCopy), canonicalFollowUpScript);
 
   const rejectedUntaggedCopy = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -620,9 +650,9 @@ function main() {
     question: "客户已经看了资料但没有行动，接下来怎么办？"
   });
 
-  assert.match(rejectedUntaggedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedUntaggedCopy, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.doesNotMatch(rejectedUntaggedCopy, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.equal(extractCareerMentorCustomerAnswer(rejectedUntaggedCopy), "");
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedUntaggedCopy), canonicalFollowUpScript);
 
   const rejectedDuplicateCopySections = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -643,9 +673,9 @@ function main() {
     question: "客户已经看了资料但没有行动，接下来怎么办？"
   });
 
-  assert.match(rejectedDuplicateCopySections, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(rejectedDuplicateCopySections, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.doesNotMatch(rejectedDuplicateCopySections, /现在就决定吧/);
-  assert.equal(extractCareerMentorCustomerAnswer(rejectedDuplicateCopySections), "");
+  assert.equal(extractCareerMentorCustomerAnswer(rejectedDuplicateCopySections), canonicalFollowUpScript);
 
   const fencedMarkdownPreserved = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -669,9 +699,90 @@ function main() {
   });
 
   assert.match(fencedMarkdownPreserved, /```markdown[\s\S]*## 可复制给客户[\s\S]*代码块中的展示示例。[\s\S]*```/);
-  assert.match(fencedMarkdownPreserved, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.doesNotMatch(fencedMarkdownPreserved, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.doesNotMatch(fencedMarkdownPreserved, /现在就决定吧/);
-  assert.equal(extractCareerMentorCustomerAnswer(fencedMarkdownPreserved), "");
+  assert.equal(extractCareerMentorCustomerAnswer(fencedMarkdownPreserved), canonicalFollowUpScript);
+
+  const objectionCanonicalCopy = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第四步锁定问题",
+    "",
+    "## 回复思路",
+    "先锁定客户真正担心的问题。"
+  ].join("\n"), {
+    chunks: [],
+    question: "客户说考虑考虑，怎么办"
+  });
+
+  assert.equal(extractCareerMentorCustomerAnswer(objectionCanonicalCopy), canonicalConsiderScript);
+
+  const currentObjectionTakesPriority = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：第四步锁定问题",
+    "",
+    "## 回复思路",
+    "只处理客户本轮提出的一个问题。"
+  ].join("\n"), {
+    chunks: [],
+    question: "客户现在说没时间做，怎么办",
+    supportingContext: "她上一轮还提到产品价格有点贵。"
+  });
+
+  assert.match(extractCareerMentorCustomerAnswer(currentObjectionTakesPriority), /^姐你说得太对了——哪个人每天不忙/);
+
+  const currentConsiderationWins = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "客户现在说考虑考虑，怎么办",
+    supportingContext: "她上一轮提到产品价格有点贵。"
+  });
+
+  assert.equal(extractCareerMentorCustomerAnswer(currentConsiderationWins), canonicalConsiderScript);
+
+  const negatedPriceUsesTimeCopy = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "产品不贵，就是没时间做，怎么办"
+  });
+  const negatedTimeUsesPriceCopy = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "不是没时间，是觉得产品有点贵"
+  });
+  const currentTrustQuestionWins = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "客户现在说这个不靠谱，怎么办",
+    supportingContext: "她上一轮还提到产品价格有点贵。"
+  });
+  const explicitNoTimeCopy = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "客户说没有时间做，怎么办"
+  });
+  const explicitDistrustCopy = cleanCareerMentorUserAnswer("## 判断\n保留正文。", {
+    chunks: [],
+    question: "客户不相信我，怎么办"
+  });
+
+  assert.match(extractCareerMentorCustomerAnswer(negatedPriceUsesTimeCopy), /^姐你说得太对了——哪个人每天不忙/);
+  assert.equal(extractCareerMentorCustomerAnswer(negatedTimeUsesPriceCopy), canonicalPriceScript);
+  assert.equal(extractCareerMentorCustomerAnswer(currentTrustQuestionWins), "姐——你是不是不相信我？来——我给你看看。");
+  assert.match(extractCareerMentorCustomerAnswer(explicitNoTimeCopy), /^姐你说得太对了——哪个人每天不忙/);
+  assert.equal(extractCareerMentorCustomerAnswer(explicitDistrustCopy), "姐——你是不是不相信我？来——我给你看看。");
+  assert.doesNotMatch(
+    [negatedPriceUsesTimeCopy, negatedTimeUsesPriceCopy, currentTrustQuestionWins].join("\n"),
+    /走标准三板斧流程|共享屏幕|打开群/
+  );
+
+  const maintenanceFallback = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "- 当前阶段：成交后长期客户维护",
+    "",
+    "## 回复思路",
+    "四份资料没有完整维护 SOP，不能编造。"
+  ].join("\n"), {
+    chunks: [],
+    question: "客户成交以后怎么维护老客户？"
+  });
+
+  assert.match(maintenanceFallback, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.equal(extractCareerMentorCustomerAnswer(maintenanceFallback), "");
 
   console.log("ai-chat career mentor tests passed");
 }

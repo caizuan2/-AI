@@ -1,6 +1,6 @@
 import type { RetrievedRagChunk } from "@/lib/rag/search";
 
-export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-copy-first-v4";
+export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-copy-first-v5";
 export const CAREER_MENTOR_RETRIEVAL_TOP_K = 14;
 
 export type CareerMentorCoreStage =
@@ -285,14 +285,25 @@ export function classifyCareerMentorQuestion(question: string, supportingContext
 
   const needsIceBreakPattern = /不知道你是谁|不了解你是谁|不了解我是谁|不认识你|刚加(?:上|到)?|刚认识|陌生客户|新客户|还没破冰|没有破冰|未破冰|还没自我介绍|没有自我介绍|还没发资料|没有发资料|没发资料/;
   const progressPattern = /破冰完成|已经破冰|破过冰|发完(?:视频|资料)|发了(?:视频|资料)|已经发(?:视频|资料)|看完(?:视频|资料)|看了(?:视频|资料)|已看(?:视频|资料)|已经了解|讲完事业|听完事业|认可|认同/;
-  const questionNeedsIceBreak = needsIceBreakPattern.test(normalizedQuestion);
-  const questionShowsProgress = progressPattern.test(normalizedQuestion);
-  const contextNeedsIceBreak = needsIceBreakPattern.test(normalizedSupportingContext);
-  const contextShowsProgress = progressPattern.test(normalizedSupportingContext);
+  const materialSentPattern = /(?:给.{0,8}客户)?(?:发|发送).{0,6}(?:破冰)?(?:视频|资料)(?:了|完|后|之后)?/;
+  const materialNotSentPattern = /(?:还没|没有|没|未).{0,12}(?:发|发送).{0,6}(?:破冰)?(?:视频|资料)/;
+  const followUpIntentPattern = /怎么跟进|如何跟进|接下来|下一步|然后|之后/;
+  const questionNeedsIceBreak = needsIceBreakPattern.test(normalizedQuestion)
+    || materialNotSentPattern.test(normalizedQuestion);
+  const questionShowsMaterialSent = materialSentPattern.test(normalizedQuestion)
+    && !materialNotSentPattern.test(normalizedQuestion);
+  const questionShowsProgress = progressPattern.test(normalizedQuestion) || questionShowsMaterialSent;
+  const contextNeedsIceBreak = needsIceBreakPattern.test(normalizedSupportingContext)
+    || materialNotSentPattern.test(normalizedSupportingContext);
+  const contextShowsProgress = progressPattern.test(normalizedSupportingContext)
+    || (
+      materialSentPattern.test(normalizedSupportingContext)
+      && !materialNotSentPattern.test(normalizedSupportingContext)
+    );
   const needsIceBreak = questionNeedsIceBreak
     || (!questionShowsProgress && contextNeedsIceBreak && !contextShowsProgress);
   const closingSignal = /(?:认可|认同|同意|答应|说可以|觉得(?:很好|不错|可以)|已经(?:清楚|明白|看懂|了解)).{0,16}(?:不加入|没加入|没有加入|不行动|没行动|没有行动|迟迟不动|不付款|没付款|不下单|没下单|不决定|没决定|不推进|一直拖|拖着|拖延)|(?:不加入|没加入|没有加入|不行动|没行动|没有行动|迟迟不动|不付款|没付款|不下单|没下单|一直拖|拖着|拖延).{0,16}(?:认可|认同|同意|答应|说可以|觉得(?:很好|不错|可以))|(?:怎么|如何)(?:付款|支付|下单)|付款方式|支付方式/;
-  const objectionSignal = /锁定问题|解决问题|异议|犹豫|考虑|再想想|担心|顾虑|有疑问|没钱|没有钱|没时间|没有时间|太忙|风险|说贵|觉得贵|认为贵|嫌贵|太贵|有点贵|产品.{0,6}贵|价格|费用|预算|靠谱|可靠|可信|信任|正规吗|合法(?:吗|不)|比较|对比|别家|其他项目|像(?:传销|直销|微商)|拒绝/;
+  const objectionSignal = /锁定问题|解决问题|异议|犹豫|考虑|再想想|担心|顾虑|有疑问|没钱|没有钱|没时间|没有时间|太忙|风险|说贵|觉得贵|认为贵|嫌贵|太贵|有点贵|产品.{0,6}贵|价格|费用|预算|靠谱|可靠|可信|信任|不相信|不信|正规吗|合法(?:吗|不)|比较|对比|别家|其他项目|像(?:传销|直销|微商)|拒绝/;
   const presentationSignal = /讲事业|讲事业通心|讲公司|讲行业|讲产品|讲利润|利润空间|持续赚钱|公司价值|团队价值|个人价值|讲事业注意事项|三个核心问题|事业机会|事业价值|主动.{0,8}(?:了解|咨询)|想.{0,8}(?:了解|知道).{0,8}(?:事业|怎么做|如何做|参与)|(?:怎么|如何)(?:参与|加入|做这个事业)|要求认真听/;
   const followUpSignal = /破冰视频.{0,8}(?:接下来|然后|之后|以后|发完|发了)|促单跟进|持续展示|已经了解.{0,12}(?:没行动|没有行动|还没行动)|看(?:完|过|了)(?:视频|资料).{0,12}(?:没行动|没有行动|不回复|没回复)|不回复|没回复|已读不回|不说话|沉默|没反应|一周|三个月|再次联系|继续聊/;
   const maintenanceMilestone = /成交后|成交以后|成交之后|已经成交|已成交|加入以后|加入之后|已经加入|老客户|长期客户/;
@@ -311,7 +322,10 @@ export function classifyCareerMentorQuestion(question: string, supportingContext
     stage = "framework";
   } else if (presentationSignal.test(normalized)) {
     stage = "career_presentation";
-  } else if (followUpSignal.test(normalized)) {
+  } else if (
+    followUpSignal.test(normalized)
+    || (questionShowsMaterialSent && followUpIntentPattern.test(normalizedQuestion))
+  ) {
     stage = "follow_up";
   } else if (/破冰|刚加|刚认识|陌生客户|发名片|自我介绍|建立信任/.test(normalized)) {
     stage = "ice_breaking";
@@ -622,12 +636,12 @@ export function buildCareerMentorBusinessContext(question: string, supportingCon
     ...STAGE_EXECUTION_CONTEXT[classification.stage].map((rule) => `- ${rule}`),
     "",
     "知识与正文铁律：",
-    "- retrieved context 是唯一业务知识来源。先精确匹配标准问题、场景话术或 SOP，保留动作、顺序、时间、条件和关键话术；禁止用通用销售知识拼凑。",
+    "- retrieved context 与本模型已固化的四份客户可复制话术卡是唯一业务知识来源。先精确匹配标准问题、场景话术或 SOP，保留动作、顺序、时间、条件和关键话术；禁止用通用销售知识拼凑。",
     "- 命中不足时请用户补充客户原话、阶段或已执行动作。只处理当前阶段及紧接的一步，不倾倒整套资料。",
     "- 隐藏测试提问、预期输出、管理员、投喂端、课程、源文件、ID、版本和检索说明。保留完整 DeepSeek/GPT 风格 Markdown 正文，不能只回答一句或只给话术卡。",
     "",
     "知识库原话优先铁律：",
-    "- ‘回复思路/推荐执行流程’优先采用当前阶段命中的精读笔记和一线人员操作卡片；‘可复制给客户’优先采用同阶段、同客户场景的客户可复制话术卡片。操作卡片中标明‘内部使用/绝不发给客户’的内容严禁进入话术卡。",
+    "- ‘回复思路/推荐执行流程’优先采用当前阶段命中的精读笔记和一线人员操作卡片；‘可复制给客户’优先采用同阶段、同客户场景的客户可复制话术卡片，包括模型中逐字固化的四份客户话术卡原文。操作卡片中标明‘内部使用/绝不发给客户’的内容严禁进入话术卡。",
     "- 只要 retrieved context 命中可直接发给客户的固定话术，‘### 话术 1’必须从该命中片段连续逐字复制：字词、标点、数字、顺序全部保持，不润色、不纠错、不缩写、不拼接、不补词，也不添加原文没有的前后缀。",
     "- 当前阶段没有专门客户话术卡时，‘话术 1’只能逐字采用精读笔记或操作卡片中明确标为话术、回复、文案、可直接转发的客户文本；不能把通心、策略、操作、技巧、配图、自检或带教内容当客户话术。",
     "- ‘### 话术 2’和‘### 话术 3’为可选项，只能排在话术 1 后，才可依据同阶段命中知识生成；不得把 AI 生成内容提前或冒充为话术 1。若没有精确话术命中，不输出 AI 话术，先请用户补充客户原话、阶段或对应资料。",
@@ -649,6 +663,128 @@ export interface CareerMentorAnswerGroundingInput {
 }
 
 const CAREER_MENTOR_COPY_GROUNDING_FALLBACK = "本轮没有检索到可逐字核对的同阶段客户话术。请补充客户原话、当前阶段或对应资料后再生成。";
+
+interface CareerMentorCanonicalCopyEntry {
+  stage: CareerMentorCoreStage;
+  sourceTitle: string;
+  sourceParagraph: number | string;
+  match?: RegExp;
+  exclude?: RegExp;
+  defaultForStage?: boolean;
+  script: string;
+}
+
+// These strings are copied verbatim from the four user-approved customer copy cards.
+// They are a career-mentor-only fallback for deployments whose indexed records contain
+// the uploaded filenames but not the DOCX body. The surrounding expert answer still
+// comes from retrieved context; this catalog only supplies the first copyable script.
+const CAREER_MENTOR_CANONICAL_COPY_LIBRARY: readonly CareerMentorCanonicalCopyEntry[] = [
+  {
+    stage: "ice_breaking",
+    sourceTitle: "01_破冰_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 97,
+    match: /靠谱|可靠|可信|信任|正规|是不是真的/,
+    script: "姐，我发你的两个视频里面有详细介绍——你先安静下来用十五分钟认真看一遍。看完你心里就清楚了。有不明白的记下来——我看完视频再给你解答。"
+  },
+  {
+    stage: "ice_breaking",
+    sourceTitle: "01_破冰_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 89,
+    defaultForStage: true,
+    script: "姐/哥，我们这个事业很简单—— 很多80后、90后、00后，甚至50多岁的伙伴，各行各业的人都有。打工的、做生意的、在家带孩子的、退休的——各行各业都有。 他们来到这里之后，短短几个月就做到了周薪五位数。当然收益还有更高的。因为我们的运营方法和流程非常简单，人人都能快速学会。 操作也很方便——一部手机走到哪里做到哪里。不用出去跑、不用看人脸色、不用大量资金。你自己决定自己的节奏。 我这边刚好有两个内部的视频资料——你可以先看看，看完你心里就清楚了。"
+  },
+  {
+    stage: "follow_up",
+    sourceTitle: "02_促单跟进_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 115,
+    defaultForStage: true,
+    script: "姐，我刚忙完一个客户——群里这会又炸了。你看看这才多大一会——各行各业的精英排队咨询的、出单的、晋升的——从早到晚就没停过。你先好好看视频——看完你心里就有数了。"
+  },
+  {
+    stage: "career_presentation",
+    sourceTitle: "03_讲事业第三步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 30,
+    match: /怎么讲|如何讲|讲解|开场|认真听|讲清楚/,
+    script: "姐，接下来大概二十多分钟的时间——你要把所有的事情全部都放下。认真地听我讲，并且每一步都要跟我互动。这样的话，我就能够确保每一步我都给你讲解明白了。咱们确保一次性就把这个生意了解清楚，好不好啊姐？"
+  },
+  {
+    stage: "career_presentation",
+    sourceTitle: "03_讲事业第三步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 19,
+    defaultForStage: true,
+    script: "姐/哥，你现在方便吗？我现在正好有点时间——方便的话我给你打过去，一次性把这个生意给你讲明白、讲清楚。"
+  },
+  {
+    stage: "objection_handling",
+    sourceTitle: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 94,
+    match: /贵|价格|费用|预算|1980/,
+    exclude: /不贵|不是价格|价格没问题|价格不是问题|不觉得贵/,
+    script: "姐——你除了觉得产品有点贵之外，还有没有其他的顾虑？你一次性说出来——我一次性给你解答。"
+  },
+  {
+    stage: "objection_handling",
+    sourceTitle: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 56,
+    match: /没时间|没有时间|太忙|忙不过来/,
+    exclude: /不是没时间|并不是没时间|时间不是问题|时间没问题|时间充足/,
+    script: "姐你说得太对了——哪个人每天不忙？一个月赚两千块的人也忙得很对不对。链商是一个可兼职可全职的事业——前期你可以先兼职当副业。等你有一定收益或者非常有信心了——再选择全职做也可以。 姐——你再怎么没时间，牙膏是不是也要用？大米是不是也要吃？跟你有没有时间没有关系嘛。无非就是把家里的日用品换到我们这里来买——换个牌子用一用。你感觉产品好了给身边的朋友分享一下——就可以赚钱了。 那你找我是为了什么？是不是为了赚钱？ 赚钱最重要的是什么？你要能可持续地赚到钱。那怎么样可持续赚钱？就是有简单、人人可为的方法嘛。"
+  },
+  {
+    stage: "objection_handling",
+    sourceTitle: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 62,
+    match: /靠谱|可靠|可信|信任|正规|合法|骗|不相信/,
+    exclude: /不是不靠谱|没有不信任|不是信任问题|我相信你|已经相信|信得过|很靠谱|确实靠谱/,
+    script: "姐——你是不是不相信我？来——我给你看看。"
+  },
+  {
+    stage: "objection_handling",
+    sourceTitle: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 25,
+    match: /考虑|再想想|想一想|犹豫|顾虑|担心/,
+    defaultForStage: true,
+    script: "姐——考虑是正常的，说明你在认真了解这个事情。那你目前主要担心的是什么呢？是担心产品不好呢？还是担心公司不放心呢？还是担心自己能不能做起来？"
+  },
+  {
+    stage: "closing",
+    sourceTitle: "03_讲事业第三步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 141,
+    match: /没有疑问|没疑问|都明白|搞清楚|听明白/,
+    script: "那姐——咱们今天就把手续办了。非常简单——我教你操作，几分钟就搞定。"
+  },
+  {
+    stage: "closing",
+    sourceTitle: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版.docx",
+    sourceParagraph: 35,
+    defaultForStage: true,
+    script: "姐——搞明白了吧？微信还是支付宝？"
+  }
+] as const;
+
+function selectCareerMentorCanonicalCopy(
+  classification: CareerMentorClassification,
+  question: string,
+  supportingContext = ""
+) {
+  if (!isCareerMentorCoreStage(classification.stage)) {
+    return null;
+  }
+
+  const normalizedQuestion = normalizeContent(question);
+  const normalizedSupportingContext = normalizeContent(supportingContext);
+  const stageEntries = CAREER_MENTOR_CANONICAL_COPY_LIBRARY.filter((entry) => (
+    entry.stage === classification.stage
+  ));
+  const matches = (entry: CareerMentorCanonicalCopyEntry, text: string) => (
+    Boolean(entry.match?.test(text)) && !entry.exclude?.test(text)
+  );
+
+  return stageEntries.find((entry) => matches(entry, normalizedQuestion))
+    ?? stageEntries.find((entry) => matches(entry, normalizedSupportingContext))
+    ?? stageEntries.find((entry) => entry.defaultForStage)
+    ?? null;
+}
 
 function buildCareerMentorFenceMask(lines: string[]) {
   const mask = new Array<boolean>(lines.length).fill(false);
@@ -840,34 +976,26 @@ function isCareerMentorScriptGrounded(
   return /(?:可直接发给客户|可直接转发|话术全文|完整话术|一字不差|标准话术|共鸣话术|标准回应|文案(?:示例)?[：:]|你怎么接|(?:回他|问他|话术|回复)[：:])[\s\S]{0,240}$/.test(localLead);
 }
 
-export function enforceCareerMentorGroundedCopy(
-  answer: string,
-  input: CareerMentorAnswerGroundingInput
+function buildCareerMentorCanonicalCopySection(script: string) {
+  return [
+    "## 可复制给客户",
+    "",
+    "### 话术 1",
+    "",
+    ...script.replace(/\r\n/g, "\n").split("\n").map((line) => `> ${line}`)
+  ];
+}
+
+function replaceCareerMentorCopySections(
+  lines: string[],
+  copySections: ReturnType<typeof findCareerMentorCopySections>,
+  replacementLines: string[]
 ) {
-  const lines = answer.replace(/\r\n/g, "\n").split("\n");
-  const copySections = findCareerMentorCopySections(lines);
-
   if (copySections.length === 0) {
-    return answer.trim();
-  }
-
-  if (copySections.length === 1) {
-    const [copySection] = copySections;
-    const script = readCareerMentorFirstScript(
-      lines,
-      copySection.firstScriptIndex,
-      copySection.endIndex
-    );
-    const classification = classifyCareerMentorQuestion(input.question, input.supportingContext);
-    const isGrounded = copySection.explicitCopyHeading
-      && script.length > 0
-      && input.chunks.some((chunk) => (
-      isCareerMentorScriptGrounded(script, chunk, classification)
-      ));
-
-    if (isGrounded) {
-      return answer.trim();
-    }
+    return [...lines, "", ...replacementLines]
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 
   const guardedLines: string[] = [];
@@ -879,11 +1007,7 @@ export function enforceCareerMentorGroundedCopy(
     guardedLines.push(...lines.slice(cursor, copySection.startIndex));
 
     if (sectionIndex === 0) {
-      guardedLines.push(
-        "## 可复制给客户",
-        "",
-        CAREER_MENTOR_COPY_GROUNDING_FALLBACK
-      );
+      guardedLines.push(...replacementLines);
     }
 
     cursor = copySection.endIndex;
@@ -895,6 +1019,55 @@ export function enforceCareerMentorGroundedCopy(
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+}
+
+export function enforceCareerMentorGroundedCopy(
+  answer: string,
+  input: CareerMentorAnswerGroundingInput
+) {
+  const lines = answer.replace(/\r\n/g, "\n").split("\n");
+  const copySections = findCareerMentorCopySections(lines);
+  const classification = classifyCareerMentorQuestion(input.question, input.supportingContext);
+  const canonicalCopy = selectCareerMentorCanonicalCopy(
+    classification,
+    input.question,
+    input.supportingContext
+  );
+
+  if (copySections.length === 1) {
+    const [copySection] = copySections;
+    const script = readCareerMentorFirstScript(
+      lines,
+      copySection.firstScriptIndex,
+      copySection.endIndex
+    );
+    const isGrounded = copySection.explicitCopyHeading
+      && script.length > 0
+      && (
+        canonicalCopy?.script === script
+        || input.chunks.some((chunk) => (
+          isCareerMentorScriptGrounded(script, chunk, classification)
+        ))
+      );
+
+    if (isGrounded) {
+      return answer.trim();
+    }
+  }
+
+  if (canonicalCopy) {
+    return replaceCareerMentorCopySections(
+      lines,
+      copySections,
+      buildCareerMentorCanonicalCopySection(canonicalCopy.script)
+    );
+  }
+
+  return replaceCareerMentorCopySections(lines, copySections, [
+    "## 可复制给客户",
+    "",
+    CAREER_MENTOR_COPY_GROUNDING_FALLBACK
+  ]);
 }
 
 export function cleanCareerMentorUserAnswer(
