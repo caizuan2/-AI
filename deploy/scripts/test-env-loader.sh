@@ -48,7 +48,9 @@ fi
 cat >"$TEST_DIR/release.env" <<'ENV'
 RELEASE_ID=20260713010101-aaaaaaaaaaaa
 RELEASE_PATH=/opt/ai-team-os/releases/20260713010101-aaaaaaaaaaaa
+SOURCE_REF=refs/tags/ai-team-os-phase14-production-live-ready
 SOURCE_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ORCHESTRATOR_SCHEMA=2
 ORCHESTRATOR_SHA256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 RUNTIME_IMAGE=ai-team-os:20260713010101-aaaaaaaaaaaa
 RUNTIME_IMAGE_ID=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
@@ -56,6 +58,8 @@ MIGRATION_IMAGE=ai-team-os-migration:20260713010101-aaaaaaaaaaaa
 MIGRATION_IMAGE_ID=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 ENV
 ai_team_os_load_env "$TEST_DIR/release.env" release
+[[ "$SOURCE_REF" == 'refs/tags/ai-team-os-phase14-production-live-ready' ]]
 [[ "$SOURCE_SHA" == 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]
+[[ "$ORCHESTRATOR_SCHEMA" == 2 ]]
 
 echo "Strict dotenv loader tests passed."

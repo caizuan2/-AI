@@ -2,6 +2,72 @@
 set -Eeuo pipefail
 IFS=$'\n\t'
 umask 027
+ulimit -c 0
+
+SAFE_PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+validate_clean_environment() {
+  local exported_name allowed_name allowed_value
+  while IFS= read -r exported_name; do
+    case "$exported_name" in
+      PATH|HOME|LANG|LC_ALL|TZ|AI_TEAM_OS_CLEAN_ENVIRONMENT|AI_TEAM_OS_ENV_FILE|CONFIRM_MIGRATIONS|SSH_AUTH_SOCK|PWD|SHLVL|_|MSYSTEM|SYSTEMROOT|WINDIR) ;;
+      *) return 1 ;;
+    esac
+  done < <(compgen -e)
+
+  [[ ${PATH:-} == "$SAFE_PATH" && ${HOME:-} == /root \
+    && ${LANG:-} == C.UTF-8 && ${LC_ALL:-} == C.UTF-8 && ${TZ:-} == UTC ]] \
+    || return 1
+  for allowed_name in AI_TEAM_OS_ENV_FILE CONFIRM_MIGRATIONS; do
+    if [[ -v $allowed_name ]]; then
+      allowed_value=${!allowed_name}
+      [[ "$allowed_value" != *$'\n'* && "$allowed_value" != *$'\r'* ]] || return 1
+    fi
+  done
+  if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
+    [[ "$SSH_AUTH_SOCK" =~ ^/[A-Za-z0-9._/-]+$ ]] || return 1
+  fi
+}
+
+if [[ ${AI_TEAM_OS_CLEAN_ENVIRONMENT:-} != 1 ]]; then
+  [[ -x /usr/bin/env && -x /usr/bin/bash ]] || {
+    printf 'A trusted /usr/bin/env and /usr/bin/bash are required.\n' >&2
+    exit 1
+  }
+  CLEAN_ENV=(
+    -i
+    "PATH=$SAFE_PATH"
+    HOME=/root
+    LANG=C.UTF-8
+    LC_ALL=C.UTF-8
+    TZ=UTC
+    AI_TEAM_OS_CLEAN_ENVIRONMENT=1
+  )
+  for allowed_name in AI_TEAM_OS_ENV_FILE CONFIRM_MIGRATIONS; do
+    if [[ -v $allowed_name ]]; then
+      allowed_value=${!allowed_name}
+      [[ "$allowed_value" != *$'\n'* && "$allowed_value" != *$'\r'* ]] || {
+        printf 'Refusing a multiline value for %s.\n' "$allowed_name" >&2
+        exit 1
+      }
+      CLEAN_ENV+=("${allowed_name}=${allowed_value}")
+    fi
+  done
+  if [[ -n ${SSH_AUTH_SOCK:-} ]]; then
+    [[ "$SSH_AUTH_SOCK" =~ ^/[A-Za-z0-9._/-]+$ ]] || {
+      printf 'SSH_AUTH_SOCK must be an absolute socket path with safe characters.\n' >&2
+      exit 1
+    }
+    CLEAN_ENV+=("SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
+  fi
+  exec /usr/bin/env "${CLEAN_ENV[@]}" /usr/bin/bash --noprofile --norc "$0" "$@"
+fi
+validate_clean_environment || {
+  printf 'Refusing a forged or contaminated clean-environment marker.\n' >&2
+  exit 1
+}
+unset AI_TEAM_OS_CLEAN_ENVIRONMENT CLEAN_ENV allowed_name allowed_value
+export PATH=$SAFE_PATH
+readonly SAFE_PATH PATH
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 if (( EUID == 0 )); then
@@ -31,6 +97,7 @@ NEW_RELEASE_DIR=""
 CUTOVER_STARTED=false
 ACTIVATION_COMMITTED=false
 VERSION_TARGET_BACKUP=""
+ENV_SNAPSHOT_FILE=""
 
 usage() {
   cat <<'USAGE'
@@ -39,7 +106,7 @@ Usage: deploy.sh [options]
   --env-file PATH       Root-owned production environment file (default:
                         /etc/ai-team-os/ai-team-os.env)
   --source-mode MODE    git or archive (overrides DEPLOY_SOURCE_MODE)
-  --release-ref REF     Immutable commit/tag/ref for git mode
+  --release-ref REF     Immutable commit or refs/tags/... for git mode
   --archive PATH        git-archive tar file for archive mode
   --release-sha SHA     Commit SHA represented by an archive
   --archive-sha256 SHA  Expected SHA-256 of the archive before extraction
@@ -60,6 +127,13 @@ log() {
 die() {
   log "ERROR: $*" >&2
   exit 1
+}
+
+validate_source_ref() {
+  local source_ref=$1
+  [[ "$source_ref" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$ ]] || return 1
+  [[ "$source_ref" != *".."* && "$source_ref" != *"//"* && "$source_ref" != */ ]] || return 1
+  [[ "$source_ref" != *"@{"* && "$source_ref" != *.lock ]] || return 1
 }
 
 prepare_root_directory() {
@@ -104,14 +178,48 @@ require_root_control_file() {
   (( (8#$mode & 022) == 0 )) || die "deployment control file must not be group/world writable: ${file}"
 }
 
+cleanup_stale_environment_snapshots() {
+  local candidate mode nullglob_was_set=false
+  local -a candidates=()
+
+  shopt -q nullglob && nullglob_was_set=true
+  shopt -s nullglob
+  candidates=(/run/ai-team-os/deploy-env.* /run/ai-team-os/rollback-env.*)
+  [[ "$nullglob_was_set" == true ]] || shopt -u nullglob
+
+  for candidate in "${candidates[@]}"; do
+    case "$candidate" in
+      /run/ai-team-os/deploy-env.*|/run/ai-team-os/rollback-env.*) ;;
+      *) die "refusing an unexpected stale environment snapshot path" ;;
+    esac
+    [[ -f "$candidate" && ! -L "$candidate" ]] \
+      || die "stale environment snapshot is not a regular file: ${candidate}"
+    [[ $(stat -c '%u' "$candidate") == 0 && $(stat -c '%g' "$candidate") == 0 ]] \
+      || die "stale environment snapshot is not root-owned: ${candidate}"
+    [[ $(stat -c '%h' "$candidate") == 1 ]] \
+      || die "stale environment snapshot has multiple hard links: ${candidate}"
+    mode=$(stat -c '%a' "$candidate")
+    (( (8#$mode & 077) == 0 )) \
+      || die "stale environment snapshot is accessible outside root: ${candidate}"
+    rm -f -- "$candidate"
+  done
+}
+
 require_root_release_tree() {
   local release_root=$1
+  local unsafe_entry
   [[ -d "$release_root" && ! -L "$release_root" ]] || die "release root is missing or is a symbolic link: ${release_root}"
-  [[ -z $(find "$release_root" -xdev ! -user root -print -quit) ]] \
+  unsafe_entry=$(find "$release_root" -xdev ! -user root -print -quit) \
+    || die "failed to inspect release ownership: ${release_root}"
+  [[ -z "$unsafe_entry" ]] \
     || die "release tree contains a non-root-owned entry: ${release_root}"
-  [[ -z $(find "$release_root" -xdev -perm /022 -print -quit) ]] \
+  unsafe_entry=$(find "$release_root" -xdev -perm /022 -print -quit) \
+    || die "failed to inspect release permissions: ${release_root}"
+  [[ -z "$unsafe_entry" ]] \
     || die "release tree contains a group/world-writable entry: ${release_root}"
-  [[ -z $(find "$release_root" -xdev ! -type f ! -type d -print -quit) ]] \
+  unsafe_entry=$(find "$release_root" -xdev ! -type f ! -type d -print -quit) \
+    || die "failed to inspect release entry types: ${release_root}"
+  [[ -z "$unsafe_entry" ]] \
     || die "release tree contains a symlink or non-regular entry: ${release_root}"
 }
 
@@ -126,9 +234,17 @@ require_trusted_orchestrator_file() {
 
 calculate_orchestrator_sha256() {
   local root=$1
+  local schema=${2:-$ORCHESTRATOR_SCHEMA_CURRENT}
+  local selected_array
   local relative_path file_hash
+  case "$schema" in
+    1) selected_array=ORCHESTRATOR_V1_RELATIVE_FILES ;;
+    2) selected_array=ORCHESTRATOR_V2_RELATIVE_FILES ;;
+    *) return 1 ;;
+  esac
+  local -n selected_files="$selected_array"
   {
-    for relative_path in "${ORCHESTRATOR_RELATIVE_FILES[@]}"; do
+    for relative_path in "${selected_files[@]}"; do
       file_hash=$(sha256sum "$root/$relative_path" | cut -d ' ' -f 1) || return 1
       printf '%s %s\n' "$relative_path" "$file_hash"
     done
@@ -158,10 +274,27 @@ function parseUrl(key, protocols) {
   }
 }
 
-function requirePostgresTls(key, url) {
+const databaseCaCert = (env.DATABASE_CA_CERT || "").trim();
+
+function requirePinnedDatabaseCa(key, url) {
   if (!url) return;
+  if (url.searchParams.getAll("sslmode").length !== 1 || url.searchParams.getAll("sslrootcert").length !== 1) {
+    errors.push(`${key}_TLS_PARAMETERS`);
+    return;
+  }
   const sslMode = (url.searchParams.get("sslmode") || "").toLowerCase();
-  if (!["require", "verify-ca", "verify-full"].includes(sslMode)) errors.push(`${key}_TLS`);
+  const sslRootCert = url.searchParams.get("sslrootcert") || "";
+  if (sslRootCert !== databaseCaCert) errors.push(`${key}_CA_PATH`);
+  if (key === "BACKUP_DATABASE_URL") {
+    if (sslMode !== "verify-full" || url.searchParams.has("sslaccept")) errors.push(`${key}_TLS`);
+    return;
+  }
+  if (url.searchParams.getAll("sslaccept").length !== 1) {
+    errors.push(`${key}_TLS_PARAMETERS`);
+    return;
+  }
+  const sslAccept = (url.searchParams.get("sslaccept") || "").toLowerCase();
+  if (sslMode !== "require" || sslAccept !== "strict") errors.push(`${key}_TLS`);
 }
 
 function requireLoopbackUrl(key) {
@@ -171,12 +304,13 @@ function requireLoopbackUrl(key) {
 }
 
 if (env.NODE_ENV !== "production") errors.push("NODE_ENV");
+if (databaseCaCert !== "/etc/ai-team-os/rds-ca.pem") errors.push("DATABASE_CA_CERT");
 const databaseUrl = parseUrl("DATABASE_URL", ["postgres:", "postgresql:"]);
 const directUrl = parseUrl("DIRECT_URL", ["postgres:", "postgresql:"]);
 const backupUrl = parseUrl("BACKUP_DATABASE_URL", ["postgres:", "postgresql:"]);
-requirePostgresTls("DATABASE_URL", databaseUrl);
-requirePostgresTls("DIRECT_URL", directUrl);
-requirePostgresTls("BACKUP_DATABASE_URL", backupUrl);
+requirePinnedDatabaseCa("DATABASE_URL", databaseUrl);
+requirePinnedDatabaseCa("DIRECT_URL", directUrl);
+requirePinnedDatabaseCa("BACKUP_DATABASE_URL", backupUrl);
 if (backupUrl?.searchParams.has("schema")) errors.push("BACKUP_DATABASE_URL_SCHEMA_PARAM");
 const publicUrl = parseUrl("NEXT_PUBLIC_APP_URL", ["https:"]);
 const knowledgeUrl = parseUrl("APP_URL", ["https:"]);
@@ -229,7 +363,7 @@ NODE
 check_json_flag() {
   local url=$1
   local key=$2
-  curl --fail --silent --show-error --max-time 10 "$url" \
+  curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 "$url" \
     | node -e '
       let input = "";
       process.stdin.setEncoding("utf8");
@@ -264,7 +398,7 @@ check_status_identity() {
   local expected_version=$2
   local expected_build=$3
   local expected_sha=$4
-  curl --fail --silent --show-error --max-time 10 "$url" \
+  curl --disable --noproxy '*' --fail --silent --show-error --max-time 10 "$url" \
     | node -e '
       let input = "";
       process.stdin.setEncoding("utf8");
@@ -321,21 +455,23 @@ load_release_snapshot() {
   local -a values
 
   payload=$(
-    unset RELEASE_ID RELEASE_PATH SOURCE_SHA ORCHESTRATOR_SHA256 RUNTIME_IMAGE RUNTIME_IMAGE_ID MIGRATION_IMAGE MIGRATION_IMAGE_ID
+    unset RELEASE_ID RELEASE_PATH SOURCE_REF SOURCE_SHA ORCHESTRATOR_SCHEMA ORCHESTRATOR_SHA256 RUNTIME_IMAGE RUNTIME_IMAGE_ID MIGRATION_IMAGE MIGRATION_IMAGE_ID
     ai_team_os_load_env "$metadata_file" release || exit 1
-    printf '%s\n' "$RELEASE_ID" "$RELEASE_PATH" "$SOURCE_SHA" "$ORCHESTRATOR_SHA256" "$RUNTIME_IMAGE" "$RUNTIME_IMAGE_ID" "$MIGRATION_IMAGE" "$MIGRATION_IMAGE_ID"
+    printf '%s\n' "$RELEASE_ID" "$RELEASE_PATH" "${SOURCE_REF:-commit/${SOURCE_SHA:-unknown}}" "${SOURCE_SHA:-}" "${ORCHESTRATOR_SCHEMA:-1}" "${ORCHESTRATOR_SHA256:-}" "${RUNTIME_IMAGE:-}" "${RUNTIME_IMAGE_ID:-}" "${MIGRATION_IMAGE:-}" "${MIGRATION_IMAGE_ID:-}"
   ) || return 1
   mapfile -t values <<<"$payload"
-  (( ${#values[@]} == 8 )) || return 1
+  (( ${#values[@]} == 10 )) || return 1
 
   printf -v "${prefix}_RELEASE_ID" '%s' "${values[0]}"
   printf -v "${prefix}_RELEASE_PATH" '%s' "${values[1]}"
-  printf -v "${prefix}_SOURCE_SHA" '%s' "${values[2]}"
-  printf -v "${prefix}_ORCHESTRATOR_SHA256" '%s' "${values[3]}"
-  printf -v "${prefix}_RUNTIME_IMAGE" '%s' "${values[4]}"
-  printf -v "${prefix}_RUNTIME_IMAGE_ID" '%s' "${values[5]}"
-  printf -v "${prefix}_MIGRATION_IMAGE" '%s' "${values[6]}"
-  printf -v "${prefix}_MIGRATION_IMAGE_ID" '%s' "${values[7]}"
+  printf -v "${prefix}_SOURCE_REF" '%s' "${values[2]}"
+  printf -v "${prefix}_SOURCE_SHA" '%s' "${values[3]}"
+  printf -v "${prefix}_ORCHESTRATOR_SCHEMA" '%s' "${values[4]}"
+  printf -v "${prefix}_ORCHESTRATOR_SHA256" '%s' "${values[5]}"
+  printf -v "${prefix}_RUNTIME_IMAGE" '%s' "${values[6]}"
+  printf -v "${prefix}_RUNTIME_IMAGE_ID" '%s' "${values[7]}"
+  printf -v "${prefix}_MIGRATION_IMAGE" '%s' "${values[8]}"
+  printf -v "${prefix}_MIGRATION_IMAGE_ID" '%s' "${values[9]}"
 }
 
 validate_release_snapshot() {
@@ -343,7 +479,9 @@ validate_release_snapshot() {
   local expected_path=$2
   local -n release_id="${prefix}_RELEASE_ID"
   local -n release_path="${prefix}_RELEASE_PATH"
+  local -n source_ref="${prefix}_SOURCE_REF"
   local -n source_sha="${prefix}_SOURCE_SHA"
+  local -n orchestrator_schema="${prefix}_ORCHESTRATOR_SCHEMA"
   local -n orchestrator_sha256="${prefix}_ORCHESTRATOR_SHA256"
   local -n runtime_image="${prefix}_RUNTIME_IMAGE"
   local -n runtime_image_id="${prefix}_RUNTIME_IMAGE_ID"
@@ -352,7 +490,9 @@ validate_release_snapshot() {
 
   [[ "$release_path" == "$expected_path" ]] || return 1
   [[ "$release_id" =~ ^[0-9]{14}-[0-9a-fA-F]{12}$ ]] || return 1
+  validate_source_ref "$source_ref" || return 1
   [[ "$source_sha" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] || return 1
+  [[ "$orchestrator_schema" == 1 || "$orchestrator_schema" == 2 ]] || return 1
   [[ "$orchestrator_sha256" =~ ^[0-9a-fA-F]{64}$ ]] || return 1
   [[ "$runtime_image" == "ai-team-os:${release_id}" ]] || return 1
   [[ "$runtime_image_id" =~ ^sha256:[0-9a-fA-F]{64}$ ]] || return 1
@@ -401,6 +541,9 @@ cleanup() {
   fi
   if [[ -n "$VERSION_TARGET_BACKUP" ]]; then
     rm -f -- "$VERSION_TARGET_BACKUP"
+  fi
+  if [[ -n "$ENV_SNAPSHOT_FILE" ]]; then
+    rm -f -- "$ENV_SNAPSHOT_FILE"
   fi
   if (( exit_code != 0 )); then
     log "Deployment failed. The database was not automatically rolled back." >&2
@@ -458,7 +601,8 @@ done
 [[ ${EUID} -eq 0 ]] || die "run as root so release and state ownership is deterministic"
 
 TRUSTED_REPOSITORY_ROOT=$(readlink -f -- "$SCRIPT_DIR/../..")
-ORCHESTRATOR_RELATIVE_FILES=(
+ORCHESTRATOR_SCHEMA_CURRENT=2
+ORCHESTRATOR_V1_RELATIVE_FILES=(
   .dockerignore
   .env.production.template
   deploy/docker/Dockerfile.production
@@ -472,6 +616,13 @@ ORCHESTRATOR_RELATIVE_FILES=(
   deploy/scripts/verify-deployment.mjs
   deploy/scripts/verify-team-os-schema.mjs
 )
+ORCHESTRATOR_V2_RELATIVE_FILES=(
+  "${ORCHESTRATOR_V1_RELATIVE_FILES[@]}"
+  deploy/scripts/production-health-check.sh
+  deploy/scripts/server-init.sh
+  deploy/scripts/cloud-preflight-check.sh
+)
+ORCHESTRATOR_RELATIVE_FILES=("${ORCHESTRATOR_V2_RELATIVE_FILES[@]}")
 TRUSTED_ORCHESTRATOR_FILES=()
 for relative_path in "${ORCHESTRATOR_RELATIVE_FILES[@]}"; do
   TRUSTED_ORCHESTRATOR_FILES+=("$TRUSTED_REPOSITORY_ROOT/$relative_path")
@@ -479,19 +630,43 @@ done
 for trusted_file in "${TRUSTED_ORCHESTRATOR_FILES[@]}"; do
   require_trusted_orchestrator_file "$trusted_file"
 done
-TRUSTED_ORCHESTRATOR_SHA256=$(calculate_orchestrator_sha256 "$TRUSTED_REPOSITORY_ROOT") \
+TRUSTED_ORCHESTRATOR_SHA256=$(calculate_orchestrator_sha256 "$TRUSTED_REPOSITORY_ROOT" "$ORCHESTRATOR_SCHEMA_CURRENT") \
   || die "failed to hash the trusted orchestrator bundle"
 
-for command_name in awk chmod chown docker curl find flock install node sed stat readlink sha256sum; do
+for command_name in awk chmod chown docker curl find findmnt flock install mktemp node readlink rm sed sha256sum stat; do
   command -v "$command_name" >/dev/null 2>&1 || die "required command not found: ${command_name}"
 done
 docker compose version >/dev/null 2>&1 || die "Docker Compose v2 is required"
 
-[[ -f "$ENV_FILE" ]] || die "environment file not found: ${ENV_FILE}"
+[[ -f "$ENV_FILE" && ! -L "$ENV_FILE" ]] || die "environment file is missing or is a symbolic link: ${ENV_FILE}"
 ENV_FILE=$(readlink -f -- "$ENV_FILE")
 [[ $(stat -c '%u' "$ENV_FILE") == 0 ]] || die "environment file must be owned by root"
 ENV_MODE=$(stat -c '%a' "$ENV_FILE")
 (( (8#$ENV_MODE & 077) == 0 )) || die "environment file must not be accessible by group or world (use mode 0600)"
+
+prepare_root_directory /run/ai-team-os 0750
+[[ $(findmnt -n -o FSTYPE -T /run/ai-team-os) == tmpfs ]] \
+  || die "/run/ai-team-os must be backed by tmpfs for the deployment environment snapshot"
+[[ -r /proc/swaps && $(awk 'NR > 1 { active = 1 } END { print active + 0 }' /proc/swaps) == 0 ]] \
+  || die "swap must be disabled while the production environment snapshot is held in tmpfs"
+DEPLOY_LOCK_FILE=/run/ai-team-os/deploy.lock
+if [[ -e "$DEPLOY_LOCK_FILE" || -L "$DEPLOY_LOCK_FILE" ]]; then
+  require_root_control_file "$DEPLOY_LOCK_FILE"
+fi
+exec 9>"$DEPLOY_LOCK_FILE"
+chown root:root "$DEPLOY_LOCK_FILE"
+chmod 0640 "$DEPLOY_LOCK_FILE"
+flock -n 9 || die "another AI Team OS deployment or rollback is active"
+cleanup_stale_environment_snapshots
+
+LIVE_ENV_SHA256=$(sha256sum "$ENV_FILE" | cut -d ' ' -f 1)
+ENV_SNAPSHOT_FILE=$(mktemp /run/ai-team-os/deploy-env.XXXXXXXX)
+install -o root -g root -m 0600 -- "$ENV_FILE" "$ENV_SNAPSHOT_FILE"
+[[ $(sha256sum "$ENV_SNAPSHOT_FILE" | cut -d ' ' -f 1) == "$LIVE_ENV_SHA256" ]] \
+  || die "production environment changed while its deployment snapshot was created"
+[[ $(sha256sum "$ENV_FILE" | cut -d ' ' -f 1) == "$LIVE_ENV_SHA256" ]] \
+  || die "production environment changed while its deployment snapshot was created"
+ENV_FILE=$ENV_SNAPSHOT_FILE
 
 ai_team_os_load_env "$ENV_FILE" || die "production environment parsing failed"
 
@@ -517,19 +692,22 @@ validate_production_environment
 [[ "$DEPLOY_BASE_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "DEPLOY_BASE_DIR contains unsupported characters"
 [[ "$DEPLOY_STATE_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "DEPLOY_STATE_DIR contains unsupported characters"
 [[ "$TEAM_OS_VERSION_TARGET" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "TEAM_OS_VERSION_TARGET contains unsupported characters"
+[[ "$DEPLOY_BASE_DIR" == /opt/ai-team-os ]] || die "DEPLOY_BASE_DIR must remain /opt/ai-team-os"
+[[ "$DEPLOY_STATE_DIR" == /var/lib/ai-team-os ]] || die "DEPLOY_STATE_DIR must remain /var/lib/ai-team-os"
+[[ "$TEAM_OS_VERSION_TARGET" == /var/www/ai-team-os/updates/VERSION_CHECK.json ]] \
+  || die "TEAM_OS_VERSION_TARGET must remain /var/www/ai-team-os/updates/VERSION_CHECK.json"
+[[ "${TEAM_OS_PORT:-}" == 3022 ]] || die "TEAM_OS_PORT must remain 3022"
+[[ "$TEAM_OS_HEALTH_URL" == http://127.0.0.1:3022/api/team-os/status ]] \
+  || die "TEAM_OS_HEALTH_URL must remain the fixed loopback Team OS status endpoint"
+[[ "$TEAM_OS_READINESS_URL" == 'http://127.0.0.1:3022/api/health?database=true&schema=true&ai=true' ]] \
+  || die "TEAM_OS_READINESS_URL must remain the fixed loopback readiness endpoint"
+[[ "$DEPLOY_LOCK_FILE" == /run/ai-team-os/deploy.lock ]] \
+  || die "DEPLOY_LOCK_FILE must remain /run/ai-team-os/deploy.lock"
 
 prepare_root_directory "$DEPLOY_BASE_DIR" 0750
 prepare_root_directory "$DEPLOY_BASE_DIR/releases" 0750
 prepare_root_directory "$DEPLOY_STATE_DIR" 0750
 prepare_root_directory "$(dirname -- "$TEAM_OS_VERSION_TARGET")" 0755
-prepare_root_directory "$(dirname -- "$DEPLOY_LOCK_FILE")" 0750
-if [[ -e "$DEPLOY_LOCK_FILE" || -L "$DEPLOY_LOCK_FILE" ]]; then
-  require_root_control_file "$DEPLOY_LOCK_FILE"
-fi
-exec 9>"$DEPLOY_LOCK_FILE"
-chown root:root "$DEPLOY_LOCK_FILE"
-chmod 0640 "$DEPLOY_LOCK_FILE"
-flock -n 9 || die "another AI Team OS deployment or rollback is active"
 
 CURRENT_RELEASE_FILE="$DEPLOY_STATE_DIR/current-release"
 PREVIOUS_RELEASE_FILE="$DEPLOY_STATE_DIR/previous-release"
@@ -571,19 +749,25 @@ if [[ -n "$PREVIOUS_RELEASE" ]]; then
     || die "recorded current release metadata could not be parsed"
   validate_release_snapshot ORIGINAL "$PREVIOUS_RELEASE" \
     || die "recorded current release metadata is inconsistent"
-  [[ $(calculate_orchestrator_sha256 "$PREVIOUS_RELEASE") == "$ORIGINAL_ORCHESTRATOR_SHA256" ]] \
+  [[ $(calculate_orchestrator_sha256 "$PREVIOUS_RELEASE" "$ORIGINAL_ORCHESTRATOR_SCHEMA") == "$ORIGINAL_ORCHESTRATOR_SHA256" ]] \
     || die "recorded current release orchestrator bundle hash is inconsistent"
 fi
 log "Current application baseline: ${PREVIOUS_RELEASE:-none}"
 
 STAGING_DIR=$(mktemp -d "$DEPLOY_BASE_DIR/.incoming.XXXXXXXX")
 SOURCE_SHA=""
+SOURCE_REF=""
 
 case "$DEPLOY_SOURCE_MODE" in
   git)
     command -v git >/dev/null 2>&1 || die "git is required for source mode git"
     [[ -n "${DEPLOY_REPOSITORY_URL:-}" ]] || die "DEPLOY_REPOSITORY_URL is required for git mode"
     [[ -n "$DEPLOY_RELEASE_REF" ]] || die "DEPLOY_RELEASE_REF must name an explicit commit or reviewed tag"
+    validate_source_ref "$DEPLOY_RELEASE_REF" || die "DEPLOY_RELEASE_REF contains unsupported or ambiguous characters"
+    if [[ ! "$DEPLOY_RELEASE_REF" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ \
+      && "$DEPLOY_RELEASE_REF" != refs/tags/* ]]; then
+      die "git mode accepts only a full commit SHA or a canonical refs/tags/... release ref"
+    fi
     [[ "$DEPLOY_RELEASE_SHA" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] || die "git mode requires the full expected DEPLOY_RELEASE_SHA"
     log "Fetching the requested release ref into an isolated staging directory"
     git -C "$STAGING_DIR" init --quiet
@@ -592,37 +776,56 @@ case "$DEPLOY_SOURCE_MODE" in
     git -C "$STAGING_DIR" -c advice.detachedHead=false checkout --quiet --detach FETCH_HEAD
     SOURCE_SHA=$(git -C "$STAGING_DIR" rev-parse HEAD)
     [[ "${SOURCE_SHA,,}" == "${DEPLOY_RELEASE_SHA,,}" ]] || die "fetched git ref does not match the approved release SHA"
+    SOURCE_REF=$DEPLOY_RELEASE_REF
     rm -rf -- "$STAGING_DIR/.git"
     ;;
   archive)
     command -v tar >/dev/null 2>&1 || die "tar is required for source mode archive"
     command -v git >/dev/null 2>&1 || die "git is required to verify the archive commit id"
-    [[ -n "$DEPLOY_SOURCE_ARCHIVE" && -f "$DEPLOY_SOURCE_ARCHIVE" ]] || die "DEPLOY_SOURCE_ARCHIVE must reference a readable tar archive"
+    [[ -n "$DEPLOY_SOURCE_ARCHIVE" && -f "$DEPLOY_SOURCE_ARCHIVE" && ! -L "$DEPLOY_SOURCE_ARCHIVE" ]] \
+      || die "DEPLOY_SOURCE_ARCHIVE must reference a regular tar archive, not a symbolic link"
+    [[ -z "$DEPLOY_RELEASE_REF" ]] \
+      || die "archive mode records commit/<sha> provenance and does not accept DEPLOY_RELEASE_REF"
     EXPECTED_ARCHIVE_SHA256=${DEPLOY_SOURCE_ARCHIVE_SHA256:-}
     [[ "$EXPECTED_ARCHIVE_SHA256" =~ ^[0-9a-fA-F]{64}$ ]] || die "archive mode requires DEPLOY_SOURCE_ARCHIVE_SHA256"
-    ACTUAL_ARCHIVE_SHA256=$(sha256sum "$DEPLOY_SOURCE_ARCHIVE" | cut -d ' ' -f 1)
+
+    # Freeze an untrusted uploaded archive into the root-owned release staging
+    # tree. Every integrity/type check and the final extraction reads this one
+    # 0600 copy, eliminating a checksum-to-extract replacement window.
+    ARCHIVE_COPY="$STAGING_DIR/.approved-source.tar"
+    install -o root -g root -m 0600 -- "$DEPLOY_SOURCE_ARCHIVE" "$ARCHIVE_COPY"
+    [[ -f "$ARCHIVE_COPY" && ! -L "$ARCHIVE_COPY" ]] \
+      || die "failed to create a regular root-owned archive snapshot"
+    ACTUAL_ARCHIVE_SHA256=$(sha256sum "$ARCHIVE_COPY" | cut -d ' ' -f 1)
     [[ "${ACTUAL_ARCHIVE_SHA256,,}" == "${EXPECTED_ARCHIVE_SHA256,,}" ]] || die "source archive SHA-256 does not match"
-    ARCHIVE_COMMIT_SHA=$(git get-tar-commit-id <"$DEPLOY_SOURCE_ARCHIVE" 2>/dev/null || true)
+    ARCHIVE_COMMIT_SHA=$(git get-tar-commit-id <"$ARCHIVE_COPY" 2>/dev/null || true)
     [[ "$ARCHIVE_COMMIT_SHA" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] \
       || die "archive must be a standard git archive with an embedded commit id"
     [[ "${ARCHIVE_COMMIT_SHA,,}" == "${DEPLOY_RELEASE_SHA,,}" ]] \
       || die "archive embedded commit id does not match DEPLOY_RELEASE_SHA"
-    if tar -tf "$DEPLOY_SOURCE_ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    tar -tf "$ARCHIVE_COPY" >/dev/null \
+      || die "source archive could not be listed safely"
+    if tar -tf "$ARCHIVE_COPY" | grep -E '(^/|(^|/)\.\.(/|$))' >/dev/null; then
       die "archive contains an unsafe absolute or parent path"
     fi
-    if tar -tvf "$DEPLOY_SOURCE_ARCHIVE" | awk 'substr($1, 1, 1) !~ /^[-d]$/ { unsafe = 1 } END { exit unsafe ? 0 : 1 }'; then
+    if tar -tvf "$ARCHIVE_COPY" | awk 'substr($1, 1, 1) !~ /^[-d]$/ { unsafe = 1 } END { exit unsafe ? 0 : 1 }'; then
       die "archive may contain only regular files and directories"
     fi
-    tar -xf "$DEPLOY_SOURCE_ARCHIVE" -C "$STAGING_DIR"
+    tar -xf "$ARCHIVE_COPY" -C "$STAGING_DIR"
+    rm -f -- "$ARCHIVE_COPY"
     SOURCE_SHA=${DEPLOY_RELEASE_SHA:-${WEB_RELEASE_SHA:-}}
     [[ "$SOURCE_SHA" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]] || die "archive mode requires a full DEPLOY_RELEASE_SHA"
+    SOURCE_REF=commit/$SOURCE_SHA
+    validate_source_ref "$SOURCE_REF" || die "archive release ref contains unsupported or ambiguous characters"
     ;;
   *)
     die "DEPLOY_SOURCE_MODE must be git or archive"
     ;;
 esac
 
-if [[ -n $(find "$STAGING_DIR" -mindepth 1 ! -type f ! -type d -print -quit) ]]; then
+STAGING_UNSAFE_ENTRY=$(find "$STAGING_DIR" -mindepth 1 ! -type f ! -type d -print -quit) \
+  || die "failed to inspect staged release entry types"
+if [[ -n "$STAGING_UNSAFE_ENTRY" ]]; then
   die "release source contains a symlink or another non-regular filesystem entry"
 fi
 [[ ! -e "$STAGING_DIR/.release.env" && ! -L "$STAGING_DIR/.release.env" ]] \
@@ -641,10 +844,10 @@ install -m 0644 "$TRUSTED_REPOSITORY_ROOT/.env.production.template" "$STAGING_DI
 install -m 0644 "$TRUSTED_REPOSITORY_ROOT/deploy/docker/Dockerfile.production" "$STAGING_DIR/deploy/docker/Dockerfile.production"
 install -m 0644 "$TRUSTED_REPOSITORY_ROOT/deploy/docker/docker-compose.yml" "$STAGING_DIR/deploy/docker/docker-compose.yml"
 install -m 0644 "$TRUSTED_REPOSITORY_ROOT/deploy/nginx/ai-team-os.conf" "$STAGING_DIR/deploy/nginx/ai-team-os.conf"
-for trusted_script in backup.sh deploy.sh load-env.sh rollback.sh test-env-loader.sh verify-deployment.mjs verify-team-os-schema.mjs; do
+    for trusted_script in backup.sh deploy.sh load-env.sh production-health-check.sh rollback.sh server-init.sh test-env-loader.sh verify-deployment.mjs verify-team-os-schema.mjs; do
   install -m 0644 "$TRUSTED_REPOSITORY_ROOT/deploy/scripts/$trusted_script" "$STAGING_DIR/deploy/scripts/$trusted_script"
 done
-ORCHESTRATOR_SHA256=$(calculate_orchestrator_sha256 "$STAGING_DIR") \
+ORCHESTRATOR_SHA256=$(calculate_orchestrator_sha256 "$STAGING_DIR" "$ORCHESTRATOR_SCHEMA_CURRENT") \
   || die "failed to hash the release orchestrator overlay"
 [[ "$ORCHESTRATOR_SHA256" == "$TRUSTED_ORCHESTRATOR_SHA256" ]] \
   || die "release orchestrator overlay does not match the trusted bundle"
@@ -718,7 +921,7 @@ restore_original_application() {
     "${COMPOSE[@]}" rm -f team-os >/dev/null 2>&1 || true
     remaining_container=$("${COMPOSE[@]}" ps -aq team-os 2>/dev/null || true)
     [[ -z "$remaining_container" ]] || return 1
-    if curl --fail --silent --show-error --max-time 2 "$TEAM_OS_HEALTH_URL" >/dev/null 2>&1; then
+    if curl --disable --noproxy '*' --fail --silent --show-error --max-time 2 "$TEAM_OS_HEALTH_URL" >/dev/null 2>&1; then
       log "The failed candidate still responds on the private Team OS health endpoint." >&2
       return 1
     fi
@@ -772,7 +975,9 @@ verify_team_os_schema
 {
   printf 'RELEASE_ID=%s\n' "$RELEASE_ID"
   printf 'RELEASE_PATH=%s\n' "$NEW_RELEASE_DIR"
+  printf 'SOURCE_REF=%s\n' "$SOURCE_REF"
   printf 'SOURCE_SHA=%s\n' "$SOURCE_SHA"
+  printf 'ORCHESTRATOR_SCHEMA=%s\n' "$ORCHESTRATOR_SCHEMA_CURRENT"
   printf 'ORCHESTRATOR_SHA256=%s\n' "$ORCHESTRATOR_SHA256"
   printf 'RUNTIME_IMAGE=%s\n' "$RUNTIME_IMAGE"
   printf 'RUNTIME_IMAGE_ID=%s\n' "$RUNTIME_IMAGE_ID"

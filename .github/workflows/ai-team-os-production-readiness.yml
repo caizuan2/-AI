@@ -102,6 +102,9 @@ jobs:
           bash -n deploy/scripts/rollback.sh
           bash -n deploy/scripts/load-env.sh
           bash -n deploy/scripts/test-env-loader.sh
+          bash -n deploy/scripts/server-init.sh
+          bash -n deploy/scripts/cloud-preflight-check.sh
+          bash -n deploy/scripts/production-health-check.sh
           bash deploy/scripts/test-env-loader.sh
           cp .env.production.example .env.production
           trap 'rm -f .env.production' EXIT

@@ -54,6 +54,12 @@ services:
     volumes:
       - team_os_storage:/app/storage
       - team_os_uploads:/app/public/uploads
+      - type: bind
+        source: ${DATABASE_CA_CERT:-/etc/ai-team-os/rds-ca.pem}
+        target: /etc/ai-team-os/rds-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       public_egress:
         gw_priority: 1
@@ -63,6 +69,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    ulimits:
+      core: 0
     pids_limit: 512
     healthcheck:
       test:
@@ -100,6 +108,13 @@ services:
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
+    volumes:
+      - type: bind
+        source: ${DATABASE_CA_CERT:-/etc/ai-team-os/rds-ca.pem}
+        target: /etc/ai-team-os/rds-ca.pem
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       public_egress:
         gw_priority: 1
@@ -109,6 +124,8 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    ulimits:
+      core: 0
     restart: "no"
 
   # Opt-in local fallback only. Alibaba Cloud production should normally use
@@ -127,6 +144,8 @@ services:
       - private_data
     security_opt:
       - no-new-privileges:true
+    ulimits:
+      core: 0
     healthcheck:
       test:
         - CMD-SHELL
@@ -163,6 +182,8 @@ services:
       - private_data
     security_opt:
       - no-new-privileges:true
+    ulimits:
+      core: 0
     healthcheck:
       test:
         - CMD-SHELL
