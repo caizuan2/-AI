@@ -39,9 +39,11 @@ interface ProductAnswerViewProps {
   className?: string;
 }
 
+type CustomerScriptVariant = "default" | "careerAi" | "careerKnowledge";
+
 type NaturalAnswerSegment =
   | { kind: "markdown"; text: string }
-  | { kind: "customerScript"; title: string; text: string };
+  | { kind: "customerScript"; title: string; text: string; variant: CustomerScriptVariant };
 
 type CustomerQuoteLine = {
   text: string;
@@ -239,6 +241,34 @@ function parseCustomerScriptContainerHeading(line: string) {
   }
 
   return null;
+}
+
+function parseCareerMentorScriptSectionVariant(line: string): CustomerScriptVariant | null {
+  const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
+
+  if (/^AI思考回复话术(?:$|[（(、\s])/.test(normalized)) {
+    return "careerAi";
+  }
+
+  if (/^(?:可复制给客户|可直接复制给客户|客户可复制话术)(?:$|[（(、\s])/.test(normalized)) {
+    return "careerKnowledge";
+  }
+
+  return null;
+}
+
+function parseCareerMentorAiScriptHeading(line: string) {
+  const normalized = normalizeScriptHeadingText(line);
+  const match = normalized.match(/^(AI(?:建议|思考)话术\s*(?:[一二三四五六七八九十\d]+)?(?:[（(][^）)]{1,24}[）)])?)\s*[：:]?\s*(.*)$/i);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    title: match[1].replace(/[：:]$/, "").trim() || "AI建议话术",
+    firstLine: match[2]?.trim() ?? ""
+  };
 }
 
 function extractCustomerQuoteLine(line: string): CustomerQuoteLine | null {
@@ -458,7 +488,7 @@ function cleanCustomerScriptText(text: string) {
       continue;
     }
 
-    const cleaned = trimCustomerScriptMetaSuffix(line);
+    const cleaned = trimCustomerScriptMetaSuffix(stripCustomerScriptListPrefix(line));
 
     if (isUsableCustomerScriptText(cleaned)) {
       lines.push(cleaned);
@@ -485,7 +515,12 @@ function appendMarkdownSegment(segments: NaturalAnswerSegment[], text: string) {
   segments.push({ kind: "markdown", text: normalized });
 }
 
-function appendCustomerScriptSegment(segments: NaturalAnswerSegment[], title: string, text: string) {
+function appendCustomerScriptSegment(
+  segments: NaturalAnswerSegment[],
+  title: string,
+  text: string,
+  variant: CustomerScriptVariant = "default"
+) {
   const normalized = cleanCustomerScriptText(text);
 
   if (!normalized) {
@@ -496,7 +531,8 @@ function appendCustomerScriptSegment(segments: NaturalAnswerSegment[], title: st
   segments.push({
     kind: "customerScript",
     title: title.trim() || "客户话术",
-    text: normalized
+    text: normalized,
+    variant
   });
 }
 
@@ -518,10 +554,15 @@ function hasNormalizedCustomerScriptOverlap(first: string, second: string) {
   return firstKey === secondKey || firstKey.includes(secondKey) || secondKey.includes(firstKey);
 }
 
-function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
+function splitMarkdownScriptHeadings(
+  markdown: string,
+  options: { strictHeading?: boolean; careerMentorMode?: boolean } = {}
+) {
   const segments: NaturalAnswerSegment[] = [];
   const markdownLines: string[] = [];
-  let activeScript: { title: string; lines: string[] } | null = null;
+  const strictHeading = options.strictHeading === true;
+  let activeVariant: CustomerScriptVariant = options.careerMentorMode ? "careerAi" : "default";
+  let activeScript: { title: string; lines: string[]; variant: CustomerScriptVariant } | null = null;
   let pendingScriptTitle: string | null = null;
 
   function flushMarkdown() {
@@ -534,7 +575,12 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       return;
     }
 
-    appendCustomerScriptSegment(segments, activeScript.title, activeScript.lines.join("\n"));
+    appendCustomerScriptSegment(
+      segments,
+      activeScript.title,
+      activeScript.lines.join("\n"),
+      activeScript.variant
+    );
     activeScript = null;
   }
 
@@ -544,6 +590,18 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
     .flatMap((line) => splitInlineCustomerScriptItems(line));
 
   for (const line of lines) {
+    const careerSectionVariant = options.careerMentorMode
+      ? parseCareerMentorScriptSectionVariant(line)
+      : null;
+
+    if (careerSectionVariant) {
+      flushScript();
+      markdownLines.push(line);
+      pendingScriptTitle = null;
+      activeVariant = careerSectionVariant;
+      continue;
+    }
+
     const containerHeading = parseCustomerScriptContainerHeading(line);
 
     if (containerHeading) {
@@ -561,7 +619,9 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       continue;
     }
 
-    const scriptHeading = parseCustomerScriptHeading(line, strictHeading);
+    const scriptHeading = options.careerMentorMode && activeVariant === "careerAi"
+      ? parseCareerMentorAiScriptHeading(line) ?? parseCustomerScriptHeading(line, strictHeading)
+      : parseCustomerScriptHeading(line, strictHeading);
 
     if (scriptHeading) {
       flushScript();
@@ -569,7 +629,8 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       pendingScriptTitle = null;
       activeScript = {
         title: scriptHeading.title,
-        lines: scriptHeading.firstLine ? [scriptHeading.firstLine] : []
+        lines: scriptHeading.firstLine ? [scriptHeading.firstLine] : [],
+        variant: activeVariant
       };
       continue;
     }
@@ -581,7 +642,12 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
 
       markdownLines.push(line);
       flushMarkdown();
-      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(segments, scriptTitle, script));
+      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(
+        segments,
+        scriptTitle,
+        script,
+        activeVariant
+      ));
       continue;
     }
 
@@ -596,7 +662,7 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       const title = inferCustomerScriptTitle(markdownLines);
 
       flushMarkdown();
-      appendCustomerScriptSegment(segments, title, quoteLine.text);
+      appendCustomerScriptSegment(segments, title, quoteLine.text, activeVariant);
       pendingScriptTitle = null;
 
       if (quoteLine.trailingText) {
@@ -610,7 +676,8 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       flushMarkdown();
       activeScript = {
         title: pendingScriptTitle,
-        lines: [line]
+        lines: [line],
+        variant: activeVariant
       };
       pendingScriptTitle = null;
       continue;
@@ -622,7 +689,12 @@ function splitMarkdownScriptHeadings(markdown: string, strictHeading = false) {
       flushScript();
       markdownLines.push(line);
       flushMarkdown();
-      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(segments, scriptTitle, script));
+      directedQuoteScripts.forEach((script) => appendCustomerScriptSegment(
+        segments,
+        scriptTitle,
+        script,
+        activeVariant
+      ));
       continue;
     }
 
@@ -690,16 +762,27 @@ export function splitNaturalAnswerForCustomerScriptCards(
 
     splitMarkdownScriptHeadings(
       text.slice(lastIndex, index),
-      options.careerMentorMode === true
+      {
+        strictHeading: options.careerMentorMode === true,
+        careerMentorMode: options.careerMentorMode === true
+      }
     ).forEach((segment) => segments.push(segment));
-    appendCustomerScriptSegment(segments, match[2] || "客户话术", match[3] || "");
+    appendCustomerScriptSegment(
+      segments,
+      match[2] || "客户话术",
+      match[3] || "",
+      options.careerMentorMode ? "careerAi" : "default"
+    );
     lastIndex = match.index + match[0].length;
     match = inlineCustomerScriptPattern.exec(text);
   }
 
   splitMarkdownScriptHeadings(
     text.slice(lastIndex),
-    options.careerMentorMode === true
+    {
+      strictHeading: options.careerMentorMode === true,
+      careerMentorMode: options.careerMentorMode === true
+    }
   ).forEach((segment) => segments.push(segment));
 
   return segments.length > 0 ? segments : [{ kind: "markdown", text }];
@@ -748,21 +831,36 @@ function CustomerScriptInlineCard({
   title,
   text,
   index,
-  highlighted = false
+  variant = "default"
 }: {
   title: string;
   text: string;
   index: number;
-  highlighted?: boolean;
+  variant?: CustomerScriptVariant;
 }) {
+  const careerAi = variant === "careerAi";
+  const careerKnowledge = variant === "careerKnowledge";
+
   return (
-    <section className={cn(
-      "not-prose my-3 rounded-2xl border border-emerald-100 px-4 py-3 shadow-sm shadow-emerald-950/5",
-      highlighted ? "bg-emerald-50/70" : "bg-white"
-    )}>
+    <section
+      data-script-origin={careerAi ? "career-ai" : careerKnowledge ? "career-knowledge" : "default"}
+      className={cn(
+        "not-prose my-3 rounded-2xl border px-4 py-3 shadow-sm",
+        careerAi
+          ? "border-teal-200 bg-teal-50/70 shadow-teal-950/5"
+          : "border-emerald-100 shadow-emerald-950/5",
+        careerKnowledge ? "bg-emerald-50/70" : !careerAi ? "bg-white" : ""
+      )}
+    >
       <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-900">
-          <MessageSquareText className="h-4 w-4 text-emerald-600" aria-hidden="true" />
+        <div className={cn(
+          "inline-flex items-center gap-2 text-sm font-semibold",
+          careerAi ? "text-teal-950" : "text-emerald-900"
+        )}>
+          <MessageSquareText
+            className={cn("h-4 w-4", careerAi ? "text-teal-600" : "text-emerald-600")}
+            aria-hidden="true"
+          />
           <span>{title || `客户话术 ${index + 1}`}</span>
         </div>
         <CopyMiniButton text={text} label="复制话术" />
@@ -824,14 +922,17 @@ export function ProductAnswerView({
     [careerMentorMode, naturalAnswerText]
   );
   const structuredCustomerReply = answerForDisplay?.customerReply?.trim() ?? "";
-  const naturalCustomerScripts = naturalAnswerSegments
-    .filter((segment): segment is Extract<NaturalAnswerSegment, { kind: "customerScript" }> => segment.kind === "customerScript")
+  const naturalKnowledgeScripts = naturalAnswerSegments
+    .filter((segment): segment is Extract<NaturalAnswerSegment, { kind: "customerScript" }> => (
+      segment.kind === "customerScript"
+      && (!careerMentorMode || segment.variant === "careerKnowledge")
+    ))
     .map((segment) => segment.text);
   const shouldAppendStructuredCustomerReply = Boolean(
     careerMentorMode
     && naturalAnswerText
     && structuredCustomerReply
-    && naturalCustomerScripts.length === 0
+    && naturalKnowledgeScripts.length === 0
     && !hasNormalizedCustomerScriptOverlap(naturalAnswerText, structuredCustomerReply)
   );
   const display = React.useMemo(
@@ -875,7 +976,7 @@ export function ProductAnswerView({
                   title={segment.title}
                   text={segment.text}
                   index={index}
-                  highlighted={careerMentorMode}
+                  variant={segment.variant}
                 />
               ) : (
                 <div
@@ -893,7 +994,7 @@ export function ProductAnswerView({
                 title="可直接复制给客户"
                 text={structuredCustomerReply}
                 index={naturalAnswerSegments.length}
-                highlighted
+                variant="careerKnowledge"
               />
             ) : null}
           </div>
