@@ -332,12 +332,14 @@ function LicenseTable({
   title,
   description,
   licenses,
+  generatedKeyById,
   disablingId,
   onDisable
 }: {
   title: string;
   description: string;
   licenses: SuperAdminLicenseRecord[];
+  generatedKeyById: Map<string, string>;
   disablingId: string | null;
   onDisable: (id: string) => Promise<void>;
 }) {
@@ -350,11 +352,20 @@ function LicenseTable({
       return licenses;
     }
 
-    return licenses.filter((license) => getLicenseSearchText(license).includes(normalizedQuery));
-  }, [licenses, normalizedQuery]);
+    return licenses.filter((license) => {
+      const plainKey = generatedKeyById.get(license.id);
+      return `${getLicenseSearchText(license)} ${plainKey ?? ""}`.toLocaleLowerCase("zh-CN").includes(normalizedQuery);
+    });
+  }, [generatedKeyById, licenses, normalizedQuery]);
 
   async function handleCopyLicenseKey(license: SuperAdminLicenseRecord) {
-    const copied = await copyTextToClipboard(license.displayKey);
+    const plainKey = generatedKeyById.get(license.id);
+
+    if (!plainKey) {
+      return;
+    }
+
+    const copied = await copyTextToClipboard(plainKey);
 
     if (copied) {
       setCopiedLicenseId(license.id);
@@ -364,7 +375,7 @@ function LicenseTable({
       return;
     }
 
-    window.prompt("复制卡密", license.displayKey);
+    window.prompt("复制卡密", plainKey);
   }
 
   if (licenses.length === 0) {
@@ -434,7 +445,7 @@ function LicenseTable({
               </tr>
             ) : filteredLicenses.map((license) => (
               <tr key={license.id} className="align-top">
-                <td className="px-4 py-3 font-mono text-xs text-slate-700">{license.displayKey}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-700">{generatedKeyById.get(license.id) ?? license.displayKey}</td>
                 <td className="px-4 py-3"><AppTypeBadge appType={license.appType} /></td>
                 <td className="px-4 py-3 text-slate-600">
                   {license.appType === "ingest_admin"
@@ -458,14 +469,16 @@ function LicenseTable({
                       {disablingId === license.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
                       禁用
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCopyLicenseKey(license)}
-                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      {copiedLicenseId === license.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                      {copiedLicenseId === license.id ? "已复制" : "复制"}
-                    </button>
+                    {generatedKeyById.has(license.id) ? (
+                      <button
+                        type="button"
+                        onClick={() => handleCopyLicenseKey(license)}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        {copiedLicenseId === license.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                        {copiedLicenseId === license.id ? "已复制" : "复制"}
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -581,6 +594,7 @@ export function LicenseDashboard() {
 
   const userAppLicenses = data.licenses.filter((license) => license.appType === "user_app");
   const ingestAdminLicenses = data.licenses.filter((license) => license.appType === "ingest_admin");
+  const generatedKeyById = new Map(generated.map((license) => [license.id, license.key]));
 
   return (
     <div className="space-y-6">
@@ -609,15 +623,17 @@ export function LicenseDashboard() {
       <div className="space-y-6">
         <LicenseTable
           title="用户端卡密列表"
-          description="只显示 XT-USER 用途的脱敏记录，用户端 Web / APK / EXE 可使用。"
+          description="刷新后仅展示脱敏标识；本次生成的 XT-USER 明文卡密可在当前行复制。"
           licenses={userAppLicenses}
+          generatedKeyById={generatedKeyById}
           disablingId={disablingId}
           onDisable={handleDisable}
         />
         <LicenseTable
           title="投喂管理员端卡密列表"
-          description="只显示 XT-INGEST 用途的脱敏记录，管理员投喂版 Web / APK / EXE 可使用。"
+          description="刷新后仅展示脱敏标识；本次生成的 XT-INGEST 明文卡密可在当前行复制。"
           licenses={ingestAdminLicenses}
+          generatedKeyById={generatedKeyById}
           disablingId={disablingId}
           onDisable={handleDisable}
         />
