@@ -131,6 +131,7 @@ export interface CareerMentorGroundedAnswerResult extends RagAnswerResult {
 
 export interface CareerMentorGroundedAnswerOptions extends GenerateRagAnswerOptions {
   expectedStage: CareerMentorStage;
+  outputMode?: "structured_cards" | "natural_markdown_with_cards";
 }
 
 export interface CareerMentorGroundedAnswerDependencies {
@@ -303,28 +304,32 @@ function coversCompleteStageSequence(input: {
   return coversDerivedSegments && coversRequiredStageActions;
 }
 
-function hasNonNegatedEvidenceOccurrence(evidenceText: string, claim: string) {
+function findNonNegatedEvidenceOccurrence(evidenceText: string, claim: string) {
   const evidence = normalizeText(evidenceText);
   const normalizedClaim = normalizeText(claim);
 
   if (!normalizedClaim) {
-    return false;
+    return -1;
   }
 
   let cursor = evidence.indexOf(normalizedClaim);
 
   while (cursor >= 0) {
     const prefix = evidence.slice(Math.max(0, cursor - 28), cursor);
-    const negated = /(?:严禁|禁止|不得|不能|不要|不可|避免|拒绝|不应|不可以|并非|不是|切勿|不需要|无需|不必|没有|没|未|勿|别|无|不)[^。！？\n]{0,32}$/.test(prefix);
+    const negated = /(?:严禁|禁止|不得|不能|不要|不可|避免|拒绝|不应|不可以|并非|不是|切勿|不需要|无需|不必|没有|没|未|勿|别|无|不)[^，,；;：:。！？\n]{0,32}$/.test(prefix);
 
     if (!negated) {
-      return true;
+      return cursor;
     }
 
     cursor = evidence.indexOf(normalizedClaim, cursor + normalizedClaim.length);
   }
 
-  return false;
+  return -1;
+}
+
+function hasNonNegatedEvidenceOccurrence(evidenceText: string, claim: string) {
+  return findNonNegatedEvidenceOccurrence(evidenceText, claim) >= 0;
 }
 
 function hasNegatedEvidenceOccurrence(evidenceText: string, claim: string) {
@@ -339,7 +344,7 @@ function hasNegatedEvidenceOccurrence(evidenceText: string, claim: string) {
 
   while (cursor >= 0) {
     const prefix = evidence.slice(Math.max(0, cursor - 28), cursor);
-    if (/(?:严禁|禁止|不得|不能|不要|不可|避免|拒绝|不应|不可以|并非|不是|切勿|不需要|无需|不必|没有|没|未|勿|别|无|不)[^。！？\n]{0,32}$/.test(prefix)) {
+    if (/(?:严禁|禁止|不得|不能|不要|不可|避免|拒绝|不应|不可以|并非|不是|切勿|不需要|无需|不必|没有|没|未|勿|别|无|不)[^，,；;：:。！？\n]{0,32}$/.test(prefix)) {
       return true;
     }
     cursor = evidence.indexOf(normalizedClaim, cursor + normalizedClaim.length);
@@ -731,13 +736,18 @@ function readRecord(value: unknown): Record<string, unknown> | null {
 function collectSensitiveClaims(text: string) {
   const patterns = [
     /\d+(?:\.\d+)?\s*(?:元|万元|万|千元|%|％|天|小时|分钟|个月|年|人|位|单|倍|岁|级)/g,
+    /[一二三四五六七八九十百千万两\d]+\s*(?:条|次|遍|个|轮|组|份)(?:消息|微信|电话|内容|资料|方案)?/g,
     /(?:周薪|月入|年入|收入|收益|利润|分润)[^。！？\n]{0,28}(?:\d+|[一二三四五六七八九十百千万]+)[^。！？\n]{0,12}/g,
     /(?:保证|确保|一定|肯定)(?:能|可以|会)?[^。！？\n]{0,18}(?:赚钱|盈利|收益|收入|成功|有效)/g,
     /(?:零风险|无风险|稳赚(?:不赔)?|不会亏|没有副作用)/g,
     /(?:国家(?:级)?|官方|权威)[^。！？\n]{0,24}(?:认证|认可|检测|背书|批准|资质)/g,
     /(?:很多|大量|不少|多位|多名)(?:客户|伙伴|宝妈|妈妈|用户|人)[^。！？\n]{0,42}(?:成功|改善|实现|获得|做到|增加|赚|收益|收入|分润)/g,
     /(?:公司|平台|团队|品牌|产品)[^。！？\n]{0,30}(?:实力(?:很|非常)?强|领先|强大|靠谱|正规|可靠|值得信赖|效果(?:很|非常)?好|安全(?:可靠)?|有效|优质|最好)/g,
-    /(?:我|我们|我这边)[^。！？\n]{0,42}(?:帮助|服务|带领)[^。！？\n]{0,42}(?:成功|改善|实现|做到|增加|赚|收益|收入|分润)/g
+    /(?:我|我们|我这边)[^。！？\n]{0,42}(?:帮助|服务|带领)[^。！？\n]{0,42}(?:成功|改善|实现|做到|增加|赚|收益|收入|分润)/g,
+    /(?:适合|适用于|有效于)[^。！？\n]{0,12}(?:所有|全部|任何)(?:客户|人|场景)/g,
+    /(?:所有|全部|任何)(?:客户|人|场景)[^。！？\n]{0,20}(?:都|均|一律|必须|应该|适合)/g,
+    /(?:最稳妥|最专业|最容易|最佳|唯一正确|万能)[^。！？\n]{0,28}/g,
+    /(?:记录|收集|打听|保存)[^。！？\n]{0,16}(?:客户)?(?:隐私|身份证|住址|家庭情况|收入情况)/g
   ];
 
   return Array.from(new Set(patterns.flatMap((pattern) => text.match(pattern) ?? [])));
@@ -1121,6 +1131,51 @@ function formatPlanForWriter(plan: CareerMentorEvidencePlanV1) {
   return prompt;
 }
 
+function formatNaturalPlanForWriter(plan: CareerMentorEvidencePlanV1) {
+  const compactPlan = {
+    version: plan.version,
+    expectedStage: plan.stage,
+    customerState: plan.customerState,
+    completedActions: plan.completedActions,
+    responseFocus: plan.responseFocus,
+    evidenceAnchors: plan.evidenceFindings.flatMap((finding) => (
+      finding.supportingQuotes.map((quote) => quote.slice(0, 220))
+    )),
+    executionAnchors: plan.executionSequence?.actionAnchors ?? [],
+    replies: plan.replyBlueprints.map((item) => ({
+      style: item.style,
+      draft: item.draft
+    })),
+    fixedScriptAvailable: Boolean(plan.fixedScriptCandidate),
+    missingInformation: plan.missingInformation,
+    forbiddenClaims: plan.forbiddenClaims
+  };
+  const prompt = [
+    `[CAREER_EVIDENCE_PLAN_APP_VALIDATED ${CAREER_MENTOR_EVIDENCE_PLAN_VERSION}]`,
+    "下面是应用根据本轮命中知识校验通过的证据计划。只把它当作写作边界，不得向用户展示计划名、证据 ID、内部字段或思维过程。",
+    "先输出一篇完整、自然、专业的 DeepSeek/GPT 风格 Markdown 正文：直接回应问题，按内容需要自由组织动态标题、短段落、列表、引用或示例。不要套用‘判断’‘回复思路’‘推荐执行流程’三个固定栏目。",
+    "自然正文必须把当前客户状态、为什么这样处理、执行顺序、边界与具体做法讲清楚。所有事实和动作只能来自 compactPlan、retrieved context 与当前五步骤规则；不得加入未经证据支持的公司、产品、收益、人数、案例、资质、时间或保证性内容。",
+    "正文每个业务事实、动作建议和解释句都必须能逐句追溯到 evidenceAnchors、executionAnchors 或客户本轮原话；可以自然释义和增加不承载新事实的连接语，但不得夹带常识型销售建议。保持原证据的肯定/否定方向，不能把‘要做’改成‘不用做’，也不能反向改写。",
+    "compactPlan.executionAnchors 中的核心动作必须全部出现在自然正文里，并严格保持原顺序；允许增加自然连接语，但不得跳步、倒序或推进到其他阶段。",
+    plan.replyBlueprints.length === 3
+      ? "自然正文结束后，原样输出 ### AI思考回复话术，并依次输出三个 #### AI建议话术标题和独立引用块。三条话术必须逐字使用 compactPlan.replies 中对应 draft，不得改写或增添事实。"
+      : "当前阶段不输出 AI思考回复话术或 AI建议话术。",
+    "最后输出 ## 可复制给客户。固定知识话术由应用校验后注入，Writer 不得自行编造。",
+    "不要为了拉长篇幅重复表述，不输出 chain-of-thought。",
+    JSON.stringify(compactPlan)
+  ].join("\n");
+
+  if (prompt.length > 4200) {
+    throw new AppError(
+      "AI_PROVIDER_FAILED",
+      "讲事业导师自然正文证据计划超过安全写作预算，已停止生成。",
+      422
+    );
+  }
+
+  return prompt;
+}
+
 function extractAdaptiveReplies(answer: string) {
   const lines = answer.replace(/\r\n/g, "\n").split("\n");
   const replies: Array<{ slot: number; style: string; text: string }> = [];
@@ -1224,6 +1279,359 @@ function extractExecutionFlowItems(answer: string) {
     .split("\n")
     .map((line) => line.replace(/^\s*(?:[-*]|\d+[.、])\s*/, "").trim())
     .filter(Boolean);
+}
+
+function extractNaturalGroundingClauses(body: string) {
+  return body
+    .replace(/```[\s\S]*?```/g, " ")
+    .split("\n")
+    .filter((line) => !/^\s*#{1,6}\s+/.test(line))
+    .map((line) => line
+      .replace(/^\s*(?:[-*+]\s+|\d+[.)、]\s*|>\s*)/, "")
+      .trim())
+    .filter(Boolean)
+    .flatMap((line) => line.split(
+      /[，,。！？!?；;：:]+|(?:并且|而且|同时|另外|此外|还可以|还要|也要|更要|这套)/
+    ))
+    .map((clause) => clause.trim())
+    .filter((clause) => {
+      const normalized = normalizeFactKey(clause);
+      const safeShortConnector = /^(?:因此|所以|不过|但是|而是|然后|接着|最后|例如|比如|总之|这样|这时|此时|其中|一是|二是|三是)$/.test(
+        normalized
+      );
+
+      return isCareerNaturalActionClause(clause)
+        || (normalized.length >= 2 && !safeShortConnector);
+    });
+}
+
+function normalizeCareerNaturalSemanticExpression(value: string) {
+  return normalizeGroundingExpression(value)
+    .replace(/(?:弄|搞|问|了解)清楚(?:一下)?/g, "确认")
+    .replace(/对方(?:真正)?(?:关心|在意|想知道|想了解)的(?:内容|部分|点)/g, "客户最关注哪一部分")
+    .replace(/针对(?:这|那|这个|那个)?(?:一)?(?:点|内容|部分)/g, "围绕关注点")
+    .replace(/继续(?:聊|交流|说明|沟通)/g, "继续沟通")
+    .replace(/然后/g, "再");
+}
+
+function stripCareerNaturalSafeFraming(value: string) {
+  return normalizeCareerNaturalSemanticExpression(value)
+    .replace(/^(?:这样做的目的|这样安排的目的|为什么要这样做|具体来说|换句话说|也就是说|接下来|下面看具体做法)/, "")
+    .replace(/^(?:是)?(?:先|再)?/, "")
+    .trim();
+}
+
+function isCareerNaturalActionClause(value: string) {
+  return /(?:确认|围绕|沟通|跟进|发送|展示|介绍|询问|推进|解决|认可|转移|解释|回复|联系|发消息|打电话|催|逼单|逼她|恐吓|洗脑|造假|纠缠|轰炸|硬推|骚扰|欺骗|骗|套取|诱导|误导|歪曲|撒谎|夸大|承诺|隐瞒|删除|记录|收集|打听|要求|引导|施压|付款|支付|转账|加入|购买|下单|成交|签约|报名|办理)/.test(
+    normalizeText(value)
+  );
+}
+
+function isCareerNaturalHighRiskHeading(value: string) {
+  return /(?:马上|立即|天天|每天|连续|必须|务必|保证|确保|万能|永久|打电话|催|骚扰|欺骗|骗|套取|隐瞒|删除|记录|收集|打听|施压|付款|支付|转账|加入|购买|下单|成交|签约|报名|办理|承诺)/.test(
+    normalizeText(value)
+  );
+}
+
+function isCareerNaturalSafeOrganizationalHeading(value: string) {
+  const normalized = normalizeText(value);
+
+  if (
+    isCareerNaturalHighRiskHeading(value)
+    || /(?:客户|对方|伙伴|公司|平台|团队|品牌|产品|收入|收益|利润|金额|隐私|家庭|案例|资质|电话|微信|朋友圈|资料|红包)/.test(normalized)
+  ) {
+    return false;
+  }
+
+  return /^(?:下一步|接下来)(?:可以)?(?:怎么做|如何做)$/.test(normalized)
+    || /^(?:为什么|为何)(?:要)?(?:这样做|这样安排|保持这个顺序|顺序很重要)$/.test(normalized)
+    || /^(?:(?:沟通)?五步骤|这五步|整体)(?:的)?(?:整体逻辑|逻辑|路径|思路)$/.test(normalized)
+    || /^(?:阶段判断|当前阶段)(?:怎么做|如何做|的重点|与边界)?$/.test(normalized)
+    || /^(?:执行重点|沟通重点|注意事项|常见误区|适用边界|具体方法|核心原则)$/.test(normalized)
+    || /^先把(?:这次|当前|本轮)?(?:跟进|沟通|破冰|讲事业|问题处理|成交)?(?:的)?目标(?:放对|理清|说清|明确)?$/.test(normalized)
+    || /^先看清(?:当前|这次|本轮)?(?:阶段|身份|问题|目标|边界)$/.test(normalized);
+}
+
+function stripCareerNaturalHeadingPrefix(value: string) {
+  return normalizeText(value)
+    .replace(
+      /^(?:目标|下一步|接下来|为什么|执行重点|沟通重点|注意事项|常见误区|适用边界|具体方法|核心原则)\s*[：:\-—]\s*/,
+      ""
+    )
+    .trim();
+}
+
+function hasNaturalGroundingNegation(value: string) {
+  return /(?:严禁|禁止|不得|不能|不要|不可|避免|不应|不可以|切勿|不需要|不用|无需|不必|没有|没法|未|勿|别)/.test(
+    normalizeText(value)
+  );
+}
+
+function hasNaturalGroundingPolarityMatch(claim: string, source: string) {
+  const normalizedClaim = stripCareerNaturalSafeFraming(claim);
+  const normalizedSource = normalizeCareerNaturalSemanticExpression(source);
+  const claimNegated = hasNaturalGroundingNegation(claim);
+  const sourceNegated = hasNaturalGroundingNegation(source);
+
+  if (claimNegated === sourceNegated) {
+    return true;
+  }
+
+  return !claimNegated
+    && findNonNegatedEvidenceOccurrence(normalizedSource, normalizedClaim) >= 0;
+}
+
+function isNaturalBodyClauseGrounded(input: {
+  clause: string;
+  evidenceQuotes: string[];
+  customerGroundingText: string;
+}) {
+  if (/^(?:这样做的目的|这样安排的目的|为什么要这样做|具体来说|换句话说|也就是说|接下来|下面看具体做法)$/.test(
+    normalizeText(input.clause)
+  )) {
+    return true;
+  }
+
+  const normalizedClause = normalizeText(input.clause);
+  const clearlyReportedCustomerFact = /(?:客户|对方|用户|她|他|我|你|您)[^。！？\n]{0,20}(?:是|说|表示|提到|反馈|认为|觉得|担心|顾虑|想|不想|愿意|不愿意|拒绝|认可|犹豫|考虑|已经|正在|还没|没有|尚未)|(?:^|[^应])(?:已经|刚刚|刚才|正在|还没|尚未|未曾)/.test(
+    normalizedClause
+  );
+
+  if (clearlyReportedCustomerFact && isJudgementClaimGrounded({
+    claim: input.clause,
+    customerGroundingText: input.customerGroundingText,
+    evidenceQuotes: input.evidenceQuotes
+  })) {
+    return true;
+  }
+
+  const knowledgeClaim = stripSupportedCustomerPersonalization(
+    input.clause,
+    input.customerGroundingText
+  );
+  const semanticKnowledgeClaim = stripCareerNaturalSafeFraming(knowledgeClaim);
+
+  return normalizeFactKey(semanticKnowledgeClaim).length >= 2
+    && input.evidenceQuotes.some((quote) => {
+      const semanticQuote = normalizeCareerNaturalSemanticExpression(quote);
+      const polarityMatches = hasNaturalGroundingPolarityMatch(knowledgeClaim, quote);
+      const exactSemanticClaim = normalizeFactKey(semanticQuote).includes(
+        normalizeFactKey(semanticKnowledgeClaim)
+      );
+
+      return polarityMatches
+        && (
+          exactSemanticClaim
+          || hasBlueprintEvidenceAnchor(semanticKnowledgeClaim, semanticQuote)
+        );
+    });
+}
+
+export function validateCareerMentorNaturalWriterAnswer(input: {
+  answer: string;
+  plan: CareerMentorEvidencePlanV1;
+  knowledgeContexts: RagContext[];
+  expectedReplyCount: 0 | 3;
+  question?: string;
+  customerContexts?: RagContext[];
+  recentConversation?: RagRecentConversationTurn[];
+}) {
+  const issues: string[] = [];
+  const customerGroundingText = buildCustomerGroundingText({
+    question: input.question,
+    customerContexts: input.customerContexts,
+    recentConversation: input.recentConversation
+  });
+  const evidenceQuotes = input.plan.evidenceFindings
+    .flatMap((finding) => finding.supportingQuotes);
+  const evidenceText = evidenceQuotes.join("\n");
+  const answerLines = input.answer.replace(/\r\n/g, "\n").split("\n");
+  const aiSectionIndices = answerLines
+    .map((line, index) => /^\s*###\s+AI思考回复话术\s*$/.test(line) ? index : -1)
+    .filter((index) => index >= 0);
+  const replyHeadingEntries = answerLines
+    .map((line, index) => {
+      const match = line.match(/^\s*#{3,6}\s+AI建议话术\s*([123])\s*[（(]([^）)]+)[）)]\s*$/);
+      return match ? { index, slot: Number(match[1]) } : null;
+    })
+    .filter((item): item is { index: number; slot: number } => item !== null);
+  const copySectionIndices = answerLines
+    .map((line, index) => /^\s*##\s+可复制给客户\s*$/.test(line) ? index : -1)
+    .filter((index) => index >= 0);
+  const copySectionIndex = copySectionIndices[0] ?? -1;
+  const lastTopLevelHeadingIndex = answerLines.reduce((lastIndex, line, index) => (
+    /^\s*#{1,2}\s+\S+/.test(line) ? index : lastIndex
+  ), -1);
+  const copyTailLines = copySectionIndex >= 0
+    ? answerLines.slice(copySectionIndex + 1).filter((line) => line.trim())
+    : [];
+  const copyTailHasValidShape = copyTailLines.length === 0
+    || (
+      /^\s*###\s+话术\s*1\s*$/.test(copyTailLines[0])
+      && copyTailLines.slice(1).every((line) => !/^\s*#{1,6}\s+/.test(line))
+    );
+  const replyHeadingsOrdered = replyHeadingEntries.length === input.expectedReplyCount
+    && replyHeadingEntries.every((entry, index) => (
+      entry.slot === index + 1
+      && (index === 0 || entry.index > replyHeadingEntries[index - 1].index)
+    ));
+  const aiToCopyHeadingIndices = aiSectionIndices.length === 1 && copySectionIndex >= 0
+    ? answerLines
+      .map((line, index) => (
+        index > aiSectionIndices[0]
+        && index < copySectionIndex
+        && /^\s*#{1,6}\s+\S+/.test(line)
+          ? index
+          : -1
+      ))
+      .filter((index) => index >= 0)
+    : [];
+  const replyHeadingIndexSet = new Set(replyHeadingEntries.map((entry) => entry.index));
+  const aiToCopyContainsOnlyReplyHeadings = aiToCopyHeadingIndices.length === input.expectedReplyCount
+    && aiToCopyHeadingIndices.every((index) => replyHeadingIndexSet.has(index));
+  const sectionTopologyValid = copySectionIndices.length === 1
+    && copySectionIndex === lastTopLevelHeadingIndex
+    && copyTailHasValidShape
+    && (input.expectedReplyCount === 3
+      ? aiSectionIndices.length === 1
+        && replyHeadingsOrdered
+        && aiToCopyContainsOnlyReplyHeadings
+        && aiSectionIndices[0] < replyHeadingEntries[0].index
+        && replyHeadingEntries[replyHeadingEntries.length - 1].index < copySectionIndex
+      : aiSectionIndices.length === 0 && replyHeadingEntries.length === 0);
+  const analysisBody = input.answer
+    .split(/^\s*###\s+AI思考回复话术\s*$|^\s*##\s+可复制给客户\s*$/m)[0]
+    .trim();
+  const replies = extractAdaptiveReplies(input.answer);
+
+  if (!sectionTopologyValid) {
+    issues.push("writer_section_topology_invalid");
+  }
+
+  if (/\[CAREER_(?:EVIDENCE_PLAN|WRITER_REPAIR)|\b(?:compactPlan|expectedStage|responseFocus|evidenceAnchors|executionSequence|executionAnchors|actionAnchors|fixedScriptAvailable|evidenceIds?|replyBlueprints|customerState|completedActions|forbiddenClaims|missingInformation)\b|(?:应用|系统)(?:校验|生成|选择|注入|处理)[^。！？\n]{0,18}(?:证据计划|内部计划|内部规划器|内部处理过程|内部推理|思维过程)|(?:证据计划|内部计划|内部规划器|内部处理过程|内部推理|内部分析|内部判断|内部思考|思维过程|推理过程|系统思考|系统推理|模型思考|模型推理|隐藏提示词|系统提示词)/.test(input.answer)) {
+    issues.push("writer_internal_plan_leak");
+  }
+
+  if (
+    normalizeText(analysisBody).length < 100
+    || !/^\s*#{1,4}\s+\S+/m.test(analysisBody)
+  ) {
+    issues.push("writer_natural_body_incomplete");
+  }
+
+  if (/^\s*##\s+(?:判断|回复思路)\s*$|^\s*###\s+推荐执行流程\s*$/m.test(analysisBody)) {
+    issues.push("writer_fixed_body_template_used");
+  }
+
+  if (/```|~~~/.test(analysisBody)) {
+    issues.push("writer_natural_body_unsupported_markup");
+  }
+
+  if (hasStageContradictoryAction(analysisBody, input.plan.stage)) {
+    issues.push("writer_stage_action_conflict");
+  }
+
+  const sequence = input.plan.executionSequence;
+  if (sequence) {
+    const anchorPositions = sequence.actionAnchors.map((anchor) => (
+      findNonNegatedEvidenceOccurrence(analysisBody, anchor)
+    ));
+    const anchorsPresentAndOrdered = anchorPositions.every((position) => position >= 0)
+      && anchorPositions.every((position, index) => index === 0 || position > anchorPositions[index - 1]);
+
+    if (
+      !isCareerMentorEvidenceTextAligned(input.plan.stage, sequence.supportingQuote)
+      || !anchorsPresentAndOrdered
+    ) {
+      issues.push("writer_execution_flow_not_grounded");
+    }
+  }
+
+  const naturalGroundingClauses = extractNaturalGroundingClauses(analysisBody);
+  const naturalGroundingHeadings = analysisBody
+    .split("\n")
+    .map((line) => line.match(/^\s*#{1,6}\s+(.+?)\s*$/)?.[1]?.trim() ?? "")
+    .filter(Boolean);
+  const unsupportedNaturalClauses = naturalGroundingClauses.filter((clause) => (
+    !isNaturalBodyClauseGrounded({
+      clause,
+      evidenceQuotes,
+      customerGroundingText
+    })
+  ));
+  const unsupportedNaturalHeadings = naturalGroundingHeadings.filter((heading) => (
+    !isCareerNaturalSafeOrganizationalHeading(heading)
+    && !isNaturalBodyClauseGrounded({
+      clause: stripCareerNaturalHeadingPrefix(heading),
+      evidenceQuotes,
+      customerGroundingText
+    })
+  ));
+  if (
+    naturalGroundingClauses.length === 0
+    || unsupportedNaturalClauses.length > 0
+    || unsupportedNaturalHeadings.length > 0
+  ) {
+    issues.push("writer_natural_body_not_grounded");
+  }
+
+  if (findUnsupportedSensitiveClaims(
+    input.answer,
+    evidenceText,
+    customerGroundingText
+  ).length > 0) {
+    issues.push("writer_unsupported_sensitive_claim");
+  }
+
+  if (!/^\s*##\s+可复制给客户\s*$/m.test(input.answer)) {
+    issues.push("writer_missing_copy_section");
+  }
+
+  if (replies.length !== input.expectedReplyCount) {
+    issues.push("writer_reply_count_invalid");
+  }
+
+  if (input.expectedReplyCount === 3) {
+    for (let index = 0; index < CAREER_REPLY_STYLES.length; index += 1) {
+      const reply = replies.find((item) => item.slot === index + 1);
+      const plannedReply = input.plan.replyBlueprints[index];
+
+      if (
+        !reply
+        || reply.style !== CAREER_REPLY_STYLES[index]
+        || !reply.text
+        || !plannedReply
+        || normalizeText(reply.text) !== normalizeText(plannedReply.draft)
+      ) {
+        issues.push("writer_reply_structure_invalid");
+      }
+    }
+
+    if (new Set(replies.map((item) => normalizeReplyDiversityKey(
+      stripSupportedCustomerPersonalization(item.text, customerGroundingText)
+    ))).size !== 3) {
+      issues.push("writer_reply_duplicate");
+    }
+  }
+
+  const fixedScript = extractFixedScript(input.answer);
+  if (fixedScript) {
+    const planScript = input.plan.fixedScriptCandidate?.text ?? "";
+    const groundedInContext = input.knowledgeContexts.some((context) => (
+      isStageAlignedFixedScript(context, fixedScript, input.plan.stage)
+    ));
+
+    if (!planScript || fixedScript !== planScript || !groundedInContext) {
+      issues.push("writer_fixed_script_not_grounded");
+    }
+  }
+
+  return {
+    ok: issues.length === 0,
+    issues: Array.from(new Set(issues)),
+    replies: replies.map((item) => item.text),
+    fixedScript
+  };
 }
 
 export function validateCareerMentorWriterAnswer(input: {
@@ -1556,7 +1964,10 @@ export async function generateCareerMentorGroundedAnswer(
     );
   }
 
-  const evidencePlanPrompt = formatPlanForWriter(plan);
+  const naturalBodyMode = options.outputMode === "natural_markdown_with_cards";
+  const evidencePlanPrompt = naturalBodyMode
+    ? formatNaturalPlanForWriter(plan)
+    : formatPlanForWriter(plan);
   const writerBusinessContext = [
     evidencePlanPrompt,
     options.businessExecutionContext
@@ -1566,21 +1977,41 @@ export async function generateCareerMentorGroundedAnswer(
     businessExecutionContext: writerBusinessContext,
     intentLabel: "career_grounded_deep_thinking"
   });
-  let writerValidation = validateCareerMentorWriterAnswer({
-    answer: writerResult.answer,
-    plan,
-    knowledgeContexts,
-    expectedReplyCount,
-    question,
-    customerContexts,
-    recentConversation: options.recentConversation
-  });
+  const validateWriter = (answer: string) => (
+    naturalBodyMode
+      ? validateCareerMentorNaturalWriterAnswer({
+          answer,
+          plan,
+          knowledgeContexts,
+          expectedReplyCount,
+          question,
+          customerContexts,
+          recentConversation: options.recentConversation
+        })
+      : validateCareerMentorWriterAnswer({
+          answer,
+          plan,
+          knowledgeContexts,
+          expectedReplyCount,
+          question,
+          customerContexts,
+          recentConversation: options.recentConversation
+        })
+  );
+  let writerValidation = validateWriter(writerResult.answer);
+  const maxWriterRepairAttempts = naturalBodyMode ? 2 : 1;
 
-  if (!writerValidation.ok) {
+  for (
+    let repairAttempt = 1;
+    !writerValidation.ok && repairAttempt <= maxWriterRepairAttempts;
+    repairAttempt += 1
+  ) {
     const repairContext = [
       "[CAREER_WRITER_REPAIR_APP_VALIDATED]",
       `上一版没有通过应用校验：${writerValidation.issues.join(", ")}。`,
-      "请基于同一 Evidence Plan 重写完整正文；不要解释校验过程。固定知识话术由应用注入，不得自行编造。",
+      naturalBodyMode
+        ? "请基于同一 Evidence Plan 重写完整自然 Markdown 正文，并完整保留后续三条 AI 话术与固定知识话术卡容器；不要解释校验过程。固定知识话术由应用注入，不得自行编造。"
+        : "请基于同一 Evidence Plan 重写完整正文；不要解释校验过程。固定知识话术由应用注入，不得自行编造。",
       evidencePlanPrompt,
       options.businessExecutionContext
     ].join("\n\n");
@@ -1588,17 +2019,9 @@ export async function generateCareerMentorGroundedAnswer(
     writerResult = await writer(question, contexts, {
       ...options,
       businessExecutionContext: repairContext,
-      intentLabel: "career_grounded_deep_thinking_repair"
+      intentLabel: `career_grounded_deep_thinking_repair_${repairAttempt}`
     });
-    writerValidation = validateCareerMentorWriterAnswer({
-      answer: writerResult.answer,
-      plan,
-      knowledgeContexts,
-      expectedReplyCount,
-      question,
-      customerContexts,
-      recentConversation: options.recentConversation
-    });
+    writerValidation = validateWriter(writerResult.answer);
   }
 
   if (!writerValidation.ok) {

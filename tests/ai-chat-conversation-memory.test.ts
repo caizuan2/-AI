@@ -338,19 +338,17 @@ async function main() {
 
       return {
         answer: [
-          "## 判断",
-          "当前阶段：第一步——破冰。调用步骤：第一步破冰。判断依据：客户是宝妈，仍需先建立连接和信任。",
+          "## 先从建立信任开始",
+          "这位客户仍处在第一次建立连接的阶段。面对宝妈客户，先从她真实的生活状态切入，让她感到被理解，再自然介绍自己；这轮不要因为用户说‘再换一个方案’就推进到讲事业。",
           "",
-          "## 回复思路",
-          "继续围绕同一位宝妈客户调整表达，不跳到第三步讲事业。",
+          "## 这次可以这样推进",
+          "继续围绕同一位宝妈客户调整表达，先自然建立连接，找到真实关注点后再发送资料。整个过程保持轻松，不连续追问，也不跳到第三步讲事业。",
           "",
           "### AI思考回复话术",
           "",
           "#### AI建议话术 1",
           "",
           "> 您好，我们先不急着聊太多。我想先了解一下，您现在更希望改善时间安排，还是想多了解一个适合自己的选择？",
-          "",
-          "### 推荐执行流程",
           "",
           "1. 先自然建立连接。",
           "2. 找到真实关注点后再发送资料。",
@@ -369,10 +367,9 @@ async function main() {
   });
 
   assert.equal(careerResult.provider_status, "ok");
-  assert.match(careerResult.answer, /## 判断/);
-  assert.match(careerResult.answer, /当前阶段：第一步.*破冰/);
-  assert.match(careerResult.answer, /## 回复思路/);
-  assert.match(careerResult.answer, /### 推荐执行流程/);
+  assert.match(careerResult.answer, /## 先从建立信任开始/);
+  assert.match(careerResult.answer, /## 这次可以这样推进/);
+  assert.doesNotMatch(careerResult.answer, /^## 判断$|^## 回复思路$|^### 推荐执行流程$/m);
   assert.match(careerResult.answer, /### AI思考回复话术/);
   assert.match(careerResult.answer, /## 可复制给客户/);
   assert.match(careerResult.answer, /姐\/哥，我们这个事业很简单/);

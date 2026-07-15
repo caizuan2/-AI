@@ -34,6 +34,7 @@ export interface RagPromptOptions {
   intentLabel?: string;
   retrievalMessage?: string | null;
   businessExecutionContext?: string | null;
+  businessExecutionContextMaxChars?: number;
   recentConversation?: RagRecentConversationTurn[];
 }
 
@@ -139,8 +140,11 @@ export function buildRagPromptMessages(
   options: RagPromptOptions = {}
 ): RagPromptMessage[] {
   const normalizedQuestion = question.trim();
+  const businessExecutionContextMaxChars = Number.isFinite(options.businessExecutionContextMaxChars)
+    ? Math.max(2400, Math.min(8000, Math.floor(options.businessExecutionContextMaxChars ?? 2400)))
+    : 2400;
   const businessExecutionContext = typeof options.businessExecutionContext === "string"
-    ? options.businessExecutionContext.trim().slice(0, 2400)
+    ? options.businessExecutionContext.trim().slice(0, businessExecutionContextMaxChars)
     : "";
   const recentConversation = Array.isArray(options.recentConversation)
     ? options.recentConversation

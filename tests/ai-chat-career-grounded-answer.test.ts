@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   CAREER_MENTOR_EVIDENCE_PLAN_VERSION,
   generateCareerMentorGroundedAnswer,
+  validateCareerMentorNaturalWriterAnswer,
   validateCareerMentorWriterAnswer,
   type CareerMentorEvidencePlanV1
 } from "../lib/ai-chat/career-mentor-grounded-answer";
@@ -152,6 +153,40 @@ function createWriterAnswer(options: {
   ].join("\n");
 }
 
+function createNaturalWriterAnswer(options: {
+  drafts?: string[];
+  fixedScript?: string;
+  body?: string;
+} = {}): string {
+  const drafts = options.drafts ?? replyDrafts;
+  const body = options.body ?? [
+    "## 先把这次跟进的目标放对",
+    "客户说晚点再看资料。资料发出后，跟进重点是确认客户最关注哪一部分，再围绕关注点继续沟通。",
+    "",
+    "## 下一步可以怎么做",
+    "资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。先确认客户最关注哪一部分，再围绕关注点继续沟通。"
+  ].join("\n");
+
+  return [
+    body,
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${drafts[0]}`,
+    "",
+    "#### AI建议话术 2（共情引导型）",
+    `> ${drafts[1]}`,
+    "",
+    "#### AI建议话术 3（轻问推进型）",
+    `> ${drafts[2]}`,
+    "",
+    "## 可复制给客户",
+    ...(options.fixedScript
+      ? ["### 话术 1", ...options.fixedScript.split("\n").map((line) => `> ${line}`)]
+      : [])
+  ].join("\n");
+}
+
 function createWriterResult(answer: string): RagAnswerResult {
   return {
     answer,
@@ -271,6 +306,549 @@ async function main() {
   for (const reply of replyDrafts) {
     assert.equal(actualWriterPrompt.includes(reply), true);
   }
+
+  const naturalAnswer = createNaturalWriterAnswer();
+  const naturalValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: naturalAnswer,
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext],
+    recentConversation: []
+  });
+
+  assert.equal(naturalValidation.ok, true, naturalValidation.issues.join(", "));
+  assert.doesNotMatch(naturalAnswer, /^## 判断$|^## 回复思路$|^### 推荐执行流程$/m);
+
+  const fixedTemplateValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createWriterAnswer(),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(fixedTemplateValidation.ok, false);
+  assert.equal(fixedTemplateValidation.issues.includes("writer_fixed_body_template_used"), true);
+
+  const reversedSequenceValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        "## 跟进时先守住客户节奏",
+        "客户已经收到资料，当前需要把沟通入口留得轻一些。围绕关注点继续沟通之后，再确认客户最关注哪一部分。为了让正文保持完整，这里只解释当前阶段的做法，不增加知识片段没有提供的事实，也不提前推进到后续阶段。",
+        "",
+        "## 为什么顺序很重要",
+        "把两个动作倒过来会失去明确关注点，因此应回到资料里已经给出的原始顺序，再安排下一次交流。"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(reversedSequenceValidation.ok, false);
+  assert.equal(reversedSequenceValidation.issues.includes("writer_execution_flow_not_grounded"), true);
+
+  const unsupportedClaimValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: `${createNaturalWriterAnswer().split("### AI思考回复话术")[0]}\n这个方法保证每月收入五万元。`
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(unsupportedClaimValidation.ok, false);
+  assert.equal(unsupportedClaimValidation.issues.includes("writer_unsupported_sensitive_claim"), true);
+
+  const ungroundedNaturalAdviceValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        "## 先这样跟进",
+        "先确认客户最关注哪一部分，再围绕关注点继续沟通。每天给客户连续发十条消息，是最稳妥、最专业、最容易让客户产生兴趣的做法。这套频率适合所有客户，不需要根据客户反应调整。为了把方案讲完整，这里继续补充一些没有来自资料的普通建议，让正文达到完整长度并保持自然表达。还可以要求伙伴每天记录客户隐私和家庭情况，并统一套用这一节奏，不必判断客户是否愿意继续沟通。这些做法都没有出现在知识片段里，但也没有包含收入保证或公司资质等敏感词。"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(ungroundedNaturalAdviceValidation.ok, false);
+  assert.equal(
+    ungroundedNaturalAdviceValidation.issues.includes("writer_natural_body_not_grounded"),
+    true
+  );
+
+  const shortUngroundedActionsValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+        "马上打电话。天天催客户。"
+      ].join("\n\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(shortUngroundedActionsValidation.ok, false);
+  assert.equal(
+    shortUngroundedActionsValidation.issues.includes("writer_natural_body_not_grounded"),
+    true
+  );
+
+  const fencedUngroundedActionsValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+        "```text",
+        "马上打电话。",
+        "天天催客户。",
+        "```"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(fencedUngroundedActionsValidation.ok, false);
+  assert.equal(
+    fencedUngroundedActionsValidation.issues.includes("writer_natural_body_unsupported_markup"),
+    true
+  );
+
+  for (const ungroundedHeading of [
+    "## 天天催客户",
+    "## 马上打电话",
+    "## 目标：诱导客户透露隐私",
+    "## 下一步：误导客户接受安排",
+    "## 为什么要歪曲客户需求",
+    "## 沟通重点：套客户个人信息"
+  ]) {
+    const ungroundedHeadingValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: createNaturalWriterAnswer({
+        body: [
+          createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+          ungroundedHeading
+        ].join("\n\n")
+      }),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(ungroundedHeadingValidation.ok, false, ungroundedHeading);
+    assert.equal(
+      ungroundedHeadingValidation.issues.includes("writer_natural_body_not_grounded"),
+      true,
+      ungroundedHeading
+    );
+  }
+
+  for (const ungroundedShortClause of [
+    "逼单。",
+    "逼她。",
+    "恐吓。",
+    "洗脑。",
+    "造假。",
+    "纠缠。",
+    "轰炸。",
+    "硬推。"
+  ]) {
+    const ungroundedShortClauseValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: createNaturalWriterAnswer({
+        body: [
+          createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+          ungroundedShortClause
+        ].join("\n\n")
+      }),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(ungroundedShortClauseValidation.ok, false, ungroundedShortClause);
+    assert.equal(
+      ungroundedShortClauseValidation.issues.includes("writer_natural_body_not_grounded"),
+      true,
+      ungroundedShortClause
+    );
+  }
+
+  for (const ungroundedFrequencyClause of [
+    "每天确认客户最关注哪一部分。",
+    "每天围绕关注点继续沟通。",
+    "每天确认客户最关注哪一部分。每天围绕关注点继续沟通。"
+  ]) {
+    const ungroundedFrequencyClauseValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: createNaturalWriterAnswer({
+        body: [
+          createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+          ungroundedFrequencyClause
+        ].join("\n\n")
+      }),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(ungroundedFrequencyClauseValidation.ok, false, ungroundedFrequencyClause);
+    assert.equal(
+      ungroundedFrequencyClauseValidation.issues.includes("writer_natural_body_not_grounded"),
+      true,
+      ungroundedFrequencyClause
+    );
+  }
+
+  const adviceQuestionEchoValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+        "天天催客户。"
+      ].join("\n\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "我应该天天催客户吗？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(adviceQuestionEchoValidation.ok, false);
+  assert.equal(
+    adviceQuestionEchoValidation.issues.includes("writer_natural_body_not_grounded"),
+    true
+  );
+
+  for (const [ungroundedRequestedAction, requestedActionQuestion] of [
+    ["给客户发红包。", "给我一套给客户发红包的话术"],
+    ["给客户送礼物。", "给我一套给客户送礼物的话术"],
+    ["夸客户很漂亮。", "给我一套夸客户很漂亮的话术"],
+    ["约客户见面。", "给我一套约客户见面的话术"]
+  ] as const) {
+    const requestedActionEchoValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: createNaturalWriterAnswer({
+        body: [
+          createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+          ungroundedRequestedAction
+        ].join("\n\n")
+      }),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: requestedActionQuestion,
+      customerContexts: [customerContext]
+    });
+    assert.equal(requestedActionEchoValidation.ok, false, requestedActionQuestion);
+    assert.equal(
+      requestedActionEchoValidation.issues.includes("writer_natural_body_not_grounded"),
+      true,
+      requestedActionQuestion
+    );
+  }
+
+  for (const copyTailInjection of ["硬推。", "每天轰炸。", "造假。"]) {
+    const copyTailInjectionValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: [
+        createNaturalWriterAnswer(),
+        "## 额外策略",
+        copyTailInjection
+      ].join("\n\n"),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(copyTailInjectionValidation.ok, false, copyTailInjection);
+    assert.equal(
+      copyTailInjectionValidation.issues.includes("writer_section_topology_invalid"),
+      true,
+      copyTailInjection
+    );
+  }
+
+  const validNaturalLines = createNaturalWriterAnswer().split("\n");
+  const aiSectionLineIndex = validNaturalLines.findIndex((line) => line === "### AI思考回复话术");
+  const copySectionLineIndex = validNaturalLines.findIndex((line) => line === "## 可复制给客户");
+  for (const injectionIndex of [aiSectionLineIndex + 1, copySectionLineIndex]) {
+    const injectedLines = [...validNaturalLines];
+    injectedLines.splice(injectionIndex, 0, "## 额外策略", "", "硬推。", "");
+    const aiSectionInjectionValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: injectedLines.join("\n"),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(aiSectionInjectionValidation.ok, false, String(injectionIndex));
+    assert.equal(
+      aiSectionInjectionValidation.issues.includes("writer_section_topology_invalid"),
+      true,
+      String(injectionIndex)
+    );
+  }
+
+  for (const alteredAction of [
+    "欺骗客户最关注哪一部分。",
+    "套取客户最关注哪一部分。",
+    "隐瞒客户最关注哪一部分。",
+    "删除客户最关注哪一部分。",
+    "确认客户最关注哪个项目。",
+    "确认客户最关注哪位伙伴。",
+    "确认客户最关注哪次活动。"
+  ]) {
+    const alteredNaturalActionValidation = validateCareerMentorNaturalWriterAnswer({
+      answer: createNaturalWriterAnswer({
+        body: [
+          createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+          alteredAction
+        ].join("\n\n")
+      }),
+      plan,
+      knowledgeContexts: [knowledgeContext],
+      expectedReplyCount: 3,
+      question: "客户说晚点再看资料，我怎么跟进？",
+      customerContexts: [customerContext]
+    });
+    assert.equal(alteredNaturalActionValidation.ok, false, alteredAction);
+    assert.equal(
+      alteredNaturalActionValidation.issues.includes("writer_natural_body_not_grounded"),
+      true,
+      alteredAction
+    );
+  }
+
+  const negatedNaturalActionValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        "## 跟进动作不能被反向改写",
+        "客户说晚点再看资料。资料发出后，不用确认客户最关注哪一部分，再围绕关注点继续沟通。资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。确认客户最关注哪一部分，再围绕关注点继续沟通。资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(negatedNaturalActionValidation.ok, false);
+  assert.equal(
+    negatedNaturalActionValidation.issues.includes("writer_natural_body_not_grounded"),
+    true
+  );
+
+  const naturalParaphraseValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        createNaturalWriterAnswer().split("### AI思考回复话术")[0].trim(),
+        "这样做的目的，是先弄清楚对方真正关心的内容，然后针对这一点继续聊。"
+      ].join("\n\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(naturalParaphraseValidation.ok, true, naturalParaphraseValidation.issues.join(", "));
+
+  const chineseInternalPlanLeakValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        "## 内部证据计划说明",
+        "以下内容来自应用校验后的证据计划。内部规划器已经完成证据选择，现在先把内部证据计划的判断告诉你，再给出用户端答案。确认客户最关注哪一部分，再围绕关注点继续沟通。为了达到完整正文长度，这里继续说明应用已经校验过知识依据，并把内部处理过程转成了当前回复。这个内部规划过程原本不会给客户看到，但这次正文直接把它写在这里。"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(chineseInternalPlanLeakValidation.ok, false);
+  assert.equal(
+    chineseInternalPlanLeakValidation.issues.includes("writer_internal_plan_leak"),
+    true
+  );
+
+  const frameworkQuotes = [
+    "沟通五步骤依次是破冰、促单跟进、讲事业、锁定问题和成交，每一步都要根据客户当前状态判断，不能随意跳步。",
+    "破冰先建立信任并发送资料，促单跟进持续展示价值，客户主动了解后再讲事业，出现疑虑时锁定问题，认可后推动成交。",
+    "陌生客户先解决你是谁和为什么愿意听的问题，已经了解但没有行动时继续展示价值，主动想了解事业时再进入完整讲解。",
+    "客户提出贵、靠不靠谱、没时间或考虑一下时，先认可，再转移焦点，最后用核心价值解释；认可却不行动时再推进下一步。"
+  ];
+  const frameworkContexts = frameworkQuotes.map((quote, index): RagContext => ({
+    id: `framework-${index + 1}`,
+    sourceId: `framework-${index + 1}`,
+    title: "沟通五步骤知识树",
+    sourceType: "admin_docx",
+    content: quote
+  }));
+  const frameworkPlan: CareerMentorEvidencePlanV1 = {
+    version: CAREER_MENTOR_EVIDENCE_PLAN_VERSION,
+    stage: "framework",
+    customerState: "用户正在了解沟通五步骤整体框架。",
+    completedActions: [],
+    responseFocus: "说明五步骤整体顺序和阶段判断。",
+    evidenceFindings: frameworkQuotes.map((quote, index) => ({
+      evidenceId: `framework-${index + 1}`,
+      supportingQuotes: [quote]
+    })),
+    executionSequence: null,
+    replyBlueprints: [],
+    fixedScriptCandidate: null,
+    missingInformation: [],
+    forbiddenClaims: []
+  };
+  const frameworkNaturalAnswer = [
+    "## 五步骤的整体逻辑",
+    "",
+    frameworkQuotes[0],
+    "",
+    frameworkQuotes[1],
+    "",
+    "## 阶段判断怎么做",
+    "",
+    frameworkQuotes[2],
+    "",
+    frameworkQuotes[3],
+    "",
+    "## 可复制给客户"
+  ].join("\n");
+  const frameworkNaturalValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: frameworkNaturalAnswer,
+    plan: frameworkPlan,
+    knowledgeContexts: frameworkContexts,
+    expectedReplyCount: 0,
+    question: "沟通五步骤都是什么？"
+  });
+  assert.equal(frameworkNaturalValidation.ok, true, JSON.stringify(frameworkNaturalValidation));
+
+  const naturalStageConflictValidation = validateCareerMentorNaturalWriterAnswer({
+    answer: createNaturalWriterAnswer({
+      body: [
+        "## 先尊重客户当前的阅读节奏",
+        "客户已经收到资料并表示稍后再看，当前仍应先确认客户最关注哪一部分，再围绕关注点继续沟通。这样可以让本轮交流继续停留在资料跟进阶段，不加入知识片段没有支持的判断。",
+        "",
+        "## 不应提前跨到成交动作",
+        "现在立即要求客户付款并马上加入。"
+      ].join("\n")
+    }),
+    plan,
+    knowledgeContexts: [knowledgeContext],
+    expectedReplyCount: 3,
+    question: "客户说晚点再看资料，我怎么跟进？",
+    customerContexts: [customerContext]
+  });
+  assert.equal(naturalStageConflictValidation.ok, false);
+  assert.equal(
+    naturalStageConflictValidation.issues.includes("writer_stage_action_conflict"),
+    true
+  );
+
+  let naturalWriterCalls = 0;
+  let naturalWriterBusinessContext = "";
+  const naturalGroundedResult = await generateCareerMentorGroundedAnswer(
+    "客户说晚点再看资料，我怎么跟进？",
+    [knowledgeContext, customerContext],
+    {
+      provider: "deepseek",
+      providerChain: ["deepseek"],
+      model: "deepseek-v4-pro",
+      expectedStage: "follow_up",
+      outputMode: "natural_markdown_with_cards",
+      temperature: 0.7,
+      maxTokens: 6000,
+      businessExecutionContextMaxChars: 7000,
+      businessExecutionContext: "CAREER_NATURAL_TAIL_RULE"
+    },
+    {
+      chat: async () => createPlannerResponse(JSON.stringify(plan)),
+      writer: async (_question, _contexts, options) => {
+        naturalWriterCalls += 1;
+        naturalWriterBusinessContext = options?.businessExecutionContext ?? "";
+        assert.equal(options?.temperature, 0.7);
+        assert.equal(options?.maxTokens, 6000);
+        assert.equal(options?.businessExecutionContextMaxChars, 7000);
+        return createWriterResult(createNaturalWriterAnswer());
+      },
+      recordUsage: async () => undefined
+    }
+  );
+
+  assert.equal(naturalWriterCalls, 1);
+  assert.match(naturalWriterBusinessContext, /完整、自然、专业的 DeepSeek\/GPT 风格 Markdown 正文/);
+  assert.match(naturalWriterBusinessContext, /不要套用‘判断’‘回复思路’‘推荐执行流程’三个固定栏目/);
+  const naturalWriterPrompt = buildRagPromptMessages(
+    "客户说晚点再看资料，我怎么跟进？",
+    [knowledgeContext],
+    {
+      businessExecutionContext: naturalWriterBusinessContext,
+      businessExecutionContextMaxChars: 7000
+    }
+  ).map((message) => message.content).join("\n");
+  assert.match(naturalWriterPrompt, /CAREER_NATURAL_TAIL_RULE/);
+  assert.match(naturalGroundedResult.answer, /## 先把这次跟进的目标放对/);
+  assert.match(naturalGroundedResult.answer, /### AI思考回复话术/);
+  assert.match(naturalGroundedResult.answer, /## 可复制给客户/);
+  assert.equal(naturalGroundedResult.careerEvidencePlan.groundingValidationPassed, true);
+
+  let naturalRepairWriterCalls = 0;
+  const naturalRepairResult = await generateCareerMentorGroundedAnswer(
+    "客户说晚点再看资料，我怎么跟进？",
+    [knowledgeContext, customerContext],
+    {
+      provider: "deepseek",
+      expectedStage: "follow_up",
+      outputMode: "natural_markdown_with_cards"
+    },
+    {
+      chat: async () => createPlannerResponse(JSON.stringify(plan)),
+      writer: async () => {
+        naturalRepairWriterCalls += 1;
+        return createWriterResult(
+          naturalRepairWriterCalls < 3
+            ? createWriterAnswer()
+            : createNaturalWriterAnswer()
+        );
+      },
+      recordUsage: async () => undefined
+    }
+  );
+
+  assert.equal(naturalRepairWriterCalls, 3);
+  assert.match(naturalRepairResult.answer, /## 先把这次跟进的目标放对/);
+
+  let rejectedNaturalWriterCalls = 0;
+  await assert.rejects(() => generateCareerMentorGroundedAnswer(
+    "客户说晚点再看资料，我怎么跟进？",
+    [knowledgeContext, customerContext],
+    {
+      provider: "deepseek",
+      expectedStage: "follow_up",
+      outputMode: "natural_markdown_with_cards"
+    },
+    {
+      chat: async () => createPlannerResponse(JSON.stringify(plan)),
+      writer: async () => {
+        rejectedNaturalWriterCalls += 1;
+        return createWriterResult(createWriterAnswer());
+      },
+      recordUsage: async () => undefined
+    }
+  ), /回答未通过知识依据校验/);
+  assert.equal(rejectedNaturalWriterCalls, 3);
 
   let repairPlannerCalls = 0;
   const repairedResult = await generateCareerMentorGroundedAnswer(
