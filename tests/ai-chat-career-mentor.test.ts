@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   CAREER_MENTOR_KNOWLEDGE_TREE,
@@ -386,10 +387,10 @@ function main() {
   assert.match(policy, /逐字固化的四份客户话术卡原文/);
   assert.match(policy, /五步顺序铁律：破冰 -> 促单跟进 -> 讲事业 -> 锁定问题 -> 成交/);
   assert.match(policy, /没有回复不等于拒绝/);
-  assert.match(policy, /## 判断/);
-  assert.match(policy, /当前阶段：.*调用步骤：.*判断依据：/);
-  assert.match(policy, /## 回复思路/);
-  assert.match(policy, /### 推荐执行流程/);
+  assert.match(policy, /最终输出由‘自然正文 \+ 现有话术卡’组成/);
+  assert.match(policy, /正文标题必须随问题动态生成/);
+  assert.match(policy, /不得套用‘判断’‘回复思路’‘推荐执行流程’三个固定栏目/);
+  assert.doesNotMatch(policy, /^## 判断$|^## 回复思路$|^### 推荐执行流程$/m);
   assert.match(policy, /## 可复制给客户/);
   assert.match(policy, /知识库原话优先铁律/);
   assert.match(policy, /话术 1.*连续逐字复制/);
@@ -399,7 +400,7 @@ function main() {
   assert.match(policy, /### AI思考回复话术/);
   assert.match(policy, /固定生成 3 条可选择的短话术/);
   assert.match(policy, /AI建议话术 1（稳妥自然型）.*AI建议话术 2（共情引导型）.*AI建议话术 3（轻问推进型）/);
-  assert.match(policy, /不得省略流程、减少数量或合并话术/);
+  assert.match(policy, /不得减少数量、合并或把卡片内容混入正文/);
   assert.doesNotMatch(policy, /1—2 条短话术|可选的.*AI建议话术 2/);
   assert.match(policy, /不得编造公司、产品、收益或案例事实/);
   assert.match(policy, /最下面只保留固定知识库话术，不放 AI 改写或延伸/);
@@ -416,12 +417,24 @@ function main() {
   assert.match(followUpPolicy, /只代表更换方案或说法，不代表客户状态前进/);
   assert.match(followUpPolicy, /第一步：破冰/);
   assert.match(followUpPolicy, /客户是宝妈，应该怎么破冰/);
-  assert.match(policy, /不得省略流程、减少数量或合并话术/);
-  assert.match(policy, /完整 DeepSeek\/GPT 风格 Markdown 正文/);
+  assert.match(policy, /不得减少数量、合并或把卡片内容混入正文/);
+  assert.match(policy, /完整、自然、专业的 DeepSeek\/GPT 风格 Markdown/);
   assert.doesNotMatch(policy, /业务问题 客户问题 成交 回复 处理建议/);
   assert.ok(policy.length <= 2700);
   assert.match(policy.slice(-160), /最下方绿色复制卡片/);
   assert.match(policy.slice(-160), /不得混入 AI 改写/);
+
+  const userAskRouteSource = readFileSync("app/api/ai/chat/ask/route.ts", "utf8");
+  const userAskServiceSource = readFileSync("lib/ai-chat/ask.ts", "utf8");
+
+  assert.match(userAskRouteSource, /generateCareerMentorGroundedAnswer/);
+  assert.match(userAskRouteSource, /outputMode: "natural_markdown_with_cards"/);
+  assert.match(userAskRouteSource, /GPT_OS_DEEPSEEK_PRO_MODEL/);
+  assert.match(userAskRouteSource, /temperature: 0\.7/);
+  assert.match(userAskRouteSource, /maxTokens: 6000/);
+  assert.match(userAskServiceSource, /cleanCareerMentorUserAnswer/);
+  assert.match(userAskServiceSource, /extractCareerMentorCustomerAnswer/);
+  assert.match(userAskServiceSource, /naturalBodyPassthrough: Boolean\(careerEvidencePlan\?\.groundingValidationPassed\)/);
 
   const objectionPolicy = buildCareerMentorBusinessContext("客户说贵、还说不靠谱，怎么办？");
 
@@ -448,7 +461,7 @@ function main() {
 
   assert.match(frameworkPolicy, /按五步完整说明：破冰建立信任并发资料；促单跟进持续展示价值；讲事业完成通心与客户讲解；锁定问题用公式解决疑虑；成交把认可转为行动/);
   assert.match(frameworkPolicy, /不生成 AI 思考回复话术/);
-  assert.match(frameworkPolicy, /不要输出‘### AI思考回复话术’/);
+  assert.match(frameworkPolicy, /不输出‘### AI思考回复话术’/);
   assert.doesNotMatch(frameworkPolicy, /不得省略流程或动态话术/);
 
   const maintenancePolicy = buildCareerMentorBusinessContext("客户成交以后，怎么长期维护关系？");

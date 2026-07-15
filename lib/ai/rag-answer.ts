@@ -42,6 +42,8 @@ export interface GenerateRagAnswerOptions {
   provider?: ChatProviderName;
   providerChain?: ChatProviderName[];
   model?: string;
+  temperature?: number;
+  maxTokens?: number;
   agentId?: string | null;
   knowledgeBaseId?: string | null;
   namespace?: string | null;
@@ -50,6 +52,7 @@ export interface GenerateRagAnswerOptions {
   intentLabel?: string;
   retrievalMessage?: string | null;
   businessExecutionContext?: string | null;
+  businessExecutionContextMaxChars?: number;
   recentConversation?: RagRecentConversationTurn[];
 }
 
@@ -143,6 +146,7 @@ export async function generateRagAnswer(
     intentLabel: options.intentLabel,
     retrievalMessage: options.retrievalMessage,
     businessExecutionContext: options.businessExecutionContext,
+    businessExecutionContextMaxChars: options.businessExecutionContextMaxChars,
     recentConversation: options.recentConversation
   });
   const startedAt = Date.now();
@@ -150,7 +154,8 @@ export async function generateRagAnswer(
 
   try {
     const response = await chatWithFallback({
-      temperature: options.answerMode === "partial" ? 0.25 : 0.35,
+      temperature: options.temperature ?? (options.answerMode === "partial" ? 0.25 : 0.35),
+      maxTokens: options.maxTokens,
       messages,
       requestId: options.requestId,
       provider: options.provider,

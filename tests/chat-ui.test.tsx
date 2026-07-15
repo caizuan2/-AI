@@ -292,13 +292,12 @@ async function main() {
   const adaptiveCareerReply2 = "姐，不着急回复我。资料里哪一部分你比较有感觉，或者哪一部分还没看明白？";
   const adaptiveCareerReply3 = "姐，你可以先不用一次看完。你更想先了解具体怎么做，还是时间怎么安排？";
   const dualLayerCareerAnswer = [
-    "## 判断",
-    "当前阶段：第二步促单跟进",
+    "## 先把这次跟进的目标放对",
+    "客户已经收到资料，这时不需要催促。先给她留出阅读空间，再围绕她主动提到的关注点继续。",
     "",
-    "## 回复思路",
-    "完整处理逻辑继续显示，不改变原有正文结构。",
+    "## 这次可以怎么推进",
+    "完整的自然正文继续显示，并且可以按问题自由组织标题、段落和列表。",
     "",
-    "### 推荐执行流程",
     "1. 先确认客户是否已经看过资料。",
     "2. 再根据客户反馈推进下一步。",
     "",
@@ -362,9 +361,9 @@ async function main() {
     />
   );
 
-  assert.match(dualLayerCareerMarkup, /当前阶段：第二步促单跟进/);
-  assert.match(dualLayerCareerMarkup, /完整处理逻辑继续显示/);
-  assert.match(dualLayerCareerMarkup, /推荐执行流程/);
+  assert.match(dualLayerCareerMarkup, /先把这次跟进的目标放对/);
+  assert.match(dualLayerCareerMarkup, /完整的自然正文继续显示/);
+  assert.doesNotMatch(dualLayerCareerMarkup, /当前阶段：第二步促单跟进|推荐执行流程/);
   assert.match(dualLayerCareerMarkup, /AI思考回复话术/);
   assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply));
   assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply2));

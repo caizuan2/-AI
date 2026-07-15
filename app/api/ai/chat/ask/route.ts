@@ -11,6 +11,7 @@ import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
 import { generateRagAnswer, type GenerateRagAnswerOptions } from "@/lib/ai/rag-answer";
 import { requireAiChatAccess } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
+import { GPT_OS_DEEPSEEK_PRO_MODEL } from "@/gpt-os/core/model_router";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
   hasDatabaseUrl,
@@ -153,13 +154,30 @@ export async function POST(request: Request) {
               knowledgeBaseId,
               namespace
             }) => {
-              const answerProvider = getFirstUsableProvider(requestedProvider) ?? configuredProvider ?? normalizeProvider(requestedProvider);
-              const answerProviderChain = normalizeProviderChain(answerProvider, providerFallbackChain, configuredProvider);
+              const careerMentorNaturalBodyEnabled = isCareerMentorScope({
+                agentId,
+                knowledgeBaseId,
+                namespace
+              });
+              const answerProvider = careerMentorNaturalBodyEnabled
+                ? getFirstUsableProvider("deepseek") ?? configuredProvider ?? normalizeProvider(requestedProvider)
+                : getFirstUsableProvider(requestedProvider) ?? configuredProvider ?? normalizeProvider(requestedProvider);
+              const answerProviderChain = normalizeProviderChain(
+                answerProvider,
+                careerMentorNaturalBodyEnabled
+                  ? ["deepseek", ...providerFallbackChain]
+                  : providerFallbackChain,
+                configuredProvider
+              );
               const ragAnswerOptions = {
                 userId: actor.id,
                 provider: answerProvider,
                 providerChain: answerProviderChain,
-                model: actualModel,
+                model: careerMentorNaturalBodyEnabled
+                  ? answerProvider === "deepseek"
+                    ? GPT_OS_DEEPSEEK_PRO_MODEL
+                    : undefined
+                  : actualModel,
                 agentId,
                 knowledgeBaseId,
                 namespace,
@@ -169,18 +187,17 @@ export async function POST(request: Request) {
                 businessExecutionContext,
                 recentConversation
               } satisfies GenerateRagAnswerOptions;
-              const careerMentorGroundingEnabled = isCareerMentorScope({
-                agentId,
-                knowledgeBaseId,
-                namespace
-              });
-              const ragAnswer = careerMentorGroundingEnabled
+              const ragAnswer = careerMentorNaturalBodyEnabled
                 ? await generateCareerMentorGroundedAnswer(question, contexts, {
                     ...ragAnswerOptions,
-                    expectedStage: careerMentorStage ?? "unknown"
+                    expectedStage: careerMentorStage ?? "unknown",
+                    outputMode: "natural_markdown_with_cards",
+                    temperature: 0.7,
+                    maxTokens: 6000,
+                    businessExecutionContextMaxChars: 7000
                   } satisfies CareerMentorGroundedAnswerOptions)
                 : await generateRagAnswer(question, contexts, ragAnswerOptions);
-              const careerEvidencePlan = careerMentorGroundingEnabled
+              const careerEvidencePlan = careerMentorNaturalBodyEnabled
                 ? (ragAnswer as CareerMentorGroundedAnswerResult).careerEvidencePlan
                 : undefined;
 

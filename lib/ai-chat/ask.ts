@@ -29,7 +29,9 @@ import {
   CAREER_MENTOR_POLICY_VERSION,
   CAREER_MENTOR_RETRIEVAL_TOP_K,
   buildCareerMentorBusinessContext,
-  buildCareerMentorNoEvidenceAnswer,
+  buildCareerMentorNaturalNoEvidenceAnswer,
+  buildCareerMentorNaturalProviderErrorAnswer,
+  buildCareerMentorNaturalProviderUnavailableAnswer,
   buildCareerMentorRetrievalQuery,
   buildCareerMentorRetrievalQueries,
   cleanCareerMentorUserAnswer,
@@ -1410,6 +1412,7 @@ export async function handleAiChatAsk(
       ? {
           careerMentorPolicy: {
             version: CAREER_MENTOR_POLICY_VERSION,
+            outputMode: "natural_markdown_with_cards",
             applied: true,
             continuationRequested: careerMentorTurnContext?.continuationRequested ?? false,
             conversationContextApplied: careerMentorTurnContext?.conversationContextApplied ?? false,
@@ -1641,10 +1644,7 @@ export async function handleAiChatAsk(
   });
 
   let answer = careerMentorEnabled && !careerKnowledgeHit
-    ? buildCareerMentorNoEvidenceAnswer(
-        careerMentorScenarioQuestion,
-        careerMentorSupportingContext
-      )
+    ? buildCareerMentorNaturalNoEvidenceAnswer()
     : NO_KNOWLEDGE_ANSWER;
   let customerAnswer = careerMentorEnabled && !careerKnowledgeHit
     ? ""
@@ -1690,18 +1690,20 @@ export async function handleAiChatAsk(
         });
 
         careerEvidencePlan = providerResult.careerEvidencePlan;
-        answer = cleanUserFacingRagAnswer(providerResult.answer);
         answer = careerMentorEnabled
-          ? cleanCareerMentorUserAnswer(answer, {
-              chunks,
-              question: careerMentorScenarioQuestion,
-              supportingContext: careerMentorSupportingContext,
-              strictEvidencePlan: Boolean(careerEvidencePlan),
-              evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
-              evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
-              evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
-            })
-          : answer;
+          ? cleanCareerMentorUserAnswer(
+              normalizeUserChatMarkdown(providerResult.answer),
+              {
+                chunks,
+                question: careerMentorScenarioQuestion,
+                supportingContext: careerMentorSupportingContext,
+                strictEvidencePlan: Boolean(careerEvidencePlan),
+                evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
+                evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
+                evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
+              }
+            )
+          : cleanUserFacingRagAnswer(providerResult.answer);
         customerAnswer = careerMentorEnabled
           ? extractCareerMentorCustomerAnswer(answer)
           : buildCustomerAnswerFromText(question, answer);
@@ -1719,10 +1721,7 @@ export async function handleAiChatAsk(
       } catch (error) {
         const appError = toAppError(error);
         answer = careerMentorEnabled
-          ? buildCareerMentorNoEvidenceAnswer(
-              careerMentorScenarioQuestion,
-              careerMentorSupportingContext
-            )
+          ? buildCareerMentorNaturalProviderErrorAnswer()
           : RAG_CUSTOMER_DRAFT_ANSWER;
         customerAnswer = careerMentorEnabled ? "" : customerAnswer;
         providerStatus = "error";
@@ -1731,10 +1730,7 @@ export async function handleAiChatAsk(
       }
     } else {
       answer = careerMentorEnabled
-        ? buildCareerMentorNoEvidenceAnswer(
-            careerMentorScenarioQuestion,
-            careerMentorSupportingContext
-          )
+        ? buildCareerMentorNaturalProviderUnavailableAnswer()
         : RAG_CUSTOMER_DRAFT_ANSWER;
       customerAnswer = careerMentorEnabled ? "" : customerAnswer;
       providerStatus = "provider_not_configured";
@@ -1764,7 +1760,9 @@ export async function handleAiChatAsk(
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
   const rawAnswerBeforeFinalizer = normalizeUserChatMarkdown(providerMainAnswer || businessSchemaGuard.response);
-  const rawCustomerAnswerBeforeFinalizer = normalizeUserChatMarkdown(providerCustomerAnswer || businessSchemaGuard.response);
+  const rawCustomerAnswerBeforeFinalizer = normalizeUserChatMarkdown(
+    providerCustomerAnswer || businessSchemaGuard.response
+  );
   const finalizedAnswer = finalizeUserAnswer({
     rawAnswer: rawAnswerBeforeFinalizer,
     customerAnswer: rawCustomerAnswerBeforeFinalizer,
@@ -1789,18 +1787,20 @@ export async function handleAiChatAsk(
     source: "ai_chat_ask",
     mode
   }).output;
-  const globallyCleanOutputControlledAnswer = cleanUserFacingRagAnswer(outputControlledAnswer);
   const cleanOutputControlledAnswer = careerMentorEnabled
-    ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer, {
-        chunks,
-        question: careerMentorScenarioQuestion,
-        supportingContext: careerMentorSupportingContext,
-        strictEvidencePlan: Boolean(careerEvidencePlan) || providerStatus !== "ok" || !careerKnowledgeHit,
-        evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
-        evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
-        evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
-      })
-    : globallyCleanOutputControlledAnswer;
+    ? cleanCareerMentorUserAnswer(
+        normalizeUserChatMarkdown(outputControlledAnswer),
+        {
+          chunks,
+          question: careerMentorScenarioQuestion,
+          supportingContext: careerMentorSupportingContext,
+          strictEvidencePlan: Boolean(careerEvidencePlan) || providerStatus !== "ok" || !careerKnowledgeHit,
+          evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
+          evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
+          evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
+        }
+      )
+    : cleanUserFacingRagAnswer(outputControlledAnswer);
 
   if (cleanOutputControlledAnswer !== answer) {
     answer = cleanOutputControlledAnswer;
@@ -1941,6 +1941,9 @@ export async function handleAiChatAsk(
             writerPassed: careerEvidencePlan?.writerPassed ?? false,
             groundingValidationPassed: careerEvidencePlan?.groundingValidationPassed ?? false,
             plannerRepairUsed: careerEvidencePlan?.plannerRepairUsed ?? false,
+            outputMode: "natural_markdown_with_cards",
+            naturalBodyPassthrough: Boolean(careerEvidencePlan?.groundingValidationPassed),
+            deepThinkingApplied: enableDeepThinking,
             staticFallbackUsed: Boolean(
               customerAnswer
               && careerEvidencePlan

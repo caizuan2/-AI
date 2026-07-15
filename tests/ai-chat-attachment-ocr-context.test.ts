@@ -391,7 +391,7 @@ async function main() {
 
   assert.equal(careerOcrOnlyProviderCalled, false);
   assert.equal(careerOcrOnlyResult.provider_status, "no_relevant_knowledge");
-  assert.match(careerOcrOnlyResult.answer, /本轮暂未形成可验证的同阶段知识证据链/);
+  assert.match(careerOcrOnlyResult.answer, /还没有检索到足够的讲事业资料/);
   assert.doesNotMatch(careerOcrOnlyResult.answer, /### AI思考回复话术|### 话术 1/);
   assert.equal(careerOcrOnlyResult.customer_answer, "");
 
