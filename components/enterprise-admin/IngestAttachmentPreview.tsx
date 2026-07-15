@@ -123,6 +123,14 @@ export function IngestAttachmentPreview({
         const kind = getAttachmentKind(file);
         const isImage = kind.label === "图片";
         const Icon = kind.Icon;
+        const statusLabel = file.parseStatus === "partial"
+          ? "部分解析"
+          : statusLabels[file.status];
+        const statusTone = file.status === "failed"
+          ? "bg-[#fff0f0] text-[#b42318]"
+          : file.parseStatus === "partial"
+            ? "bg-[#fff6df] text-[#9a5b00]"
+            : "bg-[#e9f8ef] text-[#128246]";
 
         return (
           <div
@@ -160,8 +168,8 @@ export function IngestAttachmentPreview({
                   ) : null}
                 </div>
               </div>
-              <span className="absolute bottom-2 right-2 rounded-full bg-[#e9f8ef] px-2 py-0.5 text-[10px] font-semibold text-[#128246]">
-                {statusLabels[file.status]}
+              <span className={["absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold", statusTone].join(" ")}>
+                {statusLabel}
               </span>
               {onRemove ? (
                 <button

@@ -7,6 +7,16 @@ import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_MAX_PARSE_BYTES = 50 * 1024 * 1024;
+
+function readMaxParseBytes() {
+  const configured = Number(process.env.ADMIN_INGEST_PARSE_MAX_BYTES);
+
+  return Number.isFinite(configured) && configured > 0
+    ? Math.min(100 * 1024 * 1024, Math.max(1024 * 1024, Math.floor(configured)))
+    : DEFAULT_MAX_PARSE_BYTES;
+}
+
 function jsonUtf8(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -43,6 +53,13 @@ export async function POST(request: Request) {
     }
   }
 
+  const maxParseBytes = readMaxParseBytes();
+  const contentLength = Number(request.headers.get("content-length"));
+
+  if (Number.isFinite(contentLength) && contentLength > maxParseBytes + 1024 * 1024) {
+    return apiError(new ValidationError(`附件超过解析安全上限（${Math.floor(maxParseBytes / 1024 / 1024)} MB）。`));
+  }
+
   let formData: FormData;
 
   try {
@@ -55,6 +72,10 @@ export async function POST(request: Request) {
 
   if (!(file instanceof File)) {
     return apiError(new ValidationError("缺少要解析的文件。"));
+  }
+
+  if (file.size > maxParseBytes) {
+    return apiError(new ValidationError(`附件超过解析安全上限（${Math.floor(maxParseBytes / 1024 / 1024)} MB）。`));
   }
 
   const fileName = readString(formData.get("fileName")) || file.name;

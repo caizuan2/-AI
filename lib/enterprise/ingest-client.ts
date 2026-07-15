@@ -226,7 +226,7 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  errorCode: "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
   message: string;
   userMessage?: string;
   retryable?: boolean;
@@ -1139,6 +1139,17 @@ export async function sendCoreIngest(input: {
     }
 
     if (isGptFailureResponse(payload) && ingestResult.type !== "success") {
+      const userMessage = sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。");
+
+      if (payload.errorCode === "ATTACHMENT_CONTENT_MISSING" || payload.errorCode === "ATTACHMENT_EVIDENCE_MISMATCH") {
+        console.warn("[admin-ingest:attachment-evidence:warning]", {
+          status: response.status,
+          errorCode: payload.errorCode,
+          requestId
+        });
+        throw new Error(`${payload.errorCode}: ${userMessage}`);
+      }
+
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
         status: response.status,
@@ -1148,7 +1159,8 @@ export async function sendCoreIngest(input: {
         model: payload.model,
         requestId
       });
-      throw new Error(sanitizeGptOSUserMessage(payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"));
+
+      throw new Error(userMessage);
     }
 
     if (ingestResult.type !== "success" || !ingestResult.raw) {
@@ -1510,11 +1522,23 @@ export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<
   formData.append("fileName", file.fileName);
   formData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
 
-  const response = await fetch("/api/admin/kb/ingest/files/parse", {
-    method: "POST",
-    credentials: "include",
-    body: formData
-  });
+  let response: Response;
+
+  try {
+    response = await fetch("/api/admin/kb/ingest/files/parse", {
+      method: "POST",
+      credentials: "include",
+      body: formData
+    });
+  } catch {
+    return {
+      ...file,
+      status: "failed",
+      parseStatus: "metadata_only",
+      limitationNote: "附件解析服务暂时不可用，尚未读取到正文。"
+    };
+  }
+
   const payload = await response.json().catch(() => null) as ParseFileResponse | null;
 
   if (!response.ok || !payload?.ok || !payload.data) {
@@ -1537,8 +1561,31 @@ export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<
     slideTexts: payload.data.slideTexts,
     parseStatus: payload.data.parseStatus,
     limitationNote: payload.data.limitationNote,
-    status: payload.data.parseStatus === "unsupported" ? "failed" : "parsed"
+    status: payload.data.parseStatus === "parsed" || payload.data.parseStatus === "partial" ? "parsed" : "failed"
   };
+}
+
+export async function parseUploadedFilesForGpt(files: IngestUploadState[], concurrency = 2) {
+  const results = new Array<IngestUploadState>(files.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < files.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await parseUploadedFileForGpt({
+        ...files[index],
+        status: "parsing"
+      });
+    }
+  }
+
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, Math.floor(concurrency)), files.length) },
+    () => worker()
+  ));
+
+  return results;
 }
 
 export async function sendUrlIngestPreview(input: {

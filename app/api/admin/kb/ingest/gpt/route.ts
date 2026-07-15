@@ -29,6 +29,13 @@ import {
   type EnterpriseIngestActor
 } from "@/lib/enterprise/ingest-logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
+import {
+  ATTACHMENT_CONTENT_MISSING_CODE,
+  ATTACHMENT_EVIDENCE_MISMATCH_CODE,
+  assessAdminIngestAttachmentEvidence,
+  buildAttachmentContentMissingMessage,
+  findUnsupportedAdminIngestAttachmentClaim
+} from "@/lib/enterprise/ingest-attachment-evidence";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +48,19 @@ function jsonUtf8(data: unknown, status = 200) {
       "Cache-Control": "no-store"
     }
   });
+}
+
+function attachmentEvidenceError(code: typeof ATTACHMENT_CONTENT_MISSING_CODE | typeof ATTACHMENT_EVIDENCE_MISMATCH_CODE, message: string) {
+  return jsonUtf8({
+    ok: false,
+    success: false,
+    fallback: false,
+    fallbackUsed: false,
+    errorCode: code,
+    userMessage: message,
+    message,
+    retryable: false
+  }, 422);
 }
 
 function readString(value: unknown) {
@@ -558,6 +578,15 @@ export async function POST(request: Request) {
     return apiError(new ValidationError("管理员 GPT 投喂接口仅支持 modelMode=highest。"));
   }
 
+  const attachmentEvidence = assessAdminIngestAttachmentEvidence(input.attachments);
+
+  if (attachmentEvidence.blocking) {
+    return attachmentEvidenceError(
+      ATTACHMENT_CONTENT_MISSING_CODE,
+      buildAttachmentContentMissingMessage(attachmentEvidence)
+    );
+  }
+
   try {
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
@@ -600,6 +629,18 @@ export async function POST(request: Request) {
       autonomous: input.autonomous,
       requestId
     });
+
+    const unsupportedClaim = findUnsupportedAdminIngestAttachmentClaim(
+      result.replyMarkdown || "",
+      attachmentEvidence
+    );
+
+    if (unsupportedClaim) {
+      return attachmentEvidenceError(
+        ATTACHMENT_EVIDENCE_MISMATCH_CODE,
+        "当前附件只完成了部分识别，模型回答出现了超出附件证据的完整性声明。系统已停止生成知识草稿和训练记忆，请重新识别后再分析。"
+      );
+    }
 
     const rawReply = result.replyMarkdown || "";
     const stylePassThrough = enhanceGPTStyle(rawReply, {

@@ -23,7 +23,7 @@ import {
   checkGptHealthStatus,
   createUploadState,
   ingestSyncTarget,
-  parseUploadedFileForGpt,
+  parseUploadedFilesForGpt,
   saveKnowledgeDraft,
   sendCoreIngest,
   sendUrlIngestPreview,
@@ -71,6 +71,12 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import { sanitizeGptOSUserMessage, toUserFriendlyMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import {
+  ATTACHMENT_CONTENT_MISSING_CODE,
+  assessAdminIngestAttachmentEvidence,
+  buildAttachmentContentMissingMessage,
+  readAttachmentEvidenceErrorMessage
+} from "@/lib/enterprise/ingest-attachment-evidence";
 import {
   getStateDomain,
   isRealIngestFailure,
@@ -1854,31 +1860,6 @@ export function IngestModeToggle() {
     });
     conversationState = markRequestActive(conversationState, requestId);
     conversationStateByIdRef.current[conversationId] = conversationState;
-    const memoryV2Trace = await prepareMemoryV2Context({
-      query: effectiveInput,
-      conversationId,
-      agentId: activeAgent.id,
-      knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-      messages: conversationState.messages
-    });
-    const memoryV2Preview = memoryV2Trace.promptPreview;
-    const contextPayload = buildIngestContextPayload({
-      conversationId,
-      agentId: activeAgent.id,
-      knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-      messages: conversationState.messages,
-      prompt: effectiveInput,
-      maxMessages: 12,
-      memoryContextText: memoryV2Preview?.memoryContextText,
-      usedMemoryIds: memoryV2Preview?.usedMemoryIds,
-      agentLearningInstruction: memoryV2Preview?.agentLearningInstruction
-    });
-    const recentMessages = contextPayload.messages.map((message) => ({
-      ...message,
-      model: null,
-      provider: null
-    }));
-    const previousKnowledgeDrafts = toPreviousKnowledgeDrafts(draft);
     const isCurrentRequest = () => activeIngestRequestIdRef.current === requestId
       && !shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId);
 
@@ -1920,17 +1901,14 @@ export function IngestModeToggle() {
     let successRendered = false;
 
     try {
-      let outgoingAttachments = draftAttachments;
+      let outgoingAttachments: IngestUploadState[] = draftAttachments;
 
       if (composerUploads.length > 0) {
-        const preparedUploads = await Promise.all(composerUploads.map((file) => parseUploadedFileForGpt({
-          ...file,
-          status: "parsing"
-        })));
+        const preparedUploads = await parseUploadedFilesForGpt(composerUploads, 2);
 
         outgoingAttachments = preparedUploads.map((file) => ({
           ...stripUploadRuntimeFields(file),
-          status: "attached" as const,
+          status: file.status === "parsed" ? "attached" as const : "failed" as const,
           agentId: activeAgent.id,
           tenantId,
           userId,
@@ -1946,6 +1924,38 @@ export function IngestModeToggle() {
           ? { ...message, attachments: outgoingAttachments }
           : message));
       }
+
+      const attachmentEvidence = assessAdminIngestAttachmentEvidence(outgoingAttachments);
+
+      if (attachmentEvidence.blocking) {
+        throw new Error(`${ATTACHMENT_CONTENT_MISSING_CODE}: ${buildAttachmentContentMissingMessage(attachmentEvidence)}`);
+      }
+
+      const memoryV2Trace = await prepareMemoryV2Context({
+        query: effectiveInput,
+        conversationId,
+        agentId: activeAgent.id,
+        knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+        messages: conversationState.messages
+      });
+      const memoryV2Preview = memoryV2Trace.promptPreview;
+      const contextPayload = buildIngestContextPayload({
+        conversationId,
+        agentId: activeAgent.id,
+        knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+        messages: conversationState.messages,
+        prompt: effectiveInput,
+        maxMessages: 12,
+        memoryContextText: memoryV2Preview?.memoryContextText,
+        usedMemoryIds: memoryV2Preview?.usedMemoryIds,
+        agentLearningInstruction: memoryV2Preview?.agentLearningInstruction
+      });
+      const recentMessages = contextPayload.messages.map((message) => ({
+        ...message,
+        model: null,
+        provider: null
+      }));
+      const previousKnowledgeDrafts = toPreviousKnowledgeDrafts(draft);
 
       let attempt = 0;
       let result: IngestActionResult;
@@ -1988,6 +1998,10 @@ export function IngestModeToggle() {
           });
           break;
         } catch (retryError) {
+          if (readAttachmentEvidenceErrorMessage(retryError)) {
+            throw retryError;
+          }
+
           const canRetry = attempt < 1
             && !abortController.signal.aborted
             && isCurrentRequest()
@@ -2150,10 +2164,29 @@ export function IngestModeToggle() {
       const stateDomain = getStateDomain(error);
       const errorCode = error instanceof Error ? error.name : undefined;
       const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
+      const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(error);
       conversationStateByIdRef.current[conversationId] = failAssistantMessage(conversationStateByIdRef.current[conversationId], {
         requestId,
-        message: rawErrorMessage
+        message: attachmentEvidenceMessage || rawErrorMessage
       });
+
+      if (attachmentEvidenceMessage) {
+        console.warn("[admin-ingest:attachment-evidence:warning]", {
+          requestId,
+          attachmentCount: draftAttachments.length
+        });
+        setGptFallbackToast(null);
+        setNoticeMessage(attachmentEvidenceMessage);
+        setErrorMessage(attachmentEvidenceMessage);
+        setInput((current) => current || value);
+        setUploadedFiles((current) => current.length > 0 ? current : composerUploads);
+        showActionToast({
+          type: "warning",
+          title: "附件证据不足，已停止本轮分析。"
+        });
+        return null;
+      }
+
       const shouldSuppress = shouldSuppressFallbackToast({
         reason: rawErrorMessage,
         stateDomain,

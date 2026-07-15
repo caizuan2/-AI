@@ -38,20 +38,32 @@ function cleanText(value: unknown) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
 }
 
+function cleanStructuredText(value: unknown) {
+  return typeof value === "string"
+    ? value
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => line.replace(/[\t ]+/g, " ").trim())
+      .filter(Boolean)
+      .join("\n")
+      .trim()
+    : "";
+}
+
 function cleanTextArray(value: unknown, limit = 8) {
   return Array.isArray(value)
     ? value.map((item) => cleanText(item)).filter(Boolean).slice(0, limit)
     : [];
 }
 
-function cleanSlideTexts(value: unknown, limit = 20) {
+function cleanSlideTexts(value: unknown, limit = 40) {
   if (!Array.isArray(value)) {
     return [];
   }
 
   return value.map((item, index) => {
     if (typeof item === "string") {
-      const text = cleanText(item);
+      const text = cleanStructuredText(item);
 
       return text ? { slideIndex: index + 1, text } : null;
     }
@@ -62,7 +74,7 @@ function cleanSlideTexts(value: unknown, limit = 20) {
 
     const record = item as { slideIndex?: unknown; pageIndex?: unknown; text?: unknown; content?: unknown };
     const slideIndex = readNumber(record.slideIndex, record.pageIndex) ?? index + 1;
-    const text = cleanText(record.text) || cleanText(record.content);
+    const text = cleanStructuredText(record.text) || cleanStructuredText(record.content);
 
     return text ? { slideIndex, text } : null;
   }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, limit);
@@ -111,8 +123,8 @@ function inferFileType(fileName: string, fileType?: string, mimeType?: string) {
   return fileType || mimeType || "文件";
 }
 
-function smartLimit(value: string, maxLength: number) {
-  const text = cleanText(value);
+function smartLimit(value: string, maxLength: number, preserveStructure = false) {
+  const text = preserveStructure ? cleanStructuredText(value) : cleanText(value);
 
   if (text.length <= maxLength) {
     return text;
@@ -128,7 +140,7 @@ function smartLimit(value: string, maxLength: number) {
     `...（中间内容已压缩，原文约 ${text.length} 字）...`,
     text.slice(middleStart, middleStart + middleLength),
     tailLength > 0 ? `...（末尾片段）...${text.slice(-tailLength)}` : ""
-  ].filter(Boolean).join(" ");
+  ].filter(Boolean).join(preserveStructure ? "\n" : " ");
 }
 
 function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string): IngestFileContext | null {
@@ -141,13 +153,14 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
   const mimeType = cleanText(source.mimeType || source.fileType);
   const fileType = inferFileType(fileName, cleanText(source.fileType), mimeType);
   const extractedText = smartLimit(
-    cleanText(source.extractedText) || cleanText(source.text) || cleanText(source.content),
-    PER_FILE_CONTEXT_LIMIT
+    cleanStructuredText(source.extractedText) || cleanStructuredText(source.text) || cleanStructuredText(source.content),
+    PER_FILE_CONTEXT_LIMIT,
+    true
   );
   const visibleText = smartLimit(cleanText(source.visibleText), Math.floor(PER_FILE_CONTEXT_LIMIT / 2));
   const summary = smartLimit(cleanText(source.summary), 1_400);
   const pageSummaries = cleanTextArray(source.pageSummaries, 10);
-  const slideTexts = cleanSlideTexts(source.slideTexts, 20);
+  const slideTexts = cleanSlideTexts(source.slideTexts, 40);
   const explicitParseStatus = cleanText(source.parseStatus);
   const parseStatus = explicitParseStatus === "unsupported" || explicitParseStatus === "ocr_pending" || explicitParseStatus === "partial"
     ? explicitParseStatus
@@ -240,5 +253,17 @@ export function buildIngestFileContextPrompt(
     ].filter(Boolean).join("\n");
   }).join("\n\n");
 
-  return smartLimit(sections, options.maxTotalChars ?? DEFAULT_FILE_CONTEXT_LIMIT);
+  const evidenceRules = [
+    "【附件证据规则】",
+    "1. 只有下方 extractedText、visibleTextOrSummary、slideTexts、pageSummaries 才是本轮当前附件的证据。",
+    "2. 文件名、limitationNote 和历史对话不能替代当前附件正文；如引用历史内容，必须明确标注为历史上下文。",
+    "3. parseStatus 为 partial、metadata_only、unsupported 或 ocr_pending 时，不得声称已完整阅读、精准识别或完全理解附件。",
+    "4. 看不清或缺失的内容必须如实说明，不得依据课程常识补写。"
+  ].join("\n");
+
+  return smartLimit(
+    `${evidenceRules}\n\n${sections}`,
+    options.maxTotalChars ?? DEFAULT_FILE_CONTEXT_LIMIT,
+    true
+  );
 }
