@@ -53,7 +53,7 @@ export function SuperAdminSidebar() {
   const superAdminMenus = getSuperAdminMenus();
 
   return (
-    <aside className="min-w-0 overflow-hidden border-b border-slate-800 bg-slate-950 text-white lg:sticky lg:top-0 lg:h-dvh lg:border-b-0 lg:border-r">
+    <aside className="min-w-0 overflow-hidden border-b border-slate-800 bg-slate-950 text-white lg:fixed lg:inset-y-0 lg:left-0 lg:z-40 lg:h-dvh lg:w-[280px] lg:border-b-0 lg:border-r">
       <div className="flex h-full min-w-0 flex-col">
         <div className="border-b border-white/10 px-5 py-5">
           <div className="flex items-center gap-3">
@@ -67,7 +67,7 @@ export function SuperAdminSidebar() {
           </div>
         </div>
 
-        <nav className="flex w-full min-w-0 max-w-full gap-2 overflow-x-auto px-4 py-4 lg:block lg:space-y-1 lg:overflow-visible">
+        <nav className="flex w-full min-w-0 max-w-full gap-2 overflow-x-auto px-4 py-4 lg:min-h-0 lg:flex-1 lg:block lg:space-y-1 lg:overflow-x-hidden lg:overflow-y-auto lg:overscroll-contain">
           {superAdminMenus.map((item) => {
             const Icon = iconMap[item.icon] ?? LayoutDashboard;
             const active = isActive(item.href, pathname);

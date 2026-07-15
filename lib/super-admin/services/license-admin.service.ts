@@ -7,6 +7,11 @@ import { hashLicenseKey } from "@/lib/auth/license";
 import type { RbacUser } from "@/lib/auth/rbac";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
+import {
+  decryptLicenseKey,
+  encryptLicenseKey,
+  LICENSE_KEY_ENCRYPTION_VERSION
+} from "@/lib/super-admin/license-key-crypto";
 import type {
   SuperAdminGeneratedLicense,
   SuperAdminLicenseAppType,
@@ -16,13 +21,14 @@ import type {
   SuperAdminLicenseGenerationResult,
   SuperAdminLicensePlan,
   SuperAdminLicenseRecord,
+  SuperAdminLicenseRevealResult,
   SuperAdminLicenseSummary
 } from "@/types/super-admin-licenses";
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_APP_TYPES: SuperAdminLicenseAppType[] = ["user_app", "ingest_admin", "super_admin"];
 const LICENSE_PLANS: SuperAdminLicensePlan[] = ["free", "pro", "enterprise"];
-const LICENSE_AUDIT_ACTIONS = [
+const LICENSE_METADATA_ACTIONS = [
   "generate_user_app_license_key",
   "generate_ingest_admin_license_key",
   "generate_super_admin_license_key",
@@ -30,6 +36,7 @@ const LICENSE_AUDIT_ACTIONS = [
   "SUPER_ADMIN_LICENSE_GENERATE",
   "SUPER_ADMIN_LICENSE_DISABLE"
 ];
+const LICENSE_AUDIT_ACTIONS = [...LICENSE_METADATA_ACTIONS, "reveal_license_key"];
 
 type LicenseMetadata = {
   appType: SuperAdminLicenseAppType;
@@ -179,7 +186,7 @@ async function getLicenseMetadataMap(licenseIds: string[]) {
   const auditLogs = await prisma.auditLog.findMany({
     where: {
       action: {
-        in: LICENSE_AUDIT_ACTIONS
+        in: LICENSE_METADATA_ACTIONS
       },
       targetType: "license_key",
       targetId: {
@@ -255,6 +262,7 @@ function enrichLicense(license: LicenseWithRedeemer, metadata?: LicenseMetadata)
   return {
     id: license.id,
     displayKey: maskLicenseKey(license),
+    canReveal: Boolean(license.encryptedKey),
     appType: resolvedMetadata.appType,
     plan: resolvedMetadata.plan,
     status: license.status,
@@ -434,6 +442,8 @@ export async function generateSuperAdminLicenses(
           const created = await tx.licenseKey.create({
             data: {
               keyHash: hashLicenseKey(plainKey),
+              encryptedKey: encryptLicenseKey(plainKey),
+              encryptionKeyVersion: LICENSE_KEY_ENCRYPTION_VERSION,
               status: LicenseKeyStatus.UNUSED,
               expiresAt
             }
@@ -485,6 +495,52 @@ export async function generateSuperAdminLicenses(
   return {
     generated,
     summary: await calculateSummary()
+  };
+}
+
+export async function revealSuperAdminLicense(
+  actor: Pick<RbacUser, "id" | "role">,
+  licenseId: string,
+  request?: Request
+): Promise<SuperAdminLicenseRevealResult> {
+  const license = await prisma.licenseKey.findUnique({
+    where: {
+      id: licenseId
+    }
+  });
+
+  if (!license) {
+    throw new NotFoundError("卡密不存在。");
+  }
+
+  if (!license.encryptedKey || !license.encryptionKeyVersion) {
+    throw new ValidationError("这张历史卡密未保存可恢复密文，请生成替代卡密。");
+  }
+
+  const plainKey = decryptLicenseKey(license.encryptedKey);
+  const metadataMap = await getLicenseMetadataMap([license.id]);
+  const metadata = metadataMap.get(license.id) ?? getDefaultMetadata();
+
+  await createLicenseAuditLog({
+    actor,
+    action: "reveal_license_key",
+    licenseId: license.id,
+    request,
+    metadata: {
+      appType: metadata.appType,
+      plan: metadata.plan,
+      tenantId: metadata.tenantId,
+      note: metadata.note,
+      maxActivations: metadata.maxActivations,
+      status: license.status,
+      encryptionKeyVersion: license.encryptionKeyVersion,
+      revealed: true
+    }
+  });
+
+  return {
+    id: license.id,
+    key: plainKey
   };
 }
 
