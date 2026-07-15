@@ -4,6 +4,7 @@ import {
   formatFinalizedAnswerForDisplay,
   type FinalizedAnswer
 } from "@/lib/ai-chat/response-finalizer";
+import { isCareerMentorScope } from "@/lib/ai-chat/career-mentor";
 import { normalizeUserChatMarkdown } from "@/lib/ai-chat/user-chat-markdown";
 import { routeUserChatToRuntimeV2 } from "@/lib/knowledge-runtime/runtime-v2-router";
 
@@ -279,6 +280,13 @@ function getFinalizedAnswer(value: unknown): FinalizedAnswer | null {
 
 async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Promise<StreamableAiChatResult> {
   const runtimeInput = isRecord(result.runtime_input) ? result.runtime_input : {};
+  const careerMentorGroundedScope = isCareerMentorScope({
+    agentId: readString(runtimeInput.agentId) || readString(result.agentId),
+    expertId: readString(runtimeInput.expertId) || readString(result.expert_id),
+    knowledgeBaseId: readString(runtimeInput.knowledgeBaseId) || readString(result.knowledgeBaseId),
+    kbId: readString(runtimeInput.kbId) || readString(result.kb_id),
+    namespace: readString(runtimeInput.namespace) || readString(result.namespace)
+  });
   const userMessage =
     readString(runtimeInput.query) ||
     readString(result.message) ||
@@ -296,16 +304,27 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     sources: getFinalizerSources(result),
     userMessage,
   });
+  const protectedCareerCustomerReply = careerMentorGroundedScope
+    ? typeof result.customer_answer === "string"
+      ? result.customer_answer
+      : finalizedAnswer.customerReply
+    : null;
+  const streamFinalizedAnswer: FinalizedAnswer = careerMentorGroundedScope
+    ? {
+        ...finalizedAnswer,
+        customerReply: protectedCareerCustomerReply ?? ""
+      }
+    : finalizedAnswer;
   const metadata = isRecord(result.metadata) ? result.metadata : {};
   const debug = isRecord(metadata.debug) ? metadata.debug : {};
   const normalizedResult = {
     ...result,
-    answer: preservedMainAnswer || formatFinalizedAnswerForDisplay(finalizedAnswer),
+    answer: preservedMainAnswer || formatFinalizedAnswerForDisplay(streamFinalizedAnswer),
     rawAnswerBeforeFinalizer: preservedMainAnswer || null,
     rawContent: preservedMainAnswer || null,
     rawText: preservedMainAnswer || null,
-    customer_answer: finalizedAnswer.customerReply,
-    finalized_answer: finalizedAnswer
+    customer_answer: streamFinalizedAnswer.customerReply,
+    finalized_answer: streamFinalizedAnswer
   };
   const runtimeOutput = await routeUserChatToRuntimeV2(normalizedResult, {
     query: readString(runtimeInput.query) || readString(result.message) || readString(result.question) || result.answer,
@@ -322,11 +341,11 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     platform: readRuntimePlatform(runtimeInput.platform),
     outputMode: readRuntimeOutputMode(runtimeInput.outputMode)
   });
-  const runtimeFinalizedAnswer: FinalizedAnswer = {
-    ...finalizedAnswer,
-    freeformAnswer: runtimeOutput.answer || finalizedAnswer.freeformAnswer,
-    customerReply: runtimeOutput.customerCopy || finalizedAnswer.customerReply,
-    nextAction: runtimeOutput.nextStep || finalizedAnswer.nextAction,
+  const runtimeEnrichedFinalizedAnswer: FinalizedAnswer = {
+    ...streamFinalizedAnswer,
+    freeformAnswer: runtimeOutput.answer || streamFinalizedAnswer.freeformAnswer,
+    customerReply: runtimeOutput.customerCopy || streamFinalizedAnswer.customerReply,
+    nextAction: runtimeOutput.nextStep || streamFinalizedAnswer.nextAction,
     salesIntent: runtimeOutput.salesIntent,
     customerStage: runtimeOutput.customerStage,
     salesStrategy: runtimeOutput.salesStrategy,
@@ -372,6 +391,15 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     autonomousRecommendation: runtimeOutput.autonomousRecommendation,
     complianceWarnings: runtimeOutput.complianceWarnings,
   };
+  const runtimeFinalizedAnswer = careerMentorGroundedScope
+    ? streamFinalizedAnswer
+    : runtimeEnrichedFinalizedAnswer;
+  const visibleCustomerCopy = careerMentorGroundedScope
+    ? streamFinalizedAnswer.customerReply
+    : runtimeOutput.customerCopy;
+  const visibleNextStep = careerMentorGroundedScope
+    ? streamFinalizedAnswer.nextAction
+    : runtimeOutput.nextStep ?? streamFinalizedAnswer.nextAction;
 
   return {
     ...normalizedResult,
@@ -379,10 +407,10 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     rawAnswerBeforeFinalizer: preservedMainAnswer || null,
     rawContent: preservedMainAnswer || null,
     rawText: preservedMainAnswer || null,
-    customerCopy: runtimeOutput.customerCopy,
-    customer_answer: runtimeOutput.customerCopy,
+    customerCopy: visibleCustomerCopy,
+    customer_answer: visibleCustomerCopy,
     finalized_answer: runtimeFinalizedAnswer,
-    nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
+    nextStep: visibleNextStep,
     traceId: runtimeOutput.traceId,
     runtimeVersion: runtimeOutput.runtimeVersion,
     runtime_sources: runtimeOutput.sources,
@@ -423,9 +451,9 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
       rawContent: preservedMainAnswer || null,
       rawText: preservedMainAnswer || null,
       rawAnswer: preservedMainAnswer || null,
-      customerCopy: runtimeOutput.customerCopy,
+      customerCopy: visibleCustomerCopy,
       traceId: runtimeOutput.traceId,
-      nextStep: runtimeOutput.nextStep ?? finalizedAnswer.nextAction,
+      nextStep: visibleNextStep,
       runtimeVersion: runtimeOutput.runtimeVersion,
       memoryApplied: runtimeOutput.memoryApplied,
       usedMemoryIds: runtimeOutput.usedMemoryIds,

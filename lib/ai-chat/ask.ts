@@ -29,14 +29,19 @@ import {
   CAREER_MENTOR_POLICY_VERSION,
   CAREER_MENTOR_RETRIEVAL_TOP_K,
   buildCareerMentorBusinessContext,
+  buildCareerMentorNoEvidenceAnswer,
   buildCareerMentorRetrievalQuery,
   buildCareerMentorRetrievalQueries,
   cleanCareerMentorUserAnswer,
   extractCareerMentorCustomerAnswer,
   isCareerMentorScope,
   prioritizeCareerMentorChunks,
-  resolveCareerMentorTurnContext
+  resolveCareerMentorTurnContext,
+  type CareerMentorStage
 } from "@/lib/ai-chat/career-mentor";
+import type {
+  CareerMentorEvidencePlanSummary
+} from "@/lib/ai-chat/career-mentor-grounded-answer";
 import {
   finalizeUserAnswer,
   formatFinalizedAnswerForDisplay
@@ -64,6 +69,11 @@ import {
   type RagSearchDb,
   type RetrievedRagChunk
 } from "@/lib/rag/search";
+import {
+  retrieveKnowledge,
+  type RetrievedKnowledgeChunk,
+  type RetrievalMode
+} from "@/lib/rag/retriever";
 
 export const NO_KNOWLEDGE_ANSWER = "知识库中暂无明确资料。";
 export const RAG_CUSTOMER_DRAFT_ANSWER = "已根据知识库资料整理如下，可直接复制给客户。";
@@ -123,6 +133,7 @@ export interface AiChatAnswerProviderInput {
   knowledgeBaseId: string;
   namespace: string;
   recentConversation: RagRecentConversationTurn[];
+  careerMentorStage?: CareerMentorStage;
 }
 
 export interface AiChatAnswerProviderResult {
@@ -133,6 +144,7 @@ export interface AiChatAnswerProviderResult {
   answerGroundingScore?: number;
   modelFeedbackEvent?: ModelFeedbackEvent;
   originalProviderErrorCode?: string;
+  careerEvidencePlan?: CareerMentorEvidencePlanSummary;
 }
 
 export interface AiChatAskOptions {
@@ -334,6 +346,37 @@ function toRuntimeMemoryChunk(
     matchedBy: "kb_id",
     chunk_rank: index + 1,
     createdAt: null,
+  };
+}
+
+function toHybridCareerChunk(
+  item: RetrievedKnowledgeChunk,
+  index: number,
+  scope: {
+    knowledgeBaseId?: string | null;
+    agentId?: string | null;
+    namespace?: string | null;
+    tenantId?: string | null;
+  }
+): RetrievedRagChunk {
+  return {
+    ...item,
+    fileId: null,
+    knowledgeBaseId: item.knowledgeBaseId ?? scope.knowledgeBaseId ?? null,
+    agentId: item.agentId ?? scope.agentId ?? null,
+    tenantId: scope.tenantId ?? null,
+    namespace: item.namespace ?? scope.namespace ?? null,
+    sourceApp: "user_app",
+    includeShared: true,
+    includePublished: true,
+    content: item.chunkText,
+    summary: item.summary || null,
+    category: item.category || null,
+    sourceType: item.sourceType || null,
+    score: item.score,
+    relevance_score: item.score,
+    matchedBy: item.knowledgeBaseId ? "kb_id" : item.agentId ? "expert_id" : "namespace",
+    chunk_rank: index + 1
   };
 }
 
@@ -1251,7 +1294,7 @@ export async function handleAiChatAsk(
   const db = options.db ?? defaultDb();
   const question = sanitizeRagInput(readQuestionInput(input));
   const mode = normalizeAiChatMode(input.mode);
-  const enableDeepThinking = input.enable_deep_thinking === true;
+  const requestedDeepThinking = input.enable_deep_thinking === true;
   const enableWebSearch = input.enable_web_search === true;
   const attachments = validateAttachments(input.attachments);
   const businessContext = readBusinessExecutionContext(input);
@@ -1280,6 +1323,7 @@ export async function handleAiChatAsk(
     knowledgeBaseId: agentScope.knowledgeBaseId,
     namespace: agentScope.namespace
   });
+  const enableDeepThinking = requestedDeepThinking || careerMentorEnabled;
   let osContext = os_core.process({
     query: question,
     userId: actor.id,
@@ -1477,9 +1521,34 @@ export async function handleAiChatAsk(
     mode,
     topK,
     knowledgeScope: selectedKnowledgeScope,
+    allowScopedFallback: !careerMentorEnabled,
     db
   })));
   const dbChunks = dbChunkGroups.flat();
+  const hybridCareerRetrieval = careerMentorEnabled && !options.db
+    ? await retrieveKnowledge({
+        query: ragQueryContext,
+        userId: actor.id,
+        tenantId: scopedTenantId,
+        appType: "user_app",
+        ...agentScope,
+        includeShared: true,
+        includePublished: true,
+        topK,
+        minResults: 1,
+        requestId: osContext.trace_id
+      }).catch(() => null)
+    : null;
+  const hybridCareerChunks = (hybridCareerRetrieval?.results ?? []).map((item, index) => (
+    toHybridCareerChunk(item, index, {
+      knowledgeBaseId: agentScope.knowledgeBaseId,
+      agentId: agentScope.agentId,
+      namespace: explicitRuntimeNamespace ?? agentScope.namespace,
+      tenantId: scopedTenantId
+    })
+  ));
+  const careerRetrievalMode: RetrievalMode | "scoped_keyword" = hybridCareerRetrieval?.mode
+    ?? "scoped_keyword";
   const runtimeMemoryResult = hasExplicitAgentScope
     ? await searchRuntimeMemories({
         query: careerMentorEnabled ? ragQueryContext : question,
@@ -1512,12 +1581,13 @@ export async function handleAiChatAsk(
   }));
   const chunks = careerMentorEnabled
     ? prioritizeCareerMentorChunks({
-        chunks: [...runtimeMemoryChunks, ...dbChunks],
+        chunks: [...runtimeMemoryChunks, ...hybridCareerChunks, ...dbChunks],
         question: careerMentorScenarioQuestion,
         supportingContext: careerMentorSupportingContext,
         topK
       })
     : mergeRuntimeMemoryChunks(runtimeMemoryChunks, dbChunks, topK);
+  const careerKnowledgeHit = !careerMentorEnabled || chunks.length > 0;
   const attachmentOcrContext = buildAttachmentOcrContext(attachmentTextBlocks);
   const contexts = [
     ...buildRagContext(chunks),
@@ -1570,8 +1640,15 @@ export async function handleAiChatAsk(
     }
   });
 
-  let answer = NO_KNOWLEDGE_ANSWER;
-  let customerAnswer = buildNoKnowledgeCustomerAnswer();
+  let answer = careerMentorEnabled && !careerKnowledgeHit
+    ? buildCareerMentorNoEvidenceAnswer(
+        careerMentorScenarioQuestion,
+        careerMentorSupportingContext
+      )
+    : NO_KNOWLEDGE_ANSWER;
+  let customerAnswer = careerMentorEnabled && !careerKnowledgeHit
+    ? ""
+    : buildNoKnowledgeCustomerAnswer();
   let providerStatus: "ok" | "provider_not_configured" | "no_relevant_knowledge" | "error" = "no_relevant_knowledge";
   let providerUsed: string | undefined;
   let modelUsed: string | undefined;
@@ -1580,8 +1657,9 @@ export async function handleAiChatAsk(
   let answerGroundingScore: number | undefined;
   let modelFeedbackEvent: ModelFeedbackEvent | undefined;
   let businessSchemaGuard: BusinessSchemaGuardResult | null = null;
+  let careerEvidencePlan: CareerMentorEvidencePlanSummary | undefined;
 
-  if (contexts.length > 0) {
+  if (contexts.length > 0 && careerKnowledgeHit) {
     customerAnswer = buildCustomerAnswerFromChunks({
       question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
       chunks,
@@ -1592,7 +1670,7 @@ export async function handleAiChatAsk(
     if (options.providerConfigured && options.answerProvider) {
       try {
         const providerResult = await options.answerProvider({
-          question,
+          question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
           contexts,
           mode,
           enableDeepThinking,
@@ -1605,15 +1683,23 @@ export async function handleAiChatAsk(
           traceId: osContext.trace_id,
           businessExecutionContext,
           recentConversation,
+          ...(careerMentorEnabled
+            ? { careerMentorStage: careerMentorTurnContext?.resolvedStage ?? "unknown" }
+            : {}),
           ...agentScope
         });
 
+        careerEvidencePlan = providerResult.careerEvidencePlan;
         answer = cleanUserFacingRagAnswer(providerResult.answer);
         answer = careerMentorEnabled
           ? cleanCareerMentorUserAnswer(answer, {
               chunks,
               question: careerMentorScenarioQuestion,
-              supportingContext: careerMentorSupportingContext
+              supportingContext: careerMentorSupportingContext,
+              strictEvidencePlan: Boolean(careerEvidencePlan),
+              evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
+              evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
+              evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
             })
           : answer;
         customerAnswer = careerMentorEnabled
@@ -1632,13 +1718,25 @@ export async function handleAiChatAsk(
         }
       } catch (error) {
         const appError = toAppError(error);
-        answer = RAG_CUSTOMER_DRAFT_ANSWER;
+        answer = careerMentorEnabled
+          ? buildCareerMentorNoEvidenceAnswer(
+              careerMentorScenarioQuestion,
+              careerMentorSupportingContext
+            )
+          : RAG_CUSTOMER_DRAFT_ANSWER;
+        customerAnswer = careerMentorEnabled ? "" : customerAnswer;
         providerStatus = "error";
         fallbackUsed = true;
         providerErrorCode = appError.code;
       }
     } else {
-      answer = RAG_CUSTOMER_DRAFT_ANSWER;
+      answer = careerMentorEnabled
+        ? buildCareerMentorNoEvidenceAnswer(
+            careerMentorScenarioQuestion,
+            careerMentorSupportingContext
+          )
+        : RAG_CUSTOMER_DRAFT_ANSWER;
+      customerAnswer = careerMentorEnabled ? "" : customerAnswer;
       providerStatus = "provider_not_configured";
       fallbackUsed = true;
       providerErrorCode = "PROVIDER_NOT_CONFIGURED";
@@ -1677,9 +1775,11 @@ export async function handleAiChatAsk(
   });
 
   const finalizedDisplayAnswer = formatFinalizedAnswerForDisplay(finalizedAnswer);
-  answer = providerStatus === "ok" && rawAnswerBeforeFinalizer
+  answer = careerMentorEnabled && providerStatus !== "ok"
     ? rawAnswerBeforeFinalizer
-    : finalizedDisplayAnswer;
+    : providerStatus === "ok" && rawAnswerBeforeFinalizer
+      ? rawAnswerBeforeFinalizer
+      : finalizedDisplayAnswer;
   customerAnswer = finalizedAnswer.customerReply;
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
@@ -1694,7 +1794,11 @@ export async function handleAiChatAsk(
     ? cleanCareerMentorUserAnswer(globallyCleanOutputControlledAnswer, {
         chunks,
         question: careerMentorScenarioQuestion,
-        supportingContext: careerMentorSupportingContext
+        supportingContext: careerMentorSupportingContext,
+        strictEvidencePlan: Boolean(careerEvidencePlan) || providerStatus !== "ok" || !careerKnowledgeHit,
+        evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
+        evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
+        evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
       })
     : globallyCleanOutputControlledAnswer;
 
@@ -1823,6 +1927,26 @@ export async function handleAiChatAsk(
       ? {
           businessExecution: effectiveBusinessContext.metadata,
           businessExecutionPrompt: businessExecutionContext
+        }
+      : {}),
+    ...(careerMentorEnabled
+      ? {
+          careerMentorGrounding: {
+            scopeVerified: true,
+            retrievalMode: `career_${careerRetrievalMode}_stage_gated`,
+            knowledgeHitCount: chunks.length,
+            stageAlignedHitCount: chunks.length,
+            evidenceIds: careerEvidencePlan?.evidenceIds ?? [],
+            plannerPassed: careerEvidencePlan?.plannerPassed ?? false,
+            writerPassed: careerEvidencePlan?.writerPassed ?? false,
+            groundingValidationPassed: careerEvidencePlan?.groundingValidationPassed ?? false,
+            plannerRepairUsed: careerEvidencePlan?.plannerRepairUsed ?? false,
+            staticFallbackUsed: Boolean(
+              customerAnswer
+              && careerEvidencePlan
+              && !careerEvidencePlan.fixedScript
+            )
+          }
         }
       : {}),
     businessSchemaGuard: businessSchemaGuardMetadata,

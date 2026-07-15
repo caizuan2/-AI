@@ -1,8 +1,14 @@
 import { apiError, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { handleAiChatAsk } from "@/lib/ai-chat/ask";
+import {
+  generateCareerMentorGroundedAnswer,
+  type CareerMentorGroundedAnswerOptions,
+  type CareerMentorGroundedAnswerResult
+} from "@/lib/ai-chat/career-mentor-grounded-answer";
+import { isCareerMentorScope } from "@/lib/ai-chat/career-mentor";
 import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
-import { generateRagAnswer } from "@/lib/ai/rag-answer";
+import { generateRagAnswer, type GenerateRagAnswerOptions } from "@/lib/ai/rag-answer";
 import { requireAiChatAccess } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
 import { getOrCreateUserSettings } from "@/lib/settings";
@@ -142,13 +148,14 @@ export async function POST(request: Request) {
               providerFallbackChain,
               businessExecutionContext,
               recentConversation,
+              careerMentorStage,
               agentId,
               knowledgeBaseId,
               namespace
             }) => {
               const answerProvider = getFirstUsableProvider(requestedProvider) ?? configuredProvider ?? normalizeProvider(requestedProvider);
               const answerProviderChain = normalizeProviderChain(answerProvider, providerFallbackChain, configuredProvider);
-              const ragAnswer = await generateRagAnswer(question, contexts, {
+              const ragAnswerOptions = {
                 userId: actor.id,
                 provider: answerProvider,
                 providerChain: answerProviderChain,
@@ -161,7 +168,21 @@ export async function POST(request: Request) {
                 intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
                 businessExecutionContext,
                 recentConversation
+              } satisfies GenerateRagAnswerOptions;
+              const careerMentorGroundingEnabled = isCareerMentorScope({
+                agentId,
+                knowledgeBaseId,
+                namespace
               });
+              const ragAnswer = careerMentorGroundingEnabled
+                ? await generateCareerMentorGroundedAnswer(question, contexts, {
+                    ...ragAnswerOptions,
+                    expectedStage: careerMentorStage ?? "unknown"
+                  } satisfies CareerMentorGroundedAnswerOptions)
+                : await generateRagAnswer(question, contexts, ragAnswerOptions);
+              const careerEvidencePlan = careerMentorGroundingEnabled
+                ? (ragAnswer as CareerMentorGroundedAnswerResult).careerEvidencePlan
+                : undefined;
 
               return {
                 answer: ragAnswer.answer,
@@ -170,7 +191,10 @@ export async function POST(request: Request) {
                 fallbackUsed: ragAnswer.fallbackUsed,
                 answerGroundingScore: ragAnswer.answer_grounding_score,
                 modelFeedbackEvent: ragAnswer.model_feedback_event,
-                originalProviderErrorCode: ragAnswer.originalProviderErrorCode
+                originalProviderErrorCode: ragAnswer.originalProviderErrorCode,
+                ...(careerEvidencePlan
+                  ? { careerEvidencePlan }
+                  : {})
               };
             }
           : undefined

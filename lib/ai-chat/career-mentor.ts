@@ -1,6 +1,6 @@
 import type { RetrievedRagChunk } from "@/lib/rag/search";
 
-export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-context-lock-v7";
+export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-context-lock-v8";
 export const CAREER_MENTOR_RETRIEVAL_TOP_K = 14;
 
 export type CareerMentorCoreStage =
@@ -341,7 +341,7 @@ export function classifyCareerMentorQuestion(question: string, supportingContext
   const closingSignal = /(?:认可|认同|同意|答应|说可以|觉得(?:很好|不错|可以)|已经(?:清楚|明白|看懂|了解)).{0,16}(?:不加入|没加入|没有加入|不行动|没行动|没有行动|迟迟不动|不付款|没付款|不下单|没下单|不决定|没决定|不推进|一直拖|拖着|拖延)|(?:不加入|没加入|没有加入|不行动|没行动|没有行动|迟迟不动|不付款|没付款|不下单|没下单|一直拖|拖着|拖延).{0,16}(?:认可|认同|同意|答应|说可以|觉得(?:很好|不错|可以))|(?:怎么|如何)(?:付款|支付|下单)|付款方式|支付方式/;
   const objectionSignal = /锁定问题|解决问题|异议|犹豫|考虑|再想想|担心|顾虑|有疑问|没钱|没有钱|没时间|没有时间|太忙|风险|说贵|觉得贵|认为贵|嫌贵|太贵|有点贵|产品.{0,6}贵|价格|费用|预算|靠谱|可靠|可信|信任|不相信|不信|正规吗|合法(?:吗|不)|比较|对比|别家|其他项目|像(?:传销|直销|微商)|拒绝/;
   const presentationSignal = /讲事业|讲事业通心|讲公司|讲行业|讲产品|讲利润|利润空间|持续赚钱|公司价值|团队价值|个人价值|讲事业注意事项|三个核心问题|事业机会|事业价值|主动.{0,8}(?:了解|咨询)|想.{0,8}(?:了解|知道).{0,8}(?:事业|怎么做|如何做|参与)|(?:怎么|如何)(?:参与|加入|做这个事业)|要求认真听/;
-  const followUpSignal = /破冰视频.{0,8}(?:接下来|然后|之后|以后|发完|发了)|促单跟进|持续展示|已经了解.{0,12}(?:没行动|没有行动|还没行动)|看(?:完|过|了)(?:视频|资料).{0,12}(?:没行动|没有行动|不回复|没回复)|不回复|没回复|已读不回|不说话|沉默|没反应|一周|三个月|再次联系|继续聊/;
+  const followUpSignal = /破冰视频.{0,8}(?:接下来|然后|之后|以后|发完|发了)|促单跟进|持续展示|已经了解.{0,12}(?:没行动|没有行动|还没行动)|看(?:完|过|了)(?:视频|资料).{0,12}(?:没行动|没有行动|不回复|没回复)|(?:视频|资料).{0,12}(?:怎么跟进|如何跟进|晚点再看|稍后再看|再看看|还在看)|(?:晚点|稍后|改天)(?:再)?看(?:视频|资料)|不回复|没回复|已读不回|不说话|沉默|没反应|一周|三个月|再次联系|继续聊/;
   const maintenanceMilestone = /成交后|成交以后|成交之后|已经成交|已成交|加入以后|加入之后|已经加入|老客户|长期客户/;
   const maintenanceTopic = /维护|持续关系|售后|复购|服务|跟进|下一步|怎么办/;
   const frameworkSignal = /(?:沟通五步|沟通五步骤)(?:是什么|有哪些|包括什么|怎么走|完整流程|整体流程|全貌)|(?:什么是|介绍|列出)(?:讲事业)?沟通五步|五步流程(?:是什么|有哪些|怎么走)|五个阶段(?:是什么|有哪些)/;
@@ -525,8 +525,29 @@ export function buildCareerMentorRetrievalQueries(question: string, supportingCo
   return Array.from(new Set([exactQuery, expandedQuery].filter(Boolean)));
 }
 
-function detectCareerMentorSourceStages(sourceIdentity: string) {
-  const normalized = normalizeContent(sourceIdentity);
+function hasNonNegatedCareerMentorStageSignal(text: string, pattern: RegExp) {
+  const matcher = new RegExp(pattern.source, pattern.flags.replace("g", "") + "g");
+  let match = matcher.exec(text);
+
+  while (match) {
+    const prefix = text.slice(Math.max(0, match.index - 32), match.index);
+
+    if (!/(?:严禁|禁止|不得|不能|不要|不可|避免|拒绝|不应|不宜|不建议|并非|不是|切勿|切忌|尚未|还没|没有|无需|不必|未|勿|没|无|不)[^。！？；\n]{0,24}$/.test(prefix)) {
+      return true;
+    }
+
+    match = matcher.exec(text);
+  }
+
+  return false;
+}
+
+function detectCareerMentorSourceStages(sourceIdentity: string, contentAware = false) {
+  const normalized = sourceIdentity
+    .toLowerCase()
+    .replace(/\u0000/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
   const stages = new Set<CareerMentorCoreStage>();
 
   if (/(?:01.{0,20}破冰|第一步.{0,20}破冰|破冰.{0,20}第一步)/.test(normalized)) {
@@ -541,7 +562,39 @@ function detectCareerMentorSourceStages(sourceIdentity: string) {
     stages.add("career_presentation");
   }
 
-  if (/(?:04.{0,32}(?:第四五步|锁定问题|收钱闭环)|第四五步|第四步.{0,20}锁定问题|第五步.{0,20}成交)/.test(normalized)) {
+  if (contentAware) {
+    const objectionSignals = [
+      /锁定问题/,
+      /解决疑虑|异议|顾虑/,
+      /万能公式/,
+      /认可.{0,12}转移/,
+      /核心价值解释/,
+      /(?:太贵|价格|不靠谱|靠谱吗|没时间|没有时间|考虑|比较|犹豫|担心|疑问|反驳)/
+    ].filter((pattern) => hasNonNegatedCareerMentorStageSignal(normalized, pattern)).length;
+    const closingSignals = [
+      /成交三核心/,
+      /价值确认/,
+      /行动时间/,
+      /降低行动阻力/,
+      /推进下一步|推进一次行动/,
+      /微信还是支付宝|办理手续|付款方式|支付方式/,
+      /(?:已经|基本|明确)?认可.{0,20}(?:迟迟|还没|没有|未|不)(?:行动|加入|付款|支付|下单)/,
+      /(?:答应|同意|愿意).{0,20}(?:行动|加入|付款|支付|下单|签约)/
+    ].filter((pattern) => hasNonNegatedCareerMentorStageSignal(normalized, pattern)).length;
+    const objectionContent = hasNonNegatedCareerMentorStageSignal(normalized, /第四步/)
+      || objectionSignals >= 1;
+    const closingContent = hasNonNegatedCareerMentorStageSignal(normalized, /第五步/)
+      || closingSignals >= 1;
+
+    if (objectionContent) {
+      stages.add("objection_handling");
+    }
+
+    if (closingContent) {
+      stages.add("closing");
+    }
+
+  } else if (/(?:04.{0,32}(?:第四五步|锁定问题|收钱闭环)|第四五步|第四步.{0,20}锁定问题|第五步.{0,20}成交)/.test(normalized)) {
     stages.add("objection_handling");
     stages.add("closing");
   }
@@ -549,12 +602,135 @@ function detectCareerMentorSourceStages(sourceIdentity: string) {
   return stages;
 }
 
+export function isCareerMentorEvidenceTextAligned(
+  stage: CareerMentorStage,
+  text: string
+) {
+  if (stage !== "objection_handling" && stage !== "closing") {
+    return true;
+  }
+
+  const detectedStages = detectCareerMentorSourceStages(text, true);
+  const otherFourthFifthStage = stage === "objection_handling"
+    ? "closing"
+    : "objection_handling";
+
+  return detectedStages.has(stage) && !detectedStages.has(otherFourthFifthStage);
+}
+
+export function extractCareerMentorExplicitCustomerScriptBlocks(content: string) {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const markerPattern = /(?:^|(?<=[\n。；;]))\s*(?:#{1,6}\s*)?(?:(?:可直接发给客户|可直接转发|话术全文|完整话术|一字不差|固定话术|标准话术|共鸣话术|标准回应|文案)(?:\s*[一二三四五六七八九十\d]+)?(?:\s*[（(][^）)\n]{1,48}[）)])?|(?:话术|回复)(?:\s*[一二三四五六七八九十\d]+)?(?:\s*[（(][^）)\n]{1,48}[）)])?)\s*(?:[：:]|(?=\n))/gm;
+  const blocks: string[] = [];
+  const matches = Array.from(normalized.matchAll(markerPattern));
+  const boundaryHeading = /^(?:#{1,6}\s+.+|[一二三四五六七八九十百]+[、.].+|第[一二三四五六七八九十百\d]+(?:章|节|部分|步).+|\d+(?:\.\d+)+(?:\s+.+)?|【[^】]{1,80}】.*|(?:讲这个的时候要注意|为什么这段话能打动人|为什么[^。！？\n]{0,28}有效|等(?:他|她|客户)|重要客户|使用提醒|内部操作|内部说明|内部纪律|执行提醒|执行边界|边界说明|注意事项|操作要点|拆解|核心原则|公式结构|等待|先判断|开场|投屏展示|故事变通提示|配套说明|用法[一二三四五六七八九十\d]*|铁律[一二三四五六七八九十\d]*|自检问题))(?:\s*[—：:]|$)/;
+
+  for (let matchIndex = 0; matchIndex < matches.length; matchIndex += 1) {
+    const match = matches[matchIndex];
+    if (match.index === undefined) {
+      continue;
+    }
+
+    const markerStart = match.index;
+    const markerEnd = markerStart + match[0].length;
+    const markerContext = normalized.slice(Math.max(0, markerStart - 80), markerEnd);
+
+    if (/(?:不是|并非|不属于|非)(?:给)?客户.{0,8}话术|(?:仅供|只供|用于).{0,16}(?:内部|培训|操作|参考)/.test(markerContext)) {
+      continue;
+    }
+
+    const nextMarkerStart = matches[matchIndex + 1]?.index ?? normalized.length;
+    const tail = normalized.slice(markerEnd, Math.min(nextMarkerStart, markerEnd + 4000));
+    const blockLines: string[] = [];
+    let contentStarted = false;
+
+    for (const rawLine of tail.split("\n")) {
+      const line = rawLine.replace(/^\s*>\s?/, "").trimEnd();
+      const trimmed = line.trim();
+
+      if (!contentStarted && !trimmed) {
+        continue;
+      }
+
+      if (trimmed && boundaryHeading.test(trimmed)) {
+        break;
+      }
+
+      if (trimmed) {
+        contentStarted = true;
+        blockLines.push(line.trim());
+      } else if (contentStarted && blockLines.at(-1) !== "") {
+        blockLines.push("");
+      }
+    }
+
+    let block = blockLines
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    const openingQuote = block[0];
+    const closingQuote = openingQuote === "“"
+      ? "”"
+      : openingQuote === "「"
+        ? "」"
+        : openingQuote === "\""
+          ? "\""
+          : "";
+
+    if (closingQuote) {
+      const closingIndex = block.indexOf(closingQuote, 1);
+      if (closingIndex >= 2) {
+        block = block.slice(1, closingIndex).trim();
+      }
+    }
+
+    block = block.replace(
+      /[（(][^（）()\n]{0,220}(?:配图|图片|截屏|截图|发名片|推送名片|打开腾讯会议|共享屏幕|展示业务群|先聊|拉近感情|再切事业|等(?:他|她|客户)?回复|不多说|发完|跟上[^（）()\n]{0,20}素材|一个字[^（）()\n]{0,20}不要再说|关心的语气|促单的语气|让(?:他|她|客户)放松|同上)[^（）()\n]{0,220}[）)]/g,
+      ""
+    ).replace(/[ \t]{2,}/g, " ").trim();
+
+    block = block.replace(
+      /([。！？!?；;”"])[ \t]+(?:核心|关键细节)\s*[—：:][\s\S]*$/,
+      "$1"
+    ).trim();
+
+    if (
+      block.length >= 2
+      && !/(?:使用提醒|内部操作|内部说明|内部纪律|执行提醒|执行边界|边界说明|注意事项)\s*[：:]/.test(block)
+    ) {
+      blocks.push(block);
+    }
+  }
+
+  return Array.from(new Set(blocks));
+}
+
 function resolveCareerMentorSourceStages(metadataIdentity: string, contentLead: string) {
   const metadataStages = detectCareerMentorSourceStages(metadataIdentity);
+  const contentStages = detectCareerMentorSourceStages(contentLead, true);
+  const combinedFourthFifthFile = metadataStages.has("objection_handling")
+    && metadataStages.has("closing");
 
-  return metadataStages.size > 0
-    ? metadataStages
-    : detectCareerMentorSourceStages(contentLead);
+  if (
+    combinedFourthFifthFile
+    && (contentStages.has("objection_handling") || contentStages.has("closing"))
+  ) {
+    return new Set<CareerMentorCoreStage>([
+      ...Array.from(contentStages).filter((stage) => (
+        stage === "objection_handling" || stage === "closing"
+      ))
+    ]);
+  }
+
+  if (combinedFourthFifthFile) {
+    return new Set<CareerMentorCoreStage>();
+  }
+
+  if (metadataStages.size > 0) {
+    return metadataStages;
+  }
+
+  return detectCareerMentorSourceStages(contentLead);
 }
 
 function isCareerMentorCoreStage(stage: CareerMentorStage): stage is CareerMentorCoreStage {
@@ -616,7 +792,7 @@ function scoreCareerMentorChunk(
     chunk.category ?? "",
     ...(chunk.tags ?? [])
   ].join(" ");
-  const contentLead = chunk.content.slice(0, 220);
+  const contentLead = chunk.content.slice(0, 800);
   const normalizedQuestion = normalizeContent(question);
   const signalTerms = dedupe([
     ...collectSignalTerms(question),
@@ -655,7 +831,8 @@ function scoreCareerMentorChunk(
     expectedOutputMatch,
     customerScriptCardMatch,
     operatorCardMatch,
-    stageMismatchedCard
+    stageMismatchedCard,
+    sourceStages
   };
 }
 
@@ -680,12 +857,23 @@ export function prioritizeCareerMentorChunks(input: {
     dedupedChunks.push(chunk);
   }
 
-  const scored = dedupedChunks
+  const scoredCandidates = dedupedChunks
     .map((chunk) => ({
       chunk,
       ...scoreCareerMentorChunk(chunk, input.question, classification)
     }))
     .filter((item) => !item.stageMismatchedCard);
+  const scored = scoredCandidates.filter((item) => {
+    if (isCareerMentorCoreStage(classification.stage)) {
+      return item.sourceStages.has(classification.stage);
+    }
+
+    if (classification.stage === "framework") {
+      return item.sourceStages.size > 0;
+    }
+
+    return false;
+  });
   const bestSignalMatches = Math.max(0, ...scored.map((item) => item.signalMatches));
   const anchorItemIds = new Set(scored
     .filter((item) => item.customerScriptCardMatch
@@ -794,7 +982,7 @@ export function buildCareerMentorBusinessContext(
     "- 只要 retrieved context 命中可直接发给客户的固定话术，‘### 话术 1’必须从该命中片段连续逐字复制：字词、标点、数字、顺序全部保持，不润色、不纠错、不缩写、不拼接、不补词，也不添加原文没有的前后缀。",
     "- 当前阶段没有专门客户话术卡时，‘话术 1’只能逐字采用精读笔记或操作卡片中明确标为话术、回复、文案、可直接转发的客户文本；不能把通心、策略、操作、技巧、配图、自检或带教内容当客户话术。",
     shouldGenerateAdaptiveReply
-      ? "- 在‘回复思路’内增加‘### AI思考回复话术’，根据本轮客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术；每条分别使用‘#### AI建议话术 1’或‘#### AI建议话术 2’和独立引用块。不得编造公司、产品、收益或案例事实，不得照抄固定话术冒充动态建议。用户未提供的客户姓名、朋友圈内容、个人经历、帮助人数、业绩、收益、时间和案例一律不得补全；改用中性称呼与条件式表达。"
+      ? "- 在‘回复思路’内增加‘### AI思考回复话术’，根据本轮客户原话、当前阶段、已执行动作和命中知识固定生成 3 条可选择的短话术。三条必须分别采用不同沟通目标，依次使用‘#### AI建议话术 1（稳妥自然型）’‘#### AI建议话术 2（共情引导型）’‘#### AI建议话术 3（轻问推进型）’和独立引用块；不得只换同义词或重复同一表达。不得编造公司、产品、收益或案例事实，不得照抄固定话术冒充动态建议。用户未提供的客户姓名、朋友圈内容、个人经历、帮助人数、业绩、收益、时间和案例一律不得补全；改用中性称呼与条件式表达。"
       : "- 当前不是信息充分的五个客户沟通阶段，不生成 AI 思考回复话术；应先解释框架或请用户补充客户原话、阶段和已执行动作，严禁为长期维护或未知场景编造客户话术。",
     "- ‘## 可复制给客户’与 AI 思考话术严格分层：最下面只保留固定知识库话术，不放 AI 改写或延伸。若没有精确固定话术命中，先请用户补充客户原话、阶段或对应资料。",
     "",
@@ -803,7 +991,7 @@ export function buildCareerMentorBusinessContext(
     "依次写明‘当前阶段：’‘调用步骤：’‘判断依据：’，明确为什么调用这一步。",
     "## 回复思路",
     shouldGenerateAdaptiveReply
-      ? "先说明处理逻辑，再用‘### 推荐执行流程’给出可执行步骤；流程后必须输出‘### AI思考回复话术’，并用‘#### AI建议话术 1’和可选的‘#### AI建议话术 2’给出可复制的动态回复。不得省略流程或动态话术。"
+      ? "先说明处理逻辑，再用‘### 推荐执行流程’给出可执行步骤；流程后必须输出‘### AI思考回复话术’，并按稳妥自然、共情引导、轻问推进三个不同方向输出且只输出‘#### AI建议话术 1（稳妥自然型）’‘#### AI建议话术 2（共情引导型）’‘#### AI建议话术 3（轻问推进型）’三条可复制动态回复。不得省略流程、减少数量或合并话术。"
       : "先说明处理逻辑，再用‘### 推荐执行流程’给出当前可执行步骤；不要输出‘### AI思考回复话术’，先完成框架说明或信息补充。",
     "## 可复制给客户",
     "只放逐字命中的固定知识库话术，使用‘### 话术 1’和独立引用块，生成最下方绿色复制卡片；不得混入 AI 改写，不得在用户端显示内部检索标签。"
@@ -814,6 +1002,10 @@ export interface CareerMentorAnswerGroundingInput {
   chunks: readonly RetrievedRagChunk[];
   question: string;
   supportingContext?: string;
+  strictEvidencePlan?: boolean;
+  evidencePlanAdaptiveReplies?: readonly string[];
+  evidencePlanFixedScript?: string | null;
+  evidencePlanEvidenceIds?: readonly string[];
 }
 
 const CAREER_MENTOR_COPY_GROUNDING_FALLBACK = "本轮没有检索到可逐字核对的同阶段客户话术。请补充客户原话、当前阶段或对应资料后再生成。";
@@ -940,27 +1132,65 @@ function selectCareerMentorCanonicalCopy(
     ?? null;
 }
 
+export function buildCareerMentorNoEvidenceAnswer(
+  question: string,
+  supportingContext = ""
+) {
+  const classification = classifyCareerMentorQuestion(question, supportingContext);
+
+  return [
+    "## 判断",
+    `当前阶段：${classification.stageLabel}。`,
+    `调用步骤：${classification.stageLabel}。`,
+    "判断依据：已识别当前沟通场景，但本轮暂未形成可验证的同阶段知识证据链，因此不直接生成业务结论或客户话术。",
+    "",
+    "## 回复思路",
+    "先补齐客户原话、当前阶段和已经执行过的动作，再按沟通五步骤调用对应资料；在知识依据不足时，不跨步骤、不套用其他专家内容，也不使用通用销售话术代替。",
+    "",
+    "### 推荐执行流程",
+    "1. 补充客户最近一句原话或清晰聊天截图。",
+    "2. 说明是否已经破冰、是否发过资料，以及客户目前有没有明确疑问。",
+    "3. 信息补齐后，再按当前阶段重新生成完整分析与三条可选择话术。",
+    "",
+    "## 可复制给客户",
+    "本轮没有检索到可逐字核对的同阶段客户话术。请补充客户原话、当前阶段或对应资料后再生成。"
+  ].join("\n");
+}
+
 function buildCareerMentorFenceMask(lines: string[]) {
   const mask = new Array<boolean>(lines.length).fill(false);
-  let fenceMarker: "`" | "~" | null = null;
+  let activeFence: { marker: "`" | "~"; length: number } | null = null;
 
   for (let index = 0; index < lines.length; index += 1) {
-    const markerMatch = lines[index].match(/^\s*(`{3,}|~{3,})/);
+    if (activeFence) {
+      mask[index] = true;
+      const closingMatch = lines[index].match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
 
-    if (markerMatch) {
-      const marker = markerMatch[1][0] as "`" | "~";
-
-      if (!fenceMarker) {
-        fenceMarker = marker;
-      } else if (fenceMarker === marker) {
-        fenceMarker = null;
+      if (
+        closingMatch
+        && closingMatch[1][0] === activeFence.marker
+        && closingMatch[1].length >= activeFence.length
+      ) {
+        activeFence = null;
       }
 
+      continue;
+    }
+
+    if (/^(?: {4,}|\t)/.test(lines[index])) {
       mask[index] = true;
       continue;
     }
 
-    mask[index] = fenceMarker !== null;
+    const openingMatch = lines[index].match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+
+    if (openingMatch) {
+      activeFence = {
+        marker: openingMatch[1][0] as "`" | "~",
+        length: openingMatch[1].length
+      };
+      mask[index] = true;
+    }
   }
 
   return mask;
@@ -990,6 +1220,17 @@ function isCareerMentorAiReplyHeading(line: string) {
   return /^\s*(?:#{1,6}\s*)?(?:\*{1,2}|_{1,2})?\s*AI思考回复话术\s*(?:\*{1,2}|_{1,2})?\s*(?:[（(、:].*)?$/i.test(line);
 }
 
+function isCareerMentorExplicitAdaptiveReplyItemHeading(line: string) {
+  const normalized = line
+    .replace(/^\s*#{1,6}\s+/, "")
+    .replace(/[*_`]/g, "")
+    .trim();
+
+  return !/^(?: {4,}|\t)/.test(line)
+    && /^AI建议话术/i.test(normalized)
+    && Boolean(parseCareerMentorAdaptiveReplyItemHeading(line));
+}
+
 function buildCareerMentorAiReplyMask(lines: string[], fenceMask: boolean[]) {
   let insideAiReplySection = false;
 
@@ -1005,7 +1246,10 @@ function buildCareerMentorAiReplyMask(lines: string[], fenceMask: boolean[]) {
 
     if (
       insideAiReplySection
-      && (isCareerMentorCopyHeading(line) || /^\s*#{1,2}\s+/.test(line))
+      && (
+        isCareerMentorCopyHeading(line)
+        || (/^\s*#{1,2}\s+/.test(line) && !parseCareerMentorAdaptiveReplyItemHeading(line))
+      )
     ) {
       insideAiReplySection = false;
       return false;
@@ -1015,23 +1259,94 @@ function buildCareerMentorAiReplyMask(lines: string[], fenceMask: boolean[]) {
   });
 }
 
-function findCareerMentorAiReplySection(lines: string[]) {
-  const startIndex = lines.findIndex(isCareerMentorAiReplyHeading);
+function findCareerMentorAiReplySections(lines: string[]) {
+  const fenceMask = buildCareerMentorFenceMask(lines);
+  const startIndexes = lines
+    .map((line, index) => (
+      !fenceMask[index] && isCareerMentorAiReplyHeading(line) ? index : -1
+    ))
+    .filter((index) => index >= 0);
 
-  if (startIndex < 0) {
-    return null;
-  }
+  const explicitSections = startIndexes.map((startIndex, sectionIndex) => {
+    const nextSectionIndex = startIndexes[sectionIndex + 1] ?? lines.length;
+    let endIndex = nextSectionIndex;
 
-  let endIndex = lines.length;
+    for (let index = startIndex + 1; index < nextSectionIndex; index += 1) {
+      if (
+        !fenceMask[index]
+        && (
+          isCareerMentorCopyHeading(lines[index])
+          || (
+            /^\s*#{1,3}\s+/.test(lines[index])
+            && !parseCareerMentorAdaptiveReplyItemHeading(lines[index])
+          )
+        )
+      ) {
+        endIndex = index;
+        break;
+      }
+    }
 
-  for (let index = startIndex + 1; index < lines.length; index += 1) {
-    if (isCareerMentorCopyHeading(lines[index]) || /^\s*#{1,3}\s+/.test(lines[index])) {
-      endIndex = index;
-      break;
+    return {
+      startIndex,
+      contentStartIndex: startIndex + 1,
+      endIndex
+    };
+  });
+  const orphanHeadingIndexes = lines
+    .map((line, index) => (
+      !fenceMask[index]
+      && isCareerMentorExplicitAdaptiveReplyItemHeading(line)
+      && !explicitSections.some((section) => (
+        index >= section.startIndex && index < section.endIndex
+      ))
+        ? index
+        : -1
+    ))
+    .filter((index) => index >= 0);
+  const orphanSections: Array<{
+    startIndex: number;
+    contentStartIndex: number;
+    endIndex: number;
+  }> = [];
+  let orphanCursor = 0;
+
+  while (orphanCursor < orphanHeadingIndexes.length) {
+    const startIndex = orphanHeadingIndexes[orphanCursor];
+    let endIndex = lines.length;
+
+    for (let index = startIndex + 1; index < endIndex; index += 1) {
+      if (
+        !fenceMask[index]
+        && (
+          isCareerMentorCopyHeading(lines[index])
+          || (
+            /^\s*#{1,3}\s+/.test(lines[index])
+            && !parseCareerMentorAdaptiveReplyItemHeading(lines[index])
+          )
+        )
+      ) {
+        endIndex = index;
+        break;
+      }
+    }
+
+    orphanSections.push({
+      startIndex,
+      contentStartIndex: startIndex,
+      endIndex
+    });
+
+    while (
+      orphanCursor < orphanHeadingIndexes.length
+      && orphanHeadingIndexes[orphanCursor] < endIndex
+    ) {
+      orphanCursor += 1;
     }
   }
 
-  return { startIndex, endIndex };
+  return [...explicitSections, ...orphanSections]
+    .sort((left, right) => left.startIndex - right.startIndex);
 }
 
 function hasUnsupportedCareerMentorAdaptiveFacts(
@@ -1095,9 +1410,65 @@ function hasUnsupportedCareerMentorAdaptiveFacts(
       return true;
     }
 
-    const outcomeClaim = text.match(/稳定(?:收入|收益|分润)|做到(?:周薪|月入)|轻松赚钱|保证收益/);
+    const outcomeClaim = text.match(
+      /稳定(?:收入|收益|分润)|做到(?:周薪|月入)|轻松赚钱|保证(?:收益|赚钱|收入|分润)|一定(?:能|可以)?赚钱|月入过万/
+    );
 
     if (outcomeClaim && !knowledgeEvidence.includes(normalizeContent(outcomeClaim[0]))) {
+      return true;
+    }
+
+    const institutionalClaim = text.match(
+      /(?:我们公司|本公司|公司|平台|团队|品牌|产品)[^。！？\n]{0,50}(?:国家(?:级)?认证|权威(?:认证|检测|背书)|官方(?:认证|认可)|专利|获奖|上市|批准|资质|检测报告)/
+    );
+
+    if (institutionalClaim && !allEvidence.includes(normalizeContent(institutionalClaim[0]))) {
+      return true;
+    }
+
+    const institutionalAssertion = text.match(
+      /(?:我们公司|本公司|公司|平台|团队|品牌)[^。！？\n]{0,36}(?:实力(?:很|非常)?强|领先|强大|靠谱|正规|可靠|值得信赖)/
+    );
+
+    if (institutionalAssertion && !allEvidence.includes(normalizeContent(institutionalAssertion[0]))) {
+      return true;
+    }
+
+    const productAssertion = text.match(
+      /(?:这个|我们的|该)?产品[^。！？\n]{0,40}(?:效果(?:很|非常)?好|安全(?:可靠)?|有效|优质|最好|没有副作用)/
+    );
+
+    if (productAssertion && !allEvidence.includes(normalizeContent(productAssertion[0]))) {
+      return true;
+    }
+
+    const riskGuarantee = text.match(/零风险|没有风险|无风险|稳赚(?:不赔)?|不会亏/);
+
+    if (riskGuarantee && !allEvidence.includes(normalizeContent(riskGuarantee[0]))) {
+      return true;
+    }
+
+    const unverifiedCaseClaim = text.match(
+      /(?:(?:我|我们|公司|团队|平台)(?:已经|曾经)?(?:帮助|服务|带领)?)?(?:很多|大量|不少|多位|多名|一批)(?:客户|伙伴|宝妈|妈妈|家庭|用户|人)[^。！？\n]{0,60}(?:成功|改善|实现|获得|做到|增加|赚|收益|收入|分润|改变)/
+    );
+
+    if (unverifiedCaseClaim && !allEvidence.includes(normalizeContent(unverifiedCaseClaim[0]))) {
+      return true;
+    }
+
+    const personalCaseClaim = text.match(
+      /(?:我|我们|我这边)[^。！？\n]{0,40}(?:帮|帮助|服务|带领)[^。！？\n]{0,40}(?:解决过|改善过|成功|实现|做到)/
+    );
+
+    if (personalCaseClaim && !allEvidence.includes(normalizeContent(personalCaseClaim[0]))) {
+      return true;
+    }
+
+    const teamExperienceClaim = text.match(
+      /(?:公司|团队|平台|品牌)[^。！？\n]{0,30}(?:有|拥有|具备)[^。！？\n]{0,20}(?:[一二三四五六七八九十百]+年|多年|丰富|成熟)[^。！？\n]{0,12}经验/
+    );
+
+    if (teamExperienceClaim && !allEvidence.includes(normalizeContent(teamExperienceClaim[0]))) {
       return true;
     }
   }
@@ -1105,33 +1476,186 @@ function hasUnsupportedCareerMentorAdaptiveFacts(
   return false;
 }
 
-function buildCareerMentorSafeAdaptiveReply(
+const CAREER_MENTOR_ADAPTIVE_REPLY_TITLES = [
+  "AI建议话术 1（稳妥自然型）",
+  "AI建议话术 2（共情引导型）",
+  "AI建议话术 3（轻问推进型）"
+] as const;
+
+function buildCareerMentorSafeAdaptiveReplies(
   classification: CareerMentorClassification,
   supportingContext: string
 ) {
   if (classification.stage === "ice_breaking") {
     return /宝妈|妈妈|带孩子|带娃/.test(normalizeContent(supportingContext))
-      ? "您好，带孩子的同时还要安排好自己的生活确实不容易。我们先不急着聊太多，我想先了解一下，您现在更希望改善时间安排，还是想多了解一个适合自己的选择？我再按您的实际情况和您说。"
-      : "您好，我们先不急着聊太多。我想先了解一下，您现在主要是在工作、做生意，还是照顾家庭？我再根据您的实际情况和您说。";
+      ? [
+          "您好，带孩子的同时还要安排好自己的生活确实不容易。我们先不急着聊太多，我想先了解一下，您现在更希望改善时间安排，还是想多了解一个适合自己的选择？我再按您的实际情况和您说。",
+          "您好，平时既要照顾孩子，也要安排自己的事情，确实挺辛苦的。您现在是更在意时间能不能灵活一些，还是想先看看有没有适合自己的方向？",
+          "您好，我们先轻松认识一下，不着急谈太多。您目前主要是在照顾家庭，还是也有工作或其他安排？我了解清楚后再和您分享。"
+        ]
+      : [
+          "您好，我们先不急着聊太多。我想先了解一下，您现在主要是在工作、做生意，还是照顾家庭？我再根据您的实际情况和您说。",
+          "您好，我们先简单认识一下。您现在的生活重心更多是在工作、做生意，还是照顾家庭？我了解清楚后再和您交流。",
+          "您好，不着急聊具体内容。我想先听听您目前最关注的是时间安排、收入方向，还是个人成长？您方便从最关心的一点说起吗？"
+        ];
   }
 
   if (classification.stage === "follow_up") {
-    return "您好，资料您先按自己的节奏看。看完告诉我您最想先了解哪一部分，我再按您的关注点和您说。";
+    return [
+      "您好，资料您先按自己的节奏看。看完告诉我您最想先了解哪一部分，我再按您的关注点和您说。",
+      "您好，不着急回复我。资料里哪一部分您比较有感觉，或者哪一部分还没看明白？您告诉我一个点，我按那个点和您聊。",
+      "您好，您可以先不用一次看完。您更想先了解具体怎么做、时间怎么安排，还是整个模式？我先把您最关心的一点说明白。"
+    ];
   }
 
   if (classification.stage === "career_presentation") {
-    return "您好，我们先把您最关心的一点讲清楚。您现在更想先了解怎么参与，还是时间和投入怎么安排？我按您的关注点一步一步说。";
+    return [
+      "您好，我们先把您最关心的一点讲清楚。您现在更想先了解怎么参与，还是时间和投入怎么安排？我按您的关注点一步一步说。",
+      "您好，您可以先按自己的判断标准来了解，不需要急着做决定。您最想先核实哪一点？我先把这一点说清楚。",
+      "您好，我先不一次讲很多。您更想先听整体逻辑，还是先了解参与后的具体步骤？我按您最关心的顺序来讲。"
+    ];
   }
 
   if (classification.stage === "objection_handling") {
-    return "您好，您有顾虑很正常。您现在最担心的是哪一点？我们先把这一个问题说清楚，再看下一步。";
+    return [
+      "您好，您有顾虑很正常。您现在最担心的是哪一点？我们先把这一个问题说清楚，再看下一步。",
+      "您好，先不用急着做决定。您是对价值、信任、时间，还是具体执行还有顾虑？我们只先解决最关键的一点。",
+      "您好，认真确认清楚再决定是对的。您把最犹豫的地方直接告诉我，我先把事实和逻辑说明白，再由您判断。"
+    ];
   }
 
   if (classification.stage === "closing") {
-    return "您好，前面您已经了解了一些。您现在主要卡在哪一步？我们先把这个问题解决，再确认一个您方便执行的下一步。";
+    return [
+      "您好，前面您已经了解了一些。您现在主要卡在哪一步？我们先把这个问题解决，再确认一个您方便执行的下一步。",
+      "您好，前面的内容如果您基本认可，我们就不把问题放得太大。您觉得现在最需要确认的是时间、流程，还是第一步怎么开始？",
+      "您好，我们先定一个您没有压力的小步骤。您更方便先确认参与方式，还是先把具体时间安排好？"
+    ];
   }
 
-  return "可以的。为了给您换一个真正适合当前情况的方案，请先告诉我您最想调整的是表达方式、执行步骤，还是客户话术。";
+  return [
+    "可以的。为了给您换一个真正适合当前情况的方案，请先告诉我您最想调整的是表达方式、执行步骤，还是客户话术。",
+    "可以的。您先告诉我客户目前说了什么、已经沟通到哪一步，我再按这个场景给您更合适的表达。",
+    "可以的。您更希望这次回复自然一点、共情一点，还是更明确地推进下一步？我按您要的方向调整。"
+  ];
+}
+
+function parseCareerMentorAdaptiveReplyItemHeading(line: string) {
+  if (/^(?: {4,}|\t)/.test(line)) {
+    return null;
+  }
+
+  const normalized = line
+    .replace(/^ {0,3}#{1,6}\s+/, "")
+    .replace(/[*_`]/g, "")
+    .trim();
+  const match = normalized.match(
+    /^(?:AI建议话术|话术)\s*((?:[一二三四五六七八九十\d]+|[①②③④⑤⑥⑦⑧⑨⑩]))?(?:[（(][^）)]{1,24}[）)])?\s*[：:]?\s*(.*)$/i
+  );
+
+  if (!match) {
+    return null;
+  }
+
+  const slotMap: Record<string, number> = {
+    "1": 0,
+    "一": 0,
+    "①": 0,
+    "2": 1,
+    "二": 1,
+    "②": 1,
+    "3": 2,
+    "三": 2,
+    "③": 2
+  };
+
+  return {
+    slot: match[1] ? (slotMap[match[1]] ?? -1) : null,
+    firstLine: match[2]?.trim() ?? ""
+  };
+}
+
+function readCareerMentorAdaptiveReplies(lines: string[]) {
+  const replies: Array<{ slot: number; text: string }> = [];
+  let activeLines: string[] | null = null;
+  let activeSlot: number | null = null;
+  let nextSequentialSlot = 0;
+
+  function flushReply() {
+    if (!activeLines) {
+      return;
+    }
+
+    const text = activeLines
+      .map((line) => line.replace(/^\s*>\s?/, "").trim())
+      .filter(Boolean)
+      .join("\n")
+      .trim();
+
+    if (text) {
+      const slot = activeSlot ?? nextSequentialSlot;
+
+      if (slot >= 0 && slot < CAREER_MENTOR_ADAPTIVE_REPLY_TITLES.length) {
+        replies.push({ slot, text });
+        nextSequentialSlot = Math.max(nextSequentialSlot, slot + 1);
+      }
+    }
+
+    activeLines = null;
+    activeSlot = null;
+  }
+
+  for (const line of lines) {
+    const heading = parseCareerMentorAdaptiveReplyItemHeading(line);
+
+    if (heading) {
+      flushReply();
+      activeSlot = heading.slot;
+      activeLines = heading.firstLine ? [heading.firstLine] : [];
+      continue;
+    }
+
+    if (activeLines) {
+      activeLines.push(line);
+    }
+  }
+
+  flushReply();
+  return replies;
+}
+
+function buildCareerMentorAdaptiveReplySection(replies: string[]) {
+  return [
+    "### AI思考回复话术",
+    "",
+    ...CAREER_MENTOR_ADAPTIVE_REPLY_TITLES.flatMap((title, index) => [
+      `#### ${title}`,
+      "",
+      ...replies[index].split("\n").map((line) => `> ${line}`),
+      ""
+    ])
+  ];
+}
+
+function removeCareerMentorAiReplySections(
+  lines: string[],
+  sections: ReturnType<typeof findCareerMentorAiReplySections>
+) {
+  const guardedLines: string[] = [];
+  let cursor = 0;
+  let firstInsertionIndex: number | null = null;
+
+  for (const section of sections) {
+    guardedLines.push(...lines.slice(cursor, section.startIndex));
+    firstInsertionIndex ??= guardedLines.length;
+    cursor = section.endIndex;
+  }
+
+  guardedLines.push(...lines.slice(cursor));
+
+  return {
+    lines: guardedLines,
+    insertionIndex: firstInsertionIndex ?? guardedLines.length
+  };
 }
 
 function sanitizeCareerMentorAdaptiveReplies(
@@ -1139,33 +1663,110 @@ function sanitizeCareerMentorAdaptiveReplies(
   input: CareerMentorAnswerGroundingInput
 ) {
   const lines = answer.replace(/\r\n/g, "\n").split("\n");
-  const section = findCareerMentorAiReplySection(lines);
-
-  if (!section) {
-    return answer;
-  }
-
-  const sectionLines = lines.slice(section.startIndex, section.endIndex);
-
-  if (!hasUnsupportedCareerMentorAdaptiveFacts(sectionLines, input)) {
-    return answer;
-  }
-
   const classification = classifyCareerMentorQuestion(input.question, input.supportingContext);
-  const safeReply = buildCareerMentorSafeAdaptiveReply(
-    classification,
-    `${input.question}\n${input.supportingContext ?? ""}`
+  const sections = findCareerMentorAiReplySections(lines);
+
+  if (
+    !isCareerMentorCoreStage(classification.stage)
+    || (input.strictEvidencePlan === true && input.chunks.length === 0)
+  ) {
+    if (sections.length === 0) {
+      return answer;
+    }
+
+    return removeCareerMentorAiReplySections(lines, sections)
+      .lines
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  const generatedReplies = sections.flatMap((section) => (
+    readCareerMentorAdaptiveReplies(lines.slice(section.contentStartIndex, section.endIndex))
+  ));
+  const safeReplies = input.strictEvidencePlan === true
+    ? (input.evidencePlanAdaptiveReplies ?? []).slice(0, CAREER_MENTOR_ADAPTIVE_REPLY_TITLES.length)
+    : buildCareerMentorSafeAdaptiveReplies(
+        classification,
+        `${input.question}\n${input.supportingContext ?? ""}`
+      );
+  const groundedCopyKey = normalizeContent(
+    extractCareerMentorCustomerAnswer(answer)
   );
+  const selectedReplies: string[] = [];
+  const selectedKeys = new Set<string>();
+
+  for (let slot = 0; slot < CAREER_MENTOR_ADAPTIVE_REPLY_TITLES.length; slot += 1) {
+    const slotCandidates = input.strictEvidencePlan === true
+      ? []
+      : generatedReplies
+          .filter((reply) => reply.slot === slot)
+          .map((reply) => reply.text);
+    const candidates = input.strictEvidencePlan === true
+      ? [safeReplies[slot]].filter((reply): reply is string => Boolean(reply))
+      : [...slotCandidates, safeReplies[slot], ...safeReplies].filter(
+      (reply): reply is string => Boolean(reply)
+        );
+
+    for (const reply of candidates) {
+      const key = normalizeContent(reply);
+      const isGeneratedReply = slotCandidates.includes(reply);
+      const replyLines = reply.split("\n").map((line) => `> ${line}`);
+
+      if (
+        !key
+        || selectedKeys.has(key)
+        || (
+          isGeneratedReply
+          && Boolean(groundedCopyKey)
+          && (
+            key === groundedCopyKey
+            || key.includes(groundedCopyKey)
+            || groundedCopyKey.includes(key)
+          )
+        )
+        || (
+          (isGeneratedReply || input.strictEvidencePlan === true)
+          && hasUnsupportedCareerMentorAdaptiveFacts(replyLines, input)
+        )
+      ) {
+        continue;
+      }
+
+      selectedReplies.push(reply);
+      selectedKeys.add(key);
+      break;
+    }
+  }
+
+  const answerWithoutAiSections = removeCareerMentorAiReplySections(lines, sections);
+  const baseLines = answerWithoutAiSections.lines;
+
+  if (
+    input.strictEvidencePlan === true
+    && selectedReplies.length !== CAREER_MENTOR_ADAPTIVE_REPLY_TITLES.length
+  ) {
+    return baseLines
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  const replacementLines = buildCareerMentorAdaptiveReplySection(selectedReplies);
+
+  const fenceMask = buildCareerMentorFenceMask(baseLines);
+  const copyHeadingIndex = baseLines.findIndex((line, index) => (
+    !fenceMask[index] && isCareerMentorCopyHeading(line)
+  ));
+  const insertionIndex = copyHeadingIndex >= 0
+    ? copyHeadingIndex
+    : answerWithoutAiSections.insertionIndex;
 
   return [
-    ...lines.slice(0, section.startIndex),
-    lines[section.startIndex],
+    ...baseLines.slice(0, insertionIndex),
     "",
-    "#### AI建议话术 1",
-    "",
-    `> ${safeReply}`,
-    "",
-    ...lines.slice(section.endIndex)
+    ...replacementLines,
+    ...baseLines.slice(insertionIndex)
   ].join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
@@ -1181,7 +1782,13 @@ function findCareerMentorCopySections(lines: string[]) {
     let endIndex = nextCopyIndex;
 
     for (let index = startIndex + 1; index < nextCopyIndex; index += 1) {
-      if (!fenceMask[index] && /^\s*#{1,2}\s+/.test(lines[index])) {
+      if (
+        !fenceMask[index]
+        && (
+          isCareerMentorAiReplyHeading(lines[index])
+          || /^ {0,3}#{1,2}\s+/.test(lines[index])
+        )
+      ) {
         endIndex = index;
         break;
       }
@@ -1218,7 +1825,13 @@ function findCareerMentorCopySections(lines: string[]) {
     let endIndex = nextOrphanIndex;
 
     for (let index = startIndex + 1; index < nextOrphanIndex; index += 1) {
-      if (!fenceMask[index] && /^\s*#{1,2}\s+/.test(lines[index])) {
+      if (
+        !fenceMask[index]
+        && (
+          isCareerMentorAiReplyHeading(lines[index])
+          || /^ {0,3}#{1,2}\s+/.test(lines[index])
+        )
+      ) {
         endIndex = index;
         break;
       }
@@ -1281,9 +1894,9 @@ function isCareerMentorScriptGrounded(
   classification: CareerMentorClassification
 ) {
   const content = chunk.content.replace(/\r\n/g, "\n");
-  const scriptIndex = content.indexOf(script);
+  const explicitScripts = extractCareerMentorExplicitCustomerScriptBlocks(content);
 
-  if (!script || scriptIndex < 0) {
+  if (!script || !explicitScripts.includes(script)) {
     return false;
   }
 
@@ -1293,7 +1906,7 @@ function isCareerMentorScriptGrounded(
     chunk.category ?? "",
     ...(chunk.tags ?? [])
   ].join(" ");
-  const contentLead = chunk.content.slice(0, 220);
+  const contentLead = chunk.content.slice(0, 800);
   const sourceStages = resolveCareerMentorSourceStages(metadataIdentity, contentLead);
 
   if (isCareerMentorCoreStage(classification.stage)) {
@@ -1304,15 +1917,7 @@ function isCareerMentorScriptGrounded(
     return false;
   }
 
-  const cardIdentity = resolveCareerMentorCardIdentity(metadataIdentity, contentLead);
-
-  if (cardIdentity.customerCard) {
-    return true;
-  }
-
-  const localLead = content.slice(Math.max(0, scriptIndex - 240), scriptIndex);
-
-  return /(?:可直接发给客户|可直接转发|话术全文|完整话术|一字不差|标准话术|共鸣话术|标准回应|文案(?:示例)?[：:]|你怎么接|(?:回他|问他|话术|回复)[：:])[\s\S]{0,240}$/.test(localLead);
+  return true;
 }
 
 function buildCareerMentorCanonicalCopySection(script: string) {
@@ -1360,6 +1965,72 @@ function replaceCareerMentorCopySections(
     .trim();
 }
 
+function isCareerMentorSelectedEvidenceChunk(
+  chunk: RetrievedRagChunk,
+  input: CareerMentorAnswerGroundingInput
+) {
+  if (input.strictEvidencePlan !== true) {
+    return true;
+  }
+
+  const selectedEvidenceIds = new Set(input.evidencePlanEvidenceIds ?? []);
+  return selectedEvidenceIds.has(chunk.chunkId)
+    || selectedEvidenceIds.has(chunk.knowledgeItemId);
+}
+
+function isCareerMentorCanonicalCopyAuthorized(
+  canonicalCopy: CareerMentorCanonicalCopyEntry | null,
+  classification: CareerMentorClassification,
+  input: CareerMentorAnswerGroundingInput
+) {
+  if (!canonicalCopy) {
+    return false;
+  }
+
+  if (input.strictEvidencePlan !== true) {
+    return true;
+  }
+
+  const expectedSourceKey = normalizeContent(canonicalCopy.sourceTitle);
+
+  return input.chunks.some((chunk) => {
+    if (!isCareerMentorSelectedEvidenceChunk(chunk, input)) {
+      return false;
+    }
+
+    const metadataIdentity = [
+      chunk.title,
+      chunk.sourceTitle ?? "",
+      chunk.category ?? "",
+      ...(chunk.tags ?? [])
+    ].join(" ");
+    const sourceStages = resolveCareerMentorSourceStages(
+      metadataIdentity,
+      chunk.content.slice(0, 800)
+    );
+    const sourceMatches = chunk.content.includes(canonicalCopy.script)
+      && normalizeContent(metadataIdentity).includes(expectedSourceKey);
+
+    return sourceMatches
+      && isCareerMentorCoreStage(classification.stage)
+      && sourceStages.has(classification.stage);
+  });
+}
+
+function isCareerMentorPlannedFixedScriptGrounded(
+  script: string,
+  classification: CareerMentorClassification,
+  input: CareerMentorAnswerGroundingInput
+) {
+  return Boolean(script) && input.chunks.some((chunk) => {
+    if (!isCareerMentorSelectedEvidenceChunk(chunk, input)) {
+      return false;
+    }
+
+    return isCareerMentorScriptGrounded(script, chunk, classification);
+  });
+}
+
 export function enforceCareerMentorGroundedCopy(
   answer: string,
   input: CareerMentorAnswerGroundingInput
@@ -1371,6 +2042,17 @@ export function enforceCareerMentorGroundedCopy(
     classification,
     input.question,
     input.supportingContext
+  );
+  const canonicalCopyAuthorized = isCareerMentorCanonicalCopyAuthorized(
+    canonicalCopy,
+    classification,
+    input
+  );
+  const plannedFixedScript = input.evidencePlanFixedScript?.trim() ?? "";
+  const plannedFixedScriptGrounded = isCareerMentorPlannedFixedScriptGrounded(
+    plannedFixedScript,
+    classification,
+    input
   );
   let groundedFixedScript = "";
 
@@ -1384,9 +2066,11 @@ export function enforceCareerMentorGroundedCopy(
     const isGrounded = copySection.explicitCopyHeading
       && script.length > 0
       && (
-        canonicalCopy?.script === script
+        (canonicalCopyAuthorized && canonicalCopy?.script === script)
+        || (plannedFixedScriptGrounded && plannedFixedScript === script)
         || input.chunks.some((chunk) => (
-          isCareerMentorScriptGrounded(script, chunk, classification)
+          isCareerMentorSelectedEvidenceChunk(chunk, input)
+          && isCareerMentorScriptGrounded(script, chunk, classification)
         ))
       );
 
@@ -1403,7 +2087,15 @@ export function enforceCareerMentorGroundedCopy(
     );
   }
 
-  if (canonicalCopy) {
+  if (plannedFixedScriptGrounded) {
+    return replaceCareerMentorCopySections(
+      lines,
+      copySections,
+      buildCareerMentorCanonicalCopySection(plannedFixedScript)
+    );
+  }
+
+  if (canonicalCopy && canonicalCopyAuthorized) {
     return replaceCareerMentorCopySections(
       lines,
       copySections,
@@ -1435,13 +2127,13 @@ export function cleanCareerMentorUserAnswer(
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 
-  const adaptiveReplySafeAnswer = grounding
-    ? sanitizeCareerMentorAdaptiveReplies(cleaned, grounding)
-    : cleaned;
+  if (!grounding) {
+    return cleaned;
+  }
 
-  return grounding
-    ? enforceCareerMentorGroundedCopy(adaptiveReplySafeAnswer, grounding)
-    : adaptiveReplySafeAnswer;
+  const groundedCopyAnswer = enforceCareerMentorGroundedCopy(cleaned, grounding);
+
+  return sanitizeCareerMentorAdaptiveReplies(groundedCopyAnswer, grounding);
 }
 
 export function extractCareerMentorCustomerAnswer(answer: string) {

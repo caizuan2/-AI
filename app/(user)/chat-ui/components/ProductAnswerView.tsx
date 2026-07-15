@@ -554,6 +554,51 @@ function hasNormalizedCustomerScriptOverlap(first: string, second: string) {
   return firstKey === secondKey || firstKey.includes(secondKey) || secondKey.includes(firstKey);
 }
 
+function splitMarkdownLinesForScriptParsing(markdown: string) {
+  const lines: Array<{ line: string; fenced: boolean }> = [];
+  let activeFence: { marker: "`" | "~"; length: number } | null = null;
+
+  for (const rawLine of markdown.replace(/\r\n/g, "\n").split("\n")) {
+    if (activeFence) {
+      lines.push({ line: rawLine, fenced: true });
+      const closingMatch = rawLine.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+
+      if (
+        closingMatch
+        && closingMatch[1][0] === activeFence.marker
+        && closingMatch[1].length >= activeFence.length
+      ) {
+        activeFence = null;
+      }
+
+      continue;
+    }
+
+    if (/^(?: {4,}|\t)/.test(rawLine)) {
+      lines.push({ line: rawLine, fenced: true });
+      continue;
+    }
+
+    const openingMatch = rawLine.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+
+    if (openingMatch) {
+      activeFence = {
+        marker: openingMatch[1][0] as "`" | "~",
+        length: openingMatch[1].length
+      };
+      lines.push({ line: rawLine, fenced: true });
+      continue;
+    }
+
+    lines.push(...splitInlineCustomerScriptItems(rawLine).map((line) => ({
+      line,
+      fenced: false
+    })));
+  }
+
+  return lines;
+}
+
 function splitMarkdownScriptHeadings(
   markdown: string,
   options: { strictHeading?: boolean; careerMentorMode?: boolean } = {}
@@ -584,12 +629,22 @@ function splitMarkdownScriptHeadings(
     activeScript = null;
   }
 
-  const lines = markdown
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .flatMap((line) => splitInlineCustomerScriptItems(line));
+  const lines = options.careerMentorMode
+    ? splitMarkdownLinesForScriptParsing(markdown)
+    : markdown
+        .replace(/\r\n/g, "\n")
+        .split("\n")
+        .flatMap((line) => splitInlineCustomerScriptItems(line))
+        .map((line) => ({ line, fenced: false }));
 
-  for (const line of lines) {
+  for (const { line, fenced } of lines) {
+    if (fenced) {
+      flushScript();
+      markdownLines.push(line);
+      pendingScriptTitle = null;
+      continue;
+    }
+
     const careerSectionVariant = options.careerMentorMode
       ? parseCareerMentorScriptSectionVariant(line)
       : null;
@@ -750,6 +805,17 @@ export function splitNaturalAnswerForCustomerScriptCards(
   text: string,
   options: { careerMentorMode?: boolean } = {}
 ): NaturalAnswerSegment[] {
+  if (options.careerMentorMode === true) {
+    const careerSegments = splitMarkdownScriptHeadings(text, {
+      strictHeading: true,
+      careerMentorMode: true
+    });
+
+    return careerSegments.length > 0
+      ? careerSegments
+      : [{ kind: "markdown", text }];
+  }
+
   const segments: NaturalAnswerSegment[] = [];
   let lastIndex = 0;
   inlineCustomerScriptPattern.lastIndex = 0;
@@ -763,15 +829,15 @@ export function splitNaturalAnswerForCustomerScriptCards(
     splitMarkdownScriptHeadings(
       text.slice(lastIndex, index),
       {
-        strictHeading: options.careerMentorMode === true,
-        careerMentorMode: options.careerMentorMode === true
+        strictHeading: false,
+        careerMentorMode: false
       }
     ).forEach((segment) => segments.push(segment));
     appendCustomerScriptSegment(
       segments,
       match[2] || "客户话术",
       match[3] || "",
-      options.careerMentorMode ? "careerAi" : "default"
+      "default"
     );
     lastIndex = match.index + match[0].length;
     match = inlineCustomerScriptPattern.exec(text);
@@ -780,8 +846,8 @@ export function splitNaturalAnswerForCustomerScriptCards(
   splitMarkdownScriptHeadings(
     text.slice(lastIndex),
     {
-      strictHeading: options.careerMentorMode === true,
-      careerMentorMode: options.careerMentorMode === true
+      strictHeading: false,
+      careerMentorMode: false
     }
   ).forEach((segment) => segments.push(segment));
 
@@ -884,6 +950,18 @@ function buildAnalysisMarkdown(display: NonNullable<ReturnType<typeof buildProdu
     .join("\n\n");
 }
 
+function getCareerMentorMarkdownAnswerText(
+  answer: FinalizedAnswerView | null,
+  rawAnswerText?: string | null
+) {
+  return getFinalizedRawAnswerText({
+    ...(answer ?? {}),
+    rawAnswerBeforeFinalizer: rawAnswerText
+  })
+    .replace(/\r\n/g, "\n")
+    .trim();
+}
+
 export function ProductAnswerView({
   answer,
   userQuery,
@@ -913,8 +991,10 @@ export function ProductAnswerView({
     };
   }, [answer, userQuery]);
   const naturalAnswerText = React.useMemo(
-    () => getFinalNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
-    [answerForDisplay, rawAnswerText]
+    () => careerMentorMode
+      ? getCareerMentorMarkdownAnswerText(answerForDisplay, rawAnswerText)
+      : getFinalNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
+    [answerForDisplay, careerMentorMode, rawAnswerText]
   );
   const naturalAnswerSegments = React.useMemo(
     () => naturalAnswerText
