@@ -6,7 +6,8 @@ import {
   disableSuperAdminLicense,
   fetchSuperAdminLicenses,
   generateSuperAdminLicenses,
-  revealSuperAdminLicense
+  revealSuperAdminLicense,
+  searchSuperAdminLicenses
 } from "@/lib/super-admin/license-admin-client";
 import type {
   SuperAdminGeneratedLicense,
@@ -332,6 +333,7 @@ function GeneratedKeys({ generated }: { generated: SuperAdminGeneratedLicense[] 
 }
 
 function LicenseTable({
+  appType,
   title,
   description,
   licenses,
@@ -339,6 +341,7 @@ function LicenseTable({
   disablingId,
   onDisable
 }: {
+  appType: "user_app" | "ingest_admin";
   title: string;
   description: string;
   licenses: SuperAdminLicenseRecord[];
@@ -348,6 +351,9 @@ function LicenseTable({
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<SuperAdminLicenseRecord[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [copiedLicenseId, setCopiedLicenseId] = useState<string | null>(null);
   const [revealingLicenseId, setRevealingLicenseId] = useState<string | null>(null);
@@ -358,11 +364,15 @@ function LicenseTable({
       return licenses;
     }
 
+    if (searchResults) {
+      return searchResults;
+    }
+
     return licenses.filter((license) => {
       const plainKey = generatedKeyById.get(license.id);
       return `${getLicenseSearchText(license)} ${plainKey ?? ""}`.toLocaleLowerCase("zh-CN").includes(normalizedQuery);
     });
-  }, [generatedKeyById, licenses, normalizedQuery]);
+  }, [generatedKeyById, licenses, normalizedQuery, searchResults]);
   const totalPages = Math.max(1, Math.ceil(filteredLicenses.length / LICENSES_PER_PAGE));
   const visiblePage = Math.min(currentPage, totalPages);
   const pageStart = (visiblePage - 1) * LICENSES_PER_PAGE;
@@ -372,6 +382,33 @@ function LicenseTable({
   useEffect(() => {
     setCurrentPage((page) => Math.min(page, totalPages));
   }, [totalPages]);
+
+  async function handleSearch() {
+    const query = draftQuery.trim();
+
+    setCurrentPage(1);
+    setSearchError(null);
+
+    if (!query) {
+      setActiveQuery("");
+      setSearchResults(null);
+      return;
+    }
+
+    setSearching(true);
+
+    try {
+      const results = await searchSuperAdminLicenses({ query, appType });
+      setActiveQuery(query);
+      setSearchResults(results);
+    } catch (error) {
+      setActiveQuery(query);
+      setSearchResults(null);
+      setSearchError(error instanceof Error ? error.message : "卡密搜索失败，请稍后重试。");
+    } finally {
+      setSearching(false);
+    }
+  }
 
   async function handleCopyLicenseKey(license: SuperAdminLicenseRecord) {
     setCopyError(null);
@@ -422,13 +459,13 @@ function LicenseTable({
             </p>
           ) : null}
           {copyError ? <p className="mt-1 text-xs font-medium text-rose-600">{copyError}</p> : null}
+          {searchError ? <p className="mt-1 text-xs font-medium text-rose-600">{searchError}</p> : null}
         </div>
         <form
           className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
-            setActiveQuery(draftQuery);
-            setCurrentPage(1);
+            await handleSearch();
           }}
         >
           <label className="sr-only" htmlFor={`${title}-license-search`}>
@@ -443,10 +480,11 @@ function LicenseTable({
           />
           <button
             type="submit"
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+            disabled={searching}
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            <Search className="h-4 w-4" />
-            搜索
+            {searching ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+            {searching ? "搜索中" : "搜索"}
           </button>
         </form>
       </div>
@@ -697,6 +735,7 @@ export function LicenseDashboard() {
       <GeneratedKeys generated={generated} />
       <div className="space-y-6">
         <LicenseTable
+          appType="user_app"
           title="用户端卡密列表"
           description="刷新后仅展示脱敏标识；本次生成的 XT-USER 明文卡密可在当前行复制。"
           licenses={userAppLicenses}
@@ -705,6 +744,7 @@ export function LicenseDashboard() {
           onDisable={handleDisable}
         />
         <LicenseTable
+          appType="ingest_admin"
           title="投喂管理员端卡密列表"
           description="刷新后仅展示脱敏标识；本次生成的 XT-INGEST 明文卡密可在当前行复制。"
           licenses={ingestAdminLicenses}

@@ -49,6 +49,16 @@ export function fetchSuperAdminLicenses() {
   return requestSuperAdmin<SuperAdminLicenseDashboardData>("/api/super-admin/licenses");
 }
 
+export function searchSuperAdminLicenses(input: {
+  query: string;
+  appType: "user_app" | "ingest_admin";
+}) {
+  return requestSuperAdmin<SuperAdminLicenseRecord[]>("/api/super-admin/licenses", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function generateSuperAdminLicenses(input: SuperAdminLicenseGenerationInput) {
   return requestSuperAdmin<SuperAdminLicenseGenerationResult>("/api/super-admin/licenses/generate", {
     method: "POST",
