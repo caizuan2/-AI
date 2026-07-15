@@ -103,23 +103,6 @@ function inferLanguage(ctx: ModelRoutingContext): "zh" | "en" | "mixed" | "unkno
 export function unifiedRouter(ctx: ModelRoutingContext): ModelType {
   const taskType = inferTaskType(ctx);
   const language = inferLanguage(ctx);
-
-  if (taskType === "document_ingest") {
-    return "kimi";
-  }
-
-  if (taskType === "knowledge_summarize") {
-    return "deepseek-pro";
-  }
-
-  if (ctx.costMode === "low" || taskType === "batch_draft") {
-    return "deepseek-flash";
-  }
-
-  if (ctx.costMode === "high") {
-    return "deepseek-pro";
-  }
-
   const explicitHint = [
     ctx.selectedModelLabel,
     ctx.modelDisplayName,
@@ -143,6 +126,22 @@ export function unifiedRouter(ctx: ModelRoutingContext): ModelType {
   }
 
   if (explicitHint.includes("gpt") || explicitHint.includes("openai")) {
+    return "deepseek-pro";
+  }
+
+  if (taskType === "document_ingest") {
+    return "kimi";
+  }
+
+  if (taskType === "knowledge_summarize") {
+    return "deepseek-pro";
+  }
+
+  if (ctx.costMode === "low" || taskType === "batch_draft") {
+    return "deepseek-flash";
+  }
+
+  if (ctx.costMode === "high") {
     return "deepseek-pro";
   }
 

@@ -38,6 +38,7 @@ import {
   withResilientLLMCall
 } from "@/lib/enterprise/gpt-os-api-adapter";
 import {
+  DEEPSEEK_PRO_MODEL_ID,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
@@ -126,7 +127,7 @@ export class DeepSeekIngestError extends Error {
 
 const REQUEST_TIMEOUT_MS = 150_000;
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = DEEPSEEK_PRO_MODEL_ID;
 const DEFAULT_MODEL_LABEL = "DeepSeek-V4-Pro";
 
 function readEnv(name: string) {

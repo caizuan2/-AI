@@ -15,7 +15,14 @@ export interface IngestModelOption {
   baseUrlEnv?: string;
 }
 
-export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model";
+export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model-deepseek-pro-primary-v1";
+export const DEEPSEEK_PRO_MODEL_ID = "deepseek-v4-pro";
+export const DEEPSEEK_FLASH_MODEL_ID = "deepseek-v4-flash";
+
+const LEGACY_DEEPSEEK_MODEL_IDS = new Set([
+  "deepseek-chat",
+  "deepseek-reasoner"
+]);
 
 function readRuntimeEnv(name: string) {
   return typeof process !== "undefined" ? process.env[name]?.trim() ?? "" : "";
@@ -28,7 +35,7 @@ export function isOpenAIIngestEnabled() {
     || readRuntimeEnv("NEXT_PUBLIC_AI_ENABLE_OPENAI_INGEST").toLowerCase() === "true";
 }
 
-export const INGEST_DEFAULT_DEEPSEEK_PROVIDER: IngestModelProvider = "deepseek-flash";
+export const INGEST_DEFAULT_DEEPSEEK_PROVIDER: IngestModelProvider = "deepseek-pro";
 
 export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   {
@@ -65,9 +72,9 @@ export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
     shortLabel: "DeepSeek",
     displayName: "DeepSeek-V4-Pro",
     modelEnvKey: "DEEPSEEK_PRO_MODEL",
-    defaultModel: "deepseek-chat",
-    description: "适合中文资料整理、知识拆解、SOP 和成本敏感的投喂任务。",
-    scenario: "中文总结 / SOP / 标准问答 / 资料归纳",
+    defaultModel: DEEPSEEK_PRO_MODEL_ID,
+    description: "适合高质量中文资料整理、复杂知识拆解、SOP 和最终正文生成。",
+    scenario: "深度总结 / SOP / 标准问答 / 最终知识正文",
     speedLabel: "均衡",
     depthLabel: "Pro",
     requiresApiKeyEnv: "DEEPSEEK_API_KEY",
@@ -79,7 +86,7 @@ export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
     shortLabel: "Flash",
     displayName: "DeepSeek-V4-Flash",
     modelEnvKey: "DEEPSEEK_FLASH_MODEL",
-    defaultModel: "deepseek-chat",
+    defaultModel: DEEPSEEK_FLASH_MODEL_ID,
     description: "适合低成本批量处理、草稿生成和快速资料初筛。",
     scenario: "低成本 / 批量 / 草稿",
     speedLabel: "极速",
@@ -136,6 +143,8 @@ const DISPLAY_MODEL_LABELS = new Set([
   "DeepSeek-V4-Pro",
   "DeepSeek-V4-Flash",
   "DeepSeek Flash",
+  "deepseek-chat",
+  "deepseek-reasoner",
   "Kimi 128K",
   "Kimi-K2.7-Code-HighSpeed",
   "Qwen Plus",
@@ -250,15 +259,19 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
   const normalized = normalizeIngestModelProvider(provider);
 
   if (normalized === "deepseek-pro") {
-    return readRuntimeEnv("DEEPSEEK_PRO_MODEL")
-      || readRuntimeEnv("DEEPSEEK_MODEL")
-      || "deepseek-chat";
+    const configured = readRuntimeEnv("DEEPSEEK_PRO_MODEL") || readRuntimeEnv("DEEPSEEK_MODEL");
+
+    return configured && !LEGACY_DEEPSEEK_MODEL_IDS.has(configured.toLowerCase())
+      ? configured
+      : DEEPSEEK_PRO_MODEL_ID;
   }
 
   if (normalized === "deepseek-flash") {
-    return readRuntimeEnv("DEEPSEEK_FLASH_MODEL")
-      || readRuntimeEnv("DEEPSEEK_MODEL")
-      || "deepseek-chat";
+    const configured = readRuntimeEnv("DEEPSEEK_FLASH_MODEL") || readRuntimeEnv("DEEPSEEK_MODEL");
+
+    return configured && !LEGACY_DEEPSEEK_MODEL_IDS.has(configured.toLowerCase())
+      ? configured
+      : DEEPSEEK_FLASH_MODEL_ID;
   }
 
   if (normalized === "kimi") {

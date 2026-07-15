@@ -2,12 +2,13 @@ import "server-only";
 
 import { DEEPSEEK_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
 import {
+  DEEPSEEK_PRO_MODEL_ID,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
 
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = DEEPSEEK_PRO_MODEL_ID;
 const DEFAULT_MODEL_LABEL = "DeepSeek-V4-Pro";
 const HEALTH_TIMEOUT_MS = 25_000;
 
@@ -105,7 +106,7 @@ export async function checkDeepSeekIngestHealth(input: {
       diagnostics: [
         "请在本地 .env 或部署平台环境变量中配置 DEEPSEEK_API_KEY",
         "DEEPSEEK_BASE_URL 未配置时默认使用 https://api.deepseek.com",
-        "DEEPSEEK_MODEL 未配置时默认使用 deepseek-chat"
+        `DeepSeek Pro 默认使用 ${DEEPSEEK_PRO_MODEL_ID}`
       ]
     };
   }
