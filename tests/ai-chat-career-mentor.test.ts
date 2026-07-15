@@ -254,6 +254,9 @@ function main() {
   );
 
   assert.equal(isCareerMentorContinuationRequest("再换一个方案"), true);
+  assert.equal(isCareerMentorContinuationRequest("再换一组"), true);
+  assert.equal(isCareerMentorContinuationRequest("换一组"), true);
+  assert.equal(isCareerMentorContinuationRequest("请再换一组吧"), true);
   assert.equal(isCareerMentorContinuationRequest("换一种更自然的说法"), true);
   assert.equal(isCareerMentorContinuationRequest("换一种更强势的说法"), true);
   assert.equal(isCareerMentorContinuationRequest("这个回答不满意，重新给一个方案"), true);
@@ -262,11 +265,14 @@ function main() {
   assert.equal(isCareerMentorContinuationRequest("另外给我一个方案"), true);
   assert.equal(isCareerMentorContinuationRequest("客户现在说贵，怎么办？"), false);
   assert.equal(isCareerMentorContinuationRequest("客户说再换一个产品"), false);
+  assert.equal(isCareerMentorContinuationRequest("再换一组，客户现在说贵"), false);
+  assert.equal(isCareerMentorContinuationRequest("客户说换一组产品"), false);
+  assert.equal(isCareerMentorContinuationRequest("换组"), false);
   assert.equal(isCareerMentorContinuationRequest("换一个阶段"), false);
   assert.equal(isCareerMentorContinuationRequest("再换一个方案，客户现在说贵"), false);
 
   const resolvedIceBreakingFollowUp = resolveCareerMentorTurnContext({
-    question: "再换一个方案",
+    question: "再换一组",
     recentConversation: [
       {
         role: "user",
