@@ -318,10 +318,14 @@ async function main() {
     answerProvider: async ({
       question,
       contexts,
+      enableDeepThinking,
       businessExecutionContext,
-      recentConversation
+      recentConversation,
+      careerMentorStage
     }) => {
-      assert.equal(question, "再换一个方案");
+      assert.match(question, /客户是宝妈.*破冰/);
+      assert.equal(enableDeepThinking, true);
+      assert.equal(careerMentorStage, "ice_breaking");
       assert.deepEqual(recentConversation.map((turn) => turn.role), ["user", "assistant"]);
       assert.match(recentConversation[0].content, /客户是宝妈.*破冰/);
       assert.match(recentConversation[1].content, /第三步讲事业/);

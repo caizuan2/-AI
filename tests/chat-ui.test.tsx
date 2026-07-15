@@ -289,6 +289,8 @@ async function main() {
   assert.match(groundedCareerMarkup, /border-emerald-200 bg-white shadow-emerald-950\/5/);
 
   const adaptiveCareerReply = "姐，资料你先按自己的节奏看，看完告诉我你最想先了解哪一部分，我按你的关注点跟你说。";
+  const adaptiveCareerReply2 = "姐，不着急回复我。资料里哪一部分你比较有感觉，或者哪一部分还没看明白？";
+  const adaptiveCareerReply3 = "姐，你可以先不用一次看完。你更想先了解具体怎么做，还是时间怎么安排？";
   const dualLayerCareerAnswer = [
     "## 判断",
     "当前阶段：第二步促单跟进",
@@ -302,8 +304,14 @@ async function main() {
     "",
     "### AI思考回复话术",
     "",
-    "#### AI建议话术 1",
+    "#### AI建议话术 1（稳妥自然型）",
     `> ${adaptiveCareerReply}`,
+    "",
+    "#### AI建议话术 2（共情引导型）",
+    `> ${adaptiveCareerReply2}`,
+    "",
+    "#### AI建议话术 3（轻问推进型）",
+    `> ${adaptiveCareerReply3}`,
     "",
     "## 可复制给客户",
     "",
@@ -320,15 +328,20 @@ async function main() {
 
   assert.deepEqual(
     dualLayerScriptSegments.map((segment) => segment.variant),
-    ["careerAi", "careerKnowledge"]
+    ["careerAi", "careerAi", "careerAi", "careerKnowledge"]
   );
   assert.deepEqual(
     dualLayerScriptSegments.map((segment) => segment.title),
-    ["AI建议话术 1", "话术 1"]
+    [
+      "AI建议话术 1（稳妥自然型）",
+      "AI建议话术 2（共情引导型）",
+      "AI建议话术 3（轻问推进型）",
+      "话术 1"
+    ]
   );
   assert.deepEqual(
     dualLayerScriptSegments.map((segment) => segment.text),
-    [adaptiveCareerReply, structuredCustomerReply]
+    [adaptiveCareerReply, adaptiveCareerReply2, adaptiveCareerReply3, structuredCustomerReply]
   );
   assert.equal(dualLayerScriptSegments.some((segment) => segment.text.startsWith(">")), false);
 
@@ -354,16 +367,132 @@ async function main() {
   assert.match(dualLayerCareerMarkup, /推荐执行流程/);
   assert.match(dualLayerCareerMarkup, /AI思考回复话术/);
   assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply));
+  assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply2));
+  assert.match(dualLayerCareerMarkup, new RegExp(adaptiveCareerReply3));
   assert.match(dualLayerCareerMarkup, new RegExp(structuredCustomerReply));
-  assert.match(dualLayerCareerMarkup, /data-script-origin="career-ai"/);
+  assert.equal((dualLayerCareerMarkup.match(/data-script-origin="career-ai"/g) ?? []).length, 3);
   assert.match(dualLayerCareerMarkup, /border-teal-200 bg-white shadow-teal-950\/5/);
   assert.match(dualLayerCareerMarkup, /data-script-origin="career-knowledge"/);
   assert.match(dualLayerCareerMarkup, /border-emerald-200 bg-white shadow-emerald-950\/5/);
   assert.doesNotMatch(dualLayerCareerMarkup, /bg-teal-50\/70|bg-emerald-50\/70/);
-  assert.equal((dualLayerCareerMarkup.match(/复制话术/g) ?? []).length, 2);
+  assert.equal((dualLayerCareerMarkup.match(/复制话术/g) ?? []).length, 4);
   assert.ok(
     dualLayerCareerMarkup.indexOf("data-script-origin=\"career-ai\"")
       < dualLayerCareerMarkup.indexOf("data-script-origin=\"career-knowledge\"")
+  );
+
+  const fencedCareerAnswer = [
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "代码块中的同名标题只是正文示例，不能拆成复制卡片。",
+    "",
+    "````markdown",
+    "```markdown",
+    "### AI思考回复话术",
+    "#### AI建议话术 1",
+    "> 代码块里的示例话术。",
+    "可直接复制给客户：“代码块里的内联示例不能成为卡片。”",
+    "```",
+    "````",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${adaptiveCareerReply}`,
+    "#### AI建议话术 2（共情引导型）",
+    `> ${adaptiveCareerReply2}`,
+    "#### AI建议话术 3（轻问推进型）",
+    `> ${adaptiveCareerReply3}`,
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> ${structuredCustomerReply}`
+  ].join("\n");
+  const fencedCareerSegments = splitNaturalAnswerForCustomerScriptCards(
+    fencedCareerAnswer,
+    { careerMentorMode: true }
+  );
+  const fencedCareerScriptSegments = fencedCareerSegments.filter(
+    (segment): segment is Extract<(typeof fencedCareerSegments)[number], { kind: "customerScript" }> => segment.kind === "customerScript"
+  );
+  const fencedCareerMarkdown = fencedCareerSegments
+    .filter((segment): segment is Extract<(typeof fencedCareerSegments)[number], { kind: "markdown" }> => segment.kind === "markdown")
+    .map((segment) => segment.text)
+    .join("\n");
+
+  assert.deepEqual(
+    fencedCareerScriptSegments.map((segment) => segment.variant),
+    ["careerAi", "careerAi", "careerAi", "careerKnowledge"]
+  );
+  assert.match(
+    fencedCareerMarkdown,
+    /````markdown[\s\S]*```markdown[\s\S]*### AI思考回复话术[\s\S]*代码块里的示例话术。[\s\S]*代码块里的内联示例不能成为卡片。[\s\S]*```[\s\S]*````/
+  );
+
+  const fencedCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: fencedCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: structuredCustomerReply,
+        nextAction: ""
+      }}
+      rawAnswerText={fencedCareerAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.equal((fencedCareerMarkup.match(/data-script-origin="career-ai"/g) ?? []).length, 3);
+  assert.match(fencedCareerMarkup, /代码块里的示例话术。/);
+  assert.match(fencedCareerMarkup, /代码块里的内联示例不能成为卡片。/);
+
+  const indentedCareerAnswer = [
+    "## 判断",
+    "当前阶段：第二步促单跟进",
+    "",
+    "## 回复思路",
+    "四空格缩进代码只属于正文。",
+    "",
+    "    ### AI思考回复话术",
+    "    #### AI建议话术 1",
+    "    > 缩进代码里的示例话术不能成为卡片。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${adaptiveCareerReply}`,
+    "#### AI建议话术 2（共情引导型）",
+    `> ${adaptiveCareerReply2}`,
+    "#### AI建议话术 3（轻问推进型）",
+    `> ${adaptiveCareerReply3}`,
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> ${structuredCustomerReply}`
+  ].join("\n");
+  const indentedCareerSegments = splitNaturalAnswerForCustomerScriptCards(
+    indentedCareerAnswer,
+    { careerMentorMode: true }
+  );
+  const indentedCareerScriptSegments = indentedCareerSegments.filter(
+    (segment): segment is Extract<(typeof indentedCareerSegments)[number], { kind: "customerScript" }> => segment.kind === "customerScript"
+  );
+  const indentedCareerMarkdown = indentedCareerSegments
+    .filter((segment): segment is Extract<(typeof indentedCareerSegments)[number], { kind: "markdown" }> => segment.kind === "markdown")
+    .map((segment) => segment.text)
+    .join("\n");
+
+  assert.deepEqual(
+    indentedCareerScriptSegments.map((segment) => segment.variant),
+    ["careerAi", "careerAi", "careerAi", "careerKnowledge"]
+  );
+  assert.match(
+    indentedCareerMarkdown,
+    /    ### AI思考回复话术\n    #### AI建议话术 1\n    > 缩进代码里的示例话术不能成为卡片。/
   );
 
   const legacyPlainSectionSegments = splitNaturalAnswerForCustomerScriptCards([
@@ -389,8 +518,12 @@ async function main() {
     "",
     "## 回复思路",
     "### AI思考回复话术",
-    "#### AI建议话术 1",
-    `> ${adaptiveCareerReply}`
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${adaptiveCareerReply}`,
+    "#### AI建议话术 2（共情引导型）",
+    `> ${adaptiveCareerReply2}`,
+    "#### AI建议话术 3（轻问推进型）",
+    `> ${adaptiveCareerReply3}`
   ].join("\n");
   const adaptiveOnlyCareerMarkup = renderToStaticMarkup(
     <ProductAnswerView
@@ -409,9 +542,9 @@ async function main() {
     />
   );
 
-  assert.match(adaptiveOnlyCareerMarkup, /data-script-origin="career-ai"/);
+  assert.equal((adaptiveOnlyCareerMarkup.match(/data-script-origin="career-ai"/g) ?? []).length, 3);
   assert.match(adaptiveOnlyCareerMarkup, /data-script-origin="career-knowledge"/);
-  assert.equal((adaptiveOnlyCareerMarkup.match(/复制话术/g) ?? []).length, 2);
+  assert.equal((adaptiveOnlyCareerMarkup.match(/复制话术/g) ?? []).length, 4);
 
   const nonCareerDualLayerMarkup = renderToStaticMarkup(
     <ProductAnswerView

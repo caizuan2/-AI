@@ -354,6 +354,47 @@ async function main() {
   assert.match(wechatRoleResult.answer, /客户最后问的是/);
   assert.match(wechatRoleResult.answer, /您这边主要是做什么的/);
 
+  const careerOcrOnlyFake = createFakeDb();
+  let careerOcrOnlyProviderCalled = false;
+  const careerOcrOnlyResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "客户说贵怎么回复？",
+    mode: "expert",
+    agentId: "expert-career",
+    knowledgeBaseId: "kb-business-coach",
+    namespace: "kb-business-coach",
+    attachments: [{
+      type: "image",
+      name: "career-objection.png",
+      filename: "career-objection.png",
+      mime_type: "image/png",
+      metadata: {
+        ocrStatus: "ok",
+        ocrText: "客户(左侧)：我觉得有点贵，想再考虑一下。"
+      }
+    }]
+  }, {
+    db: careerOcrOnlyFake.db,
+    providerConfigured: true,
+    answerProvider: async () => {
+      careerOcrOnlyProviderCalled = true;
+      return {
+        answer: "没有知识证据时不应该调用模型。",
+        providerUsed: "test",
+        modelUsed: "test-model",
+        fallbackUsed: false
+      };
+    }
+  });
+
+  assert.equal(careerOcrOnlyProviderCalled, false);
+  assert.equal(careerOcrOnlyResult.provider_status, "no_relevant_knowledge");
+  assert.match(careerOcrOnlyResult.answer, /本轮暂未形成可验证的同阶段知识证据链/);
+  assert.doesNotMatch(careerOcrOnlyResult.answer, /### AI思考回复话术|### 话术 1/);
+  assert.equal(careerOcrOnlyResult.customer_answer, "");
+
   const missingOcrFake = createFakeDb();
   let missingOcrProviderCalled = false;
   const missingOcrResult = await handleAiChatAsk({

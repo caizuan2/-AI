@@ -116,6 +116,7 @@ export interface RetrieveRelevantChunksOptions {
     tenantId?: string | null;
     namespace?: string | null;
   } | null;
+  allowScopedFallback?: boolean;
   db?: RagSearchDb;
 }
 
@@ -975,7 +976,11 @@ export async function retrieveRelevantChunks(query: string, options: RetrieveRel
   const primaryRows = terms.length > 0 ? await fetchRows(true) : [];
   const primaryChunks = rankRows(primaryRows);
 
-  if (primaryChunks.length > 0 || !hasKnowledgeScope(options)) {
+  if (
+    primaryChunks.length > 0
+    || !hasKnowledgeScope(options)
+    || options.allowScopedFallback === false
+  ) {
     return primaryChunks;
   }
 

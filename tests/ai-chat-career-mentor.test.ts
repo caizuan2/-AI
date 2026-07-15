@@ -4,10 +4,12 @@ import {
   CAREER_MENTOR_KNOWLEDGE_TREE,
   CAREER_MENTOR_POLICY_VERSION,
   buildCareerMentorBusinessContext,
+  buildCareerMentorNoEvidenceAnswer,
   buildCareerMentorRetrievalQuery,
   buildCareerMentorRetrievalQueries,
   classifyCareerMentorQuestion,
   cleanCareerMentorUserAnswer,
+  extractCareerMentorExplicitCustomerScriptBlocks,
   extractCareerMentorCustomerAnswer,
   isCareerMentorContinuationRequest,
   isCareerMentorScope,
@@ -65,6 +67,65 @@ function main() {
   assert.match(CAREER_MENTOR_KNOWLEDGE_TREE[2].flow.join(" -> "), /七条注意事项/);
   assert.match(CAREER_MENTOR_KNOWLEDGE_TREE[3].flow.join(" -> "), /认可客户感受.*一句话.*核心价值/);
   assert.match(CAREER_MENTOR_KNOWLEDGE_TREE[4].flow.join(" -> "), /行动时间.*降低行动阻力.*第四步/);
+
+  assert.deepEqual(extractCareerMentorExplicitCustomerScriptBlocks([
+    "话术全文",
+    "",
+    "第一句。",
+    "",
+    "第二句。",
+    "",
+    "讲这个的时候要注意",
+    "这是内部说明。",
+    "",
+    "固定话术1（稳妥版）：",
+    "",
+    "第三句。",
+    "",
+    "第四句。",
+    "",
+    "二、下一节"
+  ].join("\n")), [
+    "第一句。\n\n第二句。",
+    "第三句。\n\n第四句。"
+  ]);
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("第二步促单跟进。完整话术：客户逐字原话。"),
+    ["客户逐字原话。"]
+  );
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("文案：客户逐字原话。 核心——这是内部解释。"),
+    ["客户逐字原话。"]
+  );
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("话术（一对一版）\n\n重要客户——这里是内部使用说明。"),
+    []
+  );
+  assert.deepEqual(extractCareerMentorExplicitCustomerScriptBlocks([
+    "话术全文",
+    "",
+    "第一句。",
+    "",
+    "话术全文",
+    "",
+    "第二句。"
+  ].join("\n")), ["第一句。", "第二句。"]);
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("文案：客户逐字原话。 （配图：内部截图）"),
+    ["客户逐字原话。"]
+  );
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("话术：先问候客户。 （先聊几句——然后等他回复） 再自然收尾。"),
+    ["先问候客户。 再自然收尾。"]
+  );
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("话术：姐，最近怎么样？ （关心的语气——不是促单的语气——让他放松）"),
+    ["姐，最近怎么样？"]
+  );
+  assert.deepEqual(
+    extractCareerMentorExplicitCustomerScriptBlocks("你怎么接\n\n\"回头再联系你\""),
+    []
+  );
 
   assert.equal(isCareerMentorScope({
     agentId: "expert-career",
@@ -135,6 +196,7 @@ function main() {
     ["客户成交以后，怎么长期维护关系？", "maintenance"],
     ["客户成交以后怎么维护老客户？", "maintenance"],
     ["给客户发我视频资料了，怎么跟进呢", "follow_up"],
+    ["客户说晚点再看资料，我怎么跟进？", "follow_up"],
     ["我已经给她发完视频了，下一步呢", "follow_up"],
     ["还没发资料，怎么跟进", "ice_breaking"],
     ["还没有给客户发送视频资料，怎么跟进", "ice_breaking"],
@@ -329,8 +391,10 @@ function main() {
   assert.match(policy, /不润色、不纠错、不缩写、不拼接、不补词/);
   assert.match(policy, /内部使用\/绝不发给客户.*严禁进入话术卡/);
   assert.match(policy, /### AI思考回复话术/);
-  assert.match(policy, /#### AI建议话术 1.*#### AI建议话术 2/);
-  assert.match(policy, /客户原话、当前阶段、已执行动作和命中知识生成 1—2 条短话术/);
+  assert.match(policy, /固定生成 3 条可选择的短话术/);
+  assert.match(policy, /AI建议话术 1（稳妥自然型）.*AI建议话术 2（共情引导型）.*AI建议话术 3（轻问推进型）/);
+  assert.match(policy, /不得省略流程、减少数量或合并话术/);
+  assert.doesNotMatch(policy, /1—2 条短话术|可选的.*AI建议话术 2/);
   assert.match(policy, /不得编造公司、产品、收益或案例事实/);
   assert.match(policy, /最下面只保留固定知识库话术，不放 AI 改写或延伸/);
   assert.match(policy, /没有精确固定话术命中，先请用户补充/);
@@ -346,7 +410,7 @@ function main() {
   assert.match(followUpPolicy, /只代表更换方案或说法，不代表客户状态前进/);
   assert.match(followUpPolicy, /第一步：破冰/);
   assert.match(followUpPolicy, /客户是宝妈，应该怎么破冰/);
-  assert.match(policy, /不得省略流程或动态话术/);
+  assert.match(policy, /不得省略流程、减少数量或合并话术/);
   assert.match(policy, /完整 DeepSeek\/GPT 风格 Markdown 正文/);
   assert.doesNotMatch(policy, /业务问题 客户问题 成交 回复 处理建议/);
   assert.ok(policy.length <= 2700);
@@ -417,12 +481,14 @@ function main() {
       createChunk({
         chunkId: "career-question",
         knowledgeItemId: "career-lesson-1",
+        title: "02_讲事业沟通五步·第二步_促单跟进_精读笔记_WPS排版版",
         content: `测试提问 1：${question}`,
         relevanceScore: 0.22
       }),
       createChunk({
         chunkId: "career-answer",
         knowledgeItemId: "career-lesson-1",
+        title: "02_讲事业沟通五步·第二步_促单跟进_精读笔记_WPS排版版",
         content: "预期输出（操作指导模式）：第一步立即转身激发；第二步五分钟后发送对应素材。话术：姐，我刚忙完一个客户。",
         relevanceScore: 0.18
       })
@@ -474,10 +540,77 @@ function main() {
 
   assert.deepEqual(
     knowledgeLayerRanked.map((chunk) => chunk.chunkId),
-    ["matching-copy-card", "matching-operator-card", "generic-exact"]
+    ["matching-copy-card", "matching-operator-card"]
   );
+  assert.equal(knowledgeLayerRanked.some((chunk) => chunk.chunkId === "generic-exact"), false);
   assert.equal(knowledgeLayerRanked.some((chunk) => chunk.chunkId === "wrong-stage-copy-card"), false);
   assert.equal(knowledgeLayerRanked.some((chunk) => chunk.chunkId === "untagged-copy-card"), false);
+
+  const closingLayerRanked = prioritizeCareerMentorChunks({
+    question: "客户已经认可但迟迟不加入，下一步怎么推进？",
+    topK: 14,
+    chunks: [
+      createChunk({
+        chunkId: "combined-file-objection-only",
+        knowledgeItemId: "combined-file-objection-only-item",
+        title: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版",
+        content: "第四步锁定问题。客户说贵时，先认可，再围绕价值解释解决顾虑，不要直接推进成交。",
+        relevanceScore: 0.99
+      }),
+      createChunk({
+        chunkId: "combined-file-natural-objection",
+        knowledgeItemId: "combined-file-natural-objection-item",
+        title: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版",
+        content: "客户说太贵怎么办？先顺着他说，不要着急反驳，再问他真正担心的是什么，不要推进下一步。",
+        relevanceScore: 0.98
+      }),
+      createChunk({
+        chunkId: "combined-file-ambiguous",
+        knowledgeItemId: "combined-file-ambiguous-item",
+        title: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版",
+        content: "和客户继续保持联系，等对方后续反馈。",
+        relevanceScore: 0.97
+      }),
+      createChunk({
+        chunkId: "combined-file-closing",
+        knowledgeItemId: "combined-file-closing-item",
+        title: "04_讲事业第四五步_客户可复制话术卡片_WPS排版版",
+        content: "第五步成交。完成价值确认，明确行动时间，降低行动阻力，再推进一个具体下一步。",
+        relevanceScore: 0.2
+      })
+    ]
+  });
+
+  assert.deepEqual(
+    closingLayerRanked.map((chunk) => chunk.chunkId),
+    ["combined-file-closing"]
+  );
+
+  const sameDocumentObjectionRanked = prioritizeCareerMentorChunks({
+    question: "客户说贵怎么办？",
+    topK: 14,
+    chunks: [
+      createChunk({
+        chunkId: "same-doc-objection",
+        knowledgeItemId: "same-combined-document",
+        title: "04_讲事业第四五步_精读笔记_WPS排版版",
+        content: "第四步锁定问题。客户说贵时先认可，再围绕价值解释解决顾虑。",
+        relevanceScore: 0.7
+      }),
+      createChunk({
+        chunkId: "same-doc-closing",
+        knowledgeItemId: "same-combined-document",
+        title: "04_讲事业第四五步_精读笔记_WPS排版版",
+        content: "第五步成交。完成价值确认，明确行动时间，再推进一个具体下一步。",
+        relevanceScore: 0.69
+      })
+    ]
+  });
+
+  assert.deepEqual(
+    sameDocumentObjectionRanked.map((chunk) => chunk.chunkId),
+    ["same-doc-objection"]
+  );
 
   const presentationLayerRanked = prioritizeCareerMentorChunks({
     question: "第三步讲事业时，怎么要求客户认真听？",
@@ -629,7 +762,10 @@ function main() {
   assert.match(groundedFullBody, new RegExp(exactKnowledgeScript.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(groundedFullBody, /完整 DeepSeek\/GPT 正文与代码块必须保留/);
   assert.match(groundedFullBody, /### AI思考回复话术/);
-  assert.match(groundedFullBody, /#### AI建议话术 1/);
+  assert.match(groundedFullBody, /#### AI建议话术 1（稳妥自然型）/);
+  assert.match(groundedFullBody, /#### AI建议话术 2（共情引导型）/);
+  assert.match(groundedFullBody, /#### AI建议话术 3（轻问推进型）/);
+  assert.equal((groundedFullBody.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
   assert.match(groundedFullBody, /资料你先按自己的节奏看/);
   assert.doesNotMatch(groundedFullBody, /这是依据同阶段知识生成的可选变体/);
   assert.equal((groundedFullBody.match(/## 可复制给客户/g) ?? []).length, 1);
@@ -674,12 +810,261 @@ function main() {
 
   assert.match(sanitizedInventedAdaptiveReply, /完整正文继续保留/);
   assert.match(sanitizedInventedAdaptiveReply, /### AI思考回复话术/);
-  assert.match(sanitizedInventedAdaptiveReply, /#### AI建议话术 1/);
+  assert.equal((sanitizedInventedAdaptiveReply.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
   assert.match(sanitizedInventedAdaptiveReply, /带孩子的同时还要安排好自己的生活/);
   assert.match(sanitizedInventedAdaptiveReply, /### 推荐执行流程/);
   assert.match(sanitizedInventedAdaptiveReply, /完整流程正文不能被动态话术清洗删除/);
   assert.doesNotMatch(sanitizedInventedAdaptiveReply, /李姐|宝宝第一次自己吃饭|20多位|稳定分润/);
   assert.match(extractCareerMentorCustomerAnswer(sanitizedInventedAdaptiveReply), /^姐\/哥，我们这个事业很简单/);
+
+  const mixedAdaptiveReplies = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "完整正文和三条动态话术必须同时保留。",
+    "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。",
+    "",
+    "#### AI建议话术 2（共情引导型）",
+    "> 李姐，刚看到您朋友圈的新照片，我们已经帮20位伙伴实现稳定收益。",
+    "",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。",
+    "",
+    "#### AI建议话术 4（多余话术）",
+    "> 第四条不应进入最终输出。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((mixedAdaptiveReplies.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.equal((mixedAdaptiveReplies.match(/资料先按自己的节奏看，您最想了解哪部分/g) ?? []).length, 1);
+  assert.doesNotMatch(mixedAdaptiveReplies, /李姐|朋友圈的新照片|20位|稳定收益|第四条不应进入/);
+  assert.match(mixedAdaptiveReplies, /不着急回复我/);
+  assert.match(mixedAdaptiveReplies, /您可以先不用一次看完/);
+  assert.equal(extractCareerMentorCustomerAnswer(mixedAdaptiveReplies), exactKnowledgeScript);
+  assert.equal(cleanCareerMentorUserAnswer(mixedAdaptiveReplies, {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  }), mixedAdaptiveReplies);
+
+  const duplicateAdaptiveSections = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "重复区段必须合并成唯一三条，区段之间的正文仍要保留。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。",
+    "",
+    "### 推荐执行流程",
+    "1. 这段流程正文不能被删除。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（重复）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。",
+    "#### AI建议话术 2（共情引导型）",
+    "> 姐，不着急回复我，您先告诉我资料里最想了解哪一部分。",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 姐，您更想先了解具体怎么做，还是时间怎么安排？",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((duplicateAdaptiveSections.match(/### AI思考回复话术/g) ?? []).length, 1);
+  assert.equal((duplicateAdaptiveSections.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.equal((duplicateAdaptiveSections.match(/资料先按自己的节奏看，您最想了解哪部分/g) ?? []).length, 1);
+  assert.match(duplicateAdaptiveSections, /这段流程正文不能被删除/);
+  assert.equal(extractCareerMentorCustomerAnswer(duplicateAdaptiveSections), exactKnowledgeScript);
+  assert.equal(cleanCareerMentorUserAnswer(duplicateAdaptiveSections, {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  }), duplicateAdaptiveSections);
+
+  const orphanAdaptiveHeading = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "模型漏掉容器标题时也只能保留三条卡片。",
+    "",
+    "**AI建议话术 1（稳妥自然型）**",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((orphanAdaptiveHeading.match(/### AI思考回复话术/g) ?? []).length, 1);
+  assert.equal((orphanAdaptiveHeading.match(/#### AI建议话术 [123]（/g) ?? []).length, 3);
+  assert.equal((orphanAdaptiveHeading.match(/资料先按自己的节奏看，您最想了解哪部分/g) ?? []).length, 1);
+  assert.equal(extractCareerMentorCustomerAnswer(orphanAdaptiveHeading), exactKnowledgeScript);
+
+  const unsupportedInstitutionAndCaseClaims = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "只替换没有知识依据的公司、产品和案例事实。",
+    "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 我们公司已经获得国家认证，您可以放心了解。",
+    "",
+    "#### AI建议话术 2（共情引导型）",
+    "> 产品经过权威检测，所以完全不用担心。",
+    "",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 我们帮助很多宝妈改善了生活，很多客户都成功了。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((unsupportedInstitutionAndCaseClaims.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.doesNotMatch(
+    unsupportedInstitutionAndCaseClaims,
+    /国家认证|权威检测|帮助很多宝妈|很多客户都成功/
+  );
+  assert.match(unsupportedInstitutionAndCaseClaims, /资料您先按自己的节奏看/);
+  assert.equal(extractCareerMentorCustomerAnswer(unsupportedInstitutionAndCaseClaims), exactKnowledgeScript);
+
+  const additionalUnsupportedClaims = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "个人案例、团队年限和收益保证都必须有依据。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 我帮客户解决过很多类似问题，您放心。",
+    "#### AI建议话术 2（共情引导型）",
+    "> 我们的团队有十年经验，您可以放心。",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 这个事业保证赚钱，您不用担心。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((additionalUnsupportedClaims.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.doesNotMatch(additionalUnsupportedClaims, /帮客户解决过|十年经验|保证赚钱/);
+  assert.equal(extractCareerMentorCustomerAnswer(additionalUnsupportedClaims), exactKnowledgeScript);
+
+  const unsupportedCompanyProductRiskAssertions = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "公司实力、产品效果和风险保证都必须有知识依据。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 我们公司实力很强，您可以放心。",
+    "#### AI建议话术 2（共情引导型）",
+    "> 这个产品效果很好，很多人都说不错。",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 这是一个零风险的事业机会。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((unsupportedCompanyProductRiskAssertions.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.doesNotMatch(
+    unsupportedCompanyProductRiskAssertions,
+    /公司实力很强|产品效果很好|零风险/
+  );
+  assert.equal(extractCareerMentorCustomerAnswer(unsupportedCompanyProductRiskAssertions), exactKnowledgeScript);
+
+  const fixedKnowledgeCopyNotReusedAsAiReply = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "AI 动态建议不能照抄最下方固定知识库话术。",
+    "",
+    "### AI思考回复话术",
+    "",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${exactKnowledgeScript}`,
+    "",
+    "#### AI建议话术 2（共情引导型）",
+    "> 姐，不着急回复我，您先告诉我资料里最想了解哪一部分。",
+    "",
+    "#### AI建议话术 3（轻问推进型）",
+    "> 姐，您更想先了解具体怎么做，还是时间怎么安排？",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((fixedKnowledgeCopyNotReusedAsAiReply.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.equal(fixedKnowledgeCopyNotReusedAsAiReply.split(exactKnowledgeScript).length - 1, 1);
+  assert.match(fixedKnowledgeCopyNotReusedAsAiReply, /资料您先按自己的节奏看/);
+  assert.equal(extractCareerMentorCustomerAnswer(fixedKnowledgeCopyNotReusedAsAiReply), exactKnowledgeScript);
+
+  const shortClosingKnowledgeScript = "姐——搞明白了吧？微信还是支付宝？";
+  const shortFixedKnowledgeCopyNotReused = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第五步成交。",
+    "",
+    "## 回复思路",
+    "短固定知识话术同样不能在 AI 建议区重复。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${shortClosingKnowledgeScript}`,
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> ${shortClosingKnowledgeScript}`
+  ].join("\n"), {
+    chunks: [],
+    question: "客户认可但是不加入？"
+  });
+
+  assert.equal((shortFixedKnowledgeCopyNotReused.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.equal(shortFixedKnowledgeCopyNotReused.split(shortClosingKnowledgeScript).length - 1, 1);
+  assert.equal(extractCareerMentorCustomerAnswer(shortFixedKnowledgeCopyNotReused), shortClosingKnowledgeScript);
 
   const providedCustomerNameIsPreserved = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -702,7 +1087,7 @@ function main() {
     "",
     "## 回复思路",
     "### AI思考回复话术",
-    "#### 话术 1",
+    "### 话术 1",
     "> 姐，资料你先按自己的节奏看，看完告诉我你最想了解哪一部分。",
     "",
     "## 可复制给客户",
@@ -714,10 +1099,11 @@ function main() {
   });
 
   assert.match(formatDriftAiHeadingAnswer, /### AI思考回复话术/);
-  assert.match(formatDriftAiHeadingAnswer, /#### 话术 1/);
+  assert.match(formatDriftAiHeadingAnswer, /#### AI建议话术 1（稳妥自然型）/);
+  assert.equal((formatDriftAiHeadingAnswer.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
   assert.match(formatDriftAiHeadingAnswer, /资料你先按自己的节奏看/);
   assert.ok(
-    formatDriftAiHeadingAnswer.indexOf("#### 话术 1")
+    formatDriftAiHeadingAnswer.indexOf("#### AI建议话术 1")
       < formatDriftAiHeadingAnswer.indexOf("## 可复制给客户")
   );
   assert.equal(extractCareerMentorCustomerAnswer(formatDriftAiHeadingAnswer), exactKnowledgeScript);
@@ -740,7 +1126,164 @@ function main() {
 
   assert.match(negativeInstructionPreserved, /以下是内部分析，不可复制给客户。/);
   assert.match(negativeInstructionPreserved, /这一段完整正文必须保留。/);
+  assert.equal((negativeInstructionPreserved.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.ok(negativeInstructionPreserved.indexOf("### AI思考回复话术") < negativeInstructionPreserved.indexOf("## 可复制给客户"));
   assert.equal(extractCareerMentorCustomerAnswer(negativeInstructionPreserved), exactKnowledgeScript);
+
+  const frameworkAnswerWithoutAdaptiveReplies = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前问题是沟通五步骤框架说明。",
+    "",
+    "## 回复思路",
+    "按五个阶段完整说明，不生成客户动态话术。"
+  ].join("\n"), {
+    chunks: [],
+    question: "沟通五步骤是什么？"
+  });
+
+  assert.doesNotMatch(frameworkAnswerWithoutAdaptiveReplies, /### AI思考回复话术|#### AI建议话术/);
+
+  for (const nonCoreScenario of [
+    {
+      question: "沟通五步骤是什么？",
+      stage: "框架说明"
+    },
+    {
+      question: "长期客户应该怎么维护？",
+      stage: "长期维护"
+    }
+  ]) {
+    const nonCoreHallucinatedAdaptiveReply = cleanCareerMentorUserAnswer([
+      "## 判断",
+      `当前阶段：${nonCoreScenario.stage}。`,
+      "",
+      "## 回复思路",
+      "这段非核心阶段正文必须保留。",
+      "",
+      "### AI思考回复话术",
+      "#### AI建议话术 1（不应显示）",
+      "> 这条模型误生成的话术必须移除。"
+    ].join("\n"), {
+      chunks: [],
+      question: nonCoreScenario.question
+    });
+
+    assert.match(nonCoreHallucinatedAdaptiveReply, /这段非核心阶段正文必须保留/);
+    assert.doesNotMatch(
+      nonCoreHallucinatedAdaptiveReply,
+      /### AI思考回复话术|#### AI建议话术|模型误生成的话术/
+    );
+  }
+
+  const fixedCopyBeforeAdaptiveReplies = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "即使模型把固定知识卡放在前面，最终结构也必须纠正。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`,
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。"
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((fixedCopyBeforeAdaptiveReplies.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.ok(
+    fixedCopyBeforeAdaptiveReplies.indexOf("### AI思考回复话术")
+      < fixedCopyBeforeAdaptiveReplies.indexOf("## 可复制给客户")
+  );
+  assert.equal(extractCareerMentorCustomerAnswer(fixedCopyBeforeAdaptiveReplies), exactKnowledgeScript);
+
+  const orphanFixedCopyBeforeAdaptiveReplies = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "固定知识卡容器标题漂移时也必须纠正顺序。",
+    "",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`,
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 姐，资料先按自己的节奏看，您最想了解哪部分就告诉我。"
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.equal((orphanFixedCopyBeforeAdaptiveReplies.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  assert.ok(
+    orphanFixedCopyBeforeAdaptiveReplies.indexOf("### AI思考回复话术")
+      < orphanFixedCopyBeforeAdaptiveReplies.indexOf("## 可复制给客户")
+  );
+  assert.equal(extractCareerMentorCustomerAnswer(orphanFixedCopyBeforeAdaptiveReplies), canonicalFollowUpScript);
+
+  const indentedCodeAdaptiveHeading = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "下面是四空格缩进代码，必须逐字保留。",
+    "",
+    "    ### AI思考回复话术",
+    "    #### AI建议话术 1",
+    "    > 缩进代码里的示例话术不能成为卡片。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(
+    indentedCodeAdaptiveHeading,
+    /    ### AI思考回复话术\n    #### AI建议话术 1\n    > 缩进代码里的示例话术不能成为卡片。/
+  );
+  assert.equal((indentedCodeAdaptiveHeading.match(/#### AI建议话术 [123]（/g) ?? []).length, 3);
+  assert.ok(
+    indentedCodeAdaptiveHeading.lastIndexOf("### AI思考回复话术")
+      < indentedCodeAdaptiveHeading.indexOf("## 可复制给客户")
+  );
+
+  const fencedAdaptiveHeading = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "以下代码块只是格式示例，必须原样保留。",
+    "",
+    "````markdown",
+    "```markdown",
+    "### AI思考回复话术",
+    "#### AI建议话术 1",
+    "> 代码块里的示例话术。",
+    "```",
+    "````",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    `> “${exactKnowledgeScript}”`
+  ].join("\n"), {
+    chunks: [groundedChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？"
+  });
+
+  assert.match(
+    fencedAdaptiveHeading,
+    /````markdown[\s\S]*```markdown[\s\S]*代码块里的示例话术。[\s\S]*```[\s\S]*````/
+  );
+  assert.equal((fencedAdaptiveHeading.match(/#### AI建议话术 [123]（/g) ?? []).length, 3);
+  assert.ok(fencedAdaptiveHeading.lastIndexOf("### AI思考回复话术") < fencedAdaptiveHeading.indexOf("## 可复制给客户"));
 
   const appendedCanonicalCopy = cleanCareerMentorUserAnswer([
     "## 判断",
@@ -1018,6 +1561,118 @@ function main() {
 
   assert.match(maintenanceFallback, /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.equal(extractCareerMentorCustomerAnswer(maintenanceFallback), "");
+
+  const strictNoEvidenceAnswer = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "正文保留。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    "> 这条没有证据的话术不能显示。",
+    "",
+    "## 可复制给客户",
+    "### 话术 1",
+    "> 这条没有证据的固定话术也不能显示。"
+  ].join("\n"), {
+    chunks: [],
+    question: "客户已经看了资料但没有行动，接下来怎么办？",
+    strictEvidencePlan: true,
+    evidencePlanAdaptiveReplies: [],
+    evidencePlanEvidenceIds: []
+  });
+
+  assert.match(strictNoEvidenceAnswer, /正文保留/);
+  assert.doesNotMatch(strictNoEvidenceAnswer, /AI思考回复话术|AI建议话术|没有证据的话术/);
+  assert.match(strictNoEvidenceAnswer, /本轮没有检索到可逐字核对的同阶段客户话术/);
+  assert.equal(extractCareerMentorCustomerAnswer(strictNoEvidenceAnswer), "");
+
+  const strictEvidenceChunk = createChunk({
+    chunkId: "strict-follow-up-evidence",
+    knowledgeItemId: "strict-follow-up-item",
+    title: "02_促单跟进_客户可复制话术卡片_WPS排版版",
+    content: [
+      "第二步促单跟进。",
+      "固定话术：资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。"
+    ].join("\n"),
+    relevanceScore: 0.82
+  });
+  const evidencePlanReplies = [
+    "您好，资料您先慢慢看，您最想先了解哪一部分，我就从那一点和您说。",
+    "您好，不着急回复，哪里还没看明白您直接告诉我，我们先把那一点聊清楚。",
+    "您好，您更想先了解具体怎么做，还是想先确认时间怎么安排？"
+  ];
+  const strictPlanFilledAnswer = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "根据当前资料继续温和跟进。",
+    "",
+    "### 推荐执行流程",
+    "1. 先确认客户最关注的部分。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${evidencePlanReplies[0]}`,
+    "",
+    "## 可复制给客户"
+  ].join("\n"), {
+    chunks: [strictEvidenceChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？",
+    strictEvidencePlan: true,
+    evidencePlanAdaptiveReplies: evidencePlanReplies,
+    evidencePlanFixedScript: "资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。",
+    evidencePlanEvidenceIds: ["strict-follow-up-evidence"]
+  });
+
+  assert.equal((strictPlanFilledAnswer.match(/#### AI建议话术 [123]/g) ?? []).length, 3);
+  for (const reply of evidencePlanReplies) {
+    assert.equal(strictPlanFilledAnswer.includes(reply), true);
+  }
+  assert.equal(
+    extractCareerMentorCustomerAnswer(strictPlanFilledAnswer),
+    "资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。"
+  );
+
+  const strictRejectedReplyAnswer = cleanCareerMentorUserAnswer([
+    "## 判断",
+    "当前阶段：第二步促单跟进。",
+    "",
+    "## 回复思路",
+    "正文仍应保留。",
+    "",
+    "### 推荐执行流程",
+    "1. 先确认客户最关注的部分。",
+    "",
+    "### AI思考回复话术",
+    "#### AI建议话术 1（稳妥自然型）",
+    `> ${evidencePlanReplies[0]}`,
+    "",
+    "## 可复制给客户"
+  ].join("\n"), {
+    chunks: [strictEvidenceChunk],
+    question: "客户已经看了资料但没有行动，接下来怎么办？",
+    strictEvidencePlan: true,
+    evidencePlanAdaptiveReplies: [
+      evidencePlanReplies[0],
+      "我们公司保证月入过万，您现在加入一定能赚钱。",
+      evidencePlanReplies[2]
+    ],
+    evidencePlanFixedScript: "资料您先按自己的节奏看，看完告诉我您最想了解哪一部分。",
+    evidencePlanEvidenceIds: ["strict-follow-up-evidence"]
+  });
+
+  assert.match(strictRejectedReplyAnswer, /正文仍应保留/);
+  assert.doesNotMatch(strictRejectedReplyAnswer, /AI思考回复话术|AI建议话术|保证月入过万/);
+
+  const noEvidenceBody = buildCareerMentorNoEvidenceAnswer(
+    "客户已经看了资料但没有行动，接下来怎么办？"
+  );
+  assert.match(noEvidenceBody, /## 判断[\s\S]*## 回复思路[\s\S]*### 推荐执行流程/);
+  assert.doesNotMatch(noEvidenceBody, /### AI思考回复话术|### 话术 1/);
 
   console.log("ai-chat career mentor tests passed");
 }
