@@ -3,7 +3,7 @@ import "server-only";
 import { randomBytes } from "crypto";
 import { LicenseKeyStatus, type Prisma } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
-import { hashLicenseKey } from "@/lib/auth/license";
+import { getAcceptedLicenseHashes, hashLicenseKey, normalizeLicenseKey } from "@/lib/auth/license";
 import type { RbacUser } from "@/lib/auth/rbac";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
@@ -37,6 +37,7 @@ const LICENSE_METADATA_ACTIONS = [
   "SUPER_ADMIN_LICENSE_DISABLE"
 ];
 const LICENSE_AUDIT_ACTIONS = [...LICENSE_METADATA_ACTIONS, "reveal_license_key"];
+const PLAIN_LICENSE_KEY_PATTERN = /^XT-(?:USER|INGEST|SUPER)-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 
 type LicenseMetadata = {
   appType: SuperAdminLicenseAppType;
@@ -411,6 +412,87 @@ export async function getSuperAdminLicenseDashboard(): Promise<SuperAdminLicense
     licenses: licenses.map((license) => enrichLicense(license, metadataMap.get(license.id))),
     audit: await getSuperAdminLicenseAudit(10)
   };
+}
+
+export async function searchSuperAdminLicenses(input: {
+  query?: unknown;
+  appType?: unknown;
+}): Promise<SuperAdminLicenseRecord[]> {
+  const query = normalizeText(input.query, 200);
+
+  if (!query) {
+    throw new ValidationError("请输入要搜索的卡密、激活用户或账号。");
+  }
+
+  const appType = normalizeAppType(input.appType);
+  const normalizedLicenseKey = normalizeLicenseKey(query);
+  const keyHashes = PLAIN_LICENSE_KEY_PATTERN.test(normalizedLicenseKey)
+    ? getAcceptedLicenseHashes(normalizedLicenseKey)
+    : [];
+  let where: Prisma.LicenseKeyWhereInput;
+
+  if (keyHashes.length > 0) {
+    // Never send the plaintext key to Prisma or persist it in search metadata.
+    where = {
+      keyHash: {
+        in: keyHashes
+      }
+    };
+  } else {
+    const idFragment = query.replace(/^HASH-/i, "").trim();
+    const filters: Prisma.LicenseKeyWhereInput[] = [
+      {
+        redeemedByUserId: {
+          contains: query,
+          mode: "insensitive"
+        }
+      },
+      {
+        redeemedByUser: {
+          is: {
+            OR: [
+              { name: { contains: query, mode: "insensitive" } },
+              { phone: { contains: query, mode: "insensitive" } },
+              { email: { contains: query, mode: "insensitive" } }
+            ]
+          }
+        }
+      }
+    ];
+
+    if (idFragment) {
+      filters.unshift({
+        id: {
+          contains: idFragment,
+          mode: "insensitive"
+        }
+      });
+    }
+
+    where = { OR: filters };
+  }
+
+  const licenses = await prisma.licenseKey.findMany({
+    where,
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: 100,
+    include: {
+      redeemedByUser: {
+        select: {
+          phone: true,
+          email: true,
+          name: true
+        }
+      }
+    }
+  });
+  const metadataMap = await getLicenseMetadataMap(licenses.map((license) => license.id));
+
+  return licenses
+    .map((license) => enrichLicense(license, metadataMap.get(license.id)))
+    .filter((license) => license.appType === appType);
 }
 
 export async function generateSuperAdminLicenses(
