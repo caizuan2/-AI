@@ -26,6 +26,7 @@ export type SuperAdminGeneratedLicense = {
 export type SuperAdminLicenseRecord = {
   id: string;
   displayKey: string;
+  canReveal: boolean;
   appType: SuperAdminLicenseAppType;
   plan: SuperAdminLicensePlan;
   status: LicenseKeyStatus;
@@ -40,6 +41,11 @@ export type SuperAdminLicenseRecord = {
   redeemedByUserId: string | null;
   redeemedByUserLabel: string | null;
   redeemedByUserAccount: string | null;
+};
+
+export type SuperAdminLicenseRevealResult = {
+  id: string;
+  key: string;
 };
 
 export type SuperAdminLicenseSummary = {

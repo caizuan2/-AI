@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, KeyRound, Loader2, Search, ShieldOff } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Loader2, Search, ShieldOff } from "lucide-react";
 import {
   disableSuperAdminLicense,
   fetchSuperAdminLicenses,
-  generateSuperAdminLicenses
+  generateSuperAdminLicenses,
+  revealSuperAdminLicense
 } from "@/lib/super-admin/license-admin-client";
 import type {
   SuperAdminGeneratedLicense,
@@ -40,6 +41,8 @@ const statusClasses = {
   USED: "border-sky-200 bg-sky-50 text-sky-700",
   DISABLED: "border-slate-200 bg-slate-100 text-slate-600"
 };
+
+const LICENSES_PER_PAGE = 20;
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -345,7 +348,10 @@ function LicenseTable({
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
   const [copiedLicenseId, setCopiedLicenseId] = useState<string | null>(null);
+  const [revealingLicenseId, setRevealingLicenseId] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const normalizedQuery = activeQuery.trim().toLocaleLowerCase("zh-CN");
   const filteredLicenses = useMemo(() => {
     if (!normalizedQuery) {
@@ -357,25 +363,47 @@ function LicenseTable({
       return `${getLicenseSearchText(license)} ${plainKey ?? ""}`.toLocaleLowerCase("zh-CN").includes(normalizedQuery);
     });
   }, [generatedKeyById, licenses, normalizedQuery]);
+  const totalPages = Math.max(1, Math.ceil(filteredLicenses.length / LICENSES_PER_PAGE));
+  const visiblePage = Math.min(currentPage, totalPages);
+  const pageStart = (visiblePage - 1) * LICENSES_PER_PAGE;
+  const pageEnd = Math.min(pageStart + LICENSES_PER_PAGE, filteredLicenses.length);
+  const paginatedLicenses = filteredLicenses.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
 
   async function handleCopyLicenseKey(license: SuperAdminLicenseRecord) {
-    const plainKey = generatedKeyById.get(license.id);
+    setCopyError(null);
+    let plainKey = generatedKeyById.get(license.id);
 
-    if (!plainKey) {
+    if (!plainKey && !license.canReveal) {
+      setCopyError("这张历史卡密只保存了不可逆哈希，无法恢复明文，请生成替代卡密。");
       return;
     }
 
-    const copied = await copyTextToClipboard(plainKey);
+    try {
+      if (!plainKey) {
+        setRevealingLicenseId(license.id);
+        plainKey = (await revealSuperAdminLicense(license.id)).key;
+      }
 
-    if (copied) {
-      setCopiedLicenseId(license.id);
-      window.setTimeout(() => {
-        setCopiedLicenseId(null);
-      }, 1600);
-      return;
+      const copied = await copyTextToClipboard(plainKey);
+
+      if (copied) {
+        setCopiedLicenseId(license.id);
+        window.setTimeout(() => {
+          setCopiedLicenseId(null);
+        }, 1600);
+        return;
+      }
+
+      window.prompt("复制卡密", plainKey);
+    } catch (error) {
+      setCopyError(error instanceof Error ? error.message : "卡密复制失败，请稍后重试。");
+    } finally {
+      setRevealingLicenseId(null);
     }
-
-    window.prompt("复制卡密", plainKey);
   }
 
   if (licenses.length === 0) {
@@ -393,12 +421,14 @@ function LicenseTable({
               已筛选 {filteredLicenses.length} / {licenses.length} 条
             </p>
           ) : null}
+          {copyError ? <p className="mt-1 text-xs font-medium text-rose-600">{copyError}</p> : null}
         </div>
         <form
           className="flex w-full flex-col gap-2 sm:max-w-md sm:flex-row"
           onSubmit={(event) => {
             event.preventDefault();
             setActiveQuery(draftQuery);
+            setCurrentPage(1);
           }}
         >
           <label className="sr-only" htmlFor={`${title}-license-search`}>
@@ -443,7 +473,7 @@ function LicenseTable({
                   没有找到匹配的卡密、激活用户或账号。
                 </td>
               </tr>
-            ) : filteredLicenses.map((license) => (
+            ) : paginatedLicenses.map((license) => (
               <tr key={license.id} className="align-top">
                 <td className="px-4 py-3 font-mono text-xs text-slate-700">{generatedKeyById.get(license.id) ?? license.displayKey}</td>
                 <td className="px-4 py-3"><AppTypeBadge appType={license.appType} /></td>
@@ -469,16 +499,31 @@ function LicenseTable({
                       {disablingId === license.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ShieldOff className="h-3.5 w-3.5" />}
                       禁用
                     </button>
-                    {generatedKeyById.has(license.id) ? (
-                      <button
-                        type="button"
-                        onClick={() => handleCopyLicenseKey(license)}
-                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        {copiedLicenseId === license.id ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                        {copiedLicenseId === license.id ? "已复制" : "复制"}
-                      </button>
-                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => handleCopyLicenseKey(license)}
+                      disabled={
+                        (!generatedKeyById.has(license.id) && !license.canReveal) ||
+                        revealingLicenseId === license.id
+                      }
+                      title={!generatedKeyById.has(license.id) && !license.canReveal ? "旧版卡密未保存可恢复密文" : "复制完整卡密"}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {revealingLicenseId === license.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : copiedLicenseId === license.id ? (
+                        <Check className="h-3.5 w-3.5" />
+                      ) : (
+                        <Copy className="h-3.5 w-3.5" />
+                      )}
+                      {revealingLicenseId === license.id
+                        ? "读取中"
+                        : copiedLicenseId === license.id
+                          ? "已复制"
+                          : license.canReveal || generatedKeyById.has(license.id)
+                            ? "复制"
+                            : "旧卡不可恢复"}
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -486,6 +531,36 @@ function LicenseTable({
           </tbody>
         </table>
       </div>
+      {filteredLicenses.length > 0 ? (
+        <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <p>
+            显示第 {pageStart + 1}-{pageEnd} 条，共 {filteredLicenses.length} 条
+          </p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.max(1, visiblePage - 1))}
+              disabled={visiblePage === 1}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              上一页
+            </button>
+            <span className="min-w-20 text-center text-xs font-medium text-slate-600">
+              第 {visiblePage} / {totalPages} 页
+            </span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.min(totalPages, visiblePage + 1))}
+              disabled={visiblePage === totalPages}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              下一页
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

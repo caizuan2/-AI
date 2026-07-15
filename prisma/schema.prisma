@@ -245,14 +245,16 @@ model Session {
 }
 
 model LicenseKey {
-  id               String           @id @default(cuid())
-  keyHash          String           @unique
-  status           LicenseKeyStatus @default(UNUSED)
-  redeemedByUserId String?
-  redeemedAt       DateTime?
-  expiresAt        DateTime?
-  createdAt        DateTime         @default(now())
-  redeemedByUser   User?            @relation("LicenseRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  id                   String           @id @default(cuid())
+  keyHash              String           @unique
+  encryptedKey         String?          @map("encrypted_key") @db.Text
+  encryptionKeyVersion Int?             @map("encryption_key_version")
+  status               LicenseKeyStatus @default(UNUSED)
+  redeemedByUserId     String?
+  redeemedAt           DateTime?
+  expiresAt            DateTime?
+  createdAt            DateTime         @default(now())
+  redeemedByUser       User?            @relation("LicenseRedeemer", fields: [redeemedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([status])
   @@index([redeemedByUserId])
