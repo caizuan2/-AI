@@ -383,7 +383,14 @@ async function main() {
 
   assert.match(webDialogMarkup, /发现内容更新/);
   assert.match(webDialogMarkup, /立即更新/);
-  assert.match(webDialogMarkup, /不需要重新安装 APK\/EXE/);
+  assert.match(webDialogMarkup, /稍后提醒/);
+  assert.doesNotMatch(webDialogMarkup, /当前内容：/);
+  assert.doesNotMatch(webDialogMarkup, /最新内容：/);
+  assert.doesNotMatch(webDialogMarkup, /更新内容：/);
+  assert.doesNotMatch(webDialogMarkup, /不需要重新安装 APK\/EXE/);
+  for (const item of webManifest.user.changelog) {
+    assert.doesNotMatch(webDialogMarkup, new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
   assert.doesNotMatch(webDialogMarkup, /Android 安装包需要下载/);
 
   const androidBridgeCalls: string[] = [];

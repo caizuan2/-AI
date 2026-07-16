@@ -75,8 +75,6 @@ export function UpdateModal({
       ? "正在更新"
       : "立即更新";
   const displayAppName = appKind === "user" ? "小董AI" : latest.app_name;
-  const currentWebReleaseSha = update.currentWebReleaseSha?.slice(0, 8) || "当前加载版本";
-  const latestWebReleaseSha = latest.web_release_sha?.slice(0, 8) || "最新线上版本";
 
   return (
     <div className="fixed inset-0 z-[80] flex items-start justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-sm sm:items-center">
@@ -95,21 +93,13 @@ export function UpdateModal({
               {updateTitle}
             </h2>
             <p className="mt-1 text-sm font-semibold text-blue-700">{displayAppName}</p>
-            <p className="mt-2 text-sm leading-6 text-slate-600">
-              {isWebContentUpdate ? (
-                <>
-                  当前内容：{currentWebReleaseSha}
-                  <br />
-                  最新内容：{latestWebReleaseSha}
-                </>
-              ) : (
-                <>
-                  当前版本：{update.currentVersion}（Build {update.currentBuild}）
-                  <br />
-                  最新版本：{latest.version}（Build {latest.build}）
-                </>
-              )}
-            </p>
+            {!isWebContentUpdate ? (
+              <p className="mt-2 text-sm leading-6 text-slate-600">
+                当前版本：{update.currentVersion}（Build {update.currentBuild}）
+                <br />
+                最新版本：{latest.version}（Build {latest.build}）
+              </p>
+            ) : null}
           </div>
           {dismissible ? (
             <button
@@ -129,20 +119,24 @@ export function UpdateModal({
           </div>
         ) : null}
 
-        <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-900">更新内容：</p>
-          {latest.changelog.length > 0 ? (
-            <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-slate-600">
-              {latest.changelog.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
-          ) : (
-            <p className="mt-2 text-sm leading-6 text-slate-600">暂无更新说明。</p>
-          )}
-        </div>
+        {!isWebContentUpdate ? (
+          <>
+            <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">更新内容：</p>
+              {latest.changelog.length > 0 ? (
+                <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6 text-slate-600">
+                  {latest.changelog.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-sm leading-6 text-slate-600">暂无更新说明。</p>
+              )}
+            </div>
 
-        <p className="mt-4 text-xs leading-5 text-slate-500">{updateTip}</p>
+            <p className="mt-4 text-xs leading-5 text-slate-500">{updateTip}</p>
+          </>
+        ) : null}
 
         {hasInstallFeedback ? (
           <div
