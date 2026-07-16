@@ -23,8 +23,10 @@ import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebSettings;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Toast;
@@ -44,6 +46,8 @@ public class MainActivity extends BridgeActivity {
     private static final String ADMIN_APP_PACKAGE = "com.aiknowledge.admin";
     private static final String UPDATE_STATE_PREFS = "app_update_state";
     private static final String WEBVIEW_STATE_VERSION_PREFIX = "webview_state_cleared_";
+    private static final String NETWORK_ERROR_PAGE_URL = "file:///android_asset/xiaodong-network-error/";
+    private static final long[] NETWORK_RETRY_DELAYS_MS = { 2000L, 5000L, 10000L };
     private static final int FILE_CHOOSER_REQUEST_CODE = 6205;
     private ValueCallback<Uri[]> fileChooserCallback;
     private long updateDownloadId = -1L;
@@ -51,6 +55,12 @@ public class MainActivity extends BridgeActivity {
     private File updateDownloadFile;
     private final Handler updateProgressHandler = new Handler(Looper.getMainLooper());
     private Runnable updateProgressRunnable;
+    private final Handler networkRecoveryHandler = new Handler(Looper.getMainLooper());
+    private Runnable networkRetryRunnable;
+    private String lastFailedUserUrl = USER_CHAT_URL;
+    private String activeUserMainFrameUrl;
+    private int networkRetryAttempt;
+    private boolean showingNetworkError;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -96,9 +106,23 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onDestroy() {
+        cancelNetworkRetry();
         stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
         super.onDestroy();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        if (!isAdminShell() && showingNetworkError) {
+            WebView webView = getBridge() == null ? null : getBridge().getWebView();
+
+            if (webView != null) {
+                retryLastFailedUserPage(webView, false);
+            }
+        }
     }
 
     private boolean isAdminShell() {
@@ -234,6 +258,140 @@ public class MainActivity extends BridgeActivity {
         } catch (ActivityNotFoundException error) {
             return false;
         }
+    }
+
+    private static boolean isRecoverableUserUrl(Uri uri) {
+        if (uri == null || uri.getScheme() == null || uri.getHost() == null) {
+            return false;
+        }
+
+        return APP_ORIGIN.equals(uri.getScheme() + "://" + uri.getHost())
+            && isAllowedShellRoute(uri, false);
+    }
+
+    private static boolean isNetworkErrorPage(String url) {
+        return url != null && url.startsWith(NETWORK_ERROR_PAGE_URL);
+    }
+
+    private static boolean isTransientNetworkError(int errorCode) {
+        return errorCode == WebViewClient.ERROR_UNKNOWN
+            || errorCode == WebViewClient.ERROR_HOST_LOOKUP
+            || errorCode == WebViewClient.ERROR_CONNECT
+            || errorCode == WebViewClient.ERROR_TIMEOUT
+            || errorCode == WebViewClient.ERROR_IO
+            || errorCode == WebViewClient.ERROR_FAILED_SSL_HANDSHAKE;
+    }
+
+    private static boolean isRetryableHttpStatus(int statusCode) {
+        return statusCode == 502 || statusCode == 503 || statusCode == 504;
+    }
+
+    private void cancelNetworkRetry() {
+        if (networkRetryRunnable != null) {
+            networkRecoveryHandler.removeCallbacks(networkRetryRunnable);
+            networkRetryRunnable = null;
+        }
+    }
+
+    private void scheduleNextNetworkRetry(WebView webView) {
+        cancelNetworkRetry();
+
+        if (!showingNetworkError || networkRetryAttempt >= NETWORK_RETRY_DELAYS_MS.length) {
+            return;
+        }
+
+        long delayMs = NETWORK_RETRY_DELAYS_MS[networkRetryAttempt];
+        networkRetryRunnable = () -> {
+            networkRetryRunnable = null;
+
+            if (!showingNetworkError || isFinishing() || isDestroyed()) {
+                return;
+            }
+
+            networkRetryAttempt += 1;
+            retryLastFailedUserPage(webView, false);
+        };
+        networkRecoveryHandler.postDelayed(networkRetryRunnable, delayMs);
+    }
+
+    private void retryLastFailedUserPage(WebView webView, boolean resetAttempts) {
+        if (webView == null || isAdminShell() || !showingNetworkError) {
+            return;
+        }
+
+        String retryUrl = lastFailedUserUrl;
+        cancelNetworkRetry();
+
+        if (resetAttempts) {
+            networkRetryAttempt = 0;
+        }
+
+        showingNetworkError = false;
+        activeUserMainFrameUrl = retryUrl;
+        webView.evaluateJavascript(
+            "window.location.replace(" + JSONObject.quote(retryUrl) + ");",
+            null
+        );
+    }
+
+    private void markUserPageRecovered(String url) {
+        if (!isRecoverableUserUrl(Uri.parse(url))) {
+            return;
+        }
+
+        cancelNetworkRetry();
+        lastFailedUserUrl = url;
+        activeUserMainFrameUrl = url;
+        networkRetryAttempt = 0;
+        showingNetworkError = false;
+    }
+
+    private void showUserNetworkError(WebView webView, String failingUrl) {
+        Uri failedUri = Uri.parse(failingUrl == null ? "" : failingUrl);
+
+        if (webView == null || isAdminShell() || !isRecoverableUserUrl(failedUri)) {
+            return;
+        }
+
+        if (activeUserMainFrameUrl != null && !failingUrl.equals(activeUserMainFrameUrl)) {
+            return;
+        }
+
+        lastFailedUserUrl = failingUrl;
+        showingNetworkError = true;
+        cancelNetworkRetry();
+        webView.loadDataWithBaseURL(
+            NETWORK_ERROR_PAGE_URL,
+            buildNetworkErrorPageHtml(),
+            "text/html",
+            "UTF-8",
+            null
+        );
+        scheduleNextNetworkRetry(webView);
+    }
+
+    private static String buildNetworkErrorPageHtml() {
+        return "<!doctype html><html lang='zh-CN'><head>"
+            + "<meta charset='utf-8'>"
+            + "<meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no'>"
+            + "<title>网络暂时不可用</title>"
+            + "<style>"
+            + "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#f8fafc;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif}"
+            + ".card{width:100%;max-width:420px;border:1px solid #dbe4e8;border-radius:22px;background:#fff;padding:30px 24px;text-align:center;box-shadow:0 18px 50px rgba(15,23,42,.08)}"
+            + ".icon{width:64px;height:64px;margin:0 auto 18px;border-radius:20px;background:#ecfdf5;color:#047857;display:flex;align-items:center;justify-content:center;font-size:30px}"
+            + "h1{margin:0;font-size:24px;line-height:1.35}p{margin:14px 0 0;color:#64748b;font-size:15px;line-height:1.8}"
+            + "button{width:100%;min-height:48px;margin-top:24px;border:0;border-radius:14px;background:#0f766e;color:#fff;font-size:16px;font-weight:700}"
+            + ".hint{margin-top:14px;font-size:12px;color:#94a3b8}"
+            + "</style></head><body><main class='card'>"
+            + "<div class='icon' aria-hidden='true'>&#8635;</div>"
+            + "<h1>网络暂时无法连接</h1>"
+            + "<p>请检查 Wi-Fi 或移动网络。小董AI会自动重新连接，您的登录状态和聊天记录不会丢失。</p>"
+            + "<button type='button' onclick='retryApp()'>重新连接</button>"
+            + "<div class='hint'>如果仍无法打开，可以切换网络后再试。</div>"
+            + "</main><script>"
+            + "function retryApp(){if(window.AndroidBridge&&window.AndroidBridge.retryApp){window.AndroidBridge.retryApp();}}"
+            + "window.addEventListener('online',retryApp);"
+            + "</script></body></html>";
     }
 
     private static String getSafeUpdateFileName(String fileName, Uri uri) {
@@ -508,6 +666,14 @@ public class MainActivity extends BridgeActivity {
         }
 
         @JavascriptInterface
+        public void retryApp() {
+            runOnUiThread(() -> {
+                WebView webView = getBridge() == null ? null : getBridge().getWebView();
+                retryLastFailedUserPage(webView, true);
+            });
+        }
+
+        @JavascriptInterface
         public void downloadUpdate(String url, String fileName) {
             runOnUiThread(() -> downloadUpdatePackage(url, fileName));
         }
@@ -672,6 +838,36 @@ public class MainActivity extends BridgeActivity {
         }
 
         @Override
+        public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+            super.onReceivedError(view, request, error);
+
+            if (
+                !adminShell
+                && request.isForMainFrame()
+                && isTransientNetworkError(error.getErrorCode())
+            ) {
+                showUserNetworkError(view, request.getUrl().toString());
+            }
+        }
+
+        @Override
+        public void onReceivedHttpError(
+            WebView view,
+            WebResourceRequest request,
+            WebResourceResponse errorResponse
+        ) {
+            super.onReceivedHttpError(view, request, errorResponse);
+
+            if (
+                !adminShell
+                && request.isForMainFrame()
+                && isRetryableHttpStatus(errorResponse.getStatusCode())
+            ) {
+                showUserNetworkError(view, request.getUrl().toString());
+            }
+        }
+
+        @Override
         public boolean shouldOverrideUrlLoading(WebView view, String url) {
             Uri uri = Uri.parse(url);
             if (adminShell && isForbiddenAdminRoute(uri)) {
@@ -694,7 +890,17 @@ public class MainActivity extends BridgeActivity {
 
         @Override
         public void onPageStarted(WebView view, String url, Bitmap favicon) {
+            if (isNetworkErrorPage(url)) {
+                super.onPageStarted(view, url, favicon);
+                return;
+            }
+
             Uri uri = Uri.parse(url);
+            if (!adminShell && isRecoverableUserUrl(uri)) {
+                lastFailedUserUrl = url;
+                activeUserMainFrameUrl = url;
+            }
+
             if (adminShell && isForbiddenAdminRoute(uri)) {
                 view.stopLoading();
                 view.loadUrl(ADMIN_INGEST_URL);
@@ -719,6 +925,15 @@ public class MainActivity extends BridgeActivity {
         @Override
         public void onPageFinished(WebView view, String url) {
             super.onPageFinished(view, url);
+
+            if (isNetworkErrorPage(url) || showingNetworkError) {
+                return;
+            }
+
+            if (!adminShell) {
+                markUserPageRecovered(url);
+            }
+
             String routeGuardScript = adminShell
                 ? "(function(){"
                     + "var origin='https://stately-sawine-1efd4d.netlify.app';"
