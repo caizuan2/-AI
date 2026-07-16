@@ -1,19 +1,19 @@
 {
-  "updated_at": "2026-06-14T09:30:00.000Z",
-  "version": "1.0.10",
-  "build": 110,
+  "updated_at": "2026-07-16T06:26:28.415Z",
+  "version": "1.0.14",
+  "build": 139,
   "minimum_build": 100,
   "forceUpdate": false,
   "force_update": false,
-  "web_release_sha": "4e4752a80acde028687c4906b1652c15c946131d",
+  "web_release_sha": "db1688de5da8c166d38939919003f5b93a2c0857",
   "apk": "ai-knowledge-chat-latest.apk",
   "exe": "ai-knowledge-chat-latest.exe",
-  "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.exe",
   "web_url": "http://47.238.0.23/app/chat",
   "download": {
-    "android": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-    "windows": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.exe",
     "web": "http://47.238.0.23/app/chat",
     "page": "http://47.238.0.23/download"
   },
@@ -29,19 +29,19 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.10",
+      "active_version": "1.0.14",
       "versions": [
         {
-          "version": "1.0.10",
-          "build": 110,
+          "version": "1.0.14",
+          "build": 139,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
           "force_update": false,
-          "web_release_sha": "4e4752a80acde028687c4906b1652c15c946131d",
+          "web_release_sha": "db1688de5da8c166d38939919003f5b93a2c0857",
           "web_url": "http://47.238.0.23/app/chat",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.exe",
           "download_page": "http://47.238.0.23/download",
           "changelog": [
             "新增用户端忘记密码与安全找回密码功能",
@@ -50,7 +50,7 @@
             "新增断网自动重试与手动重新连接",
             "修复 AI 回答长时间等待时的连接中断与无限加载"
           ],
-          "created_at": "2026-06-14T09:30:00.000Z"
+          "created_at": "2026-07-16T06:26:28.415Z"
         }
       ]
     },
@@ -91,14 +91,14 @@
   },
   "user": {
     "app_name": "AI知识库助手",
-    "version": "1.0.10",
-    "build": 110,
+    "version": "1.0.14",
+    "build": 139,
     "minimum_build": 100,
     "force_update": false,
-    "web_release_sha": "4e4752a80acde028687c4906b1652c15c946131d",
+    "web_release_sha": "db1688de5da8c166d38939919003f5b93a2c0857",
     "web_url": "http://47.238.0.23/app/chat",
-    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.14/ai-knowledge-chat-latest.exe",
     "download_page": "http://47.238.0.23/download",
     "changelog": [
       "新增用户端忘记密码与安全找回密码功能",
