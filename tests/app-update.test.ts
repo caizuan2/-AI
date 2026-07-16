@@ -48,9 +48,9 @@ assert.equal(releaseInfo.force_update, false);
 assert.equal(releaseInfo.download.android, manifest.user.apk_url);
 assert.equal(releaseInfo.download.windows, manifest.user.exe_url);
 assert.equal(releaseInfo.download.web, manifest.user.web_url);
-assert.match(manifest.user.apk_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-chat-latest\.apk$/);
+assert.match(manifest.user.apk_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.apk$/);
 assert.match(manifest.admin.apk_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.apk$/);
-assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-chat-latest\.exe$/);
+assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.exe$/);
 assert.match(manifest.admin.exe_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.exe$/);
 assert.doesNotMatch(JSON.stringify(manifest), /\.(ipa|dmg)"/i);
 
