@@ -2312,8 +2312,9 @@ export function ChatShell() {
         if (message.id === optimisticAssistantMessage.id) {
           return {
             ...message,
-            content: message.content || "生成失败，请稍后重试。",
-            pending: false
+            content: message.content || requestErrorMessage,
+            pending: false,
+            provider_status: "error"
           };
         }
 

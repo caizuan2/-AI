@@ -1018,6 +1018,8 @@ async function main() {
   assert.match(chatShellSource, /activeConversationIdRef\.current === sourceViewId/);
   assert.match(chatShellSource, /messages=\{visibleMessages\}/);
   assert.match(chatShellSource, /setInput\(text\)/);
+  assert.match(chatShellSource, /content: message\.content \|\| requestErrorMessage/);
+  assert.match(chatShellSource, /provider_status: "error"/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /historyLoadError/);
@@ -1515,6 +1517,15 @@ async function main() {
   assert.match(avatarDialogSource, /rawValue && !\/\^\(\?:https\?:\|data:\|blob:\|\\\/\)\/i\.test\(rawValue\)/);
   assert.match(chatShellText, /pendingScrollToUserMessageIdRef\.current = optimisticUserMessage\.id/);
   assert.match(chatShellText, /setScrollFocusMessageId\(optimisticUserMessage\.id\)/);
+  const chatTransportApiSource = readFileSync("app/(user)/chat-ui/api.ts", "utf8");
+  const chatSseStreamingSource = readFileSync("lib/ai-chat/streaming.ts", "utf8");
+
+  assert.match(chatTransportApiSource, /ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000/);
+  assert.match(chatTransportApiSource, /回答连接已中断，请检查网络后重新发送/);
+  assert.match(chatTransportApiSource, /回答时间较长，连接已自动结束/);
+  assert.match(chatSseStreamingSource, /SSE_HEARTBEAT_INTERVAL_MS = 12_000/);
+  assert.match(chatSseStreamingSource, /writer\.enqueue\(`: heartbeat/);
+  assert.doesNotMatch(chatSseStreamingSource, /type: "token"[\s\S]{0,120}heartbeat/);
   assert.match(chatShellText, /scrollChatMessageToTop\(targetMessageId, "auto"\)/);
   assert.match(chatShellText, /PROMPT_HISTORY_RAIL_MARK_COUNT/);
   assert.match(chatShellText, /type PromptHistoryItem =/);

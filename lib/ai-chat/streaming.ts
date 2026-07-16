@@ -123,6 +123,8 @@ interface CreateAiChatSseResponseInput {
   }) => Promise<void>;
 }
 
+const SSE_HEARTBEAT_INTERVAL_MS = 12_000;
+
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
 }
@@ -645,6 +647,7 @@ export function createAiChatSseResponse(input: CreateAiChatSseResponseInput) {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      let heartbeat: ReturnType<typeof setInterval> | null = null;
       const writer: AiChatSseWriter = {
         enqueue(chunk) {
           if (closed || input.signal?.aborted) {
@@ -665,8 +668,18 @@ export function createAiChatSseResponse(input: CreateAiChatSseResponseInput) {
         }
 
         closed = true;
+        if (heartbeat) {
+          clearInterval(heartbeat);
+          heartbeat = null;
+        }
         controller.close();
       };
+
+      // Keep mobile WebViews and reverse proxies from treating a long model call as an idle SSE connection.
+      // A comment frame is deliberately invisible to the chat event parser and cannot alter answer content.
+      heartbeat = setInterval(() => {
+        writer.enqueue(`: heartbeat ${Date.now()}\n\n`);
+      }, SSE_HEARTBEAT_INTERVAL_MS);
 
       input.signal?.addEventListener("abort", finish, { once: true });
 
