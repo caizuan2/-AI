@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { USER_CHAT_LOGIN_URL } from "../api";
+import { useUserLicenseGuard } from "./UserLicenseGuard";
 
 type AuthState = "loading" | "ready" | "network-error";
 
@@ -15,6 +16,7 @@ export function isChatUiAuthReady(status: number) {
 }
 
 export function ClientAuthGate({ children }: { children: React.ReactNode }) {
+  const licenseGuard = useUserLicenseGuard();
   const router = useRouter();
   const [authState, setAuthState] = React.useState<AuthState>("loading");
   const [retryCount, setRetryCount] = React.useState(0);
@@ -60,12 +62,12 @@ export function ClientAuthGate({ children }: { children: React.ReactNode }) {
     };
   }, [router, retryCount]);
 
-  if (authState === "ready") {
-    return <>{children}</>;
-  }
+  let content: React.ReactNode;
 
-  if (authState === "network-error") {
-    return (
+  if (authState === "ready") {
+    content = children;
+  } else if (authState === "network-error") {
+    content = (
       <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-center text-slate-700">
         <div className="w-full max-w-sm rounded-3xl border border-slate-200 bg-white p-6 shadow-xl">
           <p className="text-base font-semibold text-slate-950">网络异常，请稍后重试</p>
@@ -80,11 +82,18 @@ export function ClientAuthGate({ children }: { children: React.ReactNode }) {
         </div>
       </main>
     );
+  } else {
+    content = (
+      <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-center text-sm font-semibold text-slate-500">
+        正在检查登录状态...
+      </main>
+    );
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-center text-sm font-semibold text-slate-500">
-      正在检查登录状态...
-    </main>
+    <>
+      {content}
+      {licenseGuard}
+    </>
   );
 }
