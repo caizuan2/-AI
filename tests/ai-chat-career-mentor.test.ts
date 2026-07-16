@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 
 import {
   CAREER_MENTOR_KNOWLEDGE_TREE,
+  CAREER_MENTOR_FAST_RETRIEVAL_TOP_K,
+  CAREER_MENTOR_RETRIEVAL_TOP_K,
   CAREER_MENTOR_POLICY_VERSION,
   buildCareerMentorBusinessContext,
   buildCareerMentorNoEvidenceAnswer,
@@ -13,6 +15,7 @@ import {
   extractCareerMentorExplicitCustomerScriptBlocks,
   extractCareerMentorCustomerAnswer,
   isCareerMentorContinuationRequest,
+  isCareerMentorFastAnswerEligible,
   isCareerMentorScope,
   prioritizeCareerMentorChunks,
   resolveCareerMentorTurnContext
@@ -133,6 +136,11 @@ function main() {
     knowledgeBaseId: "kb-business-coach",
     namespace: "kb-business-coach"
   }), true);
+  assert.equal(CAREER_MENTOR_FAST_RETRIEVAL_TOP_K < CAREER_MENTOR_RETRIEVAL_TOP_K, true);
+  assert.equal(isCareerMentorFastAnswerEligible("加好友了，是一位宝妈，怎么破冰呢？"), true);
+  assert.equal(isCareerMentorFastAnswerEligible("请完整讲解五步流程"), false);
+  assert.equal(isCareerMentorFastAnswerEligible("客户成交以后怎么长期维护？"), false);
+  assert.equal(isCareerMentorFastAnswerEligible("客户说贵怎么办？", "补充：客户还没有看过资料"), false);
   assert.equal(isCareerMentorScope({
     agentId: "expert-career",
     knowledgeBaseId: "kb:expert-agent-expert-career"

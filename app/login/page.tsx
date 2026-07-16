@@ -50,6 +50,10 @@ function getPostLoginPath(input: {
   const normalizedNextPath = input.nextPath?.split("?")[0] || "";
   const nextProduct = normalizedNextPath ? getProductFromPath(normalizedNextPath) : "public";
 
+  if (role === "user" && !input.licenseActivated) {
+    return "/unlock";
+  }
+
   if (
     input.nextPath &&
     !(normalizedNextPath === "/unlock" && input.licenseActivated) &&
@@ -242,6 +246,8 @@ function LoginForm() {
   const forgotPasswordHref = safeNextPath
     ? `/forgot-password?next=${encodeURIComponent(safeNextPath)}`
     : "/forgot-password";
+  const continueActivationHref = "/login?next=%2Funlock&activation=1";
+  const continuingActivation = searchParams.get("activation") === "1" || nextPathname === "/unlock";
 
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
@@ -254,6 +260,12 @@ function LoginForm() {
       {passwordReset && !isAdminEntry ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           密码重置成功，请使用新密码登录。
+        </div>
+      ) : null}
+
+      {continuingActivation && !isAdminEntry ? (
+        <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
+          请登录已经注册的账号，登录后即可继续输入卡密激活。
         </div>
       ) : null}
 
@@ -314,6 +326,15 @@ function LoginForm() {
           去注册
         </Link>
       </p>
+
+      {!isAdminEntry ? (
+        <p className="text-center text-sm text-muted">
+          已注册但还没激活？
+          <Link href={continueActivationHref} className="font-medium text-teal-700 hover:text-teal-800">
+            继续激活
+          </Link>
+        </p>
+      ) : null}
     </form>
   );
 }

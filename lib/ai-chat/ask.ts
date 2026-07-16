@@ -27,6 +27,7 @@ import {
 } from "@/lib/ai-chat/customer-answer";
 import {
   CAREER_MENTOR_POLICY_VERSION,
+  CAREER_MENTOR_FAST_RETRIEVAL_TOP_K,
   CAREER_MENTOR_RETRIEVAL_TOP_K,
   buildCareerMentorBusinessContext,
   buildCareerMentorNaturalNoEvidenceAnswer,
@@ -37,6 +38,7 @@ import {
   cleanCareerMentorUserAnswer,
   extractCareerMentorCustomerAnswer,
   isCareerMentorScope,
+  isCareerMentorFastAnswerEligible,
   prioritizeCareerMentorChunks,
   resolveCareerMentorTurnContext,
   type CareerMentorStage
@@ -215,9 +217,41 @@ const MAX_ATTACHMENT_SEARCH_HINT_CHARS = 360;
 const MAX_CONVERSATION_MEMORY_TURNS = 8;
 const MAX_CONVERSATION_MEMORY_CHARS_PER_TURN = 900;
 const MAX_CONVERSATION_MEMORY_TOTAL_CHARS = 3600;
+const CAREER_MENTOR_RUNTIME_MEMORY_TIMEOUT_MS = 1500;
 const MAX_PINNED_CONVERSATIONS = 100;
 const allowedAttachmentTypes = new Set(["image", "camera_photo", "gallery_photo", "file", "audio", "video"]);
 const ATTACHMENT_SEARCH_KEYWORD_PATTERN = /订单号|订单|退款|退费|退货|售后|发货|物流|付款|支付|价格|费用|成分|用法|使用|效果|安全|禁忌|周期|剂量|减肥|瘦身|体重|反弹|不瘦|客户|回复|话术|沟通/gi;
+
+function careerMentorRuntimeMemoryTimeoutResult() {
+  return {
+    ok: true as const,
+    memoryApplied: false,
+    memories: [],
+    memoryTrace: [],
+    usedMemoryIds: [],
+    warnings: [`讲事业导师补充 Memory 检索超过 ${CAREER_MENTOR_RUNTIME_MEMORY_TIMEOUT_MS}ms，已使用固定知识库继续回答。`]
+  };
+}
+
+async function withCareerMentorRuntimeMemoryBudget<T>(promise: Promise<T>) {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<ReturnType<typeof careerMentorRuntimeMemoryTimeoutResult>>((resolve) => {
+        timeoutId = setTimeout(
+          () => resolve(careerMentorRuntimeMemoryTimeoutResult()),
+          CAREER_MENTOR_RUNTIME_MEMORY_TIMEOUT_MS
+        );
+      })
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
 
 function defaultDb() {
   return prisma as unknown as AiChatDb;
@@ -1520,10 +1554,15 @@ export async function handleAiChatAsk(
   }
 
   const topK = osContext.rag.topK;
+  const careerMentorFastAnswer = careerMentorEnabled
+    && isCareerMentorFastAnswerEligible(careerMentorScenarioQuestion, careerMentorSupportingContext);
+  const retrievalTopK = careerMentorFastAnswer
+    ? Math.min(topK, CAREER_MENTOR_FAST_RETRIEVAL_TOP_K)
+    : topK;
   const dbQueryContexts = careerMentorEnabled
     ? buildCareerMentorRetrievalQueries(careerMentorScenarioQuestion, careerMentorSupportingContext)
     : [ragQueryContext];
-  const dbChunkGroups = await Promise.all(dbQueryContexts.map((query) => retrieveRelevantChunks(query, {
+  const dbChunksPromise = Promise.all(dbQueryContexts.map((query) => retrieveRelevantChunks(query, {
     userId: actor.id,
     tenantId: scopedTenantId,
     appType: "user_app",
@@ -1531,14 +1570,13 @@ export async function handleAiChatAsk(
     includeShared: true,
     includePublished: true,
     mode,
-    topK,
+    topK: retrievalTopK,
     knowledgeScope: selectedKnowledgeScope,
     allowScopedFallback: !careerMentorEnabled,
     db
   })));
-  const dbChunks = dbChunkGroups.flat();
-  const hybridCareerRetrieval = careerMentorEnabled && !options.db
-    ? await retrieveKnowledge({
+  const hybridCareerRetrievalPromise = careerMentorEnabled && !options.db
+    ? retrieveKnowledge({
         query: ragQueryContext,
         userId: actor.id,
         tenantId: scopedTenantId,
@@ -1550,19 +1588,9 @@ export async function handleAiChatAsk(
         minResults: 1,
         requestId: osContext.trace_id
       }).catch(() => null)
-    : null;
-  const hybridCareerChunks = (hybridCareerRetrieval?.results ?? []).map((item, index) => (
-    toHybridCareerChunk(item, index, {
-      knowledgeBaseId: agentScope.knowledgeBaseId,
-      agentId: agentScope.agentId,
-      namespace: explicitRuntimeNamespace ?? agentScope.namespace,
-      tenantId: scopedTenantId
-    })
-  ));
-  const careerRetrievalMode: RetrievalMode | "scoped_keyword" = hybridCareerRetrieval?.mode
-    ?? "scoped_keyword";
-  const runtimeMemoryResult = hasExplicitAgentScope
-    ? await searchRuntimeMemories({
+    : Promise.resolve(null);
+  const runtimeMemoryPromise = hasExplicitAgentScope
+    ? searchRuntimeMemories({
         query: careerMentorEnabled ? ragQueryContext : question,
         knowledgeBaseId: agentScope.knowledgeBaseId,
         agentId: agentScope.agentId,
@@ -1577,14 +1605,32 @@ export async function handleAiChatAsk(
         usedMemoryIds: [],
         warnings: [error instanceof Error ? error.message : "runtime memory search failed"],
       }))
-    : {
+    : Promise.resolve({
         ok: true as const,
         memoryApplied: false,
         memories: [],
         memoryTrace: [],
         usedMemoryIds: [],
         warnings: ["缺少 agent scope，跳过 runtime memory 检索。"],
-      };
+      });
+  const [dbChunkGroups, hybridCareerRetrieval, runtimeMemoryResult] = careerMentorEnabled
+    ? await Promise.all([
+        dbChunksPromise,
+        hybridCareerRetrievalPromise,
+        withCareerMentorRuntimeMemoryBudget(runtimeMemoryPromise)
+      ])
+    : [await dbChunksPromise, await hybridCareerRetrievalPromise, await runtimeMemoryPromise] as const;
+  const dbChunks = dbChunkGroups.flat();
+  const hybridCareerChunks = (hybridCareerRetrieval?.results ?? []).map((item, index) => (
+    toHybridCareerChunk(item, index, {
+      knowledgeBaseId: agentScope.knowledgeBaseId,
+      agentId: agentScope.agentId,
+      namespace: explicitRuntimeNamespace ?? agentScope.namespace,
+      tenantId: scopedTenantId
+    })
+  ));
+  const careerRetrievalMode: RetrievalMode | "scoped_keyword" = hybridCareerRetrieval?.mode
+    ?? "scoped_keyword";
   const runtimeMemoryChunks = runtimeMemoryResult.memories.map((item, index) => toRuntimeMemoryChunk(item, index, {
     knowledgeBaseId: agentScope.knowledgeBaseId,
     agentId: agentScope.agentId,
@@ -1643,6 +1689,13 @@ export async function handleAiChatAsk(
   await writeAuditLog(db, actor, "CHAT_RETRIEVE", normalizedConversationId, {
     mode,
     topK,
+    ...(careerMentorEnabled
+      ? {
+          careerMentorFastAnswer,
+          retrievalTopK,
+          finalTopK: topK
+        }
+      : {}),
     sourceCount: sources.length,
     confidence,
     runtimeMemory: {

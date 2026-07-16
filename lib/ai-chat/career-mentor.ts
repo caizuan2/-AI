@@ -2,6 +2,7 @@ import type { RetrievedRagChunk } from "@/lib/rag/search";
 
 export const CAREER_MENTOR_POLICY_VERSION = "career-mentor-five-step-context-lock-v8";
 export const CAREER_MENTOR_RETRIEVAL_TOP_K = 14;
+export const CAREER_MENTOR_FAST_RETRIEVAL_TOP_K = 8;
 
 export type CareerMentorCoreStage =
   | "ice_breaking"
@@ -400,6 +401,16 @@ export function classifyCareerMentorQuestion(question: string, supportingContext
     stageLabel: STAGE_CONFIG[stage].label,
     retrievalTerms
   };
+}
+
+export function isCareerMentorFastAnswerEligible(question: string, supportingContext = "") {
+  const classification = classifyCareerMentorQuestion(question, supportingContext);
+
+  return classification.stage !== "framework"
+    && classification.stage !== "maintenance"
+    && classification.stage !== "unknown"
+    && question.trim().length <= 120
+    && supportingContext.trim().length === 0;
 }
 
 function findCareerMentorConversationAnchor(
