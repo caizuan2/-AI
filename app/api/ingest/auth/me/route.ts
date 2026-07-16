@@ -1,7 +1,7 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { getCurrentUser } from "@/lib/auth";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
-import { requireIngestAdminAccess } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 import { toAppError } from "@/lib/errors";
 import { getHighestRole, type AppRole } from "@/lib/rbac/roles";
@@ -27,7 +27,13 @@ export async function GET(request: Request) {
 
     if (user.isActive && hasIngestRole) {
       try {
-        await requireIngestAdminAccess(request);
+        await requireKbAdmin(request, {
+          product: "ingest_admin",
+          requireLicense: true,
+          requiredAppType: "ingest_admin",
+          deniedAction: "RBAC_ACCESS_DENIED",
+          targetType: "ingest_auth_status"
+        });
         hasCurrentLicenseAccess = true;
       } catch (error) {
         const appError = toAppError(error);
