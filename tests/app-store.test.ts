@@ -160,13 +160,13 @@ assert.ok(normalizedLatest);
 assert.ok(normalizedLatest.apps.user.versions.length >= 1);
 assert.ok(normalizedLatest.apps.admin.versions.length >= 1);
 assert.equal(normalizedLatest.apps.user.active_version, versionInfo.version);
-assert.equal(normalizedLatest.apps.admin.active_version, versionInfo.version);
+assert.equal(normalizedLatest.apps.admin.active_version, latestRelease.admin.version);
 assert.equal(getManifestAppReleaseSnapshot(normalizedLatest, "user")?.build, versionInfo.build);
 
 const legacySnapshot = normalizeLatestReleaseManifest(latestRelease);
 assert.ok(legacySnapshot);
 assert.equal(legacySnapshot.user.build, versionInfo.build);
-assert.equal(legacySnapshot.admin.build, versionInfo.build);
+assert.equal(legacySnapshot.admin.build, latestRelease.admin.build);
 
 const pageSource = readFileSync("app/admin/app-store/page.tsx", "utf8");
 const consoleSource = readFileSync("app/admin/app-store/app-store-console.tsx", "utf8");

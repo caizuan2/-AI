@@ -98,10 +98,13 @@ function hasCurrentVersion(existing) {
 
 function buildVersion(appKey, existingApp, urls, updatedAt) {
   const previous = getCurrentVersion(existingApp);
+  const preserveExistingVersion = appKey === "admin"
+    && typeof previous.version === "string"
+    && Number.isInteger(previous.build);
 
   return {
-    version: versionInfo.version,
-    build: versionInfo.build,
+    version: preserveExistingVersion ? previous.version : versionInfo.version,
+    build: preserveExistingVersion ? previous.build : versionInfo.build,
     channel: "stable",
     rollout: 100,
     minimum_build: Number(previous.minimum_build) || 100,
@@ -112,7 +115,7 @@ function buildVersion(appKey, existingApp, urls, updatedAt) {
     exe_url: pickValue(urls.exe_url, previous.exe_url),
     download_page: pickValue(urls.download_page, previous.download_page),
     changelog: Array.isArray(previous.changelog) ? previous.changelog : [],
-    created_at: updatedAt
+    created_at: preserveExistingVersion && previous.created_at ? previous.created_at : updatedAt
   };
 }
 
@@ -121,7 +124,7 @@ function buildApp(appKey, appConfig, version) {
     id: appConfig.id,
     name: appConfig.name,
     platforms: ["android", "windows", "ios", "macos", "web", "electron"],
-    active_version: versionInfo.version,
+    active_version: version.version,
     versions: [version]
   };
 }
@@ -193,7 +196,7 @@ const apps = {
     name: "AI知识库助手",
     existing: userExisting
   }, userVersion),
-  admin: buildApp("admin", {
+  admin: adminExisting ?? buildApp("admin", {
     id: "ai.chat.admin",
     name: "AI知识库管理后台",
     existing: adminExisting
@@ -221,7 +224,7 @@ const manifest = {
   },
   apps,
   user: snapshot(apps.user),
-  admin: snapshot(apps.admin)
+  admin: existing.admin ?? snapshot(apps.admin)
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });

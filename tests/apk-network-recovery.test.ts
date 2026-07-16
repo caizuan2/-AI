@@ -6,6 +6,7 @@ const mainActivity = readFileSync(
   "android/app/src/main/java/com/aiknowledge/chat/MainActivity.java",
   "utf8"
 );
+const releaseWorkflow = readFileSync(".github/workflows/release.yml", "utf8");
 
 function readSection(startMarker: string, endMarker: string) {
   const start = mainActivity.indexOf(startMarker);
@@ -65,4 +66,13 @@ test("APK network recovery preserves user session and does not affect admin shel
   assert.doesNotMatch(recoverySection, /clearHistory/);
   assert.doesNotMatch(recoverySection, /removeAllCookies/);
   assert.doesNotMatch(recoverySection, /deleteAllData/);
+});
+
+test("APK release uses the stable legacy-compatible signing certificate", () => {
+  assert.match(releaseWorkflow, /secrets\.ANDROID_RELEASE_KEYSTORE_BASE64/);
+  assert.match(releaseWorkflow, /android\.injected\.signing\.store\.file/);
+  assert.match(releaseWorkflow, /2a010b24419a9cd7847784bf640e34a0d48caa39e295e16091b0373ed089a9b7/);
+  assert.match(releaseWorkflow, /APK certificate mismatch/);
+  assert.match(releaseWorkflow, /Published APK certificate mismatch/);
+  assert.doesNotMatch(releaseWorkflow, /android-debug-keystore-v1/);
 });

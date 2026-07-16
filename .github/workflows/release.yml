@@ -84,43 +84,34 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Restore Android debug keystore cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-
-      - name: Ensure Android debug keystore
+      - name: Configure stable Android release keystore
         shell: bash
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
         run: |
           set -euo pipefail
 
-          mkdir -p "${HOME}/.android"
-
-          if [[ ! -f "${HOME}/.android/debug.keystore" ]]; then
-            echo "Generating Android debug keystore for CI release signing..."
-            keytool -genkeypair \
-              -alias androiddebugkey \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -keystore "${HOME}/.android/debug.keystore" \
-              -storepass android \
-              -keypass android \
-              -dname "CN=Android,O=Android,C=US"
-          else
-            echo "Reusing cached Android debug keystore."
+          if [[ -z "${ANDROID_RELEASE_KEYSTORE_BASE64}" ]]; then
+            echo "ANDROID_RELEASE_KEYSTORE_BASE64 is not configured." >&2
+            exit 1
           fi
 
-          if [[ ! -s "${HOME}/.android/debug.keystore" ]]; then
-            echo "Android debug keystore is empty or missing." >&2
+          keystore_file="${RUNNER_TEMP}/ai-knowledge-release.keystore"
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore_file}"
+          chmod 600 "${keystore_file}"
+
+          if [[ ! -s "${keystore_file}" ]]; then
+            echo "Android release keystore is empty or missing." >&2
             exit 1
           fi
 
           keytool -list \
-            -keystore "${HOME}/.android/debug.keystore" \
+            -keystore "${keystore_file}" \
             -storepass android \
             -alias androiddebugkey
+
+          echo "ANDROID_RELEASE_KEYSTORE_PATH=${keystore_file}" >> "${GITHUB_ENV}"
+          echo "ANDROID_RELEASE_CERT_SHA256=2a010b24419a9cd7847784bf640e34a0d48caa39e295e16091b0373ed089a9b7" >> "${GITHUB_ENV}"
 
       - name: Capacitor sync
         run: npx cap sync android
@@ -131,7 +122,13 @@ jobs:
           set -euo pipefail
           chmod +x android/gradlew
           cd android
-          ./gradlew assembleRelease -PVERSION="${VERSION}" -PBUILD="${BUILD}"
+          ./gradlew assembleRelease \
+            -PVERSION="${VERSION}" \
+            -PBUILD="${BUILD}" \
+            -Pandroid.injected.signing.store.file="${ANDROID_RELEASE_KEYSTORE_PATH}" \
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
 
       - name: Verify signed APK
         shell: bash
@@ -156,7 +153,16 @@ jobs:
 
           echo "Checking APK certificate..."
           keytool -printcert -jarfile "${signed_apk}" || true
-          "${apksigner}" verify --print-certs --verbose "${signed_apk}"
+          certificate_output="$("${apksigner}" verify --print-certs --verbose "${signed_apk}")"
+          printf '%s\n' "${certificate_output}"
+
+          actual_certificate="$(printf '%s\n' "${certificate_output}" | awk -F': ' '/certificate SHA-256 digest:/ { print $NF; exit }' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          expected_certificate="$(printf '%s' "${ANDROID_RELEASE_CERT_SHA256}" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+
+          if [[ -z "${actual_certificate}" || "${actual_certificate}" != "${expected_certificate}" ]]; then
+            echo "APK certificate mismatch: expected ${expected_certificate}, got ${actual_certificate:-missing}." >&2
+            exit 1
+          fi
 
       - name: Collect APK
         shell: bash
@@ -312,7 +318,16 @@ jobs:
 
           echo "Checking APK certificate..."
           keytool -printcert -jarfile "${apk_file}" || true
-          "${apksigner}" verify --print-certs --verbose "${apk_file}"
+          certificate_output="$("${apksigner}" verify --print-certs --verbose "${apk_file}")"
+          printf '%s\n' "${certificate_output}"
+
+          actual_certificate="$(printf '%s\n' "${certificate_output}" | awk -F': ' '/certificate SHA-256 digest:/ { print $NF; exit }' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
+          expected_certificate="2a010b24419a9cd7847784bf640e34a0d48caa39e295e16091b0373ed089a9b7"
+
+          if [[ -z "${actual_certificate}" || "${actual_certificate}" != "${expected_certificate}" ]]; then
+            echo "Published APK certificate mismatch: expected ${expected_certificate}, got ${actual_certificate:-missing}." >&2
+            exit 1
+          fi
 
           echo "APK_FILE=${apk_file}" >> "${GITHUB_ENV}"
           echo "EXE_FILE=${exe_file}" >> "${GITHUB_ENV}"
