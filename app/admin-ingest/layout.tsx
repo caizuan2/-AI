@@ -1,11 +1,21 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
+import { IngestLicenseInvalidGate } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
 import { requireIngestAdminAccess } from "@/lib/auth/guards";
-import { LicenseAppTypeMismatchError, LicenseRequiredError, UnauthorizedError } from "@/lib/errors";
+import {
+  LicenseAppTypeMismatchError,
+  LicenseDisabledError,
+  LicenseExpiredError,
+  LicenseRequiredError,
+  UnauthorizedError
+} from "@/lib/errors";
+import type { IngestLicenseInvalidCode } from "@/lib/enterprise/ingest-license-invalid";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminIngestLayout({ children }: { children: ReactNode }) {
+  let initialLicenseCode: IngestLicenseInvalidCode | null = null;
+
   try {
     await requireIngestAdminAccess();
   } catch (error) {
@@ -17,12 +27,20 @@ export default async function AdminIngestLayout({ children }: { children: ReactN
       redirect("/ingest/activate?next=/admin-ingest");
     }
 
-    redirect("/no-access");
+    if (error instanceof LicenseDisabledError) {
+      initialLicenseCode = "LICENSE_DISABLED";
+    } else if (error instanceof LicenseExpiredError) {
+      initialLicenseCode = "LICENSE_EXPIRED";
+    } else {
+      redirect("/no-access");
+    }
   }
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919] antialiased">
-      {children}
-    </div>
+    <IngestLicenseInvalidGate initialCode={initialLicenseCode}>
+      <div className="flex h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919] antialiased">
+        {children}
+      </div>
+    </IngestLicenseInvalidGate>
   );
 }

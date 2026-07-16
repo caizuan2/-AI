@@ -1,6 +1,7 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { getCurrentUser } from "@/lib/auth";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
+import { requireIngestAdminAccess } from "@/lib/auth/guards";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 import { toAppError } from "@/lib/errors";
 import { getHighestRole, type AppRole } from "@/lib/rbac/roles";
@@ -18,11 +19,29 @@ export async function GET(request: Request) {
     const role = authUser.roles.length > 0
       ? getHighestRole(authUser.roles as AppRole[])
       : null;
-    const activated = authUser.licenseActivated === true;
     const hasIngestRole = authUser.roles.some((candidateRole) =>
       candidateRole === "kb_admin" || candidateRole === "ingest_admin" || candidateRole === "super_admin"
     );
-    const hasIngestAccess = user.isActive && hasIngestRole && activated;
+    let licenseErrorCode: "LICENSE_DISABLED" | "LICENSE_EXPIRED" | undefined;
+    let hasCurrentLicenseAccess = false;
+
+    if (user.isActive && hasIngestRole) {
+      try {
+        await requireIngestAdminAccess(request);
+        hasCurrentLicenseAccess = true;
+      } catch (error) {
+        const appError = toAppError(error);
+
+        if (appError.code === "LICENSE_DISABLED" || appError.code === "LICENSE_EXPIRED") {
+          licenseErrorCode = appError.code;
+        } else if (appError.statusCode >= 500) {
+          throw error;
+        }
+      }
+    }
+
+    const activated = hasCurrentLicenseAccess;
+    const hasIngestAccess = user.isActive && hasIngestRole && hasCurrentLicenseAccess;
     const effectiveUser = hasIngestAccess
       ? { ...user, licenseActivated: true }
       : { ...user, licenseActivated: false };
@@ -32,7 +51,9 @@ export async function GET(request: Request) {
       hasIngestAccess
     };
 
-    await setIngestPortalCookie(effectiveUser, request);
+    if (!licenseErrorCode) {
+      await setIngestPortalCookie(effectiveUser, request);
+    }
 
     return apiSuccess({
       success: true,
@@ -45,7 +66,11 @@ export async function GET(request: Request) {
       redirectTarget: hasIngestAccess ? "/admin-ingest?app=ingest-admin&platform=web" : "/ingest/activate",
       role,
       roles: authUser.roles,
-      user: responseUser
+      user: responseUser,
+      ...(licenseErrorCode ? {
+        errorCode: licenseErrorCode,
+        message: "卡密已失效。"
+      } : {})
     });
   } catch (error) {
     const appError = toAppError(error);
