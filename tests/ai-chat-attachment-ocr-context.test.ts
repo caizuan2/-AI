@@ -356,6 +356,7 @@ async function main() {
 
   const careerOcrOnlyFake = createFakeDb();
   let careerOcrOnlyProviderCalled = false;
+  const careerOcrOnlyReply = "客户已经明确说贵，可以先接住她的顾虑，再用自然问题了解她最在意的是预算还是价值。";
   const careerOcrOnlyResult = await handleAiChatAsk({
     id: "user_1",
     role: "user"
@@ -378,21 +379,23 @@ async function main() {
   }, {
     db: careerOcrOnlyFake.db,
     providerConfigured: true,
-    answerProvider: async () => {
+    answerProvider: async ({ contexts }) => {
       careerOcrOnlyProviderCalled = true;
+      assert.equal(contexts.some((item) => item.sourceType === "attachment_ocr"), true);
+
       return {
-        answer: "没有知识证据时不应该调用模型。",
+        answer: careerOcrOnlyReply,
         providerUsed: "test",
         modelUsed: "test-model",
-        fallbackUsed: false
+        fallbackUsed: false,
+        answerOutputMode: "admin_ingest_reply_markdown"
       };
     }
   });
 
-  assert.equal(careerOcrOnlyProviderCalled, false);
-  assert.equal(careerOcrOnlyResult.provider_status, "no_relevant_knowledge");
-  assert.match(careerOcrOnlyResult.answer, /还没有检索到足够的讲事业资料/);
-  assert.doesNotMatch(careerOcrOnlyResult.answer, /### AI思考回复话术|### 话术 1/);
+  assert.equal(careerOcrOnlyProviderCalled, true);
+  assert.equal(careerOcrOnlyResult.provider_status, "ok");
+  assert.equal(careerOcrOnlyResult.answer, careerOcrOnlyReply);
   assert.equal(careerOcrOnlyResult.customer_answer, "");
 
   const missingOcrFake = createFakeDb();

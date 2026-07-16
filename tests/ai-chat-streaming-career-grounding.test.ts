@@ -93,6 +93,50 @@ async function main() {
   assert.ok(chunkedCareerTokens.some((token) => Array.from(token).length > 1));
   assert.ok(chunkedCareerTokens.length < Array.from(completeCareerBody).length);
 
+  const ingestVisibleReply = [
+    "# 刚加好友，别急着讲事业",
+    "",
+    "这段  保留投喂端正文中的原始空格。",
+    "",
+    "## 第一步  制造‘懂她’的共鸣，而不是夸赞",
+    "",
+    "> 你现在是全天自己带，还是有人搭把手呀？",
+    "",
+    "---",
+    "",
+    "**不添加、不删减、不重排。**"
+  ].join("\n");
+  const ingestParityEvents = await collectStreamEvents({
+    answer: ingestVisibleReply,
+    conversation_id: "career-ingest-parity-conversation",
+    message_id: "career-ingest-parity-message",
+    mode: "deep",
+    customer_answer: "",
+    career_output_mode: "admin_ingest_reply_markdown",
+    finalized_answer: createFinalizedAnswer({
+      freeformAnswer: ingestVisibleReply,
+      customerReply: ""
+    }),
+    runtime_input: {
+      query: "刚刚加上好友，客户是宝妈，怎么破冰？",
+      agentId: "expert-career",
+      knowledgeBaseId: "kb-business-coach",
+      namespace: "kb-business-coach"
+    }
+  });
+  const ingestParityTokens = ingestParityEvents
+    .filter((event): event is Extract<AiChatStreamEvent, { type: "token" }> => event.type === "token")
+    .map((event) => event.content);
+  const ingestParityFinal = ingestParityEvents.find(
+    (event): event is Extract<AiChatStreamEvent, { type: "final" }> => event.type === "final"
+  );
+
+  assert.ok(ingestParityFinal);
+  assert.equal(ingestParityTokens.join(""), ingestVisibleReply);
+  assert.equal(ingestParityFinal.content, ingestVisibleReply);
+  assert.equal(ingestParityFinal.data.answer, ingestVisibleReply);
+  assert.equal(ingestParityFinal.data.rawAnswerBeforeFinalizer, ingestVisibleReply);
+
   const noEvidenceFinalizedAnswer = createFinalizedAnswer({
     freeformAnswer: "知识证据不足。",
     customerReply: "",

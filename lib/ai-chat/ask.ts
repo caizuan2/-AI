@@ -123,6 +123,7 @@ export interface AiChatAskInput {
 
 export interface AiChatAnswerProviderInput {
   question: string;
+  originalQuestion: string;
   contexts: RagContext[];
   mode: AiChatMode;
   enableDeepThinking: boolean;
@@ -150,6 +151,7 @@ export interface AiChatAnswerProviderResult {
   modelFeedbackEvent?: ModelFeedbackEvent;
   originalProviderErrorCode?: string;
   careerEvidencePlan?: CareerMentorEvidencePlanSummary;
+  answerOutputMode?: "admin_ingest_reply_markdown";
 }
 
 export interface AiChatAskOptions {
@@ -1735,8 +1737,9 @@ export async function handleAiChatAsk(
   let modelFeedbackEvent: ModelFeedbackEvent | undefined;
   let businessSchemaGuard: BusinessSchemaGuardResult | null = null;
   let careerEvidencePlan: CareerMentorEvidencePlanSummary | undefined;
+  let careerIngestReplyPassthrough = false;
 
-  if (contexts.length > 0 && careerKnowledgeHit) {
+  if (careerMentorEnabled || (contexts.length > 0 && careerKnowledgeHit)) {
     customerAnswer = buildCustomerAnswerFromChunks({
       question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
       chunks,
@@ -1744,10 +1747,11 @@ export async function handleAiChatAsk(
       mode
     });
 
-    if (options.providerConfigured && options.answerProvider) {
+    if (options.answerProvider && (careerMentorEnabled || options.providerConfigured)) {
       try {
         const providerResult = await options.answerProvider({
           question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
+          originalQuestion: question,
           contexts,
           mode,
           enableDeepThinking,
@@ -1766,8 +1770,14 @@ export async function handleAiChatAsk(
           ...agentScope
         });
 
-        careerEvidencePlan = providerResult.careerEvidencePlan;
-        answer = careerMentorEnabled
+        careerIngestReplyPassthrough = careerMentorEnabled
+          && providerResult.answerOutputMode === "admin_ingest_reply_markdown";
+        careerEvidencePlan = careerIngestReplyPassthrough
+          ? undefined
+          : providerResult.careerEvidencePlan;
+        answer = careerIngestReplyPassthrough
+          ? providerResult.answer
+          : careerMentorEnabled
           ? cleanCareerMentorUserAnswer(
               normalizeUserChatMarkdown(providerResult.answer),
               {
@@ -1781,7 +1791,9 @@ export async function handleAiChatAsk(
               }
             )
           : cleanUserFacingRagAnswer(providerResult.answer);
-        customerAnswer = careerMentorEnabled
+        customerAnswer = careerIngestReplyPassthrough
+          ? ""
+          : careerMentorEnabled
           ? extractCareerMentorCustomerAnswer(answer)
           : buildCustomerAnswerFromText(question, answer);
         providerStatus = "ok";
@@ -1797,6 +1809,7 @@ export async function handleAiChatAsk(
         }
       } catch (error) {
         const appError = toAppError(error);
+        careerIngestReplyPassthrough = false;
         answer = careerMentorEnabled
           ? buildCareerMentorNaturalProviderErrorAnswer()
           : RAG_CUSTOMER_DRAFT_ANSWER;
@@ -1836,7 +1849,9 @@ export async function handleAiChatAsk(
   });
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
-  const rawAnswerBeforeFinalizer = normalizeUserChatMarkdown(providerMainAnswer || businessSchemaGuard.response);
+  const rawAnswerBeforeFinalizer = careerIngestReplyPassthrough
+    ? providerMainAnswer
+    : normalizeUserChatMarkdown(providerMainAnswer || businessSchemaGuard.response);
   const rawCustomerAnswerBeforeFinalizer = normalizeUserChatMarkdown(
     providerCustomerAnswer || businessSchemaGuard.response
   );
@@ -1850,7 +1865,9 @@ export async function handleAiChatAsk(
   });
 
   const finalizedDisplayAnswer = formatFinalizedAnswerForDisplay(finalizedAnswer);
-  answer = careerMentorEnabled && providerStatus !== "ok"
+  answer = careerIngestReplyPassthrough
+    ? rawAnswerBeforeFinalizer
+    : careerMentorEnabled && providerStatus !== "ok"
     ? rawAnswerBeforeFinalizer
     : providerStatus === "ok" && rawAnswerBeforeFinalizer
       ? rawAnswerBeforeFinalizer
@@ -1859,25 +1876,29 @@ export async function handleAiChatAsk(
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
-  const outputControlledAnswer = processAIOutput(normalizeUserChatMarkdown(answer), {
-    model: actualModel,
-    source: "ai_chat_ask",
-    mode
-  }).output;
-  const cleanOutputControlledAnswer = careerMentorEnabled
-    ? cleanCareerMentorUserAnswer(
-        normalizeUserChatMarkdown(outputControlledAnswer),
-        {
-          chunks,
-          question: careerMentorScenarioQuestion,
-          supportingContext: careerMentorSupportingContext,
-          strictEvidencePlan: Boolean(careerEvidencePlan) || providerStatus !== "ok" || !careerKnowledgeHit,
-          evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
-          evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
-          evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
-        }
-      )
-    : cleanUserFacingRagAnswer(outputControlledAnswer);
+  const outputControlledAnswer = careerIngestReplyPassthrough
+    ? answer
+    : processAIOutput(normalizeUserChatMarkdown(answer), {
+        model: actualModel,
+        source: "ai_chat_ask",
+        mode
+      }).output;
+  const cleanOutputControlledAnswer = careerIngestReplyPassthrough
+    ? outputControlledAnswer
+    : careerMentorEnabled
+      ? cleanCareerMentorUserAnswer(
+          normalizeUserChatMarkdown(outputControlledAnswer),
+          {
+            chunks,
+            question: careerMentorScenarioQuestion,
+            supportingContext: careerMentorSupportingContext,
+            strictEvidencePlan: Boolean(careerEvidencePlan) || providerStatus !== "ok" || !careerKnowledgeHit,
+            evidencePlanAdaptiveReplies: careerEvidencePlan?.adaptiveReplies,
+            evidencePlanFixedScript: careerEvidencePlan?.fixedScript,
+            evidencePlanEvidenceIds: careerEvidencePlan?.evidenceIds
+          }
+        )
+      : cleanUserFacingRagAnswer(outputControlledAnswer);
 
   if (cleanOutputControlledAnswer !== answer) {
     answer = cleanOutputControlledAnswer;
@@ -1890,7 +1911,9 @@ export async function handleAiChatAsk(
   }
 
   if (careerMentorEnabled) {
-    customerAnswer = extractCareerMentorCustomerAnswer(answer);
+    customerAnswer = careerIngestReplyPassthrough
+      ? ""
+      : extractCareerMentorCustomerAnswer(answer);
     finalizedAnswer.customerReply = customerAnswer;
   }
   const visibleAnswerGroundingScore = answerGroundingScore ?? calculateFallbackGroundingScore(chunks, visibleFallbackUsed);
@@ -2018,8 +2041,11 @@ export async function handleAiChatAsk(
             writerPassed: careerEvidencePlan?.writerPassed ?? false,
             groundingValidationPassed: careerEvidencePlan?.groundingValidationPassed ?? false,
             plannerRepairUsed: careerEvidencePlan?.plannerRepairUsed ?? false,
-            outputMode: "natural_markdown_with_cards",
-            naturalBodyPassthrough: Boolean(careerEvidencePlan?.groundingValidationPassed),
+            outputMode: careerIngestReplyPassthrough
+              ? "admin_ingest_reply_markdown"
+              : "natural_markdown_with_cards",
+            naturalBodyPassthrough: careerIngestReplyPassthrough
+              || Boolean(careerEvidencePlan?.groundingValidationPassed),
             deepThinkingApplied: enableDeepThinking,
             staticFallbackUsed: Boolean(
               customerAnswer
@@ -2206,6 +2232,9 @@ export async function handleAiChatAsk(
     sources,
     confidence,
     provider_status: providerStatus,
+    career_output_mode: careerIngestReplyPassthrough
+      ? "admin_ingest_reply_markdown" as const
+      : null,
     model: osContext.route.model,
     actualModel,
     selected_model: osContext.route.selected_model,

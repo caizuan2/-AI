@@ -105,6 +105,7 @@ export interface StreamableAiChatResult {
   appliedAgentPolicies?: string[] | null;
   confidence?: string | null;
   provider_status?: string | null;
+  career_output_mode?: "admin_ingest_reply_markdown" | null;
   [key: string]: unknown;
 }
 
@@ -322,13 +323,17 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     readString(runtimeInput.query) ||
     readString(result.message) ||
     readString(result.question);
-  const preservedMainAnswer = normalizeUserChatMarkdown(
+  const rawPreservedMainAnswer =
     readString(result.rawAnswerBeforeFinalizer) ||
     readString(result.rawContent) ||
     readString(result.rawText) ||
     readString(result.rawAnswer) ||
-    readString(result.answer)
-  );
+    readString(result.answer);
+  const careerIngestReplyPassthrough = careerMentorGroundedScope
+    && result.career_output_mode === "admin_ingest_reply_markdown";
+  const preservedMainAnswer = careerIngestReplyPassthrough
+    ? rawPreservedMainAnswer
+    : normalizeUserChatMarkdown(rawPreservedMainAnswer);
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
     rawAnswer: preservedMainAnswer || result.answer,
     customerAnswer: result.customer_answer ?? undefined,
