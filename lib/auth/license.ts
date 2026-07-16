@@ -219,26 +219,78 @@ async function getLicenseMetadata(licenseId: string): Promise<LicenseMetadata> {
   };
 }
 
-async function getLatestRedeemedLicenseAppType(userId: string): Promise<LicenseAppType | null> {
-  const license = await prisma.licenseKey.findFirst({
+export type RedeemedLicenseState = {
+  id: string;
+  status: LicenseKeyStatus;
+  expiresAt: Date | null;
+  appType: LicenseAppType;
+};
+
+export function resolveRedeemedLicenseAccessState(
+  licenses: RedeemedLicenseState[],
+  requiredAppType?: LicenseAppType,
+  now = new Date()
+) {
+  const relevantLicenses = requiredAppType
+    ? licenses.filter((license) => license.appType === requiredAppType)
+    : licenses;
+  const activeLicense = relevantLicenses.find(
+    (license) => license.status === LicenseKeyStatus.USED && (!license.expiresAt || license.expiresAt > now)
+  );
+
+  if (activeLicense) {
+    return {
+      state: "active" as const,
+      activeLicense
+    };
+  }
+
+  if (relevantLicenses.some((license) => license.status === LicenseKeyStatus.DISABLED)) {
+    return {
+      state: "disabled" as const,
+      activeLicense: null
+    };
+  }
+
+  if (
+    relevantLicenses.some(
+      (license) => license.status === LicenseKeyStatus.USED && Boolean(license.expiresAt && license.expiresAt <= now)
+    )
+  ) {
+    return {
+      state: "expired" as const,
+      activeLicense: null
+    };
+  }
+
+  return {
+    state: requiredAppType && licenses.length > 0 ? "mismatch" as const : "missing" as const,
+    activeLicense: null
+  };
+}
+
+async function getRedeemedLicenseStates(userId: string): Promise<RedeemedLicenseState[]> {
+  const licenses = await prisma.licenseKey.findMany({
     where: {
-      redeemedByUserId: userId,
-      status: LicenseKeyStatus.USED
+      redeemedByUserId: userId
     },
     orderBy: [
       { redeemedAt: "desc" },
       { createdAt: "desc" }
     ],
     select: {
-      id: true
+      id: true,
+      status: true,
+      expiresAt: true
     }
   });
 
-  if (!license) {
-    return null;
-  }
-
-  return (await getLicenseMetadata(license.id)).appType;
+  return Promise.all(
+    licenses.map(async (license) => ({
+      ...license,
+      appType: (await getLicenseMetadata(license.id)).appType
+    }))
+  );
 }
 
 async function recordLicenseAuditLog(input: {
@@ -355,18 +407,6 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
 
   const bootstrapSuperAdmin = isBootstrapSuperAdminUser(user);
 
-  if (!user.licenseActivated) {
-    if (bootstrapSuperAdmin && (!requiredAppType || requiredAppType === "super_admin")) {
-      return true;
-    }
-
-    throw new LicenseRequiredError("请先输入卡密激活知识库。");
-  }
-
-  if (!requiredAppType) {
-    return true;
-  }
-
   if (requiredAppType === "super_admin") {
     if (bootstrapSuperAdmin) {
       return true;
@@ -375,7 +415,48 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
     throw new LicenseAppTypeMismatchError("超级管理员账号不通过普通卡密激活。");
   }
 
-  const licenseAppType = await getLatestRedeemedLicenseAppType(userId);
+  if (bootstrapSuperAdmin && !requiredAppType) {
+    return true;
+  }
+
+  const now = new Date();
+  const redeemedLicenses = await getRedeemedLicenseStates(userId);
+  const accessState = resolveRedeemedLicenseAccessState(redeemedLicenses, requiredAppType, now);
+
+  if (accessState.state !== "active") {
+    if (accessState.state === "disabled") {
+      throw new LicenseDisabledError("卡密已禁用。");
+    }
+
+    if (accessState.state === "expired") {
+      throw new LicenseExpiredError("卡密已过期。");
+    }
+
+    if (accessState.state === "mismatch" && requiredAppType) {
+      await recordLicenseAuditLog({
+        userId,
+        action: "license.mismatch",
+        metadata: {
+          requiredAppType,
+          licenseAppTypes: redeemedLicenses.map((license) => license.appType),
+          role: user.role,
+          source: "check_user_license"
+        }
+      });
+      throw new LicenseAppTypeMismatchError("卡密不适用于当前客户端。");
+    }
+
+    // Compatibility is limited to accounts that predate LicenseKey binding.
+    if (redeemedLicenses.length === 0 && user.licenseActivated) {
+      if (!requiredAppType || (requiredAppType === "user_app" && user.role === "user")) {
+        return true;
+      }
+    }
+
+    throw new LicenseRequiredError("请先输入卡密激活知识库。");
+  }
+
+  const licenseAppType = accessState.activeLicense.appType;
   const role = user.role;
 
   if (requiredAppType === "ingest_admin") {
@@ -397,7 +478,7 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
   }
 
   if (requiredAppType === "user_app") {
-    if (role !== "user" || (licenseAppType && licenseAppType !== "user_app")) {
+    if (role !== "user" || licenseAppType !== "user_app") {
       await recordLicenseAuditLog({
         userId,
         action: "license.mismatch",

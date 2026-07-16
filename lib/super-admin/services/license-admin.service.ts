@@ -652,22 +652,68 @@ export async function disableSuperAdminLicense(
 
   const metadataMap = await getLicenseMetadataMap([license.id]);
   const metadata = metadataMap.get(license.id) ?? getDefaultMetadata();
-  const updatedLicense = await prisma.licenseKey.update({
-    where: {
-      id: license.id
-    },
-    data: {
-      status: LicenseKeyStatus.DISABLED
-    },
-    include: {
-      redeemedByUser: {
-        select: {
-          phone: true,
-          email: true,
-          name: true
+  const now = new Date();
+  const { updatedLicense, userLicenseDeactivated } = await prisma.$transaction(async (tx) => {
+    const disabledLicense = await tx.licenseKey.update({
+      where: {
+        id: license.id
+      },
+      data: {
+        status: LicenseKeyStatus.DISABLED
+      },
+      include: {
+        redeemedByUser: {
+          select: {
+            phone: true,
+            email: true,
+            name: true
+          }
         }
       }
+    });
+
+    if (!license.redeemedByUserId) {
+      return {
+        updatedLicense: disabledLicense,
+        userLicenseDeactivated: false
+      };
     }
+
+    const remainingActiveLicenses = await tx.licenseKey.count({
+      where: {
+        id: {
+          not: license.id
+        },
+        redeemedByUserId: license.redeemedByUserId,
+        status: LicenseKeyStatus.USED,
+        OR: [
+          { expiresAt: null },
+          { expiresAt: { gt: now } }
+        ]
+      }
+    });
+
+    if (remainingActiveLicenses > 0) {
+      return {
+        updatedLicense: disabledLicense,
+        userLicenseDeactivated: false
+      };
+    }
+
+    const deactivatedUsers = await tx.user.updateMany({
+      where: {
+        id: license.redeemedByUserId,
+        licenseActivated: true
+      },
+      data: {
+        licenseActivated: false
+      }
+    });
+
+    return {
+      updatedLicense: disabledLicense,
+      userLicenseDeactivated: deactivatedUsers.count > 0
+    };
   });
 
   await createLicenseAuditLog({
@@ -678,7 +724,8 @@ export async function disableSuperAdminLicense(
     metadata: {
       ...metadata,
       beforeStatus: license.status,
-      afterStatus: updatedLicense.status
+      afterStatus: updatedLicense.status,
+      userLicenseDeactivated
     }
   });
 
