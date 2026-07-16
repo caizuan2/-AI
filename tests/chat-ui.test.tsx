@@ -2352,9 +2352,52 @@ async function main() {
   assert.equal(calls.at(-1)?.init?.method, "GET");
   assert.equal(calls.at(-1)?.init?.credentials, "include");
   assert.equal(calls.at(-1)?.init?.cache, "no-store");
-  assert.equal(calls.at(-1)?.init?.signal, historyController.signal);
+  assert.ok(calls.at(-1)?.init?.signal instanceof AbortSignal);
+  assert.notEqual(calls.at(-1)?.init?.signal, historyController.signal);
   assert.equal(historyResult.conversation.id, "conv_2");
   assert.equal(historyResult.messages[0].content, "联创历史问题");
+
+  calls.length = 0;
+  let historyAttempt = 0;
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    calls.push({ input, init });
+    historyAttempt += 1;
+
+    if (historyAttempt === 1) {
+      return new Response(JSON.stringify({
+        ok: false,
+        success: false,
+        error: {
+          message: "历史服务暂时繁忙。"
+        }
+      }), {
+        status: 503,
+        headers: {
+          "Content-Type": "application/json"
+        }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      ok: true,
+      success: true,
+      data: historyResult
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json"
+      }
+    });
+  }) as typeof fetch;
+
+  const retriedHistoryResult = await fetchConversationHistory("conv_2", {
+    timeoutMs: 1_000
+  });
+
+  assert.equal(historyAttempt, 2);
+  assert.equal(calls.length, 2);
+  assert.equal(retriedHistoryResult.messages[0].content, "联创历史问题");
 
   globalThis.fetch = originalFetch;
   calls.length = 0;
