@@ -61,6 +61,33 @@ export class ApiClientError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function readApiErrorCode(payload: unknown): AppErrorCode | null {
+  const root = isRecord(payload) ? payload : null;
+  const data = root && isRecord(root.data) ? root.data : root;
+  const rootError = root && isRecord(root.error) ? root.error : null;
+  const dataError = data && isRecord(data.error) ? data.error : null;
+  const candidates = [
+    rootError?.code,
+    root?.code,
+    root?.errorCode,
+    dataError?.code,
+    data?.code,
+    data?.errorCode
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate as AppErrorCode;
+    }
+  }
+
+  return null;
+}
+
 function formatErrorMessage(input: {
   code: AppErrorCode;
   message: string;
@@ -96,7 +123,7 @@ export async function unwrapApiResponse<T>(response: Response, fallback: string)
     return data.data;
   }
 
-  const code = data.error?.code ?? data.code ?? "UNKNOWN_ERROR";
+  const code = readApiErrorCode(data) ?? "UNKNOWN_ERROR";
   const requestId = data.error?.requestId ?? data.requestId ?? response.headers.get("x-request-id") ?? undefined;
   const message = data.error?.message ?? data.message ?? friendlyMessages[code] ?? fallback;
   const friendlyMessage = formatErrorMessage({
@@ -133,7 +160,7 @@ export async function readApiErrorMessage(response: Response, fallback: string) 
     });
 
     if (!data.success) {
-      const code = data.error?.code ?? data.code ?? "UNKNOWN_ERROR";
+      const code = readApiErrorCode(data) ?? "UNKNOWN_ERROR";
       const requestId = data.error?.requestId ?? data.requestId ?? response.headers.get("x-request-id") ?? undefined;
 
       return formatErrorMessage({
