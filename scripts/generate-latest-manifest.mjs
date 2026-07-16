@@ -147,6 +147,25 @@ function snapshot(app) {
   };
 }
 
+function getLegacyElectronVersion() {
+  const version = versionInfo.legacy_electron_version;
+
+  if (typeof version !== "string" || !version.trim()) {
+    throw new Error("version.json must contain a valid legacy_electron_version.");
+  }
+
+  return version.trim();
+}
+
+function legacyElectronSnapshot(app) {
+  const release = snapshot(app);
+
+  return {
+    ...release,
+    version: getLegacyElectronVersion()
+  };
+}
+
 if (typeof versionInfo.version !== "string" || !Number.isInteger(versionInfo.build)) {
   throw new Error("version.json must contain version and build.");
 }
@@ -223,7 +242,11 @@ const manifest = {
     page: userVersion.download_page
   },
   apps,
-  user: snapshot(apps.user),
+  // Electron 1.0.10 reads this legacy snapshot before `apps.user` and compares
+  // only its version. Keep that version on the newest Web-compatible Electron
+  // shell so Web-only releases do not open an installer. Build and download
+  // metadata stay current for other legacy clients; current UI uses apps.user.
+  user: legacyElectronSnapshot(apps.user),
   admin: existing.admin ?? snapshot(apps.admin)
 };
 

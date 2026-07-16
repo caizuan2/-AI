@@ -422,7 +422,9 @@ function createMainWindow() {
 
   mainWindow.webContents.once("did-finish-load", () => {
     setupElectronAutoUpdater();
-    void checkLatestJsonUpdate();
+    // The Web update coordinator distinguishes content refreshes from real
+    // native package upgrades. Do not run the legacy version-only prompt here,
+    // because it treats every Web release as a new EXE installer.
   });
 }
 

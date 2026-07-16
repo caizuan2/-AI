@@ -93,7 +93,7 @@
   },
   "user": {
     "app_name": "AI知识库助手",
-    "version": "1.0.17",
+    "version": "1.0.10",
     "build": 142,
     "minimum_build": 100,
     "force_update": false,

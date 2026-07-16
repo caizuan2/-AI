@@ -22,6 +22,7 @@ import {
 } from "../components/AppUpdateNotice";
 import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
+import versionInfo from "../version.json";
 
 const parsedManifest = normalizeLatestReleaseManifest(releaseInfo);
 const appStoreManifest = normalizeAppStoreManifest(releaseInfo);
@@ -40,6 +41,11 @@ assert.equal(typeof manifest.admin.build, "number");
 assert.equal(APP_VERSION, releaseInfo.version);
 assert.equal(APP_BUILD, releaseInfo.build);
 assert.equal(manifest.user.build, APP_BUILD);
+assert.equal(releaseInfo.user.version, versionInfo.legacy_electron_version);
+assert.equal(releaseInfo.user.build, APP_BUILD);
+assert.equal(releaseInfo.user.web_release_sha, releaseInfo.web_release_sha);
+assert.equal(releaseInfo.user.exe_url, manifest.user.exe_url);
+assert.equal(releaseInfo.apps.user.active_version, APP_VERSION);
 assert.equal(manifest.admin.build, releaseInfo.admin.build);
 assert.equal(manifest.user.web_release_sha, releaseInfo.web_release_sha);
 assert.equal(APP_WEB_RELEASE_SHA, releaseInfo.web_release_sha || APP_WEB_RELEASE_SHA);
@@ -530,6 +536,9 @@ async function main() {
 
   const electronMain = readFileSync("electron/main.cjs", "utf8");
   assert.match(electronMain, /getUpdateDownloadDir/);
+  assert.match(electronMain, /setupElectronAutoUpdater\(\)/);
+  assert.doesNotMatch(electronMain, /void checkLatestJsonUpdate\(\)/);
+  assert.match(electronMain, /ipcMain\.handle\("ai-knowledge:download-update"/);
   assert.doesNotMatch(electronMain, /app\.getPath\("downloads"\)/);
 
   const enterpriseAutoUpdate = readFileSync("components/EnterpriseAutoUpdate.tsx", "utf8");
