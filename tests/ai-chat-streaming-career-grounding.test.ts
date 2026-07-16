@@ -20,12 +20,18 @@ function createFinalizedAnswer(overrides: Partial<FinalizedAnswer> = {}): Finali
   };
 }
 
-async function collectFinalEvent(result: StreamableAiChatResult) {
+async function collectStreamEvents(result: StreamableAiChatResult) {
   const events: AiChatStreamEvent[] = [];
 
   await streamAiChatResult(result, async (event) => {
     events.push(event);
   });
+
+  return events;
+}
+
+async function collectFinalEvent(result: StreamableAiChatResult) {
+  const events = await collectStreamEvents(result);
 
   const finalEvent = events.find((event): event is Extract<AiChatStreamEvent, { type: "final" }> => (
     event.type === "final"
@@ -61,6 +67,31 @@ async function main() {
   assert.equal(groundedFinalized.customerReply, "固定知识库原话");
   assert.equal(groundedFinalized.nextAction, "按已验证的知识库流程执行下一步。");
   assert.ok(groundedFinal.data.runtime_output, "Runtime V2 metadata should remain available");
+
+  const completeCareerBody = "## 判断\n\n这位客户刚加好友，当前属于第一步破冰。\n\n## 回复思路\n\n先感受客户，再自我介绍和精准共鸣，最后发送资料。";
+  const chunkedCareerEvents = await collectStreamEvents({
+    answer: completeCareerBody,
+    conversation_id: "career-chunked-conversation",
+    message_id: "career-chunked-message",
+    mode: "deep",
+    customer_answer: "固定知识库原话",
+    finalized_answer: createFinalizedAnswer({
+      freeformAnswer: completeCareerBody
+    }),
+    runtime_input: {
+      query: "刚刚加的好友，我应该怎么破冰呢？",
+      agentId: "expert-career",
+      knowledgeBaseId: "kb-business-coach",
+      namespace: "kb-business-coach"
+    }
+  });
+  const chunkedCareerTokens = chunkedCareerEvents
+    .filter((event): event is Extract<AiChatStreamEvent, { type: "token" }> => event.type === "token")
+    .map((event) => event.content);
+
+  assert.equal(chunkedCareerTokens.join(""), completeCareerBody);
+  assert.ok(chunkedCareerTokens.some((token) => Array.from(token).length > 1));
+  assert.ok(chunkedCareerTokens.length < Array.from(completeCareerBody).length);
 
   const noEvidenceFinalizedAnswer = createFinalizedAnswer({
     freeformAnswer: "知识证据不足。",
@@ -113,6 +144,31 @@ async function main() {
     (nonCareerFinal.data.finalized_answer as FinalizedAnswer).customerReply,
     nonCareerRuntimeOutput.customerCopy
   );
+
+  const nonCareerBody = "大健康专家正文仍按原有逐字流式方式输出。";
+  const nonCareerEvents = await collectStreamEvents({
+    answer: nonCareerBody,
+    conversation_id: "non-career-stream-conversation",
+    message_id: "non-career-stream-message",
+    mode: "deep",
+    customer_answer: "非讲事业原始话术",
+    finalized_answer: createFinalizedAnswer({
+      freeformAnswer: nonCareerBody,
+      customerReply: "非讲事业原始话术"
+    }),
+    runtime_input: {
+      query: "大健康问题",
+      agentId: "expert-health",
+      knowledgeBaseId: "kb-health",
+      namespace: "kb-health"
+    }
+  });
+  const nonCareerTokens = nonCareerEvents
+    .filter((event): event is Extract<AiChatStreamEvent, { type: "token" }> => event.type === "token")
+    .map((event) => event.content);
+
+  assert.equal(nonCareerTokens.join(""), nonCareerBody);
+  assert.equal(nonCareerTokens.length, Array.from(nonCareerBody).length);
 
   console.log("ai-chat career streaming grounding tests passed");
 }

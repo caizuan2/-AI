@@ -124,6 +124,7 @@ interface CreateAiChatSseResponseInput {
 }
 
 const SSE_HEARTBEAT_INTERVAL_MS = 12_000;
+const CAREER_MENTOR_STREAM_CHUNK_SIZE = 24;
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === "AbortError";
@@ -152,12 +153,30 @@ export function splitTextIntoStreamTokens(content: string) {
   return Array.from(content);
 }
 
+function splitTextIntoStreamChunks(content: string, chunkSize: number) {
+  const characters = splitTextIntoStreamTokens(content);
+  const normalizedChunkSize = Math.max(1, Math.floor(chunkSize));
+
+  if (normalizedChunkSize === 1) {
+    return characters;
+  }
+
+  const chunks: string[] = [];
+
+  for (let index = 0; index < characters.length; index += normalizedChunkSize) {
+    chunks.push(characters.slice(index, index + normalizedChunkSize).join(""));
+  }
+
+  return chunks;
+}
+
 export async function streamTextTokens(
   content: string,
   emit: (event: AiChatStreamEvent) => Promise<void>,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  chunkSize = 1
 ) {
-  for (const token of splitTextIntoStreamTokens(content)) {
+  for (const token of splitTextIntoStreamChunks(content, chunkSize)) {
     if (signal?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
@@ -176,6 +195,16 @@ export async function streamAiChatResult(
   signal?: AbortSignal
 ) {
   const finalResult = await ensureFinalizedStreamResult(result);
+  const runtimeInput = isRecord(finalResult.runtime_input) ? finalResult.runtime_input : {};
+  const streamChunkSize = isCareerMentorScope({
+    agentId: readString(runtimeInput.agentId) || readString(finalResult.agentId),
+    expertId: readString(runtimeInput.expertId) || readString(finalResult.expert_id),
+    knowledgeBaseId: readString(runtimeInput.knowledgeBaseId) || readString(finalResult.knowledgeBaseId),
+    kbId: readString(runtimeInput.kbId) || readString(finalResult.kb_id),
+    namespace: readString(runtimeInput.namespace) || readString(finalResult.namespace)
+  })
+    ? CAREER_MENTOR_STREAM_CHUNK_SIZE
+    : 1;
 
   await emit({
     type: "thinking",
@@ -183,7 +212,7 @@ export async function streamAiChatResult(
   });
   await emitRagVisualization(finalResult, emit);
   await emitModelVisualization(finalResult, emit);
-  await streamTextTokens(finalResult.answer ?? "", emit, signal);
+  await streamTextTokens(finalResult.answer ?? "", emit, signal, streamChunkSize);
   await emit({
     type: "final",
     content: finalResult.answer ?? "",

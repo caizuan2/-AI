@@ -1620,9 +1620,14 @@ async function main() {
   const chatSseStreamingSource = readFileSync("lib/ai-chat/streaming.ts", "utf8");
 
   assert.match(chatTransportApiSource, /ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000/);
+  assert.match(chatTransportApiSource, /function isCareerMentorAskRequest\(input: AskChatRequest\)/);
+  assert.match(chatTransportApiSource, /CAREER_MENTOR_AGENT_IDS\.has\(agentId\)[\s\S]{0,100}CAREER_MENTOR_KNOWLEDGE_BASE_IDS\.has\(knowledgeBaseId\)/);
+  assert.match(chatTransportApiSource, /const timeout = isCareerMentorAskRequest\(input\)[\s\S]{0,40}\? null/);
   assert.match(chatTransportApiSource, /回答连接已中断，请检查网络后重新发送/);
   assert.match(chatTransportApiSource, /回答时间较长，连接已自动结束/);
   assert.match(chatSseStreamingSource, /SSE_HEARTBEAT_INTERVAL_MS = 12_000/);
+  assert.match(chatSseStreamingSource, /CAREER_MENTOR_STREAM_CHUNK_SIZE = 24/);
+  assert.match(chatSseStreamingSource, /streamTextTokens\(finalResult\.answer \?\? "", emit, signal, streamChunkSize\)/);
   assert.match(chatSseStreamingSource, /writer\.enqueue\(`: heartbeat/);
   assert.doesNotMatch(chatSseStreamingSource, /type: "token"[\s\S]{0,120}heartbeat/);
   assert.match(chatShellText, /scrollChatMessageToTop\(targetMessageId, "auto"\)/);
