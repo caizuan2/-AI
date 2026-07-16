@@ -16,6 +16,7 @@ import type {
 
 type ConversationActor = Pick<RbacUser, "id" | "role">;
 type ConversationFeatureName = keyof ConversationFeatureFlags;
+const MAX_PINNED_CONVERSATIONS = 100;
 
 type ConversationRecord = {
   id: string;
@@ -198,6 +199,14 @@ function readBoolean(input: unknown, key: string, fallback: boolean) {
   return typeof input[key] === "boolean" ? input[key] : fallback;
 }
 
+function readRequiredBoolean(input: unknown, key: string) {
+  if (!isRecord(input) || typeof input[key] !== "boolean") {
+    throw new ValidationError(`${key} 必须是布尔值。`);
+  }
+
+  return input[key];
+}
+
 function readReason(input: unknown) {
   if (!isRecord(input)) {
     return null;
@@ -314,43 +323,120 @@ export async function archiveConversation(
   };
 }
 
-export async function softDeleteConversation(
+export async function setConversationPin(
   actor: ConversationActor,
   conversationId: string,
   input: unknown,
   request?: Request
 ) {
-  await ensureFeatureEnabled(actor, "delete", "delete_conversation", conversationId, request);
+  const pinned = readRequiredBoolean(input, "pinned");
+  const action: ConversationControlAuditAction = pinned ? "pin_conversation" : "unpin_conversation";
 
-  const conversation = await getOwnedConversation(actor, conversationId);
-  const before = buildConversationSnapshot(conversation);
-  const metadata = buildMetadata(conversation.metadata, {
-    deletedAt: new Date().toISOString(),
-    deletedByUserId: actor.id,
-    deleteReason: readReason(input),
-    deleteMode: "soft_delete",
-    attachmentPolicy: "keep_attachments"
-  });
-  const updated = await prisma.conversation.update({
-    where: {
-      id: conversation.id
-    },
-    data: {
-      metadata
-    },
-    select: {
-      id: true,
-      userId: true,
-      title: true,
-      metadata: true,
-      updatedAt: true
+  await ensureFeatureEnabled(actor, "pinCloudSync", action, conversationId, request);
+
+  const normalizedConversationId = typeof conversationId === "string" ? conversationId.trim() : "";
+
+  if (!normalizedConversationId) {
+    throw new ValidationError("conversation_id 不能为空。");
+  }
+
+  const { conversation, before, after } = await prisma.$transaction(async (transaction) => {
+    // Serialize every pin mutation for the same user so concurrent devices cannot
+    // all pass the limit check before any of them writes.
+    await transaction.$queryRaw`
+      SELECT pg_advisory_xact_lock(734211, hashtext(${actor.id}))
+    `;
+
+    const currentConversation = await transaction.conversation.findFirst({
+      where: {
+        id: normalizedConversationId,
+        userId: actor.id,
+        type: "CHAT"
+      },
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        metadata: true,
+        updatedAt: true
+      }
+    });
+
+    if (!currentConversation || getSoftDeletedAt(currentConversation.metadata)) {
+      throw new NotFoundError("会话不存在。");
     }
+
+    const existingPin = await transaction.userConversationPin.findUnique({
+      where: {
+        userId_conversationId: {
+          userId: actor.id,
+          conversationId: currentConversation.id
+        }
+      },
+      select: {
+        pinnedAt: true
+      }
+    });
+    const beforeSnapshot = {
+      conversationId: currentConversation.id,
+      pinned: Boolean(existingPin),
+      pinnedAt: existingPin?.pinnedAt.toISOString() ?? null
+    };
+
+    if (pinned && !existingPin) {
+      const pinnedConversationCount = await transaction.userConversationPin.count({
+        where: {
+          userId: actor.id
+        }
+      });
+
+      if (pinnedConversationCount >= MAX_PINNED_CONVERSATIONS) {
+        throw new ValidationError(`最多可置顶 ${MAX_PINNED_CONVERSATIONS} 个会话，请先取消部分置顶。`);
+      }
+    }
+
+    const pin = pinned
+      ? await transaction.userConversationPin.upsert({
+          where: {
+            userId_conversationId: {
+              userId: actor.id,
+              conversationId: currentConversation.id
+            }
+          },
+          create: {
+            userId: actor.id,
+            conversationId: currentConversation.id
+          },
+          update: {},
+          select: {
+            pinnedAt: true
+          }
+        })
+      : null;
+
+    if (!pinned) {
+      await transaction.userConversationPin.deleteMany({
+        where: {
+          userId: actor.id,
+          conversationId: currentConversation.id
+        }
+      });
+    }
+
+    return {
+      conversation: currentConversation,
+      before: beforeSnapshot,
+      after: {
+        conversationId: currentConversation.id,
+        pinned,
+        pinnedAt: pin?.pinnedAt.toISOString() ?? null
+      }
+    };
   });
-  const after = buildConversationSnapshot(updated);
 
   await writeConversationAudit({
     actor,
-    action: "delete_conversation",
+    action,
     conversationId: conversation.id,
     targetUserId: conversation.userId,
     request,
@@ -360,10 +446,126 @@ export async function softDeleteConversation(
   });
 
   return {
+    conversation_id: conversation.id,
+    pinned,
+    pinned_at: after.pinnedAt
+  };
+}
+
+export async function softDeleteConversation(
+  actor: ConversationActor,
+  conversationId: string,
+  input: unknown,
+  request?: Request
+) {
+  await ensureFeatureEnabled(actor, "delete", "delete_conversation", conversationId, request);
+
+  const normalizedConversationId = typeof conversationId === "string" ? conversationId.trim() : "";
+
+  if (!normalizedConversationId) {
+    throw new ValidationError("conversation_id 不能为空。");
+  }
+
+  const result = await prisma.$transaction(async (transaction) => {
+    await transaction.$queryRaw`
+      SELECT pg_advisory_xact_lock(734211, hashtext(${actor.id}))
+    `;
+
+    const conversation = await transaction.conversation.findFirst({
+      where: {
+        id: normalizedConversationId,
+        userId: actor.id,
+        type: "CHAT"
+      },
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        metadata: true,
+        updatedAt: true
+      }
+    });
+
+    if (!conversation || getSoftDeletedAt(conversation.metadata)) {
+      throw new NotFoundError("会话不存在。");
+    }
+
+    const existingPin = await transaction.userConversationPin.findUnique({
+      where: {
+        userId_conversationId: {
+          userId: actor.id,
+          conversationId: conversation.id
+        }
+      },
+      select: {
+        pinnedAt: true
+      }
+    });
+    const metadata = buildMetadata(conversation.metadata, {
+      deletedAt: new Date().toISOString(),
+      deletedByUserId: actor.id,
+      deleteReason: readReason(input),
+      deleteMode: "soft_delete",
+      attachmentPolicy: "keep_attachments"
+    });
+    const updated = await transaction.conversation.update({
+      where: {
+        id: conversation.id
+      },
+      data: {
+        metadata
+      },
+      select: {
+        id: true,
+        userId: true,
+        title: true,
+        metadata: true,
+        updatedAt: true
+      }
+    });
+
+    await transaction.userConversationPin.deleteMany({
+      where: {
+        userId: actor.id,
+        conversationId: conversation.id
+      }
+    });
+
+    const beforeConversation = buildConversationSnapshot(conversation);
+    const afterConversation = buildConversationSnapshot(updated);
+
+    return {
+      conversation,
+      before: {
+        ...beforeConversation,
+        pinned: Boolean(existingPin),
+        pinnedAt: existingPin?.pinnedAt.toISOString() ?? null
+      },
+      after: {
+        ...afterConversation,
+        pinned: false,
+        pinnedAt: null
+      },
+      afterConversation
+    };
+  });
+
+  await writeConversationAudit({
+    actor,
+    action: "delete_conversation",
+    conversationId: result.conversation.id,
+    targetUserId: result.conversation.userId,
+    request,
+    status: "allowed",
+    before: result.before,
+    after: result.after
+  });
+
+  return {
     deleted: true,
     deleteMode: "soft_delete",
     attachmentPolicy: "keep_attachments",
-    conversation: after
+    conversation: result.afterConversation
   };
 }
 

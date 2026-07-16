@@ -19,10 +19,12 @@ import {
   fetchConversationHistory,
   fetchConversations,
   fetchCurrentChatUser,
+  isConversationActionTerminalPinMigrationError,
   logoutCurrentChatUser,
   renameConversation,
   resetConversationGroupChatLink,
   shareConversation,
+  updateConversationPin,
   updateCurrentChatUserName,
   uploadChatAttachments,
   USER_CHAT_LOGIN_URL
@@ -77,6 +79,8 @@ import type {
 } from "../types";
 
 const PINNED_CONVERSATION_STORAGE_KEY_PREFIX = "chat-ui:pinned-conversation-ids";
+const PINNED_CONVERSATION_CLOUD_MIGRATION_SUFFIX = "cloud-migrated-v1";
+const MAX_PINNED_CONVERSATIONS = 100;
 const PROMPT_HISTORY_LIMIT = 30;
 const PROMPT_HISTORY_RAIL_MARK_COUNT = 42;
 const CHAT_MODE_CLASSIFY_CACHE_PREFIX = "chat-ui:mode-classify:v12.5:";
@@ -160,6 +164,38 @@ function readPinnedConversationIds(storageKey: string | null) {
   }
 }
 
+function getPinnedConversationMigrationStorageKey(storageKey: string | null) {
+  return storageKey ? `${storageKey}:${PINNED_CONVERSATION_CLOUD_MIGRATION_SUFFIX}` : null;
+}
+
+function hasCompletedPinnedConversationMigration(storageKey: string | null) {
+  const migrationStorageKey = getPinnedConversationMigrationStorageKey(storageKey);
+
+  if (typeof window === "undefined" || !migrationStorageKey) {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(migrationStorageKey) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markPinnedConversationMigrationCompleted(storageKey: string | null) {
+  const migrationStorageKey = getPinnedConversationMigrationStorageKey(storageKey);
+
+  if (typeof window === "undefined" || !migrationStorageKey) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(migrationStorageKey, "1");
+  } catch {
+    // The cloud remains authoritative even when the local migration marker cannot be cached.
+  }
+}
+
 function normalizeAvatarUrl(avatarUrl: string | null | undefined) {
   const value = normalizeCurrentChatUserAvatarUrl(avatarUrl);
 
@@ -235,7 +271,7 @@ function writePinnedConversationIds(ids: Set<string>, storageKey: string | null)
   try {
     window.localStorage.setItem(storageKey, JSON.stringify(Array.from(ids)));
   } catch {
-    // Local pinning is a UI convenience; storage failures must not block menu actions.
+    // Local storage is only an offline cache; storage failures must not block cloud pinning.
   }
 }
 
@@ -486,9 +522,14 @@ export function ChatShell() {
   const [scrollFocusMessageId, setScrollFocusMessageId] = React.useState<string | null>(null);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const historyRequestIdRef = React.useRef(0);
+  const conversationListRequestIdRef = React.useRef(0);
   const activeAskAbortRef = React.useRef<AbortController | null>(null);
   const chatModeClassifyAbortRef = React.useRef<AbortController | null>(null);
   const activeUserIdentityRef = React.useRef<string | null>(null);
+  const pinnedConversationIdsRef = React.useRef<Set<string>>(new Set());
+  const confirmedPinnedConversationIdsRef = React.useRef<Set<string>>(new Set());
+  const pinActionVersionRef = React.useRef<Map<string, number>>(new Map());
+  const pinUpdateQueueRef = React.useRef<Map<string, Promise<unknown>>>(new Map());
   const pendingScrollToUserMessageIdRef = React.useRef<string | null>(null);
   const pendingScrollToBottomRef = React.useRef(false);
   const currentUserName = getCurrentChatUserDisplayName(currentUser);
@@ -553,21 +594,194 @@ export function ChatShell() {
     return nextUser;
   }, []);
 
+  const applyPinnedConversationIds = React.useCallback((
+    ids: Iterable<string>,
+    storageKey = pinnedConversationStorageKey
+  ) => {
+    const next = new Set(ids);
+
+    pinnedConversationIdsRef.current = next;
+    setPinnedConversationIds(next);
+    writePinnedConversationIds(next, storageKey);
+    return next;
+  }, [pinnedConversationStorageKey]);
+
+  const enqueueConversationPinUpdate = React.useCallback((targetConversationId: string, pinned: boolean) => {
+    const previousRequest = pinUpdateQueueRef.current.get(targetConversationId) ?? Promise.resolve();
+    const request = previousRequest
+      .catch(() => undefined)
+      .then(() => updateConversationPin(targetConversationId, pinned));
+
+    pinUpdateQueueRef.current.set(targetConversationId, request);
+    void request.finally(() => {
+      if (pinUpdateQueueRef.current.get(targetConversationId) === request) {
+        pinUpdateQueueRef.current.delete(targetConversationId);
+      }
+    }).catch(() => undefined);
+
+    return request;
+  }, []);
+
   const loadConversations = React.useCallback(async () => {
+    const targetUserIdentity = currentUserIdentity;
+    const targetStorageKey = pinnedConversationStorageKey;
+    const listRequestId = conversationListRequestIdRef.current + 1;
+    const isCurrentListRequest = () => (
+      conversationListRequestIdRef.current === listRequestId &&
+      activeUserIdentityRef.current === targetUserIdentity
+    );
+
+    conversationListRequestIdRef.current = listRequestId;
+
     setConversationLoading(true);
     setConversationLoadError(null);
 
     try {
       const result = await fetchConversations();
+      const nextConversations = Array.isArray(result.conversations) ? result.conversations : [];
 
-      setConversations(result.conversations);
+      if (!targetUserIdentity || !isCurrentListRequest()) {
+        return;
+      }
+
+      setConversations(nextConversations);
+
+      const migrationCompleted = hasCompletedPinnedConversationMigration(targetStorageKey);
+      const hasCloudPinState = nextConversations.length > 0
+        ? nextConversations.every((conversation) => typeof conversation.pinned === "boolean")
+        : migrationCompleted;
+
+      if (!hasCloudPinState) {
+        applyPinnedConversationIds(readPinnedConversationIds(targetStorageKey), targetStorageKey);
+        return;
+      }
+
+      const cloudPinnedIds = new Set(
+        nextConversations
+          .filter((conversation) => conversation.pinned === true)
+          .map((conversation) => conversation.id)
+      );
+
+      confirmedPinnedConversationIdsRef.current = new Set(cloudPinnedIds);
+
+      if (migrationCompleted) {
+        applyPinnedConversationIds(cloudPinnedIds, targetStorageKey);
+        return;
+      }
+
+      const localPinnedIds = readPinnedConversationIds(targetStorageKey);
+      const localOnlyPinnedIds = Array.from(localPinnedIds).filter((conversationId) => (
+        !cloudPinnedIds.has(conversationId)
+      ));
+      const availablePinSlots = Math.max(0, MAX_PINNED_CONVERSATIONS - cloudPinnedIds.size);
+      const migrationCandidateIds = localOnlyPinnedIds.slice(0, availablePinSlots);
+      const discardedOverflowIds = localOnlyPinnedIds.slice(availablePinSlots);
+      const initialPinnedIds = new Set([
+        ...Array.from(cloudPinnedIds),
+        ...migrationCandidateIds
+      ]);
+
+      applyPinnedConversationIds(initialPinnedIds, targetStorageKey);
+
+      if (discardedOverflowIds.length > 0) {
+        console.warn("[chat-ui] local pinned conversations exceeded the cloud limit and were not migrated", {
+          discardedCount: discardedOverflowIds.length
+        });
+      }
+
+      if (migrationCandidateIds.length === 0) {
+        markPinnedConversationMigrationCompleted(targetStorageKey);
+        return;
+      }
+
+      void (async () => {
+        const confirmedPinnedIds = new Set(confirmedPinnedConversationIdsRef.current);
+        const terminalConversationIds: string[] = [];
+        const retryableFailedConversationIds: string[] = [];
+
+        for (const targetConversationId of migrationCandidateIds) {
+          if (!isCurrentListRequest()) {
+            return;
+          }
+
+          try {
+            const migrationResult = await enqueueConversationPinUpdate(targetConversationId, true);
+
+            if (migrationResult.pinned) {
+              confirmedPinnedIds.add(targetConversationId);
+            } else {
+              retryableFailedConversationIds.push(targetConversationId);
+            }
+          } catch (migrationError) {
+            if (isConversationActionTerminalPinMigrationError(migrationError)) {
+              terminalConversationIds.push(targetConversationId);
+            } else {
+              retryableFailedConversationIds.push(targetConversationId);
+            }
+          }
+        }
+
+        if (!isCurrentListRequest()) {
+          return;
+        }
+
+        confirmedPinnedConversationIdsRef.current = confirmedPinnedIds;
+
+        if (terminalConversationIds.length > 0) {
+          const cleanedPinnedIds = new Set(pinnedConversationIdsRef.current);
+
+          terminalConversationIds.forEach((conversationId) => cleanedPinnedIds.delete(conversationId));
+          applyPinnedConversationIds(cleanedPinnedIds, targetStorageKey);
+        }
+
+        if (retryableFailedConversationIds.length === 0) {
+          markPinnedConversationMigrationCompleted(targetStorageKey);
+          writePinnedConversationIds(pinnedConversationIdsRef.current, targetStorageKey);
+
+          void fetchConversations()
+            .then((refreshedResult) => {
+              if (!isCurrentListRequest()) {
+                return;
+              }
+
+              const refreshedConversations = Array.isArray(refreshedResult.conversations)
+                ? refreshedResult.conversations
+                : [];
+              const refreshedPinnedIds = new Set(
+                refreshedConversations
+                  .filter((conversation) => conversation.pinned === true)
+                  .map((conversation) => conversation.id)
+              );
+
+              confirmedPinnedConversationIdsRef.current = new Set(refreshedPinnedIds);
+              setConversations(refreshedConversations);
+              applyPinnedConversationIds(refreshedPinnedIds, targetStorageKey);
+            })
+            .catch((refreshError) => {
+              console.warn("[chat-ui] migrated pinned conversations refresh failed", refreshError);
+            });
+        } else {
+          console.warn("[chat-ui] local pinned conversations could not be fully migrated", {
+            failedConversationIds: retryableFailedConversationIds
+          });
+        }
+      })();
     } catch (requestError) {
-      console.warn("[chat-ui] conversation list load failed", requestError);
-      setConversationLoadError("历史会话暂时无法加载，请稍后重试。");
+      if (isCurrentListRequest()) {
+        console.warn("[chat-ui] conversation list load failed", requestError);
+        setConversationLoadError("历史会话暂时无法加载，请稍后重试。");
+      }
     } finally {
-      setConversationLoading(false);
+      if (isCurrentListRequest()) {
+        setConversationLoading(false);
+      }
     }
-  }, []);
+  }, [
+    applyPinnedConversationIds,
+    currentUserIdentity,
+    enqueueConversationPinUpdate,
+    pinnedConversationStorageKey
+  ]);
 
   React.useEffect(() => {
     if (sidebarUserToggled) {
@@ -631,12 +845,22 @@ export function ChatShell() {
 
     if (previousUserIdentity !== nextUserIdentity) {
       activeUserIdentityRef.current = nextUserIdentity;
+      confirmedPinnedConversationIdsRef.current = new Set();
       clearChatSessionState();
-      setPinnedConversationIds(readPinnedConversationIds(pinnedConversationStorageKey));
+      applyPinnedConversationIds(
+        readPinnedConversationIds(pinnedConversationStorageKey),
+        pinnedConversationStorageKey
+      );
     }
 
     void loadConversations();
-  }, [currentUserLoaded, currentUserIdentity, pinnedConversationStorageKey, loadConversations]);
+  }, [
+    applyPinnedConversationIds,
+    currentUserLoaded,
+    currentUserIdentity,
+    pinnedConversationStorageKey,
+    loadConversations
+  ]);
 
   React.useEffect(() => {
     if (!currentUserLoaded || !currentUserIdentity) {
@@ -913,7 +1137,12 @@ export function ChatShell() {
     setConfirmDialog(null);
 
     if (options.clearPinned) {
-      setPinnedConversationIds(new Set());
+      const emptyPinnedIds = new Set<string>();
+
+      pinnedConversationIdsRef.current = emptyPinnedIds;
+      confirmedPinnedConversationIdsRef.current = emptyPinnedIds;
+      pinActionVersionRef.current.clear();
+      setPinnedConversationIds(emptyPinnedIds);
     }
   }
 
@@ -1373,20 +1602,104 @@ export function ChatShell() {
     }
   }
 
-  function handleTogglePinConversationAction(item: { id: string; title: string; pinned: boolean }) {
-    setPinnedConversationIds((current) => {
-      const next = new Set(current);
+  async function handleTogglePinConversationAction(item: { id: string; title: string; pinned: boolean }) {
+    const nextPinned = !item.pinned;
+    const actionUserIdentity = currentUserIdentity;
+    const previousPinnedAt = conversations.find((conversation) => conversation.id === item.id)?.pinned_at ?? null;
+    const optimisticPinnedIds = new Set(pinnedConversationIdsRef.current);
+    const actionVersion = (pinActionVersionRef.current.get(item.id) ?? 0) + 1;
 
-      if (next.has(item.id)) {
-        next.delete(item.id);
-      } else {
-        next.add(item.id);
+    pinActionVersionRef.current.set(item.id, actionVersion);
+
+    if (nextPinned) {
+      optimisticPinnedIds.add(item.id);
+    } else {
+      optimisticPinnedIds.delete(item.id);
+    }
+
+    applyPinnedConversationIds(optimisticPinnedIds);
+    setConversations((current) => current.map((conversation) => (
+      conversation.id === item.id
+        ? {
+            ...conversation,
+            pinned: nextPinned,
+            pinned_at: nextPinned ? (conversation.pinned_at ?? new Date().toISOString()) : null
+          }
+        : conversation
+    )));
+
+    try {
+      const result = await enqueueConversationPinUpdate(item.id, nextPinned);
+
+      if (activeUserIdentityRef.current !== actionUserIdentity) {
+        return;
       }
 
-      writePinnedConversationIds(next, pinnedConversationStorageKey);
-      showNotice(next.has(item.id) ? "已置顶聊天（本地排序生效）。" : "已取消置顶聊天。");
-      return next;
-    });
+      const serverConfirmedPinnedIds = new Set(confirmedPinnedConversationIdsRef.current);
+
+      if (result.pinned) {
+        serverConfirmedPinnedIds.add(item.id);
+      } else {
+        serverConfirmedPinnedIds.delete(item.id);
+      }
+      confirmedPinnedConversationIdsRef.current = serverConfirmedPinnedIds;
+
+      if (pinActionVersionRef.current.get(item.id) !== actionVersion) {
+        return;
+      }
+
+      const confirmedPinnedIds = new Set(pinnedConversationIdsRef.current);
+
+      if (result.pinned) {
+        confirmedPinnedIds.add(item.id);
+      } else {
+        confirmedPinnedIds.delete(item.id);
+      }
+
+      applyPinnedConversationIds(confirmedPinnedIds);
+      setConversations((current) => current.map((conversation) => (
+        conversation.id === item.id
+          ? {
+              ...conversation,
+              pinned: result.pinned,
+              pinned_at: result.pinned_at
+            }
+          : conversation
+      )));
+      setActionSuccess(result.pinned ? "聊天已置顶。" : "已取消置顶聊天。", "pin");
+    } catch (requestError) {
+      if (
+        activeUserIdentityRef.current !== actionUserIdentity ||
+        pinActionVersionRef.current.get(item.id) !== actionVersion
+      ) {
+        return;
+      }
+
+      const rollbackPinnedIds = new Set(pinnedConversationIdsRef.current);
+      const serverConfirmedPinned = confirmedPinnedConversationIdsRef.current.has(item.id);
+
+      if (serverConfirmedPinned) {
+        rollbackPinnedIds.add(item.id);
+      } else {
+        rollbackPinnedIds.delete(item.id);
+      }
+
+      applyPinnedConversationIds(rollbackPinnedIds);
+      setConversations((current) => current.map((conversation) => (
+        conversation.id === item.id
+          ? {
+              ...conversation,
+              pinned: serverConfirmedPinned,
+              pinned_at: serverConfirmedPinned ? previousPinnedAt : null
+            }
+          : conversation
+      )));
+      setActionError(
+        `${nextPinned ? "置顶" : "取消置顶"}保存失败，已恢复原状态。请检查网络后重试。`,
+        "pin",
+        requestError
+      );
+    }
   }
 
   async function handleArchiveConversationAction(item: { id: string; title: string }) {
@@ -1470,7 +1783,7 @@ export function ChatShell() {
     }
 
     if (action === "toggle-pin") {
-      handleTogglePinConversationAction(item);
+      void handleTogglePinConversationAction(item);
       return;
     }
 

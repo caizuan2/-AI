@@ -141,6 +141,7 @@ model User {
   auditLogs        AuditLog[]
   uploadedFiles    KnowledgeFile[]
   ingestionJobs    IngestionJob[]
+  conversationPins UserConversationPin[]
   tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([tenantId], map: "users_tenant_id_idx")
@@ -305,11 +306,25 @@ model Conversation {
   updatedAt DateTime         @updatedAt
   user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages  Message[]
+  pins      UserConversationPin[]
 
   @@index([userId])
   @@index([type])
   @@index([updatedAt])
   @@map("conversations")
+}
+
+model UserConversationPin {
+  id             String       @id @default(cuid())
+  userId         String       @map("user_id")
+  conversationId String       @map("conversation_id")
+  pinnedAt       DateTime     @default(now()) @map("pinned_at")
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([userId, conversationId], map: "user_conversation_pins_user_id_conversation_id_key")
+  @@index([userId, pinnedAt], map: "user_conversation_pins_user_id_pinned_at_idx")
+  @@map("user_conversation_pins")
 }
 
 model Message {

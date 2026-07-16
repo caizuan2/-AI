@@ -34,6 +34,8 @@ export type ConversationControlAuditAction =
   | "rename_conversation"
   | "archive_conversation"
   | "delete_conversation"
+  | "pin_conversation"
+  | "unpin_conversation"
   | "share_conversation"
   | "create_group_chat"
   | "conversation.share.created"

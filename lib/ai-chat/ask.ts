@@ -157,6 +157,11 @@ type ConversationRecord = Record<string, unknown> & {
   };
 };
 
+type ConversationPinRecord = Record<string, unknown> & {
+  conversationId?: string;
+  pinnedAt?: Date | string;
+};
+
 type MessageRecord = Record<string, unknown> & {
   id?: string;
   conversationId?: string;
@@ -183,6 +188,9 @@ export type AiChatDb = RagSearchDb & {
   auditLog: {
     create(args: unknown): Promise<unknown>;
   };
+  userConversationPin?: {
+    findMany(args: unknown): Promise<ConversationPinRecord[]>;
+  };
 };
 
 const MAX_ATTACHMENTS = 5;
@@ -192,6 +200,7 @@ const MAX_ATTACHMENT_SEARCH_HINT_CHARS = 360;
 const MAX_CONVERSATION_MEMORY_TURNS = 8;
 const MAX_CONVERSATION_MEMORY_CHARS_PER_TURN = 900;
 const MAX_CONVERSATION_MEMORY_TOTAL_CHARS = 3600;
+const MAX_PINNED_CONVERSATIONS = 100;
 const allowedAttachmentTypes = new Set(["image", "camera_photo", "gallery_photo", "file", "audio", "video"]);
 const ATTACHMENT_SEARCH_KEYWORD_PATTERN = /订单号|订单|退款|退费|退货|售后|发货|物流|付款|支付|价格|费用|成分|用法|使用|效果|安全|禁忌|周期|剂量|减肥|瘦身|体重|反弹|不瘦|客户|回复|话术|沟通/gi;
 
@@ -2146,13 +2155,15 @@ export async function handleAiChatAsk(
   };
 }
 
-function serializeConversation(conversation: ConversationRecord) {
+function serializeConversation(conversation: ConversationRecord, pinnedAt?: Date | string | null) {
   return {
     id: String(conversation.id),
     title: String(conversation.title ?? "新会话"),
     mode: normalizeAiChatMode(conversation.mode),
     metadata: conversation.metadata ?? null,
     message_count: Number(conversation._count?.messages ?? 0),
+    pinned: Boolean(pinnedAt),
+    pinned_at: pinnedAt ? toIsoString(pinnedAt) : null,
     created_at: toIsoString(conversation.createdAt),
     updated_at: toIsoString(conversation.updatedAt)
   };
@@ -2266,7 +2277,32 @@ function serializeMessage(message: MessageRecord) {
 }
 
 export async function listAiChatConversations(actor: AiChatActor, db: AiChatDb = defaultDb()) {
-  const conversations = await db.conversation.findMany({
+  const pinnedRows = db.userConversationPin?.findMany
+    ? await db.userConversationPin.findMany({
+      where: {
+        userId: actor.id
+      },
+      orderBy: {
+        pinnedAt: "desc"
+      },
+      take: MAX_PINNED_CONVERSATIONS,
+      select: {
+        conversationId: true,
+        pinnedAt: true
+      }
+    })
+    : [];
+  const pinnedConversationIds = pinnedRows
+    .map((row) => trimString(row.conversationId))
+    .filter(Boolean);
+  const includeMessageCount = {
+    _count: {
+      select: {
+        messages: true
+      }
+    }
+  };
+  const recentConversations = await db.conversation.findMany({
     where: {
       userId: actor.id,
       type: "CHAT"
@@ -2275,19 +2311,44 @@ export async function listAiChatConversations(actor: AiChatActor, db: AiChatDb =
       updatedAt: "desc"
     },
     take: 50,
-    include: {
-      _count: {
-        select: {
-          messages: true
-        }
-      }
-    }
+    include: includeMessageCount
   });
+  const pinnedConversations = pinnedConversationIds.length > 0
+    ? await db.conversation.findMany({
+      where: {
+        id: {
+          in: pinnedConversationIds
+        },
+        userId: actor.id,
+        type: "CHAT"
+      },
+      include: includeMessageCount
+    })
+    : [];
+  const pinnedAtByConversationId = new Map(
+    pinnedRows.map((row) => [trimString(row.conversationId), row.pinnedAt] as const)
+  );
+  const pinnedConversationById = new Map(
+    pinnedConversations.map((conversation) => [trimString(conversation.id), conversation] as const)
+  );
+  const serializedPinnedConversations = pinnedConversationIds
+    .map((conversationId) => pinnedConversationById.get(conversationId))
+    .filter((conversation): conversation is ConversationRecord => Boolean(conversation))
+    .filter((conversation) => !isConversationSoftDeleted(conversation.metadata))
+    .map((conversation) => serializeConversation(
+      conversation,
+      pinnedAtByConversationId.get(trimString(conversation.id)) ?? null
+    ));
+  const pinnedConversationIdSet = new Set(pinnedConversationIds);
 
   return {
-    conversations: conversations
+    conversations: [
+      ...serializedPinnedConversations,
+      ...recentConversations
       .filter((conversation) => !isConversationSoftDeleted(conversation.metadata))
-      .map(serializeConversation)
+      .filter((conversation) => !pinnedConversationIdSet.has(trimString(conversation.id)))
+      .map((conversation) => serializeConversation(conversation))
+    ]
   };
 }
 
@@ -2323,8 +2384,21 @@ export async function getAiChatHistory(actor: AiChatActor, conversationId: strin
     throw new NotFoundError("会话不存在。");
   }
 
+  const pinnedRows = db.userConversationPin?.findMany
+    ? await db.userConversationPin.findMany({
+      where: {
+        userId: actor.id,
+        conversationId: normalizedConversationId
+      },
+      take: 1,
+      select: {
+        pinnedAt: true
+      }
+    })
+    : [];
+
   return {
-    conversation: serializeConversation(conversation),
+    conversation: serializeConversation(conversation, pinnedRows[0]?.pinnedAt ?? null),
     messages: (conversation.messages ?? []).map(serializeMessage)
   };
 }

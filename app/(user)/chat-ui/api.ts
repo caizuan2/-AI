@@ -203,6 +203,13 @@ export interface ConversationActionResponse {
   [key: string]: unknown;
 }
 
+export interface ConversationPinResponse {
+  conversation_id: string;
+  pinned: boolean;
+  pinned_at: string | null;
+  [key: string]: unknown;
+}
+
 async function readApiPayload<T>(response: Response) {
   const rawText = await response.text().catch(() => "");
   let payload: ApiEnvelope<T> | null = null;
@@ -341,6 +348,26 @@ function getActionApiFailureMessage<T>(
   return apiMessage || rawText || "请求失败，请稍后重试。";
 }
 
+class ConversationActionRequestError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = "ConversationActionRequestError";
+    this.status = status;
+    this.code = code || null;
+  }
+}
+
+export function isConversationActionNotFoundError(error: unknown) {
+  return error instanceof ConversationActionRequestError && error.status === 404;
+}
+
+export function isConversationActionTerminalPinMigrationError(error: unknown) {
+  return error instanceof ConversationActionRequestError && (error.status === 400 || error.status === 404);
+}
+
 async function readConversationActionResponse<T extends Record<string, unknown>>(
   endpoint: string,
   response: Response
@@ -351,7 +378,13 @@ async function readConversationActionResponse<T extends Record<string, unknown>>
   }));
 
   if (!response.ok || !payload?.ok) {
-    throw new Error(getActionApiFailureMessage(endpoint, response, payload, rawText));
+    const code = payload?.code || (typeof payload?.error === "object" ? payload.error.code : undefined);
+
+    throw new ConversationActionRequestError(
+      getActionApiFailureMessage(endpoint, response, payload, rawText),
+      response.status,
+      code
+    );
   }
 
   const topLevelPayload = payload as ApiEnvelope<T> & Record<string, unknown>;
@@ -968,6 +1001,16 @@ export async function archiveConversation(conversationId: string) {
     {
       method: "PATCH",
       body: JSON.stringify({ archived: true })
+    }
+  );
+}
+
+export async function updateConversationPin(conversationId: string, pinned: boolean) {
+  return requestConversationAction<ConversationPinResponse>(
+    conversationActionEndpoint(conversationId, "/pin"),
+    {
+      method: "PUT",
+      body: JSON.stringify({ pinned })
     }
   );
 }

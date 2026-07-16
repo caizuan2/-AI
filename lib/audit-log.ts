@@ -46,6 +46,7 @@ export type AuditAction =
   | "enable_user"
   | "last_super_admin_protected"
   | "license.mismatch"
+  | "pin_conversation"
   | "product.blocked"
   | "promote_to_enterprise_admin"
   | "promote_to_ingest_admin"
@@ -55,6 +56,7 @@ export type AuditAction =
   | "route.access.denied"
   | "share_conversation"
   | "update_feature_flag"
+  | "unpin_conversation"
   | "update_user_role";
 
 export interface AuditRequestContext {
