@@ -393,6 +393,37 @@ async function main() {
   }
   assert.doesNotMatch(webDialogMarkup, /Android 安装包需要下载/);
 
+  const adminWebDialogMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "admin",
+      update: {
+        appKind: "admin",
+        currentVersion: APP_VERSION,
+        currentBuild: APP_BUILD,
+        currentWebReleaseSha: "admin-local-web-release-sha",
+        hasUpdate: true,
+        forceUpdate: false,
+        updateKind: "web",
+        latest: manifest.admin,
+        updatedAt: manifest.updated_at
+      },
+      updateUrl: manifest.admin.web_url,
+      platform: "web",
+      dismissible: true,
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+
+  const adminLatestWebReleaseSha = manifest.admin.web_release_sha?.slice(0, 8) || "最新线上版本";
+  assert.match(adminWebDialogMarkup, /当前内容：admin-lo/);
+  assert.match(adminWebDialogMarkup, new RegExp(`最新内容：${adminLatestWebReleaseSha}`));
+  assert.match(adminWebDialogMarkup, /更新内容：/);
+  assert.match(adminWebDialogMarkup, /不需要重新安装 APK\/EXE/);
+  for (const item of manifest.admin.changelog) {
+    assert.match(adminWebDialogMarkup, new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+
   const androidBridgeCalls: string[] = [];
   assert.equal(openLink(manifest.user.apk_url, {
     AndroidBridge: {
