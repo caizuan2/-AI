@@ -243,6 +243,10 @@ export function toAppError(error: unknown) {
     const code = typeof value.code === "string" ? value.code : "";
     const message = typeof value.message === "string" ? value.message : "";
 
+    if (code === "P2028") {
+      return new AppError("DATABASE_CONNECTION_FAILED", "系统繁忙，操作尚未完成，请稍后重试。", 503);
+    }
+
     if (["P1000", "P1001", "P1017", "P2024"].includes(code)) {
       return new AppError("DATABASE_CONNECTION_FAILED", "数据库连接失败，请检查 DATABASE_URL 是否为 Supabase Pooler 完整连接串。", 500);
     }
