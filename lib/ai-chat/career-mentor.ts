@@ -922,6 +922,36 @@ export function prioritizeCareerMentorChunks(input: {
     }));
 }
 
+export function hasCareerMentorFastAnswerEvidence(input: {
+  chunks: RetrievedRagChunk[];
+  question: string;
+  supportingContext?: string;
+}) {
+  const classification = classifyCareerMentorQuestion(input.question, input.supportingContext);
+
+  if (!isCareerMentorCoreStage(classification.stage)) {
+    return false;
+  }
+
+  const ranked = prioritizeCareerMentorChunks({
+    chunks: input.chunks,
+    question: input.question,
+    supportingContext: input.supportingContext,
+    topK: CAREER_MENTOR_FAST_RETRIEVAL_TOP_K
+  });
+  const scored = ranked.map((chunk) => ({
+    chunk,
+    ...scoreCareerMentorChunk(chunk, input.question, classification)
+  }));
+  const customerScript = scored.find((item) => item.customerScriptCardMatch);
+  const operatorGuidance = scored.find((item) => (
+    item.operatorCardMatch
+    || (item.expectedOutputMatch && !item.customerScriptCardMatch)
+  ));
+
+  return Boolean(customerScript && operatorGuidance);
+}
+
 const STAGE_EXECUTION_CONTEXT: Record<CareerMentorStage, string[]> = {
   framework: [
     "按五步完整说明：破冰建立信任并发资料；促单跟进持续展示价值；讲事业完成通心与客户讲解；锁定问题用公式解决疑虑；成交把认可转为行动；成交后进入长期维护。"

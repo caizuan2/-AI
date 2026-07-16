@@ -36,6 +36,33 @@ import type {
 
 export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app";
 const ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000;
+const CAREER_MENTOR_AGENT_IDS = new Set([
+  "expert-career",
+  "expert-business",
+  "expert-agent-expert-career",
+  "agent-expert-career",
+  "business-coach",
+  "career-mentor"
+]);
+const CAREER_MENTOR_KNOWLEDGE_BASE_IDS = new Set([
+  "kb-business-coach",
+  "kb-career-mentor",
+  "kb:expert-agent-expert-career",
+  "business-coach",
+  "career-mentor"
+]);
+
+function normalizeAskScopeValue(value: unknown) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function isCareerMentorAskRequest(input: AskChatRequest) {
+  const agentId = normalizeAskScopeValue(input.agentId ?? input.expert_id);
+  const knowledgeBaseId = normalizeAskScopeValue(input.knowledgeBaseId ?? input.kb_id ?? input.namespace);
+
+  return CAREER_MENTOR_AGENT_IDS.has(agentId)
+    && CAREER_MENTOR_KNOWLEDGE_BASE_IDS.has(knowledgeBaseId);
+}
 
 function normalizeAskChatNetworkError(error: unknown, timedOut: boolean) {
   if (timedOut) {
@@ -851,10 +878,12 @@ export async function askChatStream(input: AskChatRequest, handlers: AskChatStre
   const requestController = new AbortController();
   let timedOut = false;
   const abortFromCaller = () => requestController.abort();
-  const timeout = setTimeout(() => {
-    timedOut = true;
-    requestController.abort();
-  }, ASK_CHAT_TOTAL_TIMEOUT_MS);
+  const timeout = isCareerMentorAskRequest(input)
+    ? null
+    : setTimeout(() => {
+        timedOut = true;
+        requestController.abort();
+      }, ASK_CHAT_TOTAL_TIMEOUT_MS);
 
   handlers.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
@@ -896,7 +925,9 @@ export async function askChatStream(input: AskChatRequest, handlers: AskChatStre
   } catch (error) {
     throw normalizeAskChatNetworkError(error, timedOut);
   } finally {
-    clearTimeout(timeout);
+    if (timeout) {
+      clearTimeout(timeout);
+    }
     handlers.signal?.removeEventListener("abort", abortFromCaller);
   }
 }

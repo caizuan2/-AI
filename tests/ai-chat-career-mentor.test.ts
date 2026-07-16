@@ -14,6 +14,7 @@ import {
   cleanCareerMentorUserAnswer,
   extractCareerMentorExplicitCustomerScriptBlocks,
   extractCareerMentorCustomerAnswer,
+  hasCareerMentorFastAnswerEvidence,
   isCareerMentorContinuationRequest,
   isCareerMentorFastAnswerEligible,
   isCareerMentorScope,
@@ -141,6 +142,33 @@ function main() {
   assert.equal(isCareerMentorFastAnswerEligible("请完整讲解五步流程"), false);
   assert.equal(isCareerMentorFastAnswerEligible("客户成交以后怎么长期维护？"), false);
   assert.equal(isCareerMentorFastAnswerEligible("客户说贵怎么办？", "补充：客户还没有看过资料"), false);
+  const iceBreakingCustomerScript = createChunk({
+    chunkId: "ice-breaking-customer-script",
+    knowledgeItemId: "ice-breaking-customer-script-item",
+    title: "01_讲事业沟通五步·第一步_破冰_客户可复制话术卡片_WPS排版版",
+    content: "第一步破冰。客户可复制话术卡片。话术全文：姐，看到你的朋友圈很有生活气息，认识你很开心。",
+    relevanceScore: 0.84
+  });
+  const iceBreakingOperatorGuidance = createChunk({
+    chunkId: "ice-breaking-operator-guidance",
+    knowledgeItemId: "ice-breaking-operator-guidance-item",
+    title: "01_讲事业沟通五步·第一步_破冰_一线人员操作卡片_WPS排版版",
+    content: "第一步破冰。一线人员操作卡片。建议操作：先感受客户，再自我介绍和精准共鸣，最后发送资料。",
+    relevanceScore: 0.8
+  });
+
+  assert.equal(hasCareerMentorFastAnswerEvidence({
+    question: "刚刚加的好友，我应该怎么破冰呢？",
+    chunks: [iceBreakingCustomerScript, iceBreakingOperatorGuidance]
+  }), true);
+  assert.equal(hasCareerMentorFastAnswerEvidence({
+    question: "刚刚加的好友，我应该怎么破冰呢？",
+    chunks: [iceBreakingCustomerScript]
+  }), false);
+  assert.equal(hasCareerMentorFastAnswerEvidence({
+    question: "请完整讲解五步流程",
+    chunks: [iceBreakingCustomerScript, iceBreakingOperatorGuidance]
+  }), false);
   assert.equal(isCareerMentorScope({
     agentId: "expert-career",
     knowledgeBaseId: "kb:expert-agent-expert-career"
@@ -442,6 +470,9 @@ function main() {
   assert.match(userAskRouteSource, /maxTokens: 6000/);
   assert.match(userAskServiceSource, /cleanCareerMentorUserAnswer/);
   assert.match(userAskServiceSource, /extractCareerMentorCustomerAnswer/);
+  assert.match(userAskServiceSource, /careerMentorFastAnswerQualityGatePassed/);
+  assert.match(userAskServiceSource, /supplementalHybridRetrievalSkipped/);
+  assert.match(userAskServiceSource, /careerMentorFastAnswer && !careerMentorFastAnswerQualityGatePassed/);
   assert.match(userAskServiceSource, /naturalBodyPassthrough: Boolean\(careerEvidencePlan\?\.groundingValidationPassed\)/);
 
   const objectionPolicy = buildCareerMentorBusinessContext("客户说贵、还说不靠谱，怎么办？");

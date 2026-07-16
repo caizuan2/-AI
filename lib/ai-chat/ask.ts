@@ -37,6 +37,7 @@ import {
   buildCareerMentorRetrievalQueries,
   cleanCareerMentorUserAnswer,
   extractCareerMentorCustomerAnswer,
+  hasCareerMentorFastAnswerEvidence,
   isCareerMentorScope,
   isCareerMentorFastAnswerEligible,
   prioritizeCareerMentorChunks,
@@ -1575,7 +1576,7 @@ export async function handleAiChatAsk(
     allowScopedFallback: !careerMentorEnabled,
     db
   })));
-  const hybridCareerRetrievalPromise = careerMentorEnabled && !options.db
+  const loadHybridCareerRetrieval = () => careerMentorEnabled && !options.db
     ? retrieveKnowledge({
         query: ragQueryContext,
         userId: actor.id,
@@ -1588,6 +1589,9 @@ export async function handleAiChatAsk(
         minResults: 1,
         requestId: osContext.trace_id
       }).catch(() => null)
+    : Promise.resolve(null);
+  const eagerHybridCareerRetrievalPromise = careerMentorEnabled && !careerMentorFastAnswer
+    ? loadHybridCareerRetrieval()
     : Promise.resolve(null);
   const loadRuntimeMemory = () => hasExplicitAgentScope
     ? searchRuntimeMemories({
@@ -1613,14 +1617,29 @@ export async function handleAiChatAsk(
         usedMemoryIds: [],
         warnings: ["缺少 agent scope，跳过 runtime memory 检索。"],
       });
-  const [dbChunkGroups, hybridCareerRetrieval, runtimeMemoryResult] = careerMentorEnabled
+  const [dbChunkGroups, eagerHybridCareerRetrieval, runtimeMemoryResult] = careerMentorEnabled
     ? await Promise.all([
         dbChunksPromise,
-        hybridCareerRetrievalPromise,
+        eagerHybridCareerRetrievalPromise,
         withCareerMentorRuntimeMemoryBudget(loadRuntimeMemory())
       ])
-    : [await dbChunksPromise, await hybridCareerRetrievalPromise, await loadRuntimeMemory()] as const;
+    : [await dbChunksPromise, await eagerHybridCareerRetrievalPromise, await loadRuntimeMemory()] as const;
   const dbChunks = dbChunkGroups.flat();
+  const runtimeMemoryChunks = runtimeMemoryResult.memories.map((item, index) => toRuntimeMemoryChunk(item, index, {
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    agentId: agentScope.agentId,
+    namespace: explicitRuntimeNamespace ?? agentScope.namespace,
+    tenantId: scopedTenantId,
+  }));
+  const careerMentorFastAnswerQualityGatePassed = careerMentorFastAnswer
+    && hasCareerMentorFastAnswerEvidence({
+      chunks: dbChunks,
+      question: careerMentorScenarioQuestion,
+      supportingContext: careerMentorSupportingContext
+    });
+  const hybridCareerRetrieval = careerMentorFastAnswer && !careerMentorFastAnswerQualityGatePassed
+    ? await loadHybridCareerRetrieval()
+    : eagerHybridCareerRetrieval;
   const hybridCareerChunks = (hybridCareerRetrieval?.results ?? []).map((item, index) => (
     toHybridCareerChunk(item, index, {
       knowledgeBaseId: agentScope.knowledgeBaseId,
@@ -1631,12 +1650,6 @@ export async function handleAiChatAsk(
   ));
   const careerRetrievalMode: RetrievalMode | "scoped_keyword" = hybridCareerRetrieval?.mode
     ?? "scoped_keyword";
-  const runtimeMemoryChunks = runtimeMemoryResult.memories.map((item, index) => toRuntimeMemoryChunk(item, index, {
-    knowledgeBaseId: agentScope.knowledgeBaseId,
-    agentId: agentScope.agentId,
-    namespace: explicitRuntimeNamespace ?? agentScope.namespace,
-    tenantId: scopedTenantId,
-  }));
   const chunks = careerMentorEnabled
     ? prioritizeCareerMentorChunks({
         chunks: [...runtimeMemoryChunks, ...hybridCareerChunks, ...dbChunks],
@@ -1692,6 +1705,8 @@ export async function handleAiChatAsk(
     ...(careerMentorEnabled
       ? {
           careerMentorFastAnswer,
+          careerMentorFastAnswerQualityGatePassed,
+          supplementalHybridRetrievalSkipped: careerMentorFastAnswerQualityGatePassed,
           retrievalTopK,
           finalTopK: topK
         }

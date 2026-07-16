@@ -147,6 +147,7 @@ export async function POST(request: Request) {
               actualModel,
               provider: requestedProvider,
               providerFallbackChain,
+              traceId,
               businessExecutionContext,
               recentConversation,
               careerMentorStage,
@@ -185,7 +186,8 @@ export async function POST(request: Request) {
                 confidence: confidenceToNumber(confidence),
                 intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
                 businessExecutionContext,
-                recentConversation
+                recentConversation,
+                ...(careerMentorNaturalBodyEnabled ? { requestId: traceId } : {})
               } satisfies GenerateRagAnswerOptions;
               const ragAnswer = careerMentorNaturalBodyEnabled
                 ? await generateCareerMentorGroundedAnswer(question, contexts, {
