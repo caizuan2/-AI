@@ -2385,7 +2385,7 @@ function serializeConversation(conversation: ConversationRecord, pinnedAt?: Date
     id: String(conversation.id),
     title: String(conversation.title ?? "新会话"),
     mode: normalizeAiChatMode(conversation.mode),
-    metadata: conversation.metadata ?? null,
+    metadata: null,
     message_count: Number(conversation._count?.messages ?? 0),
     pinned: Boolean(pinnedAt),
     pinned_at: pinnedAt ? toIsoString(pinnedAt) : null,
@@ -2487,6 +2487,50 @@ function readSerializedMessageContent(
   ].map(readSerializedText).find(Boolean) ?? "";
 }
 
+const HISTORY_FINALIZED_ANSWER_FIELDS = [
+  "title",
+  "problemUnderstanding",
+  "keyConclusion",
+  "suggestedSteps",
+  "customerReply",
+  "nextAction",
+  "evidenceSummary",
+  "confidenceLabel",
+  "salesIntent",
+  "customerStage",
+  "salesStrategy",
+  "nextActionDetail",
+  "nextQuestion",
+  "stopRules",
+  "stageReason",
+  "recommendedAction"
+] as const;
+
+const HISTORY_MESSAGE_METADATA_FIELDS = [
+  "responseId",
+  "userQuery",
+  "behaviorFeedbackSeed"
+] as const;
+
+function pickHistoryDisplayFields(
+  source: Record<string, unknown> | null | undefined,
+  fields: readonly string[]
+) {
+  if (!source) {
+    return null;
+  }
+
+  const result: Record<string, unknown> = {};
+
+  for (const field of fields) {
+    if (source[field] !== undefined) {
+      result[field] = source[field];
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function serializeMessage(message: MessageRecord) {
   const role = String(message.role ?? "").toLowerCase();
   const metadata = toJsonObject(message.metadata) ?? {};
@@ -2497,6 +2541,11 @@ function serializeMessage(message: MessageRecord) {
     ? metadata.finalizedAnswer
     : null;
   const content = readSerializedMessageContent(message, metadata, finalizedAnswer);
+  const historyFinalizedAnswer = pickHistoryDisplayFields(
+    toJsonObject(finalizedAnswer),
+    HISTORY_FINALIZED_ANSWER_FIELDS
+  );
+  const historyMetadata = pickHistoryDisplayFields(metadata, HISTORY_MESSAGE_METADATA_FIELDS);
 
   return {
     id: String(message.id),
@@ -2507,10 +2556,10 @@ function serializeMessage(message: MessageRecord) {
     attachments: message.attachments ?? null,
     sources: message.sources ?? null,
     customer_answer: customerAnswer,
-    finalized_answer: finalizedAnswer,
+    finalized_answer: historyFinalizedAnswer,
     provider_status: providerStatus,
     confidence,
-    metadata: message.metadata ?? null,
+    metadata: historyMetadata,
     created_at: toIsoString(message.createdAt)
   };
 }

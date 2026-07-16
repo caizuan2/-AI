@@ -1102,21 +1102,88 @@ export async function fetchConversations(options: FetchConversationsOptions = {}
 
 type FetchConversationHistoryOptions = {
   signal?: AbortSignal;
+  timeoutMs?: number;
 };
+
+const CONVERSATION_HISTORY_REQUEST_TIMEOUT_MS = 15_000;
+const CONVERSATION_HISTORY_MAX_ATTEMPTS = 2;
+
+function createConversationHistoryTimeoutError() {
+  const error = new Error("历史记录加载超时，请稍后重试。");
+
+  error.name = "ConversationHistoryTimeoutError";
+  return error;
+}
 
 export async function fetchConversationHistory(
   conversationId: string,
   options: FetchConversationHistoryOptions = {}
 ) {
   const params = new URLSearchParams({ conversation_id: conversationId });
-  const response = await fetch(`/api/ai/chat/history?${params.toString()}`, {
-    method: "GET",
-    credentials: "include",
-    cache: "no-store",
-    signal: options.signal
-  });
+  const timeoutMs = Number.isFinite(options.timeoutMs)
+    ? Math.max(1, Math.floor(options.timeoutMs ?? CONVERSATION_HISTORY_REQUEST_TIMEOUT_MS))
+    : CONVERSATION_HISTORY_REQUEST_TIMEOUT_MS;
 
-  return readApiResponse<HistoryResponse>(response);
+  for (let attempt = 0; attempt < CONVERSATION_HISTORY_MAX_ATTEMPTS; attempt += 1) {
+    if (options.signal?.aborted) {
+      throw createConversationListAbortError();
+    }
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const handleExternalAbort = () => controller.abort();
+    const timeoutId = globalThis.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+
+    options.signal?.addEventListener("abort", handleExternalAbort, { once: true });
+
+    try {
+      const response = await fetch(`/api/ai/chat/history?${params.toString()}`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: controller.signal
+      });
+
+      if (
+        attempt + 1 < CONVERSATION_HISTORY_MAX_ATTEMPTS &&
+        shouldRetryConversationListStatus(response.status)
+      ) {
+        const retryDelayMs = getConversationListRetryDelayMs(response);
+
+        if (retryDelayMs !== null) {
+          globalThis.clearTimeout(timeoutId);
+          await response.body?.cancel().catch(() => undefined);
+          await waitForConversationListRetry(retryDelayMs, options.signal);
+          continue;
+        }
+      }
+
+      return await readApiResponse<HistoryResponse>(response);
+    } catch (requestError) {
+      if (options.signal?.aborted) {
+        throw createConversationListAbortError();
+      }
+
+      if (
+        attempt + 1 < CONVERSATION_HISTORY_MAX_ATTEMPTS &&
+        (timedOut || shouldRetryConversationListError(requestError))
+      ) {
+        globalThis.clearTimeout(timeoutId);
+        await waitForConversationListRetry(CONVERSATION_LIST_RETRY_DELAY_MS, options.signal);
+        continue;
+      }
+
+      throw timedOut ? createConversationHistoryTimeoutError() : requestError;
+    } finally {
+      globalThis.clearTimeout(timeoutId);
+      options.signal?.removeEventListener("abort", handleExternalAbort);
+    }
+  }
+
+  throw new Error("历史记录暂时无法加载，请稍后重试。");
 }
 
 function conversationActionEndpoint(conversationId: string, suffix = "") {
