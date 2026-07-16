@@ -1,19 +1,19 @@
 {
-  "updated_at": "2026-07-16T08:57:56.418Z",
-  "version": "1.0.16",
-  "build": 141,
+  "updated_at": "2026-07-16T12:54:26.752Z",
+  "version": "1.0.17",
+  "build": 142,
   "minimum_build": 100,
   "forceUpdate": false,
   "force_update": false,
-  "web_release_sha": "e1874efb4881a720c35c390574be06b35003bb92",
+  "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
   "apk": "ai-knowledge-chat-latest.apk",
   "exe": "ai-knowledge-chat-latest.exe",
-  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.exe",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
   "web_url": "http://47.238.0.23/app/chat",
   "download": {
-    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.apk",
-    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.exe",
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
     "web": "http://47.238.0.23/app/chat",
     "page": "http://47.238.0.23/download"
   },
@@ -29,31 +29,30 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.16",
+      "active_version": "1.0.17",
       "versions": [
         {
-          "version": "1.0.16",
-          "build": 141,
+          "version": "1.0.17",
+          "build": 142,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
           "force_update": false,
-          "web_release_sha": "e1874efb4881a720c35c390574be06b35003bb92",
+          "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
           "web_url": "http://47.238.0.23/app/chat",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
           "download_page": "http://47.238.0.23/download",
           "changelog": [
-            "新增用户端忘记密码与安全找回密码功能",
-            "修改密码后保留原有登录会话",
-            "修复 Android 网络中断后无法自动恢复的问题",
-            "新增断网自动重试与手动重新连接",
-            "修复 AI 回答长时间等待时的连接中断与无限加载",
-            "优化讲事业导师检索并增加质量优先快速回答通道",
-            "修复已注册未激活用户无法重新进入卡密激活的问题",
-            "讲事业导师提速严格隔离，不影响 KKS 与大健康专家链路"
+            "讲事业导师取消 90 秒总等待硬截止，优先等待完整高质量回答",
+            "明确简单场景使用固定知识证据质量门快速回答，证据不足自动升级完整检索",
+            "减少无结果补充检索造成的空等，并保留复杂问题原有完整检索流程",
+            "优化回答分帧速度，完整保留 DeepSeek/GPT 风格 Markdown 正文",
+            "补充讲事业导师请求 traceId，便于线上耗时排查",
+            "优化移动端专家选择器触控可靠性",
+            "讲事业导师优化严格隔离，不影响 KKS 与大健康专家链路"
           ],
-          "created_at": "2026-07-16T08:57:56.418Z"
+          "created_at": "2026-07-16T12:54:26.752Z"
         }
       ]
     },
@@ -94,24 +93,23 @@
   },
   "user": {
     "app_name": "AI知识库助手",
-    "version": "1.0.16",
-    "build": 141,
+    "version": "1.0.17",
+    "build": 142,
     "minimum_build": 100,
     "force_update": false,
-    "web_release_sha": "e1874efb4881a720c35c390574be06b35003bb92",
+    "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
     "web_url": "http://47.238.0.23/app/chat",
-    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.16/ai-knowledge-chat-latest.exe",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
     "download_page": "http://47.238.0.23/download",
     "changelog": [
-      "新增用户端忘记密码与安全找回密码功能",
-      "修改密码后保留原有登录会话",
-      "修复 Android 网络中断后无法自动恢复的问题",
-      "新增断网自动重试与手动重新连接",
-      "修复 AI 回答长时间等待时的连接中断与无限加载",
-      "优化讲事业导师检索并增加质量优先快速回答通道",
-      "修复已注册未激活用户无法重新进入卡密激活的问题",
-      "讲事业导师提速严格隔离，不影响 KKS 与大健康专家链路"
+      "讲事业导师取消 90 秒总等待硬截止，优先等待完整高质量回答",
+      "明确简单场景使用固定知识证据质量门快速回答，证据不足自动升级完整检索",
+      "减少无结果补充检索造成的空等，并保留复杂问题原有完整检索流程",
+      "优化回答分帧速度，完整保留 DeepSeek/GPT 风格 Markdown 正文",
+      "补充讲事业导师请求 traceId，便于线上耗时排查",
+      "优化移动端专家选择器触控可靠性",
+      "讲事业导师优化严格隔离，不影响 KKS 与大健康专家链路"
     ]
   },
   "admin": {
