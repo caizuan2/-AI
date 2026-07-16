@@ -1561,7 +1561,6 @@ export function ChatShell() {
     setLoading(true);
     let localUserMessage: ChatMessageView | null = null;
     let localAssistantMessageId: string | null = null;
-    let inputCleared = false;
     const submittedManualChatMode = manualChatMode;
     const submittedFinalChatModeDecision = finalChatModeDecision;
     const hasPreviousAssistantResponse = messages.some((message) => (
@@ -1652,7 +1651,6 @@ export function ChatShell() {
       setInput("");
       setInputAttachments([]);
       setManualChatMode(null);
-      inputCleared = true;
       setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
 
       const result = await askChatStream({
@@ -1946,16 +1944,29 @@ export function ChatShell() {
 
         const failedMessageId = localUserMessage.id;
         const failedAssistantId = localAssistantMessageId;
+        const failureMessage = requestError instanceof Error
+          ? requestError.message
+          : "回答请求失败，请稍后重试。";
 
-        setMessages((current) => current.filter((message) => (
-          message.id !== failedMessageId &&
-          message.id !== failedAssistantId
-        )));
-      }
+        setMessages((current) => current.map((message) => {
+          if (message.id === failedMessageId) {
+            return {
+              ...message,
+              pending: false
+            };
+          }
 
-      if (inputCleared) {
-        setInput(text);
-        setManualChatMode(submittedManualChatMode);
+          if (message.id === failedAssistantId) {
+            return {
+              ...message,
+              content: message.content || failureMessage,
+              pending: false,
+              provider_status: "error"
+            };
+          }
+
+          return message;
+        }));
       }
 
       setError(requestError instanceof Error ? requestError.message : "发送失败，请稍后重试。");

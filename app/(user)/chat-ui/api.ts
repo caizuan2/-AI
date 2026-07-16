@@ -35,6 +35,25 @@ import type {
 } from "./types";
 
 export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app";
+const ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000;
+
+function normalizeAskChatNetworkError(error: unknown, timedOut: boolean) {
+  if (timedOut) {
+    return new Error("回答时间较长，连接已自动结束。请重新发送问题后重试。");
+  }
+
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return error;
+  }
+
+  const message = error instanceof Error ? error.message : String(error ?? "");
+
+  if (/failed to fetch|network\s*error|load failed|network request failed/i.test(message)) {
+    return new Error("回答连接已中断，请检查网络后重新发送。原问题不会影响知识库内容。");
+  }
+
+  return error instanceof Error ? error : new Error("回答请求失败，请稍后重试。");
+}
 
 type ApiEnvelope<T> = {
   ok?: boolean;
@@ -796,40 +815,57 @@ async function consumeAskChatEventStream(
 }
 
 export async function askChatStream(input: AskChatRequest, handlers: AskChatStreamHandlers = {}) {
-  const response = await fetch("/api/ai/chat/ask", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "Accept": "text/event-stream",
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      ...createAskRequestPayload(input),
-      runtime_entry: "user_chat_ui"
-    }),
-    signal: handlers.signal
-  });
-  const contentType = response.headers.get("content-type") ?? "";
+  const requestController = new AbortController();
+  let timedOut = false;
+  const abortFromCaller = () => requestController.abort();
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    requestController.abort();
+  }, ASK_CHAT_TOTAL_TIMEOUT_MS);
 
-  if (!response.ok) {
-    return readApiResponse<AskChatResponse>(response);
-  }
+  handlers.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
-  if (!contentType.includes("text/event-stream")) {
-    const result = await readApiResponse<AskChatResponse>(response);
+  try {
+    const response = await fetch("/api/ai/chat/ask", {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        ...createAskRequestPayload(input),
+        runtime_entry: "user_chat_ui"
+      }),
+      signal: requestController.signal
+    });
+    const contentType = response.headers.get("content-type") ?? "";
 
-    handlers.onFinal?.(result);
+    if (!response.ok) {
+      return readApiResponse<AskChatResponse>(response);
+    }
+
+    if (!contentType.includes("text/event-stream")) {
+      const result = await readApiResponse<AskChatResponse>(response);
+
+      handlers.onFinal?.(result);
+
+      return result;
+    }
+
+    const result = await consumeAskChatEventStream(response, handlers);
+
+    if (!result) {
+      throw new Error("AI 流式响应未返回最终结果。");
+    }
 
     return result;
+  } catch (error) {
+    throw normalizeAskChatNetworkError(error, timedOut);
+  } finally {
+    clearTimeout(timeout);
+    handlers.signal?.removeEventListener("abort", abortFromCaller);
   }
-
-  const result = await consumeAskChatEventStream(response, handlers);
-
-  if (!result) {
-    throw new Error("AI 流式响应未返回最终结果。");
-  }
-
-  return result;
 }
 
 export async function submitChatBehaviorFeedback(input: ChatBehaviorFeedbackInput) {
