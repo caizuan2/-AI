@@ -462,18 +462,24 @@ function main() {
 
   const userAskRouteSource = readFileSync("app/api/ai/chat/ask/route.ts", "utf8");
   const userAskServiceSource = readFileSync("lib/ai-chat/ask.ts", "utf8");
+  const careerIngestAdapterSource = readFileSync("lib/ai-chat/career-mentor-ingest-answer.ts", "utf8");
+  const userStreamingSource = readFileSync("lib/ai-chat/streaming.ts", "utf8");
 
-  assert.match(userAskRouteSource, /generateCareerMentorGroundedAnswer/);
-  assert.match(userAskRouteSource, /outputMode: "natural_markdown_with_cards"/);
-  assert.match(userAskRouteSource, /GPT_OS_DEEPSEEK_PRO_MODEL/);
-  assert.match(userAskRouteSource, /temperature: 0\.7/);
-  assert.match(userAskRouteSource, /maxTokens: 6000/);
+  assert.match(userAskRouteSource, /runCareerMentorIngestAnswer/);
+  assert.doesNotMatch(userAskRouteSource, /generateCareerMentorGroundedAnswer/);
+  assert.match(careerIngestAdapterSource, /runAdminIngestWithSelectedModel/);
+  assert.match(careerIngestAdapterSource, /modelProvider: "deepseek-pro"/);
+  assert.match(careerIngestAdapterSource, /enhanceGPTStyle/);
+  assert.match(careerIngestAdapterSource, /source: "admin_ingest_gpt_route"/);
+  assert.match(careerIngestAdapterSource, /mode: "api_response"/);
   assert.match(userAskServiceSource, /cleanCareerMentorUserAnswer/);
   assert.match(userAskServiceSource, /extractCareerMentorCustomerAnswer/);
   assert.match(userAskServiceSource, /careerMentorFastAnswerQualityGatePassed/);
   assert.match(userAskServiceSource, /supplementalHybridRetrievalSkipped/);
   assert.match(userAskServiceSource, /careerMentorFastAnswer && !careerMentorFastAnswerQualityGatePassed/);
-  assert.match(userAskServiceSource, /naturalBodyPassthrough: Boolean\(careerEvidencePlan\?\.groundingValidationPassed\)/);
+  assert.match(userAskServiceSource, /providerResult\.answerOutputMode === "admin_ingest_reply_markdown"/);
+  assert.match(userAskServiceSource, /naturalBodyPassthrough: careerIngestReplyPassthrough/);
+  assert.match(userStreamingSource, /result\.career_output_mode === "admin_ingest_reply_markdown"/);
 
   const objectionPolicy = buildCareerMentorBusinessContext("客户说贵、还说不靠谱，怎么办？");
 

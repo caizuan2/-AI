@@ -392,6 +392,66 @@ async function main() {
   assert.equal(savedCareerPolicy.continuationRequested, true);
   assert.equal(savedCareerPolicy.conversationContextApplied, true);
 
+  const adminIngestVisibleReply = [
+    "# 刚加上好友，先让她感到你是个真实的人",
+    "",
+    "面对宝妈客户，第一轮聊天不急着讲事业，也不急着证明自己。",
+    "",
+    "## 第一句话  制造‘懂她’的共鸣，而不是夸赞",
+    "",
+    "> 你现在是全天自己带，还是有人搭把手呀？",
+    "",
+    "---",
+    "",
+    "**这就是投喂端已经完成样式透传后的正文。**"
+  ].join("\n");
+  let parityProviderQuestion = "";
+  let parityProviderOriginalQuestion = "";
+  const careerIngestParityResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "还是刚才的宝妈场景，再给一版",
+    mode: "expert",
+    conversation_id: "conv_career",
+    agentId: "expert-career",
+    knowledgeBaseId: "kb:expert-agent-expert-career",
+    namespace: "kb:expert-agent-expert-career"
+  }, {
+    db: careerFake.db,
+    providerConfigured: false,
+    answerProvider: async ({ question, originalQuestion }) => {
+      parityProviderQuestion = question;
+      parityProviderOriginalQuestion = originalQuestion;
+
+      return {
+        answer: adminIngestVisibleReply,
+        providerUsed: "deepseek",
+        modelUsed: "deepseek-v4-pro",
+        fallbackUsed: false,
+        answerOutputMode: "admin_ingest_reply_markdown"
+      };
+    }
+  });
+
+  assert.match(parityProviderQuestion, /宝妈/);
+  assert.equal(parityProviderOriginalQuestion, "还是刚才的宝妈场景，再给一版");
+  assert.equal(careerIngestParityResult.provider_status, "ok");
+  assert.equal(careerIngestParityResult.career_output_mode, "admin_ingest_reply_markdown");
+  assert.equal(careerIngestParityResult.answer, adminIngestVisibleReply);
+  assert.equal(careerIngestParityResult.customer_answer, "");
+
+  const savedCareerIngestReply = [...careerFake.state.messages].reverse().find((message) => (
+    message.role === "ASSISTANT"
+  ));
+
+  assert.ok(savedCareerIngestReply);
+  assert.equal(savedCareerIngestReply.content, adminIngestVisibleReply);
+  assert.equal(
+    (savedCareerIngestReply.metadata as AnyRecord).rawAnswerBeforeFinalizer,
+    adminIngestVisibleReply
+  );
+
   console.log("AI chat conversation memory tests passed.");
 }
 

@@ -1,17 +1,12 @@
 import { apiError, databaseConfigError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { handleAiChatAsk } from "@/lib/ai-chat/ask";
-import {
-  generateCareerMentorGroundedAnswer,
-  type CareerMentorGroundedAnswerOptions,
-  type CareerMentorGroundedAnswerResult
-} from "@/lib/ai-chat/career-mentor-grounded-answer";
+import { runCareerMentorIngestAnswer } from "@/lib/ai-chat/career-mentor-ingest-answer";
 import { isCareerMentorScope } from "@/lib/ai-chat/career-mentor";
 import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
 import { generateRagAnswer, type GenerateRagAnswerOptions } from "@/lib/ai/rag-answer";
 import { requireAiChatAccess } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
-import { GPT_OS_DEEPSEEK_PRO_MODEL } from "@/gpt-os/core/model_router";
 import { getOrCreateUserSettings } from "@/lib/settings";
 import {
   hasDatabaseUrl,
@@ -137,9 +132,9 @@ export async function POST(request: Request) {
         role: actor.role
       }, body, {
         providerConfigured,
-        answerProvider: providerConfigured
-          ? async ({
+        answerProvider: async ({
               question,
+              originalQuestion,
               contexts,
               mode,
               enableDeepThinking,
@@ -150,7 +145,6 @@ export async function POST(request: Request) {
               traceId,
               businessExecutionContext,
               recentConversation,
-              careerMentorStage,
               agentId,
               knowledgeBaseId,
               namespace
@@ -160,25 +154,31 @@ export async function POST(request: Request) {
                 knowledgeBaseId,
                 namespace
               });
-              const answerProvider = careerMentorNaturalBodyEnabled
-                ? getFirstUsableProvider("deepseek") ?? configuredProvider ?? normalizeProvider(requestedProvider)
-                : getFirstUsableProvider(requestedProvider) ?? configuredProvider ?? normalizeProvider(requestedProvider);
+
+              if (careerMentorNaturalBodyEnabled) {
+                return runCareerMentorIngestAnswer({
+                  question: originalQuestion,
+                  contexts,
+                  recentConversation,
+                  agentId,
+                  userId: actor.id,
+                  requestId: traceId
+                });
+              }
+
+              const answerProvider = getFirstUsableProvider(requestedProvider)
+                ?? configuredProvider
+                ?? normalizeProvider(requestedProvider);
               const answerProviderChain = normalizeProviderChain(
                 answerProvider,
-                careerMentorNaturalBodyEnabled
-                  ? ["deepseek", ...providerFallbackChain]
-                  : providerFallbackChain,
+                providerFallbackChain,
                 configuredProvider
               );
               const ragAnswerOptions = {
                 userId: actor.id,
                 provider: answerProvider,
                 providerChain: answerProviderChain,
-                model: careerMentorNaturalBodyEnabled
-                  ? answerProvider === "deepseek"
-                    ? GPT_OS_DEEPSEEK_PRO_MODEL
-                    : undefined
-                  : actualModel,
+                model: actualModel,
                 agentId,
                 knowledgeBaseId,
                 namespace,
@@ -186,22 +186,9 @@ export async function POST(request: Request) {
                 confidence: confidenceToNumber(confidence),
                 intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
                 businessExecutionContext,
-                recentConversation,
-                ...(careerMentorNaturalBodyEnabled ? { requestId: traceId } : {})
+                recentConversation
               } satisfies GenerateRagAnswerOptions;
-              const ragAnswer = careerMentorNaturalBodyEnabled
-                ? await generateCareerMentorGroundedAnswer(question, contexts, {
-                    ...ragAnswerOptions,
-                    expectedStage: careerMentorStage ?? "unknown",
-                    outputMode: "natural_markdown_with_cards",
-                    temperature: 0.7,
-                    maxTokens: 6000,
-                    businessExecutionContextMaxChars: 7000
-                  } satisfies CareerMentorGroundedAnswerOptions)
-                : await generateRagAnswer(question, contexts, ragAnswerOptions);
-              const careerEvidencePlan = careerMentorNaturalBodyEnabled
-                ? (ragAnswer as CareerMentorGroundedAnswerResult).careerEvidencePlan
-                : undefined;
+              const ragAnswer = await generateRagAnswer(question, contexts, ragAnswerOptions);
 
               return {
                 answer: ragAnswer.answer,
@@ -210,13 +197,9 @@ export async function POST(request: Request) {
                 fallbackUsed: ragAnswer.fallbackUsed,
                 answerGroundingScore: ragAnswer.answer_grounding_score,
                 modelFeedbackEvent: ragAnswer.model_feedback_event,
-                originalProviderErrorCode: ragAnswer.originalProviderErrorCode,
-                ...(careerEvidencePlan
-                  ? { careerEvidencePlan }
-                  : {})
+                originalProviderErrorCode: ragAnswer.originalProviderErrorCode
               };
             }
-          : undefined
       });
 
       await streamResult({
