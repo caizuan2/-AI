@@ -13,6 +13,9 @@ export interface SafeDatabaseUrlInfo {
   isSupabasePooler?: boolean;
 }
 
+const DEFAULT_CONNECTION_LIMIT = "5";
+const DEFAULT_POOL_TIMEOUT_SECONDS = "30";
+
 export function getSafeDatabaseUrlInfo(rawUrl = process.env.DATABASE_URL): SafeDatabaseUrlInfo {
   if (!rawUrl?.trim()) {
     return { present: false };
@@ -70,11 +73,11 @@ export function getDatabasePoolerWarnings(info = getSafeDatabaseUrlInfo()) {
   }
 
   if (!info.connectionLimit) {
-    warnings.push("DATABASE_URL 建议包含 connection_limit=1。");
+    warnings.push(`DATABASE_URL 建议包含 connection_limit=${DEFAULT_CONNECTION_LIMIT}。`);
   }
 
   if (!info.poolTimeout) {
-    warnings.push("DATABASE_URL 建议包含 pool_timeout=20。");
+    warnings.push(`DATABASE_URL 建议包含 pool_timeout=${DEFAULT_POOL_TIMEOUT_SECONDS}。`);
   }
 
   return warnings;
@@ -98,11 +101,11 @@ export function getDatabaseUrlWithPoolerParams(rawUrl = process.env.DATABASE_URL
     }
 
     if (!url.searchParams.has("connection_limit")) {
-      url.searchParams.set("connection_limit", "1");
+      url.searchParams.set("connection_limit", DEFAULT_CONNECTION_LIMIT);
     }
 
     if (!url.searchParams.has("pool_timeout")) {
-      url.searchParams.set("pool_timeout", "20");
+      url.searchParams.set("pool_timeout", DEFAULT_POOL_TIMEOUT_SECONDS);
     }
 
     return url.toString();

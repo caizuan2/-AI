@@ -19,6 +19,8 @@ const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const BOOTSTRAP_ADMIN_PHONES = [BOOTSTRAP_SUPER_ADMIN_PHONE];
 const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "super_admin"] as const;
+const LICENSE_TRANSACTION_MAX_WAIT_MS = 15_000;
+const LICENSE_TRANSACTION_TIMEOUT_MS = 10_000;
 const LICENSE_METADATA_ACTIONS = [
   "generate_user_app_license_key",
   "generate_ingest_admin_license_key",
@@ -511,6 +513,44 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     throw new LicenseAppTypeMismatchError("卡密不适用于当前客户端。");
   }
 
+  const licenseRedeemedByCurrentUser = licenses.find(
+    (item) => item.status === LicenseKeyStatus.USED && item.redeemedByUserId === userId
+  );
+
+  if (licenseRedeemedByCurrentUser) {
+    const activatedUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        phone: true,
+        licenseActivated: true
+      }
+    });
+
+    if (activatedUser?.licenseActivated) {
+      await recordActivationLog({
+        codeHash: primaryHash,
+        userId,
+        success: true,
+        message: "当前账号已使用该卡密激活。",
+        context
+      });
+      await recordLicenseAuditLog({
+        userId,
+        action: "redeem_license_key_idempotent",
+        targetId: licenseRedeemedByCurrentUser.id,
+        context,
+        metadata: {
+          requestedAppType,
+          licenseAppType: metadata.appType,
+          reason: "same_user_retry"
+        }
+      });
+
+      return activatedUser;
+    }
+  }
+
   if (licenses.some((item) => item.status === LicenseKeyStatus.USED)) {
     await recordActivationLog({
       codeHash: primaryHash,
@@ -596,21 +636,80 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     throw new LicenseExpiredError("卡密已过期。");
   }
 
-  const redeemedUser = await prisma.$transaction(async (tx) => {
-    const updatedLicense = await tx.licenseKey.updateMany({
-      where: {
-        id: license.id,
-        status: LicenseKeyStatus.UNUSED,
-        redeemedByUserId: null
-      },
-      data: {
-        status: LicenseKeyStatus.USED,
-        redeemedByUserId: userId,
-        redeemedAt: new Date()
-      }
-    });
+  let redeemedUser: {
+    id: string;
+    phone: string;
+    licenseActivated: boolean;
+  };
 
-    if (updatedLicense.count !== 1) {
+  try {
+    redeemedUser = await prisma.$transaction(
+      async (tx) => {
+        const updatedLicense = await tx.licenseKey.updateMany({
+          where: {
+            id: license.id,
+            status: LicenseKeyStatus.UNUSED,
+            redeemedByUserId: null
+          },
+          data: {
+            status: LicenseKeyStatus.USED,
+            redeemedByUserId: userId,
+            redeemedAt: new Date()
+          }
+        });
+
+        if (updatedLicense.count !== 1) {
+          throw new LicenseActivationLimitReachedError("卡密已使用。");
+        }
+
+        const user = await tx.user.update({
+          where: { id: userId },
+          data: {
+            licenseActivated: true,
+            ...(requestedAppType === "ingest_admin" ? { role: "ingest_admin" as const } : {})
+          },
+          select: {
+            id: true,
+            phone: true,
+            licenseActivated: true
+          }
+        });
+
+        if (requestedAppType === "ingest_admin") {
+          const activeAssignment = await tx.userRoleAssignment.findFirst({
+            where: {
+              userId,
+              role: "ingest_admin",
+              revokedAt: null,
+              OR: [
+                { expiresAt: null },
+                { expiresAt: { gt: new Date() } }
+              ]
+            },
+            select: {
+              id: true
+            }
+          });
+
+          if (!activeAssignment) {
+            await tx.userRoleAssignment.create({
+              data: {
+                userId,
+                role: "ingest_admin"
+              }
+            });
+          }
+        }
+
+        return user;
+      },
+      {
+        maxWait: LICENSE_TRANSACTION_MAX_WAIT_MS,
+        timeout: LICENSE_TRANSACTION_TIMEOUT_MS
+      }
+    );
+  } catch (error) {
+    if (error instanceof LicenseActivationLimitReachedError) {
       await recordActivationLog({
         codeHash: primaryHash,
         userId,
@@ -618,50 +717,10 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
         message: "卡密已使用。",
         context
       });
-      throw new LicenseActivationLimitReachedError("卡密已使用。");
     }
 
-    const user = await tx.user.update({
-      where: { id: userId },
-      data: {
-        licenseActivated: true,
-        ...(requestedAppType === "ingest_admin" ? { role: "ingest_admin" as const } : {})
-      },
-      select: {
-        id: true,
-        phone: true,
-        licenseActivated: true
-      }
-    });
-
-    if (requestedAppType === "ingest_admin") {
-      const activeAssignment = await tx.userRoleAssignment.findFirst({
-        where: {
-          userId,
-          role: "ingest_admin",
-          revokedAt: null,
-          OR: [
-            { expiresAt: null },
-            { expiresAt: { gt: new Date() } }
-          ]
-        },
-        select: {
-          id: true
-        }
-      });
-
-      if (!activeAssignment) {
-        await tx.userRoleAssignment.create({
-          data: {
-            userId,
-            role: "ingest_admin"
-          }
-        });
-      }
-    }
-
-    return user;
-  });
+    throw error;
+  }
 
   await recordActivationLog({
     codeHash: primaryHash,
