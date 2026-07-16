@@ -1023,6 +1023,18 @@ async function main() {
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /historyLoadError/);
+  assert.match(chatShellSource, /PINNED_CONVERSATION_CLOUD_MIGRATION_SUFFIX = "cloud-migrated-v1"/);
+  assert.match(chatShellSource, /MAX_PINNED_CONVERSATIONS = 100/);
+  assert.match(chatShellSource, /conversation\.pinned === true/);
+  assert.doesNotMatch(chatShellSource, /Promise\.allSettled\(\s*migrationCandidateIds/);
+  assert.match(chatShellSource, /for \(const targetConversationId of migrationCandidateIds\)/);
+  assert.match(chatShellSource, /localOnlyPinnedIds\.slice\(0, availablePinSlots\)/);
+  assert.match(chatShellSource, /isConversationActionTerminalPinMigrationError/);
+  assert.match(chatShellSource, /updateConversationPin\(targetConversationId, pinned\)/);
+  assert.match(chatShellSource, /confirmedPinnedConversationIdsRef/);
+  assert.match(chatShellSource, /activeUserIdentityRef\.current !== actionUserIdentity/);
+  assert.doesNotMatch(chatShellSource, /availableConversationIds\.has/);
+  assert.match(chatShellSource, /保存失败，已恢复原状态/);
   assert.match(chatShellSource, /conversationListRequestIdRef/);
   assert.match(chatShellSource, /conversationListAbortRef/);
   assert.match(chatShellSource, /conversationListInFlightRef/);
@@ -1253,6 +1265,48 @@ async function main() {
   assert.match(staleDrawerWithErrorMarkup, /失败时保留的历史/);
   assert.match(staleDrawerWithErrorMarkup, /历史会话暂时无法加载/);
   assert.match(staleDrawerWithErrorMarkup, /aria-label="重试加载历史会话"/);
+
+  const pinnedDrawerMarkup = renderToStaticMarkup(
+    <ChatSidebarDrawer
+      conversations={[
+        {
+          id: "conv_recent",
+          title: "最近普通会话",
+          mode: "fast",
+          metadata: null,
+          message_count: 1,
+          created_at: "2026-07-16T09:00:00.000Z",
+          updated_at: "2026-07-16T09:00:00.000Z"
+        },
+        {
+          id: "conv_pinned",
+          title: "云端置顶会话",
+          mode: "fast",
+          metadata: null,
+          pinned: true,
+          pinned_at: "2026-07-16T08:00:00.000Z",
+          message_count: 1,
+          created_at: "2026-06-01T08:00:00.000Z",
+          updated_at: "2026-06-01T08:00:00.000Z"
+        }
+      ]}
+      pinnedConversationIds={["conv_pinned"]}
+      activeConversationId={null}
+      open
+      loading={false}
+      currentUser={null}
+      userName="蔡姑"
+      userDescription="13360587600"
+      onClose={() => undefined}
+      onNewChat={() => undefined}
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.match(pinnedDrawerMarkup, /已置顶/);
+  assert.match(pinnedDrawerMarkup, /云端置顶会话/);
+  assert.match(pinnedDrawerMarkup, /最近普通会话/);
+  assert.ok(pinnedDrawerMarkup.indexOf("已置顶") < pinnedDrawerMarkup.indexOf("最近普通会话"));
 
   const drawerWithAvatarMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer

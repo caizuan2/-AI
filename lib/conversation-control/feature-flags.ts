@@ -67,7 +67,7 @@ const flagDefinitions: FlagDefinition[] = [
     key: "conversation.pin.cloud_sync_enabled",
     name: "pinCloudSync",
     label: "云端置顶同步",
-    description: "预留云端置顶同步开关；当前用户端仍可保持本地排序。",
+    description: "允许用户将本人历史会话的置顶状态同步到云端，并在重新登录或更新后恢复。",
     riskLevel: "medium",
     aliases: [
       "conversation.pin.cloud_sync_enabled",
@@ -94,7 +94,8 @@ const releasedConversationFeatureFloor: Partial<ConversationFeatureFlags> = {
   archive: true,
   delete: true,
   share: true,
-  groupChat: true
+  groupChat: true,
+  pinCloudSync: true
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

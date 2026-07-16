@@ -171,6 +171,8 @@ export interface ChatConversation {
   title: string;
   mode: ChatMode;
   metadata: Record<string, unknown> | null;
+  pinned?: boolean;
+  pinned_at?: string | null;
   message_count: number;
   created_at: string;
   updated_at: string;
