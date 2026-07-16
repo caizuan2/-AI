@@ -227,6 +227,13 @@ export default function RegisterPage() {
               去登录
             </Link>
           </p>
+
+          <p className="mt-3 text-center text-sm text-muted">
+            已注册但忘记密码？
+            <Link href="/forgot-password" className="inline-flex min-h-11 items-center px-1 font-medium text-teal-700 hover:text-teal-800">
+              找回密码
+            </Link>
+          </p>
         </div>
       </section>
     </main>

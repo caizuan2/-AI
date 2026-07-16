@@ -94,6 +94,7 @@ function LoginForm() {
   const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
   const activated = searchParams.get("activated") === "1";
+  const passwordReset = searchParams.get("reset") === "1";
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -226,11 +227,33 @@ function LoginForm() {
     );
   }
 
+  const safeNextPath = getSafeNextPath();
+  const requestedApp = (searchParams.get("app") || "").trim().toLowerCase();
+  const nextPathname = safeNextPath.split("?")[0] || safeNextPath;
+  const nextProduct = safeNextPath ? getProductFromPath(nextPathname) : "user_app";
+  const isLegacyAdminPath = nextPathname === "/admin" || nextPathname.startsWith("/admin/");
+  const isAdminEntry =
+    requestedApp.includes("admin") ||
+    requestedApp.includes("ingest") ||
+    requestedApp.includes("super") ||
+    isLegacyAdminPath ||
+    nextProduct === "ingest_admin" ||
+    nextProduct === "super_admin";
+  const forgotPasswordHref = safeNextPath
+    ? `/forgot-password?next=${encodeURIComponent(safeNextPath)}`
+    : "/forgot-password";
+
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
       {activated ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           激活成功，请重新登录进入小董AI用户端。
+        </div>
+      ) : null}
+
+      {passwordReset && !isAdminEntry ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          密码重置成功，请使用新密码登录。
         </div>
       ) : null}
 
@@ -250,11 +273,19 @@ function LoginForm() {
         </span>
       </label>
 
-      <label className="block">
-        <span className="text-sm font-medium text-ink">密码</span>
+      <div className="block">
+        <span className="flex items-center justify-between gap-3">
+          <label htmlFor="login-password" className="text-sm font-medium text-ink">密码</label>
+          {!isAdminEntry ? (
+            <Link href={forgotPasswordHref} className="inline-flex min-h-11 items-center text-sm font-medium text-teal-700 hover:text-teal-800">
+              忘记密码？
+            </Link>
+          ) : null}
+        </span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
           <LockKeyhole className="h-4 w-4 text-muted" />
           <Input
+            id="login-password"
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             type="password"
@@ -263,7 +294,7 @@ function LoginForm() {
             placeholder="请输入密码"
           />
         </span>
-      </label>
+      </div>
 
       {error ? (
         <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
