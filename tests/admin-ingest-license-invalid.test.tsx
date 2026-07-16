@@ -39,6 +39,18 @@ function testSignalParsing() {
   }), "LICENSE_EXPIRED");
 
   assert.equal(readIngestLicenseSignal({
+    responseStatus: 403,
+    requestPath: "/api/core/ingest",
+    payload: { error: { code: "LICENSE_DISABLED" } }
+  }), "LICENSE_DISABLED");
+
+  assert.equal(readIngestLicenseSignal({
+    responseStatus: 403,
+    requestPath: "/api/ingest/analyze",
+    payload: { errorCode: "LICENSE_EXPIRED" }
+  }), "LICENSE_EXPIRED");
+
+  assert.equal(readIngestLicenseSignal({
     responseStatus: 200,
     requestPath: "/api/ingest/auth/me",
     payload: { success: true, data: { errorCode: "LICENSE_DISABLED" } }
@@ -99,6 +111,16 @@ function testRequestBlockingScope() {
   ), true);
   assert.equal(isBlockedIngestBusinessRequest(
     "/api/runtime/memory/search",
+    { method: "POST" },
+    baseOrigin
+  ), true);
+  assert.equal(isBlockedIngestBusinessRequest(
+    "/api/core/ingest",
+    { method: "POST" },
+    baseOrigin
+  ), true);
+  assert.equal(isBlockedIngestBusinessRequest(
+    "/api/ingest/analyze",
     { method: "POST" },
     baseOrigin
   ), true);
@@ -364,7 +386,10 @@ function testDialogAndLifecycleWiring() {
   assert.doesNotMatch(gateSource, /setInput|setUploadedFiles|setMessages|clearDraft/);
   assert.match(layoutSource, /LicenseDisabledError/);
   assert.match(layoutSource, /LicenseExpiredError/);
-  assert.match(authStatusSource, /requireIngestAdminAccess/);
+  assert.match(layoutSource, /requireKbAdmin/);
+  assert.match(layoutSource, /requiredAppType:\s*"ingest_admin"/);
+  assert.match(authStatusSource, /requireKbAdmin/);
+  assert.match(authStatusSource, /requiredAppType:\s*"ingest_admin"/);
   assert.match(authStatusSource, /LICENSE_DISABLED/);
   assert.match(authStatusSource, /LICENSE_EXPIRED/);
 }

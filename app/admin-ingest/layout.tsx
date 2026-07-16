@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { redirect } from "next/navigation";
 import { IngestLicenseInvalidGate } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
-import { requireIngestAdminAccess } from "@/lib/auth/guards";
+import { requireKbAdmin } from "@/lib/auth/guards";
 import {
   LicenseAppTypeMismatchError,
   LicenseDisabledError,
@@ -17,7 +17,13 @@ export default async function AdminIngestLayout({ children }: { children: ReactN
   let initialLicenseCode: IngestLicenseInvalidCode | null = null;
 
   try {
-    await requireIngestAdminAccess();
+    await requireKbAdmin(undefined, {
+      product: "ingest_admin",
+      requireLicense: true,
+      requiredAppType: "ingest_admin",
+      deniedAction: "RBAC_ACCESS_DENIED",
+      targetType: "ingest_admin"
+    });
   } catch (error) {
     if (error instanceof UnauthorizedError) {
       redirect("/ingest/login?next=/admin-ingest");

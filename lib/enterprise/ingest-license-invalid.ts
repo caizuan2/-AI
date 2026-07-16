@@ -69,7 +69,11 @@ function isLicenseStatusPath(pathname: string | null) {
 function isObservedIngestBusinessPath(pathname: string | null) {
   return Boolean(
     pathname?.startsWith("/api/admin/") ||
-    pathname?.startsWith("/api/runtime/memory/")
+    pathname?.startsWith("/api/runtime/memory/") ||
+    pathname === "/api/core/ingest" ||
+    pathname?.startsWith("/api/core/ingest/") ||
+    pathname === "/api/ingest/analyze" ||
+    pathname?.startsWith("/api/ingest/analyze/")
   );
 }
 
@@ -156,7 +160,7 @@ export function isBlockedIngestBusinessRequest(
     return false;
   }
 
-  return url.pathname.startsWith("/api/admin/") || url.pathname.startsWith("/api/runtime/memory/");
+  return isObservedIngestBusinessPath(url.pathname);
 }
 
 function createBlockedResponse(code: IngestLicenseInvalidCode) {
