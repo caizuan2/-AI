@@ -1019,7 +1019,7 @@ async function main() {
   assert.match(chatShellSource, /messages=\{visibleMessages\}/);
   assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /content: message\.content \|\| requestErrorMessage/);
-  assert.match(chatShellSource, /provider_status: "error"/);
+  assert.match(chatShellSource, /provider_status: "error" as const/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
   assert.match(chatShellSource, /historyLoadError/);

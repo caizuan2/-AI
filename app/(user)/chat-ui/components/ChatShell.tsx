@@ -2314,7 +2314,7 @@ export function ChatShell() {
             ...message,
             content: message.content || requestErrorMessage,
             pending: false,
-            provider_status: "error"
+            provider_status: "error" as const
           };
         }
 
