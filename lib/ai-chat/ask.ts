@@ -1589,7 +1589,7 @@ export async function handleAiChatAsk(
         requestId: osContext.trace_id
       }).catch(() => null)
     : Promise.resolve(null);
-  const runtimeMemoryPromise = hasExplicitAgentScope
+  const loadRuntimeMemory = () => hasExplicitAgentScope
     ? searchRuntimeMemories({
         query: careerMentorEnabled ? ragQueryContext : question,
         knowledgeBaseId: agentScope.knowledgeBaseId,
@@ -1617,9 +1617,9 @@ export async function handleAiChatAsk(
     ? await Promise.all([
         dbChunksPromise,
         hybridCareerRetrievalPromise,
-        withCareerMentorRuntimeMemoryBudget(runtimeMemoryPromise)
+        withCareerMentorRuntimeMemoryBudget(loadRuntimeMemory())
       ])
-    : [await dbChunksPromise, await hybridCareerRetrievalPromise, await runtimeMemoryPromise] as const;
+    : [await dbChunksPromise, await hybridCareerRetrievalPromise, await loadRuntimeMemory()] as const;
   const dbChunks = dbChunkGroups.flat();
   const hybridCareerChunks = (hybridCareerRetrieval?.results ?? []).map((item, index) => (
     toHybridCareerChunk(item, index, {
