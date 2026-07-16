@@ -60,6 +60,7 @@ import {
 import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarDrawer";
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
+import { KnowledgeBaseSelector } from "../app/(user)/chat-ui/components/KnowledgeBaseSelector";
 import { isCareerMentorMessage } from "../app/(user)/app/components/chat/message-renderer";
 import {
   ProductAnswerView,
@@ -986,6 +987,7 @@ async function main() {
   assert.match(shellMarkup, /新建对话/);
   assert.doesNotMatch(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
+  assert.match(shellMarkup, /aria-label="选择专家知识库"/);
   assert.match(shellMarkup, /问问 小董AI/);
   assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
   assert.doesNotMatch(shellMarkup, /11:54/);
@@ -993,6 +995,10 @@ async function main() {
   assert.doesNotMatch(shellMarkup, /麦克风权限未开启/);
   const chatShellSource = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
 
+  assert.match(
+    chatShellSource,
+    /<KnowledgeBaseSelector[\s\S]*?onOpen=\{\(\) => setExpertMarketOpen\(true\)\}/
+  );
   assert.match(chatShellSource, /已打开扫描入口/);
   assert.match(chatShellSource, /已选择扫描图片/);
   assert.match(chatShellSource, /已打开通知面板/);
@@ -1419,6 +1425,26 @@ async function main() {
   assert.doesNotMatch(attachmentMenuMarkup, /从相册选择图片|选择文档或图片|拍摄一张照片/);
   assert.doesNotMatch(attachmentMenuMarkup, /占位/);
 
+  let selectorOpenCount = 0;
+  const knowledgeBaseSelector = KnowledgeBaseSelector({
+    selectedCount: 0,
+    activeTitle: null,
+    onOpen: () => {
+      selectorOpenCount += 1;
+    }
+  });
+  const knowledgeBaseSelectorMarkup = renderToStaticMarkup(knowledgeBaseSelector);
+
+  assert.equal(knowledgeBaseSelector.props.type, "button");
+  knowledgeBaseSelector.props.onClick();
+  assert.equal(selectorOpenCount, 1);
+  assert.match(knowledgeBaseSelectorMarkup, /aria-label="选择专家知识库"/);
+  assert.match(knowledgeBaseSelectorMarkup, /aria-haspopup="dialog"/);
+  assert.match(knowledgeBaseSelectorMarkup, /class="[^"]*\bh-12\b/);
+  assert.match(knowledgeBaseSelectorMarkup, /class="[^"]*\bw-12\b/);
+  assert.match(knowledgeBaseSelectorMarkup, /touch-manipulation/);
+  assert.match(knowledgeBaseSelectorMarkup, /pointer-events-auto/);
+
   const chatInputMarkup = renderToStaticMarkup(
     <ChatInput
       value=""
@@ -1426,6 +1452,7 @@ async function main() {
       onValueChange={() => undefined}
       onSubmit={() => undefined}
       onStatusMessage={() => undefined}
+      knowledgeBaseSelector={knowledgeBaseSelector}
     />
   );
 
@@ -1434,17 +1461,35 @@ async function main() {
   assert.match(chatInputMarkup, /multiple=""/);
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
+  assert.match(chatInputMarkup, /aria-label="选择专家知识库"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
+  assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf('aria-label="选择专家知识库"'));
+  assert.ok(chatInputMarkup.indexOf('aria-label="选择专家知识库"') < chatInputMarkup.indexOf('aria-label="发送消息"'));
   assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
   assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
   assert.match(chatInputMarkup, /disabled=""/);
   assert.match(chatInputMarkup, /bg-slate-200/);
   assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
   assert.doesNotMatch(chatInputMarkup, /aria-label="打开相机"/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="关闭上传菜单"/);
+  assert.match(chatInputMarkup, /<textarea[^>]*class="[^"]*\bmin-w-0\b/);
   const chatInputComponentSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
 
   assert.match(chatInputComponentSource, /onFileUpload=\{\(\) => fileInputRef\.current\?\.click\(\)\}/);
   assert.match(chatInputComponentSource, /onCameraOpen=\{\(\) => cameraInputRef\.current\?\.click\(\)\}/);
+  assert.match(chatInputComponentSource, /attachmentMenuRootRef/);
+  assert.match(chatInputComponentSource, /ref=\{attachmentMenuRootRef\}/);
+  assert.match(
+    chatInputComponentSource,
+    /!menuRoot\.contains\(target\)\) \{\s*setAttachmentMenuOpen\(false\)/
+  );
+  assert.match(chatInputComponentSource, /document\.addEventListener\("pointerdown", handleOutsidePointerDown\)/);
+  assert.match(chatInputComponentSource, /document\.removeEventListener\("pointerdown", handleOutsidePointerDown\)/);
+  assert.match(
+    chatInputComponentSource,
+    /paddingBottom:\s*"max\(1\.25rem, env\(safe-area-inset-bottom, 0px\), var\(--safe-area-inset-bottom, 0px\)\)"/
+  );
+  assert.doesNotMatch(chatInputComponentSource, /aria-label="关闭上传菜单"/);
   assert.doesNotMatch(chatInputComponentSource, /setTimeout\([^)]*fileInputRef/);
   assert.doesNotMatch(chatInputComponentSource, /onClick=\{\(\) => cameraInputRef\.current\?\.click\(\)\}/);
 

@@ -181,6 +181,7 @@ export function ChatInput({
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const attachmentMenuRootRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
   const hasText = value.trim().length > 0;
   const hasImageAttachment = attachments.some(isImageAttachmentDraft);
@@ -208,6 +209,27 @@ export function ChatInput({
   React.useEffect(() => {
     resizeTextarea();
   }, [resizeTextarea, value]);
+
+  React.useEffect(() => {
+    if (!attachmentMenuOpen) {
+      return;
+    }
+
+    function handleOutsidePointerDown(event: PointerEvent) {
+      const menuRoot = attachmentMenuRootRef.current;
+      const target = event.target;
+
+      if (menuRoot && target instanceof Node && !menuRoot.contains(target)) {
+        setAttachmentMenuOpen(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", handleOutsidePointerDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handleOutsidePointerDown);
+    };
+  }, [attachmentMenuOpen]);
 
   async function submitCurrentMessage() {
     const submittedAttachments = attachmentsRef.current;
@@ -281,23 +303,17 @@ export function ChatInput({
     <form
       onSubmit={handleSubmit}
       className="z-20 shrink-0 bg-white px-3 pb-5 pt-1"
+      style={{
+        paddingBottom: "max(1.25rem, env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px))"
+      }}
     >
-      {attachmentMenuOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-20 cursor-default bg-transparent"
-          aria-label="关闭上传菜单"
-          onClick={() => setAttachmentMenuOpen(false)}
-        />
-      ) : null}
-
       <SelectedAttachmentList
         attachments={attachments}
         onRemove={(attachmentId) => setAttachments((current) => removeChatAttachment(current, attachmentId))}
       />
 
       <div className="relative flex min-h-[56px] items-end gap-2 rounded-[28px] bg-white px-3 py-1.5 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
-        <div className="relative">
+        <div ref={attachmentMenuRootRef} className="relative">
           <button
             type="button"
             onClick={() => setAttachmentMenuOpen((open) => !open)}
@@ -327,7 +343,7 @@ export function ChatInput({
             }
           }}
           placeholder={placeholder}
-          className="max-h-44 min-h-10 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-1 py-2.5 text-base font-medium leading-6 shadow-none [overflow-wrap:anywhere] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+          className="max-h-44 min-h-10 min-w-0 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-1 py-2.5 text-base font-medium leading-6 shadow-none [overflow-wrap:anywhere] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
           rows={1}
           wrap="soft"
