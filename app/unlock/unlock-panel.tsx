@@ -7,6 +7,8 @@ import { ArrowRight, KeyRound, Loader2, LockKeyhole, LogIn, TriangleAlert } from
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+type UserLicenseReactivationReason = "disabled" | "expired";
+
 type ActivateApiResponse = {
   ok?: boolean;
   message?: string;
@@ -14,7 +16,13 @@ type ActivateApiResponse = {
   licenseActivated?: boolean;
 };
 
-export function UnlockPanel({ user }: { user: { phone: string; name: string } }) {
+export function UnlockPanel({
+  user,
+  reactivationReason = null
+}: {
+  user: { phone: string; name: string };
+  reactivationReason?: UserLicenseReactivationReason | null;
+}) {
   const router = useRouter();
   const [licenseKey, setLicenseKey] = useState("");
   const [loading, setLoading] = useState(false);
@@ -137,6 +145,23 @@ export function UnlockPanel({ user }: { user: { phone: string; name: string } })
               请输入超级管理员后台生成的用户端卡密，激活后即可进入 AI 业务助手。
             </p>
           </div>
+
+          {reactivationReason ? (
+            <div
+              role="alert"
+              className="mt-6 flex items-start gap-3 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm leading-6 text-rose-700"
+            >
+              <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <div>
+                <p className="font-semibold">
+                  {reactivationReason === "disabled" ? "当前卡密已被禁用" : "当前卡密已过期"}
+                </p>
+                <p className="mt-1 text-rose-600">
+                  用户端功能已暂停，请输入新的有效用户端卡密重新激活，或返回登录切换账号。
+                </p>
+              </div>
+            </div>
+          ) : null}
 
           <form onSubmit={submit} className="mt-8 space-y-4">
             <label className="block">

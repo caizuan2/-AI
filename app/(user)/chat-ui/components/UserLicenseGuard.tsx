@@ -6,10 +6,17 @@ import {
   checkCurrentUserLicense,
   createUserLicenseAwareFetch,
   createUserLicenseGuardStore,
-  USER_LICENSE_CHECK_INTERVAL_MS
+  USER_LICENSE_CHECK_INTERVAL_MS,
+  type UserLicenseInvalidReason
 } from "../lib/user-license-guard";
 
-function UserLicenseInvalidDialog({ open }: { open: boolean }) {
+function UserLicenseInvalidDialog({
+  open,
+  reason
+}: {
+  open: boolean;
+  reason: UserLicenseInvalidReason | null;
+}) {
   const dialogRef = React.useRef<HTMLDialogElement | null>(null);
   const primaryActionRef = React.useRef<HTMLButtonElement | null>(null);
   const [leaving, setLeaving] = React.useState<"activate" | "account" | null>(null);
@@ -30,7 +37,7 @@ function UserLicenseInvalidDialog({ open }: { open: boolean }) {
 
   function goToActivation() {
     setLeaving("activate");
-    window.location.assign("/unlock");
+    window.location.assign(`/unlock?reactivate=1&reason=${reason ?? "expired"}`);
   }
 
   async function switchAccount() {
@@ -63,7 +70,7 @@ function UserLicenseInvalidDialog({ open }: { open: boolean }) {
           <ShieldAlert className="h-6 w-6" aria-hidden="true" />
         </span>
         <h2 id="user-license-invalid-title" className="mt-5 text-xl font-bold">
-          卡密已失效
+          {reason === "disabled" ? "卡密已被禁用" : "卡密已过期"}
         </h2>
         <p id="user-license-invalid-description" className="mt-3 text-sm leading-6 text-slate-600">
           用户端 AI 对话和知识库功能已暂停。请重新激活卡密或切换账号后继续使用。
@@ -162,5 +169,10 @@ export function useUserLicenseGuard() {
     };
   }, [store]);
 
-  return <UserLicenseInvalidDialog open={snapshot.invalid} />;
+  return (
+    <UserLicenseInvalidDialog
+      open={snapshot.invalid}
+      reason={snapshot.invalid ? snapshot.reason : null}
+    />
+  );
 }
