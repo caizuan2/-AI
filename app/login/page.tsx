@@ -4,10 +4,10 @@ import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, KeyRound, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { unwrapApiResponse } from "@/lib/api/client";
+import { ApiClientError, unwrapApiResponse } from "@/lib/api/client";
 import {
   getEntryPathForRole,
   getEntryRoleFromRoles,
@@ -19,6 +19,7 @@ import {
 interface LoginResponse {
   success: true;
   licenseActivated: boolean;
+  entryMode?: "login" | "created" | "reactivated";
   isSuperAdmin?: boolean;
   role?: EntryRole;
   roles?: string[];
@@ -92,13 +93,17 @@ function shouldStayOnUserLogin(input: {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const activated = searchParams.get("activated") === "1";
+  const passwordReset = searchParams.get("reset") === "1";
+  const firstUse = searchParams.get("first") === "1";
+  const activationRequested = searchParams.get("activation") === "1";
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [licenseKey, setLicenseKey] = useState("");
+  const [showLicenseEntry, setShowLicenseEntry] = useState(firstUse || activationRequested);
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
-  const activated = searchParams.get("activated") === "1";
-  const passwordReset = searchParams.get("reset") === "1";
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -194,14 +199,15 @@ function LoginForm() {
     setError("");
 
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await fetch(isAdminEntry ? "/api/auth/login" : "/api/auth/user-entry", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
           phone,
-          password
+          password,
+          ...(!isAdminEntry ? { licenseKey } : {})
         })
       });
       const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
@@ -217,6 +223,14 @@ function LoginForm() {
       }));
       router.refresh();
     } catch (caughtError) {
+      if (
+        !isAdminEntry &&
+        caughtError instanceof ApiClientError &&
+        ["LICENSE_REQUIRED", "LICENSE_DISABLED", "LICENSE_EXPIRED"].includes(caughtError.details.code)
+      ) {
+        setShowLicenseEntry(true);
+      }
+
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
     } finally {
       setLoading(false);
@@ -246,7 +260,6 @@ function LoginForm() {
   const forgotPasswordHref = safeNextPath
     ? `/forgot-password?next=${encodeURIComponent(safeNextPath)}`
     : "/forgot-password";
-  const continueActivationHref = "/login?next=%2Funlock&activation=1";
   const continuingActivation = searchParams.get("activation") === "1" || nextPathname === "/unlock";
 
   return (
@@ -263,9 +276,15 @@ function LoginForm() {
         </div>
       ) : null}
 
+      {firstUse && !isAdminEntry ? (
+        <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
+          首次使用请输入手机号、密码和用户端卡密，系统会自动创建并激活账号。
+        </div>
+      ) : null}
+
       {continuingActivation && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
-          请登录已经注册的账号，登录后即可继续输入卡密激活。
+          请输入原账号的手机号和密码，并填写新的有效用户端卡密重新激活。
         </div>
       ) : null}
 
@@ -303,10 +322,60 @@ function LoginForm() {
             type="password"
             autoComplete="current-password"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入密码"
+            placeholder={showLicenseEntry && !isAdminEntry ? "请输入密码（首次使用至少 8 位）" : "请输入密码"}
           />
         </span>
       </div>
+
+      {!isAdminEntry && !showLicenseEntry ? (
+        <button
+          type="button"
+          onClick={() => {
+            setShowLicenseEntry(true);
+            setError("");
+          }}
+          className="flex min-h-11 w-full items-center justify-center text-sm font-medium text-teal-700 hover:text-teal-800"
+        >
+          首次使用或卡密失效？输入卡密
+        </button>
+      ) : null}
+
+      {!isAdminEntry && showLicenseEntry ? (
+        <div className="block">
+          <span className="flex items-center justify-between gap-3">
+            <label htmlFor="login-license-key" className="text-sm font-medium text-ink">用户端卡密</label>
+            {!firstUse && !activationRequested ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowLicenseEntry(false);
+                  setLicenseKey("");
+                  setError("");
+                }}
+                className="inline-flex min-h-11 items-center text-sm font-medium text-teal-700 hover:text-teal-800"
+              >
+                返回普通登录
+              </button>
+            ) : null}
+          </span>
+          <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+            <KeyRound className="h-4 w-4 shrink-0 text-muted" />
+            <Input
+              id="login-license-key"
+              value={licenseKey}
+              onChange={(event) => setLicenseKey(event.target.value)}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="h-auto border-0 bg-transparent p-0 uppercase shadow-none focus-visible:ring-0"
+              placeholder="XT-USER-XXXX-XXXX-XXXX"
+            />
+          </span>
+          <span className="mt-1.5 block text-xs leading-5 text-muted">
+            首次使用填写卡密即可直接开户；卡密失效时会重新激活原账号并保留聊天记录。
+          </span>
+        </div>
+      ) : null}
 
       {error ? (
         <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
@@ -319,22 +388,6 @@ function LoginForm() {
         {loading ? "正在登录" : "登录"}
         <ArrowRight className="h-4 w-4" />
       </Button>
-
-      <p className="text-center text-sm text-muted">
-        没有账号？
-        <Link href="/register" className="font-medium text-teal-700 hover:text-teal-800">
-          去注册
-        </Link>
-      </p>
-
-      {!isAdminEntry ? (
-        <p className="text-center text-sm text-muted">
-          已注册但还没激活？
-          <Link href={continueActivationHref} className="font-medium text-teal-700 hover:text-teal-800">
-            继续激活
-          </Link>
-        </p>
-      ) : null}
     </form>
   );
 }
