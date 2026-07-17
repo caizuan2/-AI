@@ -354,6 +354,109 @@ async function main() {
   assert.match(wechatRoleResult.answer, /客户最后问的是/);
   assert.match(wechatRoleResult.answer, /您这边主要是做什么的/);
 
+  const longScreenshotFake = createFakeDb();
+  const longScreenshotOcrText = [
+    "客户(左侧)：这是长截图开头的客户问题。",
+    ...Array.from(
+      { length: 220 },
+      (_, index) => `我(右侧)：middle-${String(index).padStart(4, "0")}`,
+    ),
+    "客户(左侧)：这是第一张长截图的底部消息。"
+  ].join("\n");
+  const secondLongScreenshotOcrText = [
+    "客户(左侧)：这是第二张长截图的开头。",
+    ...Array.from(
+      { length: 220 },
+      (_, index) => `我(右侧)：followup-${String(index).padStart(4, "0")}`,
+    ),
+    "客户(左侧)：这是长截图最底部最后一个真实问题，请回答这一句。"
+  ].join("\n");
+  const longScreenshotResult = await handleAiChatAsk({
+    id: "user_1",
+    role: "user"
+  }, {
+    question: "请识别这张长截图并告诉我怎么回复客户",
+    mode: "expert",
+    attachments: [
+      {
+        type: "image",
+        name: "wechat-long-1.png",
+        filename: "wechat-long-1.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "ok",
+          ocrText: longScreenshotOcrText,
+          ocrStrategy: "vertical_segments_v1",
+          ocrSegmentCount: "6",
+          ocrRecognizedSegmentCount: "5",
+          ocrPartial: "true"
+        }
+      },
+      {
+        type: "image",
+        name: "wechat-long-2.png",
+        filename: "wechat-long-2.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "ok",
+          ocrText: secondLongScreenshotOcrText,
+          ocrStrategy: "vertical_segments_v1",
+          ocrSegmentCount: "6",
+          ocrRecognizedSegmentCount: "6"
+        }
+      }
+    ]
+  }, {
+    db: longScreenshotFake.db,
+    providerConfigured: true,
+    answerProvider: async ({ businessExecutionContext, contexts }) => {
+      const context = businessExecutionContext ?? "";
+
+      assert.match(context, /这是长截图开头的客户问题/);
+      assert.match(context, /长截图中间部分因长度限制已省略/);
+      assert.match(context, /这是长截图最底部最后一个真实问题/);
+      assert.match(context, /长截图部分片段未识别，禁止猜测缺失内容/);
+      assert.equal(contexts.some((item) => item.sourceType === "attachment_ocr"), true);
+
+      return {
+        answer: "应当优先回答长截图最底部最后一个客户问题。",
+        providerUsed: "test",
+        modelUsed: "test-model",
+        fallbackUsed: false
+      };
+    }
+  });
+
+  assert.equal(longScreenshotResult.provider_status, "ok");
+  assert.match(longScreenshotResult.answer, /最底部最后一个客户问题/);
+
+  await assert.rejects(
+    handleAiChatAsk({
+      id: "user_1",
+      role: "user"
+    }, {
+      question: "普通附件 metadata 仍然必须受原限制",
+      mode: "expert",
+      attachments: [{
+        type: "image",
+        name: "ordinary.png",
+        filename: "ordinary.png",
+        mime_type: "image/png",
+        metadata: {
+          ocrStatus: "ok",
+          ocrText: "x".repeat(5000),
+          ocrStrategy: "vertical_segments_v1",
+          ocrSegmentCount: "99",
+          ocrRecognizedSegmentCount: "99"
+        }
+      }]
+    }, {
+      db: createFakeDb().db,
+      providerConfigured: true
+    }),
+    /attachment metadata 过大/,
+  );
+
   const careerOcrOnlyFake = createFakeDb();
   let careerOcrOnlyProviderCalled = false;
   const careerOcrOnlyReply = "客户已经明确说贵，可以先接住她的顾虑，再用自然问题了解她最在意的是预算还是价值。";
