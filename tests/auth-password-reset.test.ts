@@ -72,7 +72,7 @@ test("password reset input rejects incomplete or unsafe passwords", () => {
   );
 });
 
-test("user login and register pages expose only the user password reset entry", () => {
+test("the unified user login keeps password reset and retires the registration page", () => {
   const loginPage = readFileSync("app/login/page.tsx", "utf8");
   const registerPage = readFileSync("app/register/page.tsx", "utf8");
 
@@ -81,8 +81,9 @@ test("user login and register pages expose only the user password reset entry", 
   assert.match(loginPage, /nextPathname === "\/admin"/);
   assert.match(loginPage, /nextProduct === "ingest_admin"/);
   assert.match(loginPage, /href=\{forgotPasswordHref\}/);
-  assert.match(registerPage, /href="\/forgot-password"/);
-  assert.match(registerPage, /找回密码/);
+  assert.match(loginPage, /\/api\/auth\/user-entry/);
+  assert.match(registerPage, /redirect\("\/login\?first=1"\)/);
+  assert.doesNotMatch(loginPage, /href="\/register"/);
 });
 
 test("password reset page submits the complete user verification payload", () => {
