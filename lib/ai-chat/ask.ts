@@ -215,7 +215,9 @@ export type AiChatDb = RagSearchDb & {
 
 const MAX_ATTACHMENTS = 5;
 const MAX_ATTACHMENT_METADATA_BYTES = 4096;
+const MAX_LONG_SCREENSHOT_METADATA_BYTES = 32 * 1024;
 const MAX_ATTACHMENT_TEXT_CONTEXT_CHARS = 3200;
+const MAX_LONG_SCREENSHOT_TEXT_CONTEXT_CHARS = 8000;
 const MAX_ATTACHMENT_SEARCH_HINT_CHARS = 360;
 const MAX_CONVERSATION_MEMORY_TURNS = 8;
 const MAX_CONVERSATION_MEMORY_CHARS_PER_TURN = 900;
@@ -224,6 +226,7 @@ const CAREER_MENTOR_RUNTIME_MEMORY_TIMEOUT_MS = 1500;
 const MAX_PINNED_CONVERSATIONS = 100;
 const allowedAttachmentTypes = new Set(["image", "camera_photo", "gallery_photo", "file", "audio", "video"]);
 const ATTACHMENT_SEARCH_KEYWORD_PATTERN = /订单号|订单|退款|退费|退货|售后|发货|物流|付款|支付|价格|费用|成分|用法|使用|效果|安全|禁忌|周期|剂量|减肥|瘦身|体重|反弹|不瘦|客户|回复|话术|沟通/gi;
+const LONG_SCREENSHOT_OCR_STRATEGY = "vertical_segments_v1";
 
 function careerMentorRuntimeMemoryTimeoutResult() {
   return {
@@ -803,6 +806,48 @@ function getJsonByteLength(value: unknown) {
   return Buffer.byteLength(JSON.stringify(value ?? null), "utf8");
 }
 
+function readLongScreenshotSegmentCount(value: unknown) {
+  const text = trimString(value);
+
+  if (!/^\d{1,2}$/.test(text)) {
+    return null;
+  }
+
+  return Number(text);
+}
+
+function isLongScreenshotOcrMetadata(metadata: JsonObject | null | undefined) {
+  const ocrText = trimString(metadata?.ocrText);
+  const segmentCount = readLongScreenshotSegmentCount(metadata?.ocrSegmentCount);
+  const recognizedSegmentCount = readLongScreenshotSegmentCount(metadata?.ocrRecognizedSegmentCount);
+
+  return trimString(metadata?.ocrStrategy) === LONG_SCREENSHOT_OCR_STRATEGY
+    && trimString(metadata?.ocrStatus) === "ok"
+    && ocrText.length > 0
+    && ocrText.length <= MAX_LONG_SCREENSHOT_TEXT_CONTEXT_CHARS
+    && segmentCount !== null
+    && segmentCount >= 2
+    && segmentCount <= 10
+    && recognizedSegmentCount !== null
+    && recognizedSegmentCount >= 1
+    && recognizedSegmentCount <= segmentCount;
+}
+
+function preserveAttachmentTextEdges(value: string, maxChars: number) {
+  const text = value.trim();
+
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  const marker = "\n[长截图中间部分因长度限制已省略]\n";
+  const remaining = maxChars - marker.length;
+  const headLength = Math.floor(remaining * 0.35);
+  const tailLength = Math.max(0, remaining - headLength);
+
+  return `${text.slice(0, headLength).trimEnd()}${marker}${text.slice(-tailLength).trimStart()}`;
+}
+
 function cleanPersistentAttachmentUrl(value: unknown) {
   const text = trimString(value);
 
@@ -853,8 +898,20 @@ function validateAttachments(value: unknown) {
     }
 
     const metadata = toJsonObject(record.metadata);
+    const metadataWithoutOcrText = metadata
+      ? { ...metadata, ocrText: undefined }
+      : null;
 
-    if (metadata && getJsonByteLength(metadata) > MAX_ATTACHMENT_METADATA_BYTES) {
+    if (metadataWithoutOcrText
+      && getJsonByteLength(metadataWithoutOcrText) > MAX_ATTACHMENT_METADATA_BYTES) {
+      throw new ValidationError(`第 ${index + 1} 个 attachment metadata 过大。`);
+    }
+
+    const metadataLimit = isLongScreenshotOcrMetadata(metadata)
+      ? MAX_LONG_SCREENSHOT_METADATA_BYTES
+      : MAX_ATTACHMENT_METADATA_BYTES;
+
+    if (metadata && getJsonByteLength(metadata) > metadataLimit) {
       throw new ValidationError(`第 ${index + 1} 个 attachment metadata 过大。`);
     }
 
@@ -890,7 +947,13 @@ function readAttachmentSearchText(metadata: JsonObject | undefined) {
     metadata.description,
     metadata.summary
   ]
-    .map((value) => trimString(value).slice(0, 160))
+    .map((value) => {
+      const normalized = trimString(value);
+
+      return isLongScreenshotOcrMetadata(metadata)
+        ? preserveAttachmentTextEdges(normalized, 160)
+        : normalized.slice(0, 160);
+    })
     .filter(Boolean)
     .join(" ");
 
@@ -950,11 +1013,20 @@ function buildAttachmentSearchHints(text: string) {
 }
 
 function buildAttachmentTextBlocks(attachments: ReturnType<typeof validateAttachments>) {
-  return attachments
+  const hasLongScreenshot = attachments.some((attachment) => (
+    isLongScreenshotOcrMetadata(attachment.metadata ?? undefined)
+  ));
+  const totalLimit = hasLongScreenshot
+    ? MAX_LONG_SCREENSHOT_TEXT_CONTEXT_CHARS
+    : MAX_ATTACHMENT_TEXT_CONTEXT_CHARS;
+  const blocks = attachments
     .map((attachment, index) => {
-      const text = readAttachmentOcrText(attachment.metadata ?? undefined)
-        .slice(0, MAX_ATTACHMENT_TEXT_CONTEXT_CHARS)
-        .trim();
+      const metadata = attachment.metadata ?? undefined;
+      const isLongScreenshot = isLongScreenshotOcrMetadata(metadata);
+      const rawText = readAttachmentOcrText(metadata);
+      const text = isLongScreenshot
+        ? preserveAttachmentTextEdges(rawText, MAX_LONG_SCREENSHOT_TEXT_CONTEXT_CHARS)
+        : rawText.slice(0, MAX_ATTACHMENT_TEXT_CONTEXT_CHARS).trim();
 
       if (!text) {
         return "";
@@ -964,14 +1036,19 @@ function buildAttachmentTextBlocks(attachments: ReturnType<typeof validateAttach
 
       return [
         `附件 ${index + 1}：${label}`,
+        ...(isLongScreenshot && trimString(metadata?.ocrPartial) === "true"
+          ? ["识别状态：长截图部分片段未识别，禁止猜测缺失内容。"]
+          : []),
         "识别文字：",
         text
       ].join("\n");
     })
     .filter(Boolean)
-    .join("\n\n")
-    .slice(0, MAX_ATTACHMENT_TEXT_CONTEXT_CHARS)
-    .trim();
+    .join("\n\n");
+
+  return hasLongScreenshot
+    ? preserveAttachmentTextEdges(blocks, totalLimit)
+    : blocks.slice(0, totalLimit).trim();
 }
 
 function hasImageAttachment(attachments: ReturnType<typeof validateAttachments>) {
