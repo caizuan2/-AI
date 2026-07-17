@@ -134,10 +134,17 @@ async function main() {
     "app/(user)/chat-ui/components/UserLicenseGuard.tsx",
     "utf8"
   );
-  assert.match(componentSource, /卡密已失效/);
+  const pageGuardSource = readFileSync("lib/auth/page-guards.ts", "utf8");
+  const unlockPageSource = readFileSync("app/unlock/page.tsx", "utf8");
+  const unlockPanelSource = readFileSync("app/unlock/unlock-panel.tsx", "utf8");
+  const activateRouteSource = readFileSync("app/api/activate/route.ts", "utf8");
+
+  assert.match(componentSource, /卡密已被禁用/);
+  assert.match(componentSource, /卡密已过期/);
   assert.match(componentSource, /用户端 AI 对话和知识库功能已暂停/);
   assert.match(componentSource, /重新激活/);
   assert.match(componentSource, /切换账号/);
+  assert.match(componentSource, /\/unlock\?reactivate=1&reason=/);
   assert.match(componentSource, /onCancel=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(componentSource, /visibilitychange/);
   assert.match(componentSource, /window\.addEventListener\("focus"/);
@@ -145,6 +152,20 @@ async function main() {
   assert.match(componentSource, /dialog\.showModal\(\)/);
   assert.doesNotMatch(componentSource, /关闭弹窗|onClick=\{onClose\}/);
   assert.doesNotMatch(componentSource, /licenseKey|userId|\btoken\b/);
+  assert.match(pageGuardSource, /error instanceof LicenseDisabledError/);
+  assert.match(pageGuardSource, /error instanceof LicenseExpiredError/);
+  assert.match(pageGuardSource, /\/unlock\?reactivate=1&reason=disabled/);
+  assert.match(pageGuardSource, /\/unlock\?reactivate=1&reason=expired/);
+  assert.match(unlockPageSource, /reactivationRequested/);
+  assert.match(unlockPageSource, /!reactivationRequested && entryPath !== "\/unlock"/);
+  assert.match(unlockPageSource, /encodeURIComponent\(nextPath\)/);
+  assert.match(unlockPanelSource, /当前卡密已被禁用/);
+  assert.match(unlockPanelSource, /当前卡密已过期/);
+  assert.match(unlockPanelSource, /输入新的有效用户端卡密重新激活/);
+  assert.match(unlockPanelSource, /user_id: user\.phone/);
+  assert.match(activateRouteSource, /redeemLicenseKey\(user\.id, input\.code/);
+  assert.doesNotMatch(activateRouteSource, /conversation\.(?:delete|deleteMany)|message\.(?:delete|deleteMany)/i);
+  assert.doesNotMatch(unlockPanelSource, /localStorage\.clear\(\)|sessionStorage\.clear\(\)/);
 
   console.log("user license guard tests passed");
 }

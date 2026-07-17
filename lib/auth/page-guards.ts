@@ -5,6 +5,8 @@ import { requireIngestAdminAccess, requireUserAppAccess } from "@/lib/auth/guard
 import {
   ForbiddenError,
   LicenseAppTypeMismatchError,
+  LicenseDisabledError,
+  LicenseExpiredError,
   LicenseRequiredError,
   UnauthorizedError
 } from "@/lib/errors";
@@ -29,6 +31,14 @@ export async function enforceUserAppPageAccess(nextPath: string) {
   try {
     return await requireUserAppAccess();
   } catch (error) {
+    if (error instanceof LicenseDisabledError) {
+      redirect("/unlock?reactivate=1&reason=disabled");
+    }
+
+    if (error instanceof LicenseExpiredError) {
+      redirect("/unlock?reactivate=1&reason=expired");
+    }
+
     handlePageAccessError(error, nextPath);
   }
 }
