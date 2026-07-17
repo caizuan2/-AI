@@ -98,6 +98,7 @@ import {
   updateAssistantMessage
 } from "@/lib/enterprise/ingest-message-reducer";
 import { buildIngestContextPayload } from "@/lib/enterprise/ingest-context-builder";
+import { MAX_INGEST_CONTEXT_CHARS } from "@/lib/enterprise/ingest-context-compressor";
 import {
   createIngestRequestAttemptId,
   createIngestRequestId,
@@ -1946,6 +1947,7 @@ export function IngestModeToggle() {
         messages: conversationState.messages,
         prompt: effectiveInput,
         maxMessages: 12,
+        maxChars: MAX_INGEST_CONTEXT_CHARS,
         memoryContextText: memoryV2Preview?.memoryContextText,
         usedMemoryIds: memoryV2Preview?.usedMemoryIds,
         agentLearningInstruction: memoryV2Preview?.agentLearningInstruction
@@ -1977,6 +1979,9 @@ export function IngestModeToggle() {
             attachments: outgoingAttachments,
             recentMessages,
             contextSummary: contextPayload.contextSummary,
+            memoryContextText: contextPayload.memoryContextText,
+            agentLearningInstruction: contextPayload.agentLearningInstruction,
+            usedMemoryIds: contextPayload.usedMemoryIds,
             previousKnowledgeDrafts,
             recentTrainingRecords: records.slice(0, 6).map((record) => ({
               input: record.input,

@@ -58,6 +58,7 @@ import {
 } from "@/lib/enterprise/knowledge-memory-adapter";
 import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
+import { buildAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -988,6 +989,9 @@ export async function sendCoreIngest(input: {
   conversationId?: string;
   knowledgeBaseId?: string | null;
   contextSummary?: string;
+  memoryContextText?: string;
+  agentLearningInstruction?: string;
+  usedMemoryIds?: string[];
 }) {
   const platform = input.platform ?? "web";
   const normalizedModelSelection = normalizeIngestModelSelection({
@@ -1094,7 +1098,7 @@ export async function sendCoreIngest(input: {
         selectedModelLabel,
         modelDisplayName: selectedModelLabel,
         recentMessages: input.recentMessages ?? [],
-        contextSummary: input.contextSummary,
+        ...buildAdminIngestContextRequestFields(input),
         previousKnowledgeDrafts: input.previousKnowledgeDrafts ?? [],
         recentTrainingRecords: input.recentTrainingRecords ?? [],
         runtimeContext: {

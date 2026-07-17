@@ -4,8 +4,27 @@ import type {
   IngestConversationMessage
 } from "@/lib/enterprise/ingest-conversation-state";
 import {
-  compressConversationContext
+  compressConversationContext,
+  estimateTokens
 } from "@/lib/enterprise/ingest-context-compressor";
+
+function withoutTerminalPrompt(messages: IngestConversationMessage[], prompt: string) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+
+    if (message.role !== "user" && message.role !== "assistant") {
+      continue;
+    }
+
+    if (message.role === "user" && message.content.trim() === prompt) {
+      return messages.filter((_, messageIndex) => messageIndex !== index);
+    }
+
+    break;
+  }
+
+  return messages;
+}
 
 export function buildIngestContextPayload(input: {
   conversationId: string;
@@ -20,29 +39,17 @@ export function buildIngestContextPayload(input: {
   agentLearningInstruction?: string;
 }) {
   const prompt = input.prompt.trim();
-  const compressed = compressConversationContext(input.messages, {
+  const historyMessages = withoutTerminalPrompt(input.messages, prompt);
+  const compressed = compressConversationContext(historyMessages, {
     maxMessages: input.maxMessages ?? 12,
     maxChars: input.maxChars ?? 12000,
     keepRecentFullMessages: 8
   });
-  const compactMessages = compressed.messages;
-  const last = compactMessages[compactMessages.length - 1];
-  const messages = last?.role === "user" && last.content === prompt
-    ? compactMessages
-    : [...compactMessages, { role: "user" as const, content: prompt }];
-  const naturalSummary = messages
-    .slice(0, -1)
-    .map((message) => `${message.role === "user" ? "用户" : "助手"}：${message.content}`)
-    .join("\n");
-  const memoryContext = [
-    input.agentLearningInstruction,
-    input.memoryContextText
-  ].filter(Boolean).join("\n\n");
-  const contextSummary = [
-    memoryContext,
-    compressed.contextSummary,
-    naturalSummary
-  ].filter(Boolean).join("\n\n");
+  const messages = compressed.messages;
+  const contextSummary = compressed.contextSummary;
+  const promptChars = prompt.length;
+  const requestContextChars = compressed.diagnostics.contextChars + promptChars;
+  const requestContextText = `${contextSummary ?? ""}\n${messages.map((message) => message.content).join("\n")}\n${prompt}`;
 
   return {
     conversationId: input.conversationId,
@@ -54,8 +61,14 @@ export function buildIngestContextPayload(input: {
     memoryContextText: input.memoryContextText,
     usedMemoryIds: input.usedMemoryIds ?? [],
     agentLearningInstruction: input.agentLearningInstruction,
-    estimatedTokens: compressed.estimatedTokens,
+    estimatedTokens: estimateTokens(requestContextText),
     compacted: compressed.compacted,
+    contextDiagnostics: {
+      ...compressed.diagnostics,
+      promptChars,
+      requestContextChars,
+      requestEstimatedTokens: estimateTokens(requestContextText)
+    },
     mode: "ingest_chat" as const
   };
 }

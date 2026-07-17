@@ -1,12 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
-import { buildAgentLearningInstruction } from "@/lib/enterprise/ingest-agent-learning-policy";
-import { buildMemoryPromptContext } from "@/lib/enterprise/ingest-memory-prompt-injector";
-import { buildAgentLearningState } from "@/lib/enterprise/ingest-memory-panel-service";
-import { retrieveRelevantMemories } from "@/lib/enterprise/ingest-memory-retriever";
-import { buildIngestMemoryDebugSnapshot } from "@/lib/enterprise/ingest-memory-debug";
+import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
 import { AppError } from "@/lib/errors";
-import type { IngestMemoryConversationMessage } from "@/lib/enterprise/ingest-memory-types";
 
 function jsonError(error: unknown) {
   if (error instanceof AppError) {
@@ -26,12 +21,6 @@ function jsonError(error: unknown) {
   }, { status: 500 });
 }
 
-function readMessages(value: unknown): IngestMemoryConversationMessage[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is IngestMemoryConversationMessage => Boolean(item && typeof item === "object"))
-    : [];
-}
-
 export async function POST(request: Request) {
   try {
     const actor = await requireAdminIngestActor(request, {
@@ -41,63 +30,45 @@ export async function POST(request: Request) {
 
     const body = await request.json() as Record<string, unknown>;
     const query = typeof body.query === "string" ? body.query : "";
-    const agentId = typeof body.agentId === "string" ? body.agentId : undefined;
-    const knowledgeBaseId = typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : undefined;
-    const messages = readMessages(body.messages);
-    const retrieval = await retrieveRelevantMemories({
+    const agentId = typeof body.agentId === "string" ? body.agentId : "";
+    const knowledgeBaseId = typeof body.knowledgeBaseId === "string" ? body.knowledgeBaseId : "";
+    const actorWithTenant = actor as typeof actor & { tenantId?: unknown };
+    const memoryContext = await buildAdminIngestPublishedMemoryContext({
       query,
-      conversationId: typeof body.conversationId === "string" ? body.conversationId : undefined,
+      actorId: actor.id,
       agentId,
       knowledgeBaseId,
-      ownerAdminId: actor.id,
-      ownerUserId: actor.id,
-      messages,
-      limit: 5,
-      minScore: typeof body.minScore === "number" ? body.minScore : 0.25
-    });
-    const agentLearningState = await buildAgentLearningState({
-      agentId,
-      knowledgeBaseId,
-      ownerAdminId: actor.id,
-      ownerUserId: actor.id
-    });
-    const memoryPrompt = buildMemoryPromptContext({
-      query,
-      retrievedMemories: retrieval.memories,
-      agentLearningState,
-      maxChars: typeof body.maxChars === "number" ? body.maxChars : 3000
-    });
-    const learningInstruction = buildAgentLearningInstruction({
-      agentId,
-      learningState: agentLearningState,
-      userInstruction: query,
-      memoryContext: memoryPrompt.memoryContextText
+      namespace: typeof body.namespace === "string" ? body.namespace : null,
+      tenantId: typeof actorWithTenant.tenantId === "string" ? actorWithTenant.tenantId : null,
+      maxChars: typeof body.maxChars === "number" ? body.maxChars : 6_000
     });
     const finalPromptPreview = [
-      learningInstruction.instructionText,
-      memoryPrompt.memoryContextText,
+      memoryContext.agentLearningInstruction,
+      memoryContext.memoryContextText,
       "【当前用户问题】",
       query
     ].filter(Boolean).join("\n\n");
-    const debug = buildIngestMemoryDebugSnapshot({
-      retrievedMemories: retrieval.memories,
-      promptContext: memoryPrompt,
-      agentLearningInstruction: learningInstruction,
-      warnings: retrieval.warnings
-    });
+    const debug = {
+      memoryParticipated: memoryContext.usedMemoryIds.length > 0 || Boolean(memoryContext.agentLearningInstruction),
+      usedMemoryIds: memoryContext.usedMemoryIds,
+      recalledMemoryIds: memoryContext.retrievedMemories.map((item) => item.memory.id),
+      injectedCharLength: memoryContext.memoryContextText.length,
+      appliedPolicies: memoryContext.appliedPolicies,
+      warnings: memoryContext.warnings
+    };
 
     return NextResponse.json({
       success: true,
       ok: true,
       query,
-      retrievedMemories: retrieval.memories,
-      memoryContextText: memoryPrompt.memoryContextText,
-      agentLearningInstruction: learningInstruction.instructionText,
-      appliedPolicies: learningInstruction.appliedPolicies,
+      retrievedMemories: memoryContext.retrievedMemories,
+      memoryContextText: memoryContext.memoryContextText,
+      agentLearningInstruction: memoryContext.agentLearningInstruction,
+      appliedPolicies: memoryContext.appliedPolicies,
       finalPromptPreview,
-      usedMemoryIds: memoryPrompt.usedMemoryIds,
+      usedMemoryIds: memoryContext.usedMemoryIds,
       debug,
-      warnings: debug.warnings
+      warnings: memoryContext.warnings
     });
   } catch (error) {
     return jsonError(error);

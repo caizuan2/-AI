@@ -22,6 +22,9 @@ import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normali
 import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { retrieveAdminIngestGrounding } from "@/lib/enterprise/admin-ingest-grounding";
+import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
+import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
 import {
   createEnterpriseIngestLog,
   listEnterpriseTrainingRecords,
@@ -519,6 +522,8 @@ function readRequest(body: unknown) {
     throw new ValidationError("投喂内容不能为空。");
   }
 
+  const contextFields = readAdminIngestContextRequestFields(body);
+
   return {
     input,
     attachments: readAttachments(body.attachments),
@@ -545,6 +550,7 @@ function readRequest(body: unknown) {
     selectedModelLabel: readString(body.selectedModelLabel) || null,
     modelDisplayName: readString(body.modelDisplayName) || null,
     recentMessages: readRecentMessages(body.recentMessages),
+    ...contextFields,
     previousKnowledgeDrafts: readPreviousKnowledgeDrafts(body.previousKnowledgeDrafts),
     recentTrainingRecords: readRecentTrainingRecords(body.recentTrainingRecords),
     autonomous: readAutonomousRequest(body.autonomous)
@@ -587,6 +593,39 @@ export async function POST(request: Request) {
     );
   }
 
+  const enterpriseActor = toEnterpriseActor(actor);
+  const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
+  const effectiveTenantId = enterpriseActor?.tenantId ?? input.tenantId;
+  const [grounding, publishedMemoryContext] = await Promise.all([
+    retrieveAdminIngestGrounding({
+      query: input.input,
+      actorUserId: effectiveActorId,
+      tenantId: effectiveTenantId,
+      agentId: input.agentId ?? "",
+      knowledgeBaseId: input.knowledgeBaseId ?? "",
+      namespace: input.namespace ?? ""
+    }),
+    buildAdminIngestPublishedMemoryContext({
+      query: input.input,
+      actorId: effectiveActorId,
+      tenantId: effectiveTenantId,
+      agentId: input.agentId ?? "",
+      knowledgeBaseId: input.knowledgeBaseId ?? "",
+      namespace: input.namespace
+    })
+  ]);
+  const knowledgeContexts = grounding.applied
+    ? [{
+        id: grounding.sourceIds.knowledgeItemIds[0] ?? "fixed-knowledge-base",
+        title: `${grounding.scope?.knowledgeBaseId ?? input.knowledgeBaseId ?? "当前 Agent"} 固定知识库`,
+        content: grounding.context,
+        sourceId: grounding.sourceIds.chunkIds.join(",") || null,
+        score: grounding.sources.length > 0
+          ? Math.max(...grounding.sources.map((source) => source.score))
+          : null
+      }]
+    : [];
+
   try {
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
@@ -624,6 +663,11 @@ export async function POST(request: Request) {
       selectedModelLabel: modelRuntime.displayModelLabel,
       modelDisplayName: input.modelDisplayName || modelRuntime.displayModelLabel,
       recentMessages: input.recentMessages,
+      contextSummary: input.contextSummary,
+      memoryContextText: publishedMemoryContext.memoryContextText,
+      agentLearningInstruction: publishedMemoryContext.agentLearningInstruction,
+      usedMemoryIds: publishedMemoryContext.usedMemoryIds,
+      knowledgeContexts,
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
       autonomous: input.autonomous,
@@ -665,10 +709,15 @@ export async function POST(request: Request) {
       replyMarkdown: visibleReply,
       diagnostics: [
         ...result.diagnostics,
-        ...stylePassThrough.diagnostics
+        ...stylePassThrough.diagnostics,
+        `adminIngestGrounding:applied:${grounding.applied ? "true" : "false"}`,
+        `adminIngestGrounding:sourceCount:${grounding.sources.length}`,
+        `adminIngestGrounding:truncated:${grounding.truncated ? "true" : "false"}`,
+        ...grounding.warnings.map((warning) => `adminIngestGrounding:warning:${warning}`),
+        `adminIngestPublishedMemory:usedCount:${publishedMemoryContext.usedMemoryIds.length}`,
+        ...publishedMemoryContext.warnings.map((warning) => `adminIngestPublishedMemory:warning:${warning}`)
       ]
     };
-    const enterpriseActor = toEnterpriseActor(actor);
     const structuredForTrainingLog = buildStructuredKnowledgeForTrainingLog({
       rawResult,
       userInput: input.input,

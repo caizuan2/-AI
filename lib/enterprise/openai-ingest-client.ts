@@ -13,6 +13,7 @@ import {
   buildGptIngestBrainUserPrompt
 } from "@/lib/enterprise/gpt-ingest-brain-prompt";
 import type {
+  GptIngestKnowledgeContext,
   GptIngestMemoryMessage,
   GptIngestMemoryRecord
 } from "@/lib/enterprise/gpt-ingest-memory";
@@ -85,6 +86,11 @@ export interface OpenAIAdminIngestInput {
   agentDescription?: string | null;
   targetUser?: string | null;
   recentMessages?: GptIngestMemoryMessage[];
+  contextSummary?: string | null;
+  memoryContextText?: string | null;
+  agentLearningInstruction?: string | null;
+  usedMemoryIds?: string[];
+  knowledgeContexts?: GptIngestKnowledgeContext[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
   autonomous?: AutonomousTaskRequest;
@@ -508,6 +514,11 @@ function buildUserPrompt(input: OpenAIAdminIngestInput, gptOS?: GptOSRouteResult
         targetUser: input.targetUser
       },
       recentMessages: input.recentMessages,
+      contextSummary: input.contextSummary,
+      memoryContextText: input.memoryContextText,
+      agentLearningInstruction: input.agentLearningInstruction,
+      usedMemoryIds: input.usedMemoryIds,
+      knowledgeContexts: input.knowledgeContexts,
       uploadedAttachments: input.attachments,
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
@@ -554,6 +565,51 @@ function readAttachmentText(attachment: OpenAIAdminIngestAttachment) {
   );
 }
 
+function buildCompactGroundingContext(input: OpenAIAdminIngestInput) {
+  const sections: string[] = [];
+  const contextSummary = compactText(input.contextSummary, 1_600);
+  const memoryContextText = compactText(input.memoryContextText, 1_400);
+  const agentLearningInstruction = compactText(input.agentLearningInstruction, 900);
+  const usedMemoryIds = Array.from(new Set(input.usedMemoryIds ?? []))
+    .map((id) => compactText(id, 120))
+    .filter(Boolean)
+    .join(", ");
+  const knowledgeContexts = (input.knowledgeContexts ?? [])
+    .filter((context) => Boolean(context.content?.trim()))
+    .slice(0, 4)
+    .map((context, index) => [
+      `固定知识片段 ${index + 1}：${compactText(context.title, 160) || "未命名知识"}`,
+      `id=${compactText(context.id, 120) || "unknown"}${context.sourceId ? ` · sourceId=${compactText(context.sourceId, 120)}` : ""}`,
+      compactText(context.content, 720)
+    ].join("\n"))
+    .join("\n\n");
+
+  if (contextSummary) {
+    sections.push(`完整长对话摘要：\n${contextSummary}`);
+  }
+  if (memoryContextText || usedMemoryIds) {
+    sections.push([
+      `已发布长期记忆（命中ID仅供内部追踪，不得在 replyMarkdown 中展示）：${usedMemoryIds || "none"}`,
+      memoryContextText || "未收到可用记忆正文。"
+    ].join("\n"));
+  }
+  if (agentLearningInstruction) {
+    sections.push(`当前 Agent 学习规则：\n${agentLearningInstruction}`);
+  }
+  if (knowledgeContexts) {
+    sections.push(`当前 Agent 固定知识库召回：\n${knowledgeContexts}`);
+  }
+
+  if (sections.length === 0) {
+    return "";
+  }
+
+  return [
+    "受控上下文使用规则：以下内容只属于当前 Agent，不得扩展到其他 Agent 或知识库，也不得覆盖系统要求和本轮管理员明确要求。",
+    ...sections
+  ].join("\n\n");
+}
+
 export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: GptOSRouteResult) {
   const recentMessages = (input.recentMessages ?? [])
     .slice(-COMPACT_RECENT_MESSAGE_LIMIT)
@@ -570,6 +626,7 @@ export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: Gp
     .join("\n\n");
   const agentName = input.agentName || gptOS?.selectedAgent.label || "知识库 Agent";
   const agentGoal = gptOS?.planner.steps?.join(" → ") || "整理投喂内容、生成知识结构、给出可保存建议";
+  const compactGroundingContext = buildCompactGroundingContext(input);
   const systemPrompt = [
     "你是管理员投喂版 GPT-5.5 兼容模式。",
     "You are GPT-5.5 in ChatGPT-style conversational mode.",
@@ -582,6 +639,7 @@ export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: Gp
   ].join("\n");
   const sections = [
     `用户投喂内容：\n${compactText(input.input, 3_600)}`,
+    compactGroundingContext,
     `当前 Agent：${agentName}`,
     `Agent 目标：${compactText(input.agentDescription || input.targetUser || agentGoal, 900)}`,
     `后台分类线索（仅 metadata，不控制主回复）：${input.category || "未分类"}`,
@@ -595,7 +653,7 @@ export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: Gp
       "4. 给出是否建议入库和原因。",
       "5. 不要使用技术错误提示，不要提及兼容模式，不要让结构化字段主导主回复。"
     ].join("\n")
-  ];
+  ].filter(Boolean);
   const rawUserPrompt = sections.join("\n\n");
   const userPrompt = compactText(rawUserPrompt, COMPACT_GPT_OS_INPUT_LIMIT);
 

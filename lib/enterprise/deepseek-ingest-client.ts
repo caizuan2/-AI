@@ -10,6 +10,7 @@ import {
   buildGptIngestBrainUserPrompt
 } from "@/lib/enterprise/gpt-ingest-brain-prompt";
 import type {
+  GptIngestKnowledgeContext,
   GptIngestMemoryMessage,
   GptIngestMemoryRecord
 } from "@/lib/enterprise/gpt-ingest-memory";
@@ -61,6 +62,11 @@ export interface DeepSeekAdminIngestInput {
   agentDescription?: string | null;
   targetUser?: string | null;
   recentMessages?: GptIngestMemoryMessage[];
+  contextSummary?: string | null;
+  memoryContextText?: string | null;
+  agentLearningInstruction?: string | null;
+  usedMemoryIds?: string[];
+  knowledgeContexts?: GptIngestKnowledgeContext[];
   previousKnowledgeDrafts?: Array<Partial<GptKnowledgeDraft>>;
   recentTrainingRecords?: GptIngestMemoryRecord[];
   autonomous?: AutonomousTaskRequest;
@@ -234,6 +240,11 @@ function buildUserPrompt(input: DeepSeekAdminIngestInput, gptOS?: GptOSRouteResu
         targetUser: input.targetUser
       },
       recentMessages: input.recentMessages,
+      contextSummary: input.contextSummary,
+      memoryContextText: input.memoryContextText,
+      agentLearningInstruction: input.agentLearningInstruction,
+      usedMemoryIds: input.usedMemoryIds,
+      knowledgeContexts: input.knowledgeContexts,
       uploadedAttachments: input.attachments,
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
