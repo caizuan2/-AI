@@ -68,6 +68,34 @@ test("APK network recovery preserves user session and does not affect admin shel
   assert.doesNotMatch(recoverySection, /deleteAllData/);
 });
 
+test("APK user shell bypasses stale HTML and recovers missing Next assets", () => {
+  assert.match(
+    mainActivity,
+    /if \(!adminShell\) \{\s*loadFreshUserShell\(webView, "__native_session"\);\s*\}/
+  );
+  assert.match(mainActivity, /setCacheMode\(WebSettings\.LOAD_NO_CACHE\)/);
+  assert.match(mainActivity, /setCacheMode\(WebSettings\.LOAD_DEFAULT\)/);
+  assert.match(mainActivity, /appendQueryParameter\("shellVersion", BuildConfig\.VERSION_NAME\)/);
+  assert.match(mainActivity, /appendQueryParameter\("shellBuild", String\.valueOf\(BuildConfig\.VERSION_CODE\)\)/);
+  assert.match(mainActivity, /path\.startsWith\("\/_next\/static\/"\)/);
+  assert.match(
+    mainActivity,
+    /!adminShell[\s\S]*?!request\.isForMainFrame\(\)[\s\S]*?errorResponse\.getStatusCode\(\) == 404[\s\S]*?recoverMissingUserAssets\(view\)/
+  );
+  assert.match(mainActivity, /staleUserAssetsRecoveryAttempted/);
+  assert.match(mainActivity, /webView\.clearCache\(false\)/);
+  assert.match(mainActivity, /loadFreshUserShell\(webView, "__web_asset_recovery"\)/);
+
+  const staleAssetRecoverySection = readSection(
+    "private static boolean isNextStaticAsset",
+    "private static String[] getChatFileChooserMimeTypes"
+  );
+  assert.match(staleAssetRecoverySection, /isAdminShell\(\)/);
+  assert.doesNotMatch(staleAssetRecoverySection, /removeAllCookies/);
+  assert.doesNotMatch(staleAssetRecoverySection, /clearHistory/);
+  assert.doesNotMatch(staleAssetRecoverySection, /deleteAllData/);
+});
+
 test("APK release uses the stable legacy-compatible signing certificate", () => {
   assert.match(releaseWorkflow, /secrets\.ANDROID_RELEASE_KEYSTORE_BASE64/);
   assert.match(releaseWorkflow, /android\.injected\.signing\.store\.file/);

@@ -2840,6 +2840,7 @@ export function ChatShell() {
               <KnowledgeBaseSelector
                 selectedCount={selectedKnowledgeBases.length}
                 activeTitle={activeKnowledgeBase?.title ?? null}
+                open={expertMarketOpen}
                 onOpen={() => setExpertMarketOpen(true)}
               />
             )}

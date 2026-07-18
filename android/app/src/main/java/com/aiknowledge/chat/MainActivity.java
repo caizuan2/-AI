@@ -61,6 +61,8 @@ public class MainActivity extends BridgeActivity {
     private String activeUserMainFrameUrl;
     private int networkRetryAttempt;
     private boolean showingNetworkError;
+    private boolean userBootstrapCacheBypass;
+    private boolean staleUserAssetsRecoveryAttempted;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -68,12 +70,17 @@ public class MainActivity extends BridgeActivity {
 
         if (getBridge() != null && getBridge().getWebView() != null) {
             WebView webView = getBridge().getWebView();
+            boolean adminShell = isAdminShell();
 
             clearStaleWebViewState(webView);
             configureSessionPersistence(webView);
             webView.addJavascriptInterface(new AndroidBridge(), "AndroidBridge");
-            webView.setWebViewClient(new AppRouteWebViewClient(getBridge(), isAdminShell()));
+            webView.setWebViewClient(new AppRouteWebViewClient(getBridge(), adminShell));
             webView.setWebChromeClient(new AppWebChromeClient(getBridge()));
+
+            if (!adminShell) {
+                loadFreshUserShell(webView, "__native_session");
+            }
         }
     }
 
@@ -162,6 +169,62 @@ public class MainActivity extends BridgeActivity {
         CookieManager cookieManager = CookieManager.getInstance();
         cookieManager.setAcceptCookie(true);
         cookieManager.setAcceptThirdPartyCookies(webView, true);
+    }
+
+    private static boolean isNextStaticAsset(Uri uri) {
+        if (uri == null || !isSameAppOrigin(uri)) {
+            return false;
+        }
+
+        String path = uri.getPath();
+        return path != null && path.startsWith("/_next/static/");
+    }
+
+    private static String withFreshUserShellMarker(String url, String marker) {
+        Uri parsed = Uri.parse(url == null || url.length() == 0 ? USER_CHAT_URL : url);
+
+        return parsed.buildUpon()
+            .appendQueryParameter("shellVersion", BuildConfig.VERSION_NAME)
+            .appendQueryParameter("shellBuild", String.valueOf(BuildConfig.VERSION_CODE))
+            .appendQueryParameter(marker, String.valueOf(System.currentTimeMillis()))
+            .build()
+            .toString();
+    }
+
+    private void loadFreshUserShell(WebView webView, String marker) {
+        if (webView == null || isAdminShell()) {
+            return;
+        }
+
+        userBootstrapCacheBypass = true;
+        webView.getSettings().setCacheMode(WebSettings.LOAD_NO_CACHE);
+        webView.loadUrl(withFreshUserShellMarker(USER_CHAT_URL, marker));
+    }
+
+    private void finishUserBootstrapCacheBypass(WebView webView, String url) {
+        if (!userBootstrapCacheBypass || !isRecoverableUserUrl(Uri.parse(url))) {
+            return;
+        }
+
+        userBootstrapCacheBypass = false;
+        webView.getSettings().setCacheMode(WebSettings.LOAD_DEFAULT);
+    }
+
+    private void recoverMissingUserAssets(WebView webView) {
+        if (webView == null || isAdminShell() || staleUserAssetsRecoveryAttempted) {
+            return;
+        }
+
+        staleUserAssetsRecoveryAttempted = true;
+        webView.post(() -> {
+            if (isFinishing() || isDestroyed()) {
+                return;
+            }
+
+            webView.stopLoading();
+            webView.clearCache(false);
+            loadFreshUserShell(webView, "__web_asset_recovery");
+        });
     }
 
     private static String[] getChatFileChooserMimeTypes() {
@@ -860,6 +923,16 @@ public class MainActivity extends BridgeActivity {
 
             if (
                 !adminShell
+                && !request.isForMainFrame()
+                && errorResponse.getStatusCode() == 404
+                && isNextStaticAsset(request.getUrl())
+            ) {
+                recoverMissingUserAssets(view);
+                return;
+            }
+
+            if (
+                !adminShell
                 && request.isForMainFrame()
                 && isRetryableHttpStatus(errorResponse.getStatusCode())
             ) {
@@ -932,6 +1005,7 @@ public class MainActivity extends BridgeActivity {
 
             if (!adminShell) {
                 markUserPageRecovered(url);
+                finishUserBootstrapCacheBypass(view, url);
             }
 
             String routeGuardScript = adminShell

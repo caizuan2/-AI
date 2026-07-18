@@ -999,6 +999,7 @@ async function main() {
     chatShellSource,
     /<KnowledgeBaseSelector[\s\S]*?onOpen=\{\(\) => setExpertMarketOpen\(true\)\}/
   );
+  assert.match(chatShellSource, /open=\{expertMarketOpen\}/);
   assert.match(chatShellSource, /已打开扫描入口/);
   assert.match(chatShellSource, /已选择扫描图片/);
   assert.match(chatShellSource, /已打开通知面板/);
@@ -1429,6 +1430,7 @@ async function main() {
   const knowledgeBaseSelector = KnowledgeBaseSelector({
     selectedCount: 0,
     activeTitle: null,
+    open: false,
     onOpen: () => {
       selectorOpenCount += 1;
     }
@@ -1438,12 +1440,42 @@ async function main() {
   assert.equal(knowledgeBaseSelector.props.type, "button");
   knowledgeBaseSelector.props.onClick();
   assert.equal(selectorOpenCount, 1);
+  let touchDefaultPrevented = false;
+  knowledgeBaseSelector.props.onTouchEnd({
+    preventDefault: () => {
+      touchDefaultPrevented = true;
+    }
+  });
+  assert.equal(touchDefaultPrevented, true);
+  assert.equal(selectorOpenCount, 2);
   assert.match(knowledgeBaseSelectorMarkup, /aria-label="选择专家知识库"/);
   assert.match(knowledgeBaseSelectorMarkup, /aria-haspopup="dialog"/);
+  assert.match(knowledgeBaseSelectorMarkup, /aria-expanded="false"/);
   assert.match(knowledgeBaseSelectorMarkup, /class="[^"]*\bh-12\b/);
   assert.match(knowledgeBaseSelectorMarkup, /class="[^"]*\bw-12\b/);
   assert.match(knowledgeBaseSelectorMarkup, /touch-manipulation/);
   assert.match(knowledgeBaseSelectorMarkup, /pointer-events-auto/);
+  assert.match(knowledgeBaseSelectorMarkup, /active:scale-95/);
+
+  const expertMarketDrawerSource = readFileSync(
+    "app/(user)/chat-ui/components/ExpertMarketDrawer.tsx",
+    "utf8"
+  );
+  assert.match(expertMarketDrawerSource, /createPortal\(/);
+  assert.match(expertMarketDrawerSource, /document\.body/);
+  assert.match(expertMarketDrawerSource, /role="dialog"/);
+  assert.match(expertMarketDrawerSource, /aria-modal="true"/);
+  assert.match(expertMarketDrawerSource, /bg-slate-950\/20/);
+  assert.match(expertMarketDrawerSource, /safe-area-inset-bottom/);
+  assert.match(expertMarketDrawerSource, /bottom-24/);
+  assert.match(expertMarketDrawerSource, /h-\[42vh\]/);
+
+  const nextConfigSource = readFileSync("next.config.mjs", "utf8");
+  assert.match(nextConfigSource, /source: "\/app\/chat"/);
+  assert.match(nextConfigSource, /source: "\/app\/chat\/:path\*"/);
+  assert.match(nextConfigSource, /private, no-store, no-cache, max-age=0, must-revalidate/);
+  assert.doesNotMatch(nextConfigSource, /source: "\/ingest/);
+  assert.doesNotMatch(nextConfigSource, /source: "\/admin/);
 
   const chatInputMarkup = renderToStaticMarkup(
     <ChatInput

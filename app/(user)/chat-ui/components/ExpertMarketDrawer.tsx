@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { Search, X } from "lucide-react";
 import type {
   ExpertMarketItem,
@@ -123,22 +124,29 @@ export function ExpertMarketDrawer({
     return () => controller.abort();
   }, [marketLoaded, open]);
 
-  if (!open) {
+  if (!open || typeof document === "undefined") {
     return null;
   }
 
   const visibleSections = filterSections(sections, query);
   const hasSearch = query.trim().length > 0;
 
-  return (
-    <div className="fixed inset-0 z-50">
+  return createPortal(
+    <div className="fixed inset-0 z-[90] isolate" role="dialog" aria-modal="true" aria-label="专家知识库">
       <button
         type="button"
-        className="absolute inset-0 cursor-default bg-transparent"
+        className="absolute inset-0 cursor-default bg-slate-950/20"
         aria-label="关闭专家知识库"
         onClick={onClose}
       />
-      <aside className="absolute bottom-24 right-3 flex h-[42vh] min-h-[260px] w-[90vw] max-w-[380px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-300/60 sm:right-5 sm:w-[360px]">
+      <aside
+        className="absolute bottom-24 right-3 flex h-[42vh] min-h-[260px] w-[90vw] max-w-[380px] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/20 sm:right-5 sm:w-[360px]"
+        style={{
+          bottom: "max(5.75rem, calc(env(safe-area-inset-bottom, 0px) + 4.75rem))",
+          height: "min(58dvh, 520px)",
+          maxHeight: "calc(100dvh - 7rem)"
+        }}
+      >
         <div className="border-b border-slate-100 px-4 py-3">
           <div className="flex items-center gap-2">
             <label className="flex h-10 min-w-0 flex-1 items-center gap-2 rounded-full bg-slate-50 px-3 text-sm text-slate-500 ring-1 ring-slate-100">
@@ -238,6 +246,7 @@ export function ExpertMarketDrawer({
           )}
         </div>
       </aside>
-    </div>
+    </div>,
+    document.body
   );
 }
