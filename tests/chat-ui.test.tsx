@@ -63,6 +63,7 @@ import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu"
 import { KnowledgeBaseSelector } from "../app/(user)/chat-ui/components/KnowledgeBaseSelector";
 import { isCareerMentorMessage } from "../app/(user)/app/components/chat/message-renderer";
 import {
+  extractCareerMentorInlineCopyTargets,
   ProductAnswerView,
   splitNaturalAnswerForCustomerScriptCards
 } from "../app/(user)/chat-ui/components/ProductAnswerView";
@@ -178,6 +179,87 @@ async function main() {
   assert.equal(careerMentorFallbackSegments.some((segment) => segment.kind === "customerScript"), false);
   assert.match(careerMentorFallbackSegments[0]?.text ?? "", /本轮没有检索到可逐字核对的同阶段客户话术/);
   assert.doesNotMatch(careerMentorFallbackSegments[0]?.text ?? "", /## 可复制给客户\s+客户话术$/);
+
+  const careerMentorIngestPassthroughAnswer = [
+    "## 核心判断",
+    "宝妈破冰的关键不是讲事业，而是让她感觉‘你懂我’。",
+    "",
+    "## 一线可复制破冰话术（可直接用）",
+    "",
+    "### 场景：朋友圈看到宝妈吐槽带娃累",
+    "",
+    "> “看到你这条真的特别有共鸣。有时候真不是身体累，是心里空。你有这种感觉吗？”",
+    "",
+    "**原理**：先共情，再过渡。对方点头了，再往下走。",
+    "",
+    "---",
+    "",
+    "### 场景：宝妈表达‘觉得自己没用’",
+    "",
+    "> “不是你没用，是带娃这件事没人看见、没人打分。其实你比你自己以为的厉害得多。”",
+    "",
+    "**原理**：肯定价值，但不马上推事业。",
+    "",
+    "---",
+    "",
+    "### 场景：宝妈主动问‘你在做什么’",
+    "",
+    "> “我最近在研究一件事，特别适合像你这样又想兼顾孩子、又不想把自己弄丢的妈妈。你要是感兴趣，我可以和你聊聊。”",
+    "",
+    "**原理**：讲状态改变，降低防御。",
+    "",
+    "## 破冰时的 3 个安全边界",
+    "后续完整正文继续保留。"
+  ].join("\n");
+  const careerMentorInlineCopyTargets = extractCareerMentorInlineCopyTargets(
+    careerMentorIngestPassthroughAnswer
+  );
+
+  assert.equal(careerMentorInlineCopyTargets.length, 3);
+  assert.deepEqual(
+    careerMentorInlineCopyTargets.map((target) => target.title),
+    [
+      "场景：朋友圈看到宝妈吐槽带娃累",
+      "场景：宝妈表达‘觉得自己没用’",
+      "场景：宝妈主动问‘你在做什么’"
+    ]
+  );
+  assert.equal(careerMentorInlineCopyTargets.every((target) => target.variant === "careerKnowledge"), true);
+  assert.match(careerMentorInlineCopyTargets[0]?.text ?? "", /看到你这条真的特别有共鸣/);
+  assert.equal(careerMentorInlineCopyTargets.some((target) => /原理|先共情|肯定价值|降低防御/.test(target.text)), false);
+
+  const careerMentorIngestPassthroughMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: careerMentorIngestPassthroughAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={careerMentorIngestPassthroughAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+
+  assert.equal((careerMentorIngestPassthroughMarkup.match(/data-inline-copy="career-mentor"/g) ?? []).length, 3);
+  assert.equal((careerMentorIngestPassthroughMarkup.match(/data-script-origin="career-knowledge"/g) ?? []).length, 3);
+  assert.equal((careerMentorIngestPassthroughMarkup.match(/复制话术/g) ?? []).length, 3);
+  assert.match(careerMentorIngestPassthroughMarkup, /一线可复制破冰话术（可直接用）/);
+  assert.match(careerMentorIngestPassthroughMarkup, /原理/);
+  assert.match(careerMentorIngestPassthroughMarkup, /先共情，再过渡/);
+  assert.match(careerMentorIngestPassthroughMarkup, /后续完整正文继续保留/);
+  assert.ok(
+    careerMentorIngestPassthroughMarkup.indexOf("一线可复制破冰话术（可直接用）")
+      < careerMentorIngestPassthroughMarkup.indexOf("看到你这条真的特别有共鸣")
+  );
+  assert.ok(
+    careerMentorIngestPassthroughMarkup.indexOf("看到你这条真的特别有共鸣")
+      < careerMentorIngestPassthroughMarkup.indexOf("先共情，再过渡")
+  );
 
   const structuredCustomerReply = "姐姐，刚发你的视频你抽空看一下就好。主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。";
   const naturalAnswerWithoutScript = [
@@ -563,6 +645,7 @@ async function main() {
   );
 
   assert.doesNotMatch(nonCareerDualLayerMarkup, /data-script-origin="career-(?:ai|knowledge)"/);
+  assert.doesNotMatch(nonCareerDualLayerMarkup, /data-inline-copy="career-mentor"/);
   assert.doesNotMatch(nonCareerDualLayerMarkup, /bg-teal-50\/70|bg-emerald-50\/70/);
 
   const htmlListAnswer = [
