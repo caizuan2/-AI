@@ -45,6 +45,50 @@ const statusClasses = {
 
 const LICENSES_PER_PAGE = 20;
 
+const summaryKeyByStatus = {
+  UNUSED: "unused",
+  USED: "used",
+  DISABLED: "disabled"
+} as const;
+
+export function replaceLicenseRecord(
+  licenses: SuperAdminLicenseRecord[],
+  updatedLicense: SuperAdminLicenseRecord
+) {
+  return licenses.map((license) => (license.id === updatedLicense.id ? updatedLicense : license));
+}
+
+export function applyLicenseRecordUpdate(
+  data: SuperAdminLicenseDashboardData,
+  updatedLicense: SuperAdminLicenseRecord
+) {
+  const previousLicense = data.licenses.find((license) => license.id === updatedLicense.id);
+
+  if (!previousLicense) {
+    return data;
+  }
+
+  if (previousLicense.status === updatedLicense.status) {
+    return {
+      ...data,
+      licenses: replaceLicenseRecord(data.licenses, updatedLicense)
+    };
+  }
+
+  const previousSummaryKey = summaryKeyByStatus[previousLicense.status];
+  const updatedSummaryKey = summaryKeyByStatus[updatedLicense.status];
+
+  return {
+    ...data,
+    licenses: replaceLicenseRecord(data.licenses, updatedLicense),
+    summary: {
+      ...data.summary,
+      [previousSummaryKey]: Math.max(0, data.summary[previousSummaryKey] - 1),
+      [updatedSummaryKey]: data.summary[updatedSummaryKey] + 1
+    }
+  };
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "长期有效";
@@ -347,7 +391,7 @@ function LicenseTable({
   licenses: SuperAdminLicenseRecord[];
   generatedKeyById: Map<string, string>;
   disablingId: string | null;
-  onDisable: (id: string) => Promise<void>;
+  onDisable: (id: string) => Promise<SuperAdminLicenseRecord | null>;
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
@@ -443,6 +487,18 @@ function LicenseTable({
     }
   }
 
+  async function handleDisableLicense(id: string) {
+    const updatedLicense = await onDisable(id);
+
+    if (!updatedLicense) {
+      return;
+    }
+
+    setSearchResults((currentResults) => (
+      currentResults ? replaceLicenseRecord(currentResults, updatedLicense) : currentResults
+    ));
+  }
+
   if (licenses.length === 0) {
     return <EmptyState message={`${title}暂无卡密记录。`} />;
   }
@@ -530,7 +586,7 @@ function LicenseTable({
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => onDisable(license.id)}
+                      onClick={() => void handleDisableLicense(license.id)}
                       disabled={license.status === "DISABLED" || disablingId === license.id}
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -688,10 +744,17 @@ export function LicenseDashboard() {
     setError(null);
 
     try {
-      await disableSuperAdminLicense(id);
-      await reload();
+      const updatedLicense = await disableSuperAdminLicense(id);
+      setData((currentData) => (
+        currentData ? applyLicenseRecordUpdate(currentData, updatedLicense) : currentData
+      ));
+      void reload().catch(() => {
+        // The confirmed row state is already visible; a later refresh can retry dashboard reconciliation.
+      });
+      return updatedLicense;
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "卡密禁用失败。");
+      return null;
     } finally {
       setDisablingId(null);
     }
