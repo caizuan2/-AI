@@ -1,6 +1,6 @@
 {
-  "version": "1.0.17",
-  "build": 142,
-  "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
+  "version": "1.0.18",
+  "build": 143,
+  "web_release_sha": "750e1afd9478b2f42df9b09f33c4145b7de21c0e",
   "legacy_electron_version": "1.0.10"
 }

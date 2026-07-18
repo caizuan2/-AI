@@ -1,19 +1,19 @@
 {
-  "updated_at": "2026-07-16T12:54:26.752Z",
-  "version": "1.0.17",
-  "build": 142,
+  "updated_at": "2026-07-18T10:34:24.139Z",
+  "version": "1.0.18",
+  "build": 143,
   "minimum_build": 100,
   "forceUpdate": false,
   "force_update": false,
-  "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
+  "web_release_sha": "750e1afd9478b2f42df9b09f33c4145b7de21c0e",
   "apk": "ai-knowledge-chat-latest.apk",
   "exe": "ai-knowledge-chat-latest.exe",
-  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
+  "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.exe",
   "web_url": "http://47.238.0.23/app/chat",
   "download": {
-    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
-    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
+    "android": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.apk",
+    "windows": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.exe",
     "web": "http://47.238.0.23/app/chat",
     "page": "http://47.238.0.23/download"
   },
@@ -29,30 +29,28 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.17",
+      "active_version": "1.0.18",
       "versions": [
         {
-          "version": "1.0.17",
-          "build": 142,
+          "version": "1.0.18",
+          "build": 143,
           "channel": "stable",
           "rollout": 100,
           "minimum_build": 100,
           "force_update": false,
-          "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
+          "web_release_sha": "750e1afd9478b2f42df9b09f33c4145b7de21c0e",
           "web_url": "http://47.238.0.23/app/chat",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.exe",
           "download_page": "http://47.238.0.23/download",
           "changelog": [
-            "讲事业导师取消 90 秒总等待硬截止，优先等待完整高质量回答",
-            "明确简单场景使用固定知识证据质量门快速回答，证据不足自动升级完整检索",
-            "减少无结果补充检索造成的空等，并保留复杂问题原有完整检索流程",
-            "优化回答分帧速度，完整保留 DeepSeek/GPT 风格 Markdown 正文",
-            "补充讲事业导师请求 traceId，便于线上耗时排查",
-            "优化移动端专家选择器触控可靠性",
-            "讲事业导师优化严格隔离，不影响 KKS 与大健康专家链路"
+            "修复个别 Android 手机旧 WebView 页面未激活导致“沟”按钮无反应",
+            "增加旧版 WebView 触摸兜底与按钮按压反馈",
+            "专家选择抽屉改为独立 Portal，并兼容安全区域与旧视口单位",
+            "用户聊天页禁止缓存旧 HTML，APK 可自动恢复失效的 Next.js 页面脚本",
+            "保留登录状态和聊天记录，不影响 KKS、大健康、投喂端及 DeepSeek/GPT 正文"
           ],
-          "created_at": "2026-07-16T12:54:26.752Z"
+          "created_at": "2026-07-18T10:34:24.139Z"
         }
       ]
     },
@@ -94,22 +92,20 @@
   "user": {
     "app_name": "AI知识库助手",
     "version": "1.0.10",
-    "build": 142,
+    "build": 143,
     "minimum_build": 100,
     "force_update": false,
-    "web_release_sha": "94ed0237568bb163ed2c041c3bf9100fa16ba724",
+    "web_release_sha": "750e1afd9478b2f42df9b09f33c4145b7de21c0e",
     "web_url": "http://47.238.0.23/app/chat",
-    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.17/ai-knowledge-chat-latest.exe",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/1.0.18/ai-knowledge-chat-latest.exe",
     "download_page": "http://47.238.0.23/download",
     "changelog": [
-      "讲事业导师取消 90 秒总等待硬截止，优先等待完整高质量回答",
-      "明确简单场景使用固定知识证据质量门快速回答，证据不足自动升级完整检索",
-      "减少无结果补充检索造成的空等，并保留复杂问题原有完整检索流程",
-      "优化回答分帧速度，完整保留 DeepSeek/GPT 风格 Markdown 正文",
-      "补充讲事业导师请求 traceId，便于线上耗时排查",
-      "优化移动端专家选择器触控可靠性",
-      "讲事业导师优化严格隔离，不影响 KKS 与大健康专家链路"
+      "修复个别 Android 手机旧 WebView 页面未激活导致“沟”按钮无反应",
+      "增加旧版 WebView 触摸兜底与按钮按压反馈",
+      "专家选择抽屉改为独立 Portal，并兼容安全区域与旧视口单位",
+      "用户聊天页禁止缓存旧 HTML，APK 可自动恢复失效的 Next.js 页面脚本",
+      "保留登录状态和聊天记录，不影响 KKS、大健康、投喂端及 DeepSeek/GPT 正文"
     ]
   },
   "admin": {
