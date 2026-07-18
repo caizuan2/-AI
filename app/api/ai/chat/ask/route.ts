@@ -147,7 +147,8 @@ export async function POST(request: Request) {
               recentConversation,
               agentId,
               knowledgeBaseId,
-              namespace
+              namespace,
+              careerMentorStage
             }) => {
               const careerMentorNaturalBodyEnabled = isCareerMentorScope({
                 agentId,
@@ -157,7 +158,9 @@ export async function POST(request: Request) {
 
               if (careerMentorNaturalBodyEnabled) {
                 return runCareerMentorIngestAnswer({
-                  question: originalQuestion,
+                  originalQuestion,
+                  scenarioQuestion: question,
+                  careerMentorStage: careerMentorStage ?? "unknown",
                   contexts,
                   recentConversation,
                   agentId,
