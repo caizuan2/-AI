@@ -52,9 +52,11 @@ type CustomerQuoteLine = {
 
 export type CareerMentorInlineCopyTarget = {
   startLine: number;
+  endLine: number;
   title: string;
   text: string;
   variant: Exclude<CustomerScriptVariant, "default">;
+  nodeKind: "blockquote" | "paragraph";
 };
 
 function CopyMiniButton({
@@ -652,6 +654,78 @@ function toCareerMentorInlineCopyText(lines: string[]) {
   return (wrappedQuote?.[1] ?? text).trim();
 }
 
+function isCareerMentorCopyMetaText(text: string) {
+  const normalized = normalizeScriptHeadingText(text).replace(/[：:]$/, "");
+
+  if (!normalized) {
+    return true;
+  }
+
+  return /^(?:下面|以上|这些|这几条|这组|使用时|使用前|重点(?:是|在于)?|原理|说明|为什么|注意事项|跟进节奏|操作口诀|底层逻辑|三条.*铁律|请记住)(?:$|[：:，,、。\s])/.test(normalized)
+    || /这些话术.{0,24}(?:不用背|感受|参考)/.test(normalized);
+}
+
+function isLikelyCareerMentorDirectScript(text: string) {
+  const normalized = normalizeScriptHeadingText(text);
+
+  if (
+    normalized.length < 16
+    || normalized.length > 1600
+    || isCareerMentorCopyMetaText(normalized)
+  ) {
+    return false;
+  }
+
+  const hasCustomerAddress = /姐|哥|兄弟|姐妹|宝|朋友|您好|你好|您|你|[A-Za-z\u4e00-\u9fa5]{1,8}总/.test(normalized);
+  const hasConversationAction = /我|我们|咱们|刚|想到|看到|听|可以|不用|别|要是|如果|方便|有空|随时|聊|告诉|帮|发|问|觉得|理解/.test(normalized);
+
+  return hasCustomerAddress && hasConversationAction;
+}
+
+function parseCareerMentorPlainScriptTitle(line: string) {
+  const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
+
+  if (
+    !normalized
+    || normalized.length > 48
+    || /[。！？!?]$/.test(normalized)
+    || isCareerMentorCopyMetaText(normalized)
+  ) {
+    return null;
+  }
+
+  return /^(?:(?:第[一二三四五六七八九十\d]+次|首次)(?:跟进|联系)(?:[（(].{1,36}[）)])?|客户.{1,32}|场景.{1,32}|方案.{1,32}|话术.{1,32}|当客户.{1,32}|如果客户.{1,32})$/.test(normalized)
+    ? normalized
+    : null;
+}
+
+function collectCareerMentorPlainParagraph(lines: string[], startIndex: number) {
+  const paragraphLines: string[] = [];
+  let endIndex = startIndex;
+
+  while (endIndex < lines.length) {
+    const line = lines[endIndex];
+    const trimmed = line.trim();
+
+    if (
+      !trimmed
+      || /^ {0,3}(?:#{1,6}\s+|>|`{3,}|~{3,}|[-*+•]\s+|\d+[.、]\s+|---+$)/.test(line)
+      || /^(?: {4,}|\t)/.test(line)
+      || /^\|/.test(trimmed)
+    ) {
+      break;
+    }
+
+    paragraphLines.push(line);
+    endIndex += 1;
+  }
+
+  return {
+    endIndex,
+    text: toCareerMentorInlineCopyText(paragraphLines)
+  };
+}
+
 export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMentorInlineCopyTarget[] {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const targets: CareerMentorInlineCopyTarget[] = [];
@@ -721,6 +795,15 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
       continue;
     }
 
+    const plainScriptTitle = activeSection
+      ? parseCareerMentorPlainScriptTitle(line)
+      : null;
+
+    if (plainScriptTitle) {
+      activeTitle = plainScriptTitle;
+      continue;
+    }
+
     if (
       activeSection
       && !/^ {0,3}>/.test(line)
@@ -741,6 +824,30 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
     }
 
     if (!activeSection || !/^ {0,3}>/.test(line)) {
+      if (
+        activeSection
+        && activeTitle !== activeSection.title
+        && line.trim()
+        && !/^ {0,3}>/.test(line)
+      ) {
+        const paragraph = collectCareerMentorPlainParagraph(lines, index);
+
+        if (isLikelyCareerMentorDirectScript(paragraph.text)) {
+          targets.push({
+            startLine: index + 1,
+            endLine: paragraph.endIndex,
+            title: activeTitle,
+            text: paragraph.text,
+            variant: activeSection.variant,
+            nodeKind: "paragraph"
+          });
+        }
+
+        if (paragraph.endIndex > index) {
+          index = paragraph.endIndex - 1;
+        }
+      }
+
       continue;
     }
 
@@ -754,12 +861,14 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
 
     const text = toCareerMentorInlineCopyText(quoteLines);
 
-    if (isUsableCustomerScriptText(text)) {
+    if (isUsableCustomerScriptText(text) && !isCareerMentorCopyMetaText(text)) {
       targets.push({
         startLine: index + 1,
+        endLine: endIndex,
         title: activeTitle,
         text,
-        variant: activeSection.variant
+        variant: activeSection.variant,
+        nodeKind: "blockquote"
       });
     }
 
@@ -1063,45 +1172,120 @@ function markdownComponents() {
   };
 }
 
-function careerMentorMarkdownComponents(targets: CareerMentorInlineCopyTarget[]) {
+function careerMentorMarkdownComponents(targets: CareerMentorInlineCopyTarget[], markdown: string) {
   const baseComponents = markdownComponents();
-  const targetsByLine = new Map(targets.map((target) => [target.startLine, target]));
+  const markdownLines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const targetsByLineAndKind = new Map(
+    targets.map((target) => [`${target.nodeKind}:${target.startLine}`, target])
+  );
+
+  function renderInlineCopyTarget(
+    target: CareerMentorInlineCopyTarget,
+    children: React.ReactNode,
+    nodeKind: CareerMentorInlineCopyTarget["nodeKind"]
+  ) {
+    const careerAi = target.variant === "careerAi";
+    const content = nodeKind === "paragraph"
+      ? <p className="mb-0">{children}</p>
+      : children;
+    const className = cn(
+      "not-prose my-3 rounded-2xl border px-4 py-3 shadow-sm",
+      careerAi
+        ? "border-teal-200 bg-white shadow-teal-950/5"
+        : "border-emerald-200 bg-white shadow-emerald-950/5"
+    );
+    const inner = (
+      <>
+        <div className="mb-2 flex justify-end">
+          <CopyMiniButton text={target.text} label="复制话术" />
+        </div>
+        <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-2">
+          {content}
+        </div>
+      </>
+    );
+
+    return nodeKind === "blockquote" ? (
+      <blockquote
+        data-inline-copy="career-mentor"
+        data-inline-copy-node="blockquote"
+        data-script-origin={careerAi ? "career-ai" : "career-knowledge"}
+        className={className}
+      >
+        {inner}
+      </blockquote>
+    ) : (
+      <div
+        data-inline-copy="career-mentor"
+        data-inline-copy-node="paragraph"
+        data-script-origin={careerAi ? "career-ai" : "career-knowledge"}
+        className={className}
+      >
+        {inner}
+      </div>
+    );
+  }
 
   return {
     ...baseComponents,
-    blockquote: ({
+    p: ({
       children,
       node
     }: {
       children?: React.ReactNode;
       node?: { position?: { start?: { line?: number } } };
     }) => {
-      const target = targetsByLine.get(node?.position?.start?.line ?? -1);
+      const target = targetsByLineAndKind.get(`paragraph:${node?.position?.start?.line ?? -1}`);
+
+      return target
+        ? renderInlineCopyTarget(target, children, "paragraph")
+        : <p className="mb-3 last:mb-0">{children}</p>;
+    },
+    blockquote: ({
+      children,
+      node
+    }: {
+      children?: React.ReactNode;
+      node?: { position?: { start?: { line?: number }; end?: { line?: number } } };
+    }) => {
+      const target = targetsByLineAndKind.get(`blockquote:${node?.position?.start?.line ?? -1}`);
 
       if (!target) {
         return <blockquote>{children}</blockquote>;
       }
 
-      const careerAi = target.variant === "careerAi";
+      const nodeEndLine = node?.position?.end?.line ?? target.endLine;
+
+      if (nodeEndLine <= target.endLine) {
+        return renderInlineCopyTarget(target, children, "blockquote");
+      }
+
+      const trailingMarkdown = markdownLines
+        .slice(target.endLine, nodeEndLine)
+        .join("\n")
+        .trim();
+      const targetDisplayMarkdown = markdownLines
+        .slice(target.startLine - 1, target.endLine)
+        .map((line) => line.replace(/^ {0,3}> ?/, ""))
+        .join("\n");
 
       return (
-        <blockquote
-          data-inline-copy="career-mentor"
-          data-script-origin={careerAi ? "career-ai" : "career-knowledge"}
-          className={cn(
-            "not-prose my-3 rounded-2xl border px-4 py-3 shadow-sm",
-            careerAi
-              ? "border-teal-200 bg-white shadow-teal-950/5"
-              : "border-emerald-200 bg-white shadow-emerald-950/5"
+        <>
+          {renderInlineCopyTarget(
+            target,
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={baseComponents}>
+              {targetDisplayMarkdown}
+            </ReactMarkdown>,
+            "blockquote"
           )}
-        >
-          <div className="mb-2 flex justify-end">
-            <CopyMiniButton text={target.text} label="复制话术" />
-          </div>
-          <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-2">
-            {children}
-          </div>
-        </blockquote>
+          {trailingMarkdown ? (
+            <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-2">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={baseComponents}>
+                {trailingMarkdown}
+              </ReactMarkdown>
+            </div>
+          ) : null}
+        </>
       );
     }
   };
@@ -1168,10 +1352,21 @@ function getCareerMentorMarkdownAnswerText(
   answer: FinalizedAnswerView | null,
   rawAnswerText?: string | null
 ) {
-  return getFinalizedRawAnswerText({
-    ...(answer ?? {}),
-    rawAnswerBeforeFinalizer: rawAnswerText
-  })
+  const directMarkdown = [
+    rawAnswerText,
+    answer?.rawContent,
+    answer?.rawText,
+    answer?.rawAnswer,
+    answer?.freeformAnswer,
+    answer?.text,
+    answer?.answer,
+    answer?.content
+  ].find((candidate) => typeof candidate === "string" && candidate.trim());
+
+  // Career mentor receives the admin-ingest replyMarkdown verbatim. Do not send it
+  // through the generic visible-text cleaner: that cleaner can remove blank lines and
+  // change Markdown block boundaries, which makes copy-button decoration imprecise.
+  return (directMarkdown ?? getFinalizedRawAnswerText(answer))
     .replace(/\r\n/g, "\n")
     .trim();
 }
@@ -1223,8 +1418,8 @@ export function ProductAnswerView({
     [careerMentorMode, naturalAnswerText]
   );
   const careerMarkdownComponents = React.useMemo(
-    () => careerMentorMarkdownComponents(careerInlineCopyTargets),
-    [careerInlineCopyTargets]
+    () => careerMentorMarkdownComponents(careerInlineCopyTargets, naturalAnswerText),
+    [careerInlineCopyTargets, naturalAnswerText]
   );
   const structuredCustomerReply = answerForDisplay?.customerReply?.trim() ?? "";
   const naturalKnowledgeScripts = naturalAnswerSegments

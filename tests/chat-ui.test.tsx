@@ -249,6 +249,7 @@ async function main() {
   assert.equal((careerMentorIngestPassthroughMarkup.match(/data-script-origin="career-knowledge"/g) ?? []).length, 3);
   assert.equal((careerMentorIngestPassthroughMarkup.match(/复制话术/g) ?? []).length, 3);
   assert.match(careerMentorIngestPassthroughMarkup, /一线可复制破冰话术（可直接用）/);
+  assert.match(careerMentorIngestPassthroughMarkup, /“看到你这条真的特别有共鸣。.*你有这种感觉吗？”/);
   assert.match(careerMentorIngestPassthroughMarkup, /原理/);
   assert.match(careerMentorIngestPassthroughMarkup, /先共情，再过渡/);
   assert.match(careerMentorIngestPassthroughMarkup, /后续完整正文继续保留/);
@@ -260,6 +261,164 @@ async function main() {
     careerMentorIngestPassthroughMarkup.indexOf("看到你这条真的特别有共鸣")
       < careerMentorIngestPassthroughMarkup.indexOf("先共情，再过渡")
   );
+
+  const liveCareerFollowUpAnswer = [
+    "## 可以直接复制的话术模板",
+    "",
+    "下面这些话术是帮你‘无压跟进’的，不用背，感受一下里面的分寸就行。",
+    "",
+    "### 第一次跟进（破冰后 1-2 天）",
+    "> 姐，昨天晚上我理东西，看到上次跟你提的那个方向的时候，突然想到一个点——其实很多人不是不接受机会，是怕‘又要重头开始’。",
+    "> 而这个东西妙就妙在，它不需要你重新开始，只是在你原有的基础上加一条路。你啥时候有空，我两分钟把这点讲明白，你就当多听一个思路，不做也没事。",
+    "",
+    "### 客户看了资料但没下文",
+    "> 哥，上次发你的文件，你不用急着看完整。我今天刚好跟一个做了三个月的朋友聊，他说了一句话我觉得特别经典。",
+    "> 你要是有兴趣，我可以把那个朋友的故事讲给你听听，就三五分钟，比你单看资料有画面感多了。",
+    "",
+    "### 客户说‘我看看’之后沉默",
+    "> 姐，没消息就是还在琢磨，我觉得挺好的，说明你认真。",
+    "> 我刚好看到一组数据，这跟你上次说到的担心挺像的。你要是想聊聊，我随时在，不聊业务，就聊趋势。",
+    "",
+    "**重点是：每次出现都带着一点点新鲜信息，但绝不催。**",
+    "",
+    "## 跟进节奏参考",
+    "这里继续保留完整的原始正文。"
+  ].join("\n");
+  const liveCareerFollowUpTargets = extractCareerMentorInlineCopyTargets(liveCareerFollowUpAnswer);
+
+  assert.equal(liveCareerFollowUpTargets.length, 3);
+  assert.deepEqual(
+    liveCareerFollowUpTargets.map((target) => target.title),
+    [
+      "第一次跟进（破冰后 1-2 天）",
+      "客户看了资料但没下文",
+      "客户说‘我看看’之后沉默"
+    ]
+  );
+  assert.equal(liveCareerFollowUpTargets.every((target) => target.nodeKind === "blockquote"), true);
+  assert.deepEqual(
+    liveCareerFollowUpTargets.map((target) => target.text),
+    [
+      "姐，昨天晚上我理东西，看到上次跟你提的那个方向的时候，突然想到一个点——其实很多人不是不接受机会，是怕‘又要重头开始’。\n而这个东西妙就妙在，它不需要你重新开始，只是在你原有的基础上加一条路。你啥时候有空，我两分钟把这点讲明白，你就当多听一个思路，不做也没事。",
+      "哥，上次发你的文件，你不用急着看完整。我今天刚好跟一个做了三个月的朋友聊，他说了一句话我觉得特别经典。\n你要是有兴趣，我可以把那个朋友的故事讲给你听听，就三五分钟，比你单看资料有画面感多了。",
+      "姐，没消息就是还在琢磨，我觉得挺好的，说明你认真。\n我刚好看到一组数据，这跟你上次说到的担心挺像的。你要是想聊聊，我随时在，不聊业务，就聊趋势。"
+    ]
+  );
+  assert.equal(
+    liveCareerFollowUpTargets.some((target) => /下面这些话术|不用背|重点是|跟进节奏/.test(target.text)),
+    false
+  );
+
+  const liveCareerFollowUpMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: liveCareerFollowUpAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={liveCareerFollowUpAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+  const liveCareerFollowUpVisibleMarkup = liveCareerFollowUpMarkup.replace(
+    /<textarea[^>]*>[\s\S]*?<\/textarea>/g,
+    ""
+  );
+
+  assert.equal((liveCareerFollowUpMarkup.match(/data-inline-copy="career-mentor"/g) ?? []).length, 3);
+  assert.equal((liveCareerFollowUpMarkup.match(/data-inline-copy-node="blockquote"/g) ?? []).length, 3);
+  assert.equal((liveCareerFollowUpVisibleMarkup.match(/下面这些话术/g) ?? []).length, 1);
+  assert.equal((liveCareerFollowUpVisibleMarkup.match(/重点是：每次出现/g) ?? []).length, 1);
+  assert.match(liveCareerFollowUpVisibleMarkup, /这里继续保留完整的原始正文/);
+  assert.ok(
+    liveCareerFollowUpVisibleMarkup.indexOf("下面这些话术")
+      < liveCareerFollowUpVisibleMarkup.indexOf("姐，昨天晚上我理东西")
+  );
+  assert.ok(
+    liveCareerFollowUpVisibleMarkup.indexOf("姐，昨天晚上我理东西")
+      < liveCareerFollowUpVisibleMarkup.indexOf("跟进节奏参考")
+  );
+  assert.ok(
+    liveCareerFollowUpVisibleMarkup.lastIndexOf("</blockquote>")
+      < liveCareerFollowUpVisibleMarkup.indexOf("重点是：每次出现")
+  );
+
+  const plainParagraphCareerAnswer = [
+    "## 可以直接复制的话术模板",
+    "",
+    "> 下面这些话术是帮你无压跟进的，不用背，感受一下里面的分寸就行。",
+    "",
+    "第一次跟进（破冰后 1-2 天）",
+    "",
+    "姐，我刚好想到你上次提到的那个问题。你有空的时候，我用两分钟把这个思路跟你说清楚，不着急做决定。",
+    "",
+    "重点是：这是一段使用说明，不应该出现复制按钮。",
+    "",
+    "## 跟进节奏参考",
+    "正文继续保留。"
+  ].join("\n");
+  const plainParagraphCareerTargets = extractCareerMentorInlineCopyTargets(plainParagraphCareerAnswer);
+
+  assert.equal(plainParagraphCareerTargets.length, 1);
+  assert.equal(plainParagraphCareerTargets[0]?.title, "第一次跟进（破冰后 1-2 天）");
+  assert.equal(plainParagraphCareerTargets[0]?.nodeKind, "paragraph");
+  assert.match(plainParagraphCareerTargets[0]?.text ?? "", /姐，我刚好想到你/);
+  assert.doesNotMatch(plainParagraphCareerTargets[0]?.text ?? "", /下面这些话术|重点是/);
+
+  const plainParagraphCareerMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: plainParagraphCareerAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={plainParagraphCareerAnswer}
+      sources={[]}
+      careerMentorMode
+    />
+  );
+  const plainParagraphCareerVisibleMarkup = plainParagraphCareerMarkup.replace(
+    /<textarea[^>]*>[\s\S]*?<\/textarea>/g,
+    ""
+  );
+
+  assert.equal((plainParagraphCareerMarkup.match(/data-inline-copy="career-mentor"/g) ?? []).length, 1);
+  assert.match(plainParagraphCareerMarkup, /data-inline-copy-node="paragraph"/);
+  assert.equal((plainParagraphCareerVisibleMarkup.match(/下面这些话术/g) ?? []).length, 1);
+  assert.equal((plainParagraphCareerVisibleMarkup.match(/重点是：这是一段使用说明/g) ?? []).length, 1);
+  assert.equal((plainParagraphCareerVisibleMarkup.match(/姐，我刚好想到你/g) ?? []).length, 1);
+
+  for (const frozenExpertTitle of ["瘦身KKS", "大健康专家"]) {
+    const plainParagraphNonCareerMarkup = renderToStaticMarkup(
+      <ProductAnswerView
+        answer={{
+          title: frozenExpertTitle,
+          rawContent: plainParagraphCareerAnswer,
+          problemUnderstanding: "",
+          keyConclusion: "",
+          suggestedSteps: [],
+          customerReply: "",
+          nextAction: ""
+        }}
+        rawAnswerText={plainParagraphCareerAnswer}
+        sources={[]}
+      />
+    );
+
+    assert.doesNotMatch(
+      plainParagraphNonCareerMarkup,
+      /data-inline-copy="career-mentor"|data-inline-copy-node="paragraph"/
+    );
+  }
 
   const structuredCustomerReply = "姐姐，刚发你的视频你抽空看一下就好。主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。";
   const naturalAnswerWithoutScript = [
