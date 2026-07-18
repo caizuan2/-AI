@@ -50,6 +50,13 @@ type CustomerQuoteLine = {
   trailingText: string;
 };
 
+export type CareerMentorInlineCopyTarget = {
+  startLine: number;
+  title: string;
+  text: string;
+  variant: Exclude<CustomerScriptVariant, "default">;
+};
+
 function CopyMiniButton({
   text,
   label = "复制",
@@ -599,6 +606,169 @@ function splitMarkdownLinesForScriptParsing(markdown: string) {
   return lines;
 }
 
+function parseMarkdownHeading(line: string) {
+  const match = line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    depth: match[1].length,
+    text: normalizeScriptHeadingText(match[2])
+  };
+}
+
+function parseCareerMentorInlineCopySection(line: string): Exclude<CustomerScriptVariant, "default"> | null {
+  const existingVariant = parseCareerMentorScriptSectionVariant(line);
+
+  if (existingVariant === "careerAi" || existingVariant === "careerKnowledge") {
+    return existingVariant;
+  }
+
+  const normalized = normalizeScriptHeadingText(line).replace(/[：:]$/, "");
+
+  if (/AI(?:建议|思考)?回复话术/.test(normalized)) {
+    return "careerAi";
+  }
+
+  if (
+    /话术/.test(normalized)
+    && /(?:可复制|可直接(?:用|使用|发|发送|复制)|直接复制|直接使用)/.test(normalized)
+  ) {
+    return "careerKnowledge";
+  }
+
+  return null;
+}
+
+function toCareerMentorInlineCopyText(lines: string[]) {
+  const text = lines
+    .map((line) => line.replace(/^ {0,3}> ?/, ""))
+    .join("\n")
+    .trim();
+  const wrappedQuote = text.match(/^[“"]([\s\S]+)[”"]$/);
+
+  return (wrappedQuote?.[1] ?? text).trim();
+}
+
+export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMentorInlineCopyTarget[] {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const targets: CareerMentorInlineCopyTarget[] = [];
+  let activeFence: { marker: "`" | "~"; length: number } | null = null;
+  let activeSection: {
+    depth: number;
+    title: string;
+    variant: Exclude<CustomerScriptVariant, "default">;
+  } | null = null;
+  let activeTitle = "可复制话术";
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+
+    if (activeFence) {
+      const closingMatch = line.match(/^ {0,3}(`{3,}|~{3,})[ \t]*$/);
+
+      if (
+        closingMatch
+        && closingMatch[1][0] === activeFence.marker
+        && closingMatch[1].length >= activeFence.length
+      ) {
+        activeFence = null;
+      }
+
+      continue;
+    }
+
+    if (/^(?: {4,}|\t)/.test(line)) {
+      continue;
+    }
+
+    const openingMatch = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+
+    if (openingMatch) {
+      activeFence = {
+        marker: openingMatch[1][0] as "`" | "~",
+        length: openingMatch[1].length
+      };
+      continue;
+    }
+
+    const heading = parseMarkdownHeading(line);
+    const sectionVariant = parseCareerMentorInlineCopySection(line);
+
+    if (sectionVariant) {
+      activeSection = {
+        depth: heading?.depth ?? 6,
+        title: heading?.text || normalizeScriptHeadingText(line) || "可复制话术",
+        variant: sectionVariant
+      };
+      activeTitle = activeSection.title;
+      continue;
+    }
+
+    if (heading) {
+      if (activeSection && heading.depth <= activeSection.depth) {
+        activeSection = null;
+        activeTitle = "可复制话术";
+        continue;
+      }
+
+      if (activeSection) {
+        activeTitle = heading.text || activeSection.title;
+      }
+
+      continue;
+    }
+
+    if (
+      activeSection
+      && !/^ {0,3}>/.test(line)
+      && isNaturalAnswerSectionHeading(line, activeTitle)
+    ) {
+      const scriptHeading = activeSection.variant === "careerAi"
+        ? parseCareerMentorAiScriptHeading(line) ?? parseCustomerScriptHeading(line, true)
+        : parseCustomerScriptHeading(line, true);
+
+      if (scriptHeading) {
+        activeTitle = scriptHeading.title;
+      } else {
+        activeSection = null;
+        activeTitle = "可复制话术";
+      }
+
+      continue;
+    }
+
+    if (!activeSection || !/^ {0,3}>/.test(line)) {
+      continue;
+    }
+
+    const quoteLines = [line];
+    let endIndex = index + 1;
+
+    while (endIndex < lines.length && /^ {0,3}>/.test(lines[endIndex])) {
+      quoteLines.push(lines[endIndex]);
+      endIndex += 1;
+    }
+
+    const text = toCareerMentorInlineCopyText(quoteLines);
+
+    if (isUsableCustomerScriptText(text)) {
+      targets.push({
+        startLine: index + 1,
+        title: activeTitle,
+        text,
+        variant: activeSection.variant
+      });
+    }
+
+    index = endIndex - 1;
+  }
+
+  return targets;
+}
+
 function splitMarkdownScriptHeadings(
   markdown: string,
   options: { strictHeading?: boolean; careerMentorMode?: boolean } = {}
@@ -893,6 +1063,50 @@ function markdownComponents() {
   };
 }
 
+function careerMentorMarkdownComponents(targets: CareerMentorInlineCopyTarget[]) {
+  const baseComponents = markdownComponents();
+  const targetsByLine = new Map(targets.map((target) => [target.startLine, target]));
+
+  return {
+    ...baseComponents,
+    blockquote: ({
+      children,
+      node
+    }: {
+      children?: React.ReactNode;
+      node?: { position?: { start?: { line?: number } } };
+    }) => {
+      const target = targetsByLine.get(node?.position?.start?.line ?? -1);
+
+      if (!target) {
+        return <blockquote>{children}</blockquote>;
+      }
+
+      const careerAi = target.variant === "careerAi";
+
+      return (
+        <blockquote
+          data-inline-copy="career-mentor"
+          data-script-origin={careerAi ? "career-ai" : "career-knowledge"}
+          className={cn(
+            "not-prose my-3 rounded-2xl border px-4 py-3 shadow-sm",
+            careerAi
+              ? "border-teal-200 bg-white shadow-teal-950/5"
+              : "border-emerald-200 bg-white shadow-emerald-950/5"
+          )}
+        >
+          <div className="mb-2 flex justify-end">
+            <CopyMiniButton text={target.text} label="复制话术" />
+          </div>
+          <div className="prose prose-slate max-w-none text-[15px] leading-7 prose-p:my-2">
+            {children}
+          </div>
+        </blockquote>
+      );
+    }
+  };
+}
+
 function CustomerScriptInlineCard({
   title,
   text,
@@ -1002,6 +1216,16 @@ export function ProductAnswerView({
       : [],
     [careerMentorMode, naturalAnswerText]
   );
+  const careerInlineCopyTargets = React.useMemo(
+    () => careerMentorMode && naturalAnswerText
+      ? extractCareerMentorInlineCopyTargets(naturalAnswerText)
+      : [],
+    [careerMentorMode, naturalAnswerText]
+  );
+  const careerMarkdownComponents = React.useMemo(
+    () => careerMentorMarkdownComponents(careerInlineCopyTargets),
+    [careerInlineCopyTargets]
+  );
   const structuredCustomerReply = answerForDisplay?.customerReply?.trim() ?? "";
   const naturalKnowledgeScripts = naturalAnswerSegments
     .filter((segment): segment is Extract<NaturalAnswerSegment, { kind: "customerScript" }> => (
@@ -1050,26 +1274,32 @@ export function ProductAnswerView({
           </div>
 
           <div className="space-y-4 text-[15px] leading-7">
-            {naturalAnswerSegments.map((segment, index) => (
-              segment.kind === "customerScript" ? (
-                <CustomerScriptInlineCard
-                  key={`script-${index}`}
-                  title={segment.title}
-                  text={segment.text}
-                  index={index}
-                  variant={segment.variant}
-                />
-              ) : (
-                <div
-                  key={`markdown-${index}`}
-                  className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1"
-                >
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
-                    {segment.text}
-                  </ReactMarkdown>
-                </div>
-              )
-            ))}
+            {careerMentorMode ? (
+              <div className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={careerMarkdownComponents}>
+                  {naturalAnswerText}
+                </ReactMarkdown>
+              </div>
+            ) : naturalAnswerSegments.map((segment, index) => (
+                segment.kind === "customerScript" ? (
+                  <CustomerScriptInlineCard
+                    key={`script-${index}`}
+                    title={segment.title}
+                    text={segment.text}
+                    index={index}
+                    variant={segment.variant}
+                  />
+                ) : (
+                  <div
+                    key={`markdown-${index}`}
+                    className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1"
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
+                      {segment.text}
+                    </ReactMarkdown>
+                  </div>
+                )
+              ))}
             {shouldAppendStructuredCustomerReply ? (
               <CustomerScriptInlineCard
                 title="可直接复制给客户"
