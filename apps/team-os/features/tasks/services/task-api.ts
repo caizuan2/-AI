@@ -2,7 +2,7 @@ import "server-only";
 
 import { NextResponse } from "next/server";
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
   createTaskForManager,
@@ -21,7 +21,7 @@ const apiError = createTeamOsApiErrorHandler("TASKS");
 
 export async function handleTaskList(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取团队任务"));
     }
@@ -35,7 +35,7 @@ export async function handleTaskList(request: Request) {
 
 export async function handleTaskCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("创建团队任务"));
     }
@@ -49,7 +49,7 @@ export async function handleTaskCreate(request: Request) {
 
 export async function handleTaskSubmit(request: Request, taskId: string) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("提交任务证据"));
     }

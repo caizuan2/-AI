@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -33,7 +33,7 @@ function queryFromRequest(request: Request) {
 
 export async function handleAnalyticsDashboardGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业分析数据"));
     return apiSuccess(await generateDashboard(user.id, queryFromRequest(request)));
   } catch (error) {
@@ -43,7 +43,7 @@ export async function handleAnalyticsDashboardGet(request: Request) {
 
 export async function handleTeamAnalyticsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取团队分析数据"));
     return apiSuccess(await getTeamMetrics(user.id, queryFromRequest(request)));
   } catch (error) {
@@ -53,7 +53,7 @@ export async function handleTeamAnalyticsGet(request: Request) {
 
 export async function handleCrmAnalyticsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取 CRM 分析数据"));
     return apiSuccess(await getCRMAnalytics(user.id, queryFromRequest(request)));
   } catch (error) {
@@ -63,7 +63,7 @@ export async function handleCrmAnalyticsGet(request: Request) {
 
 export async function handleTrainingAnalyticsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取培训分析数据"));
     return apiSuccess(await getTrainingAnalytics(user.id, queryFromRequest(request)));
   } catch (error) {
@@ -73,7 +73,7 @@ export async function handleTrainingAnalyticsGet(request: Request) {
 
 export async function handleAiAnalyticsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取 AI 运营分析数据"));
     return apiSuccess(await getAIAnalytics(user.id, queryFromRequest(request)));
   } catch (error) {
@@ -83,7 +83,7 @@ export async function handleAiAnalyticsGet(request: Request) {
 
 export async function handleBusinessInsightPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "analytics");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("生成 AI 经营建议"));
     const input = parseBusinessInsightInput(await readJson(request));
     const access = await resolveAnalyticsAccess(user.id, input.companyId);

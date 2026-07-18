@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
   createCoachRule,
@@ -25,7 +25,7 @@ function requestedCompanyId(request: Request) {
 
 export async function handleIndustryStandardsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取行业标准"));
     }
@@ -37,7 +37,7 @@ export async function handleIndustryStandardsGet(request: Request) {
 
 export async function handleIndustryStandardsCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("新增行业标准"));
     }
@@ -50,7 +50,7 @@ export async function handleIndustryStandardsCreate(request: Request) {
 
 export async function handleCoachRulesGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取评分规则"));
     }
@@ -62,7 +62,7 @@ export async function handleCoachRulesGet(request: Request) {
 
 export async function handleCoachRulesCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("新增评分规则"));
     }

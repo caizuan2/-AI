@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import {
@@ -27,7 +27,7 @@ const apiError = createTeamOsApiErrorHandler("AI");
 
 export async function handleCoachAnalysisOptions(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取 AI 教练分析选项"));
     }
@@ -39,7 +39,7 @@ export async function handleCoachAnalysisOptions(request: Request) {
 
 export async function handleCoachAnalyze(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("生成 AI 教练报告"));
     }
@@ -75,7 +75,7 @@ export async function handleCoachAnalyze(request: Request) {
 
 export async function handleCoachReportGet(request: Request, reportId: string) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取 AI 教练报告"));
     }
@@ -87,7 +87,7 @@ export async function handleCoachReportGet(request: Request, reportId: string) {
 
 export async function handleCoachTeamGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取团队教练数据"));
     }

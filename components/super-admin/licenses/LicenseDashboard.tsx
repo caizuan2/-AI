@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Check, Copy, KeyRound, Loader2, Search, ShieldOff } from "lucide-react";
+import { CalendarClock, Check, Copy, KeyRound, Loader2, Search, ShieldOff } from "lucide-react";
 import {
   disableSuperAdminLicense,
   fetchSuperAdminLicenses,
-  generateSuperAdminLicenses
+  generateSuperAdminLicenses,
+  renewSuperAdminLicense
 } from "@/lib/super-admin/license-admin-client";
 import type {
   SuperAdminGeneratedLicense,
@@ -13,13 +14,15 @@ import type {
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
   SuperAdminLicensePlan,
-  SuperAdminLicenseRecord
+  SuperAdminLicenseRecord,
+  UnifiedLicenseProduct
 } from "@/types/super-admin-licenses";
 import { EmptyState, ErrorState, LoadingState } from "@/components/super-admin/common/ApiState";
 
 const appTypeLabels: Record<SuperAdminLicenseAppType, string> = {
   user_app: "用户端",
   ingest_admin: "投喂管理员",
+  team_os: "AI Team OS",
   super_admin: "超级管理员（兼容）"
 };
 
@@ -154,7 +157,7 @@ function AppTypeSummary({ data }: { data: SuperAdminLicenseDashboardData }) {
           <p className="mt-1 text-sm text-slate-500">复用现有 LicenseKey，通过审计元数据区分三端用途。</p>
         </div>
       </div>
-      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {(Object.keys(appTypeLabels) as SuperAdminLicenseAppType[]).map((appType) => (
           <div key={appType} className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-xs font-medium text-slate-500">{appTypeLabels[appType]}</p>
@@ -174,7 +177,7 @@ function GeneratePanel({
   loading,
   onGenerate
 }: {
-  appType: Extract<SuperAdminLicenseAppType, "user_app" | "ingest_admin">;
+  appType: UnifiedLicenseProduct;
   title: string;
   prefix: string;
   description: string;
@@ -184,6 +187,7 @@ function GeneratePanel({
   const [plan, setPlan] = useState<SuperAdminLicensePlan>("pro");
   const [count, setCount] = useState("1");
   const [expiresInDays, setExpiresInDays] = useState("365");
+  const [subscriptionDays, setSubscriptionDays] = useState("365");
   const [tenantId, setTenantId] = useState("");
   const [note, setNote] = useState(title);
 
@@ -221,7 +225,7 @@ function GeneratePanel({
           />
         </label>
         <label className="space-y-2 text-sm font-medium text-slate-700">
-          有效天数
+          {appType === "team_os" ? "兑换有效天数" : "有效天数"}
           <input
             value={expiresInDays}
             onChange={(event) => setExpiresInDays(event.target.value)}
@@ -229,6 +233,17 @@ function GeneratePanel({
             className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-800"
           />
         </label>
+        {appType === "team_os" ? (
+          <label className="space-y-2 text-sm font-medium text-slate-700">
+            企业套餐开通天数
+            <input
+              value={subscriptionDays}
+              onChange={(event) => setSubscriptionDays(event.target.value)}
+              inputMode="numeric"
+              className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-slate-800"
+            />
+          </label>
+        ) : null}
         <label className="space-y-2 text-sm font-medium text-slate-700">
           最大激活次数
           <input
@@ -264,6 +279,7 @@ function GeneratePanel({
             plan,
             count: Number(count),
             expiresInDays: expiresInDays.trim() ? Number(expiresInDays) : null,
+            subscriptionDays: appType === "team_os" ? Number(subscriptionDays) : null,
             maxActivations: 1,
             tenantId: tenantId.trim() || null,
             note: note.trim() || null
@@ -333,13 +349,17 @@ function LicenseTable({
   description,
   licenses,
   disablingId,
-  onDisable
+  renewingId,
+  onDisable,
+  onRenew
 }: {
   title: string;
   description: string;
   licenses: SuperAdminLicenseRecord[];
   disablingId: string | null;
+  renewingId: string | null;
   onDisable: (id: string) => Promise<void>;
+  onRenew: (id: string) => Promise<void>;
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
@@ -439,7 +459,9 @@ function LicenseTable({
                 <td className="px-4 py-3 text-slate-600">
                   {license.appType === "ingest_admin"
                     ? "管理员投喂版 Web / APK / EXE 激活"
-                    : "用户端 Web / APK / EXE 激活"}
+                    : license.appType === "team_os"
+                      ? `企业开通与 TEAM_OWNER 自动授权${license.teamOsCompanyId ? ` · ${license.teamOsCompanyId}` : ""}`
+                      : "用户端 Web / APK / EXE 激活"}
                 </td>
                 <td className="px-4 py-3 text-slate-700">{planLabels[license.plan]}</td>
                 <td className="px-4 py-3"><StatusBadge status={license.status} /></td>
@@ -460,6 +482,15 @@ function LicenseTable({
                     </button>
                     <button
                       type="button"
+                      onClick={() => onRenew(license.id)}
+                      disabled={license.status === "DISABLED" || renewingId === license.id}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {renewingId === license.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <CalendarClock className="h-3.5 w-3.5" />}
+                      续期
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => handleCopyLicenseKey(license)}
                       className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                     >
@@ -472,6 +503,36 @@ function LicenseTable({
             ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+
+function ActivationPreview({
+  data,
+  appType
+}: {
+  data: SuperAdminLicenseDashboardData;
+  appType?: UnifiedLicenseProduct;
+}) {
+  const records = appType
+    ? data.activations.filter((item) => item.appType === appType)
+    : data.activations;
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-semibold tracking-normal text-slate-950">激活记录</h2>
+      <p className="mt-1 text-sm text-slate-500">统一读取 ActivationLog，展示成功与失败结果，不显示卡密明文。</p>
+      <div className="mt-4 space-y-3">
+        {records.length === 0 ? <p className="text-sm text-slate-500">暂无激活记录。</p> : records.slice(0, 30).map((item) => (
+          <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">{item.displayKey} · {item.success ? "成功" : "失败"}</p>
+              <p className="mt-1 text-xs text-slate-600">{item.message} · 用户 {item.userId}</p>
+            </div>
+            <p className="text-xs text-slate-500">{formatDate(item.createdAt)}</p>
+          </div>
+        ))}
       </div>
     </section>
   );
@@ -502,12 +563,13 @@ function AuditPreview({ data }: { data: SuperAdminLicenseDashboardData }) {
   );
 }
 
-export function LicenseDashboard() {
+export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedLicenseProduct } = {}) {
   const [data, setData] = useState<SuperAdminLicenseDashboardData | null>(null);
   const [generated, setGenerated] = useState<SuperAdminGeneratedLicense[]>([]);
   const [loading, setLoading] = useState(true);
   const [generatingAppType, setGeneratingAppType] = useState<SuperAdminLicenseAppType | null>(null);
   const [disablingId, setDisablingId] = useState<string | null>(null);
+  const [renewingId, setRenewingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function reload() {
@@ -571,6 +633,26 @@ export function LicenseDashboard() {
     }
   }
 
+  async function handleRenew(id: string) {
+    const rawDays = window.prompt("请输入续期天数", "365");
+    if (rawDays === null) return;
+    const days = Number(rawDays);
+    if (!Number.isFinite(days) || days <= 0) {
+      setError("续期天数必须大于 0。");
+      return;
+    }
+    setRenewingId(id);
+    setError(null);
+    try {
+      await renewSuperAdminLicense(id, { days });
+      await reload();
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "卡密续期失败。");
+    } finally {
+      setRenewingId(null);
+    }
+  }
+
   if (loading) {
     return <LoadingState title="正在加载卡密授权中心" />;
   }
@@ -581,12 +663,14 @@ export function LicenseDashboard() {
 
   const userAppLicenses = data.licenses.filter((license) => license.appType === "user_app");
   const ingestAdminLicenses = data.licenses.filter((license) => license.appType === "ingest_admin");
+  const teamOsLicenses = data.licenses.filter((license) => license.appType === "team_os");
 
   return (
     <div className="space-y-6">
       {error ? <ErrorState message={error} /> : null}
       <SummaryCards data={data} />
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-6 xl:grid-cols-3">
+        {!initialAppType || initialAppType === "user_app" ? (
         <GeneratePanel
           appType="user_app"
           title="用户端卡密"
@@ -595,6 +679,8 @@ export function LicenseDashboard() {
           loading={generatingAppType === "user_app"}
           onGenerate={handleGenerate}
         />
+        ) : null}
+        {!initialAppType || initialAppType === "ingest_admin" ? (
         <GeneratePanel
           appType="ingest_admin"
           title="投喂管理员端卡密"
@@ -603,25 +689,50 @@ export function LicenseDashboard() {
           loading={generatingAppType === "ingest_admin"}
           onGenerate={handleGenerate}
         />
+        ) : null}
+        {!initialAppType || initialAppType === "team_os" ? (
+          <GeneratePanel
+            appType="team_os"
+            title="AI Team OS 企业授权码"
+            prefix="XT-TEAM"
+            description="企业老板激活后自动创建企业、默认团队、TEAM_OWNER 身份与企业套餐；员工通过邀请加入，无需单独卡密。"
+            loading={generatingAppType === "team_os"}
+            onGenerate={handleGenerate}
+          />
+        ) : null}
       </div>
       <AppTypeSummary data={data} />
       <GeneratedKeys generated={generated} />
       <div className="space-y-6">
-        <LicenseTable
+        {!initialAppType || initialAppType === "user_app" ? <LicenseTable
           title="用户端卡密列表"
           description="只显示 XT-USER 用途的脱敏记录，用户端 Web / APK / EXE 可使用。"
           licenses={userAppLicenses}
           disablingId={disablingId}
+          renewingId={renewingId}
           onDisable={handleDisable}
-        />
-        <LicenseTable
+          onRenew={handleRenew}
+        /> : null}
+        {!initialAppType || initialAppType === "ingest_admin" ? <LicenseTable
           title="投喂管理员端卡密列表"
           description="只显示 XT-INGEST 用途的脱敏记录，管理员投喂版 Web / APK / EXE 可使用。"
           licenses={ingestAdminLicenses}
           disablingId={disablingId}
+          renewingId={renewingId}
           onDisable={handleDisable}
-        />
+          onRenew={handleRenew}
+        /> : null}
+        {!initialAppType || initialAppType === "team_os" ? <LicenseTable
+          title="AI Team OS 企业授权码列表"
+          description="统一 LicenseKey 存储；支持禁用、续期、企业绑定和激活记录查询。"
+          licenses={teamOsLicenses}
+          disablingId={disablingId}
+          renewingId={renewingId}
+          onDisable={handleDisable}
+          onRenew={handleRenew}
+        /> : null}
       </div>
+      <ActivationPreview data={data} appType={initialAppType} />
       <AuditPreview data={data} />
     </div>
   );

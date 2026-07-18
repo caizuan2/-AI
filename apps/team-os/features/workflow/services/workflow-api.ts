@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -45,7 +45,7 @@ function searchParams(request: Request) {
 
 export async function handleWorkflowListGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业工作流"));
     const input = parseWorkflowListQuery(searchParams(request));
     const access = await resolveWorkflowAccess(user.id, input.companyId);
@@ -58,7 +58,7 @@ export async function handleWorkflowListGet(request: Request) {
 
 export async function handleWorkflowCreatePost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("创建企业工作流"));
     const input = parseCreateWorkflowInput(await readJson(request));
     const access = await resolveWorkflowAccess(user.id, input.companyId);
@@ -88,7 +88,7 @@ export async function handleWorkflowCreatePost(request: Request) {
 
 export async function handleWorkflowExecutionsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取工作流执行记录"));
     const input = parseWorkflowExecutionQuery(searchParams(request));
     const access = await resolveWorkflowAccess(user.id, input.companyId);
@@ -101,7 +101,7 @@ export async function handleWorkflowExecutionsGet(request: Request) {
 
 async function handleExecution(request: Request, mode: WorkflowExecutionMode) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "tasks");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError(mode === "TEST" ? "测试工作流" : "执行工作流"));
     const input = parseExecuteWorkflowInput(await readJson(request));
     const access = await resolveWorkflowAccess(user.id, input.companyId);

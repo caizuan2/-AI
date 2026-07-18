@@ -32,7 +32,7 @@ async function getCompanyKey(userId: string) {
 }
 
 async function lockTransaction(transaction: Prisma.TransactionClient, key: string) {
-  await transaction.$queryRaw`SELECT pg_advisory_xact_lock(hashtext(${key}))`;
+  await transaction.$queryRaw`SELECT 1::int AS "locked" FROM pg_advisory_xact_lock(hashtext(${key}))`;
 }
 
 async function getActiveMemberships(userId: string) {
@@ -426,16 +426,14 @@ export async function addOrganizationMember(userId: string, input: AddMemberInpu
   const result = await prisma.$transaction(async (transaction) => {
     await lockTransaction(transaction, `team-os:membership:${input.teamId}:${input.email}`);
     const team = await requireOwnerInTransaction(transaction, userId, input.teamId);
-    const [actor, user] = await Promise.all([
-      transaction.user.findUnique({ where: { id: userId }, select: { tenantId: true } }),
-      transaction.user.findFirst({
-        where: {
-          email: { equals: input.email, mode: "insensitive" },
-          isActive: true
-        },
-        select: { id: true, name: true, email: true, phone: true, tenantId: true }
-      })
-    ]);
+    await lockTransaction(transaction, `team-os:company:${team.companyId}`);
+    const user = await transaction.user.findFirst({
+      where: {
+        email: { equals: input.email, mode: "insensitive" },
+        isActive: true
+      },
+      select: { id: true, name: true, email: true, phone: true }
+    });
     const now = new Date();
     await transaction.teamInvitation.updateMany({
       where: {
@@ -458,22 +456,46 @@ export async function addOrganizationMember(userId: string, input: AddMemberInpu
       },
       select: { id: true, role: true }
     });
-    const sameTenant = Boolean(
-      actor?.tenantId &&
-      team.companyId === actor.tenantId &&
-      user.tenantId === actor.tenantId
-    );
-    const standaloneInvitation = Boolean(
-      !actor?.tenantId &&
-      !user.tenantId &&
-      team.companyId === `team-os:${userId}` &&
-      pendingInvitation
-    );
-    if (!sameTenant && !standaloneInvitation) {
-      throw new ForbiddenError("跨企业或独立账号添加成员前，必须先创建有效邀请。");
+    if (!pendingInvitation) {
+      throw new ForbiddenError("添加成员前必须先创建有效邀请，并保持邀请角色一致。");
     }
-    if (pendingInvitation && pendingInvitation.role !== input.role) {
+    if (pendingInvitation.role !== input.role) {
       throw new ValidationError("添加角色必须与有效邀请中指定的角色一致。");
+    }
+
+    const [company, subscription, otherCompanyMembership] = await Promise.all([
+      transaction.tenantCompany.findFirst({
+        where: { id: team.companyId, status: "ACTIVE" },
+        select: { id: true }
+      }),
+      transaction.tenantSubscription.findFirst({
+        where: {
+          companyId: team.companyId,
+          status: "ACTIVE",
+          startDate: { lte: now },
+          endDate: { gt: now },
+          plan: { status: "ACTIVE" }
+        },
+        select: { plan: { select: { maxUsers: true } } },
+        orderBy: [{ endDate: "desc" }, { createdAt: "desc" }]
+      }),
+      transaction.teamMember.findFirst({
+        where: {
+          userId: user.id,
+          status: "ACTIVE",
+          team: { status: "ACTIVE", companyId: { not: team.companyId } }
+        },
+        select: { id: true }
+      })
+    ]);
+    if (!company) {
+      throw new ForbiddenError("当前企业尚未开通或已停用，不能添加成员。");
+    }
+    if (!subscription) {
+      throw new ForbiddenError("当前企业套餐尚未生效或已经到期，不能添加成员。");
+    }
+    if (otherCompanyMembership) {
+      throw new ForbiddenError("该账号已经加入其他企业，不能跨企业添加成员。");
     }
 
     const existing = await transaction.teamMember.findUnique({
@@ -483,6 +505,19 @@ export async function addOrganizationMember(userId: string, input: AddMemberInpu
     });
     if (existing?.status === "ACTIVE") {
       throw new ValidationError("该用户已经是团队成员。");
+    }
+
+    const activeCompanyMembers = await transaction.teamMember.findMany({
+      where: {
+        status: "ACTIVE",
+        team: { companyId: team.companyId, status: "ACTIVE" }
+      },
+      distinct: ["userId"],
+      select: { userId: true }
+    });
+    const alreadyOccupiesSeat = activeCompanyMembers.some((membership) => membership.userId === user.id);
+    if (!alreadyOccupiesSeat && activeCompanyMembers.length >= subscription.plan.maxUsers) {
+      throw new ForbiddenError("企业成员数量已达到当前套餐上限。");
     }
 
     const membership = existing

@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import {
+  getTeamOsPublicEntry,
   isTeamOsPath,
   TEAM_OS_LOGIN_PATH,
-  TEAM_OS_PUBLIC_ENTRY_HEADER,
-  TEAM_OS_PUBLIC_ENTRY_LOGIN
+  TEAM_OS_PUBLIC_ENTRY_HEADER
 } from "@/apps/team-os/features/auth/constants";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { getProductFromPath } from "@/lib/auth/product";
@@ -24,6 +24,7 @@ const apiRateLimitBuckets = new Map<string, RateLimitBucket>();
 
 const apiRateLimitRules = [
   { prefix: "/api/auth", limit: 20, windowMs: 60_000 },
+  { prefix: "/api/team-os/auth", limit: 20, windowMs: 60_000 },
   { prefix: "/api/ingest/auth", limit: 20, windowMs: 60_000 },
   { prefix: "/api/admin/kb", limit: 30, windowMs: 60_000 },
   { prefix: "/api/admin", limit: 40, windowMs: 60_000 },
@@ -150,7 +151,6 @@ const protectedPagePrefixes = [
 const sessionOnlyPagePrefixes = ["/unlock"];
 const publicExactPaths = [
   "/login",
-  TEAM_OS_LOGIN_PATH,
   "/register",
   "/no-access",
   "/ingest/login",
@@ -198,7 +198,7 @@ function nextWithRequestHeaders(requestHeaders?: Headers) {
 }
 
 function isPublicPath(pathname: string) {
-  return publicExactPaths.includes(pathname) || publicPathPrefixes.some((prefix) => {
+  return Boolean(getTeamOsPublicEntry(pathname)) || publicExactPaths.includes(pathname) || publicPathPrefixes.some((prefix) => {
     return pathname === prefix || pathname.startsWith(`${prefix}/`);
   });
 }
@@ -207,14 +207,52 @@ function isStaticAsset(pathname: string) {
   return staticAssetPattern.test(pathname);
 }
 
+function isPublicTeamOsApiRequest(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+
+  if (request.method === "GET" && pathname === "/api/team-os/status") {
+    return true;
+  }
+
+  if (request.method === "POST" && pathname === "/api/team-os/auth/register") {
+    return true;
+  }
+
+  if (
+    request.method === "GET" &&
+    pathname.startsWith("/api/team-os/auth/invitations/") &&
+    Boolean(pathname.slice("/api/team-os/auth/invitations/".length)) &&
+    pathname.slice("/api/team-os/auth/invitations/".length).split("/").length === 1
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function logSafePathname(pathname: string) {
+  if (pathname.startsWith("/team-os/invite/")) {
+    return "/team-os/invite/[redacted]";
+  }
+  if (pathname.startsWith("/api/team-os/auth/invitations/")) {
+    return "/api/team-os/auth/invitations/[redacted]";
+  }
+  return pathname;
+}
+
 function isSafeNextPath(value: string) {
   if (!value.startsWith("/") || value.startsWith("//")) {
     return false;
   }
 
-  return !isPathUnder(value.split("?")[0] ?? value, [
+  const pathname = value.split("?")[0] ?? value;
+
+  if (getTeamOsPublicEntry(pathname)) {
+    return false;
+  }
+
+  return !isPathUnder(pathname, [
     "/login",
-    TEAM_OS_LOGIN_PATH,
     "/register",
     "/ingest/login",
     "/ingest/register",
@@ -363,6 +401,7 @@ async function applyAdminIngestGate(request: NextRequest, requestHeaders: Header
 
 async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requestId: string) {
   const pathname = request.nextUrl.pathname;
+  const safeLogPathname = logSafePathname(pathname);
   const product = getProductFromPath(pathname);
 
   requestHeaders.set(PRODUCT_ACCESS_HEADER, product);
@@ -372,7 +411,7 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
 
     logger.info("auth.ingest_entry_redirect", {
       requestId,
-      pathname,
+      pathname: safeLogPathname,
       redirectTarget: redirectResponse.headers.get("location"),
       reason: "legacy_ingest_entry"
     });
@@ -383,7 +422,7 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
   if (isPublicPath(pathname)) {
     logger.info("auth.redirect_check", {
       requestId,
-      pathname,
+      pathname: safeLogPathname,
       hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
       sessionValid: null,
       redirectTarget: null,
@@ -395,7 +434,7 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
   if (isStaticAsset(pathname)) {
     logger.info("auth.redirect_check", {
       requestId,
-      pathname,
+      pathname: safeLogPathname,
       hasSessionCookie: Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value),
       sessionValid: null,
       redirectTarget: null,
@@ -407,12 +446,35 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
 
   if (pathname.startsWith("/api/")) {
+    const isTeamOsApi = pathname === "/api/team-os" || pathname.startsWith("/api/team-os/");
+
+    if (isTeamOsApi) {
+      if (isPublicTeamOsApiRequest(request)) {
+        return nextWithRequestHeaders(requestHeaders);
+      }
+
+      if (!hasSession) {
+        const response = apiAuthError("UNAUTHORIZED", 401, requestId);
+
+        logger.warn("product.api_blocked", {
+          requestId,
+          pathname: safeLogPathname,
+          product: "team_os",
+          reason: "unauthenticated"
+        });
+
+        return response;
+      }
+
+      return nextWithRequestHeaders(requestHeaders);
+    }
+
     if (product !== "public" && !hasSession) {
       const response = apiAuthError("UNAUTHORIZED", 401, requestId);
 
       logger.warn("product.api_blocked", {
         requestId,
-        pathname,
+        pathname: safeLogPathname,
         product,
         reason: "unauthenticated"
       });
@@ -439,7 +501,7 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
 
     logger.warn("auth.redirect_check", {
       requestId,
-      pathname,
+      pathname: safeLogPathname,
       hasSessionCookie: false,
       sessionValid: false,
       redirectTarget: redirectResponse.headers.get("location"),
@@ -455,7 +517,7 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
 
   logger.info("auth.redirect_check", {
     requestId,
-    pathname,
+    pathname: safeLogPathname,
     hasSessionCookie: hasSession,
     sessionValid: hasSession ? null : false,
     redirectTarget: null,
@@ -471,8 +533,9 @@ export async function middleware(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
 
   requestHeaders.delete(TEAM_OS_PUBLIC_ENTRY_HEADER);
-  if (request.nextUrl.pathname === TEAM_OS_LOGIN_PATH) {
-    requestHeaders.set(TEAM_OS_PUBLIC_ENTRY_HEADER, TEAM_OS_PUBLIC_ENTRY_LOGIN);
+  const teamOsPublicEntry = getTeamOsPublicEntry(request.nextUrl.pathname);
+  if (teamOsPublicEntry) {
+    requestHeaders.set(TEAM_OS_PUBLIC_ENTRY_HEADER, teamOsPublicEntry);
   }
 
   requestHeaders.set(REQUEST_ID_HEADER, requestId);
@@ -481,7 +544,7 @@ export async function middleware(request: NextRequest) {
     logger.info("api.request", {
       requestId,
       method: request.method,
-      path: request.nextUrl.pathname,
+      path: logSafePathname(request.nextUrl.pathname),
       queryKeys: Array.from(request.nextUrl.searchParams.keys()).sort(),
       hasForwardedFor: Boolean(
         request.headers.get("x-forwarded-for") ||
@@ -497,7 +560,7 @@ export async function middleware(request: NextRequest) {
       logger.warn("api.rate_limited", {
         requestId,
         method: request.method,
-        path: request.nextUrl.pathname,
+        path: logSafePathname(request.nextUrl.pathname),
         statusCode: 429
       });
 

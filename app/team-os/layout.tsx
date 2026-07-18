@@ -3,14 +3,14 @@ import { headers } from "next/headers";
 import { TeamOsLayout } from "@/apps/team-os/app/layout";
 import {
   TEAM_OS_PUBLIC_ENTRY_HEADER,
-  TEAM_OS_PUBLIC_ENTRY_LOGIN
+  isTeamOsPublicEntry
 } from "@/apps/team-os/features/auth/constants";
 import { enforceTeamOsPageAccess } from "@/apps/team-os/features/auth/services/team-os-page-access";
 
 export const dynamic = "force-dynamic";
 
 export default async function TeamOsRouteLayout({ children }: { children: ReactNode }) {
-  if (headers().get(TEAM_OS_PUBLIC_ENTRY_HEADER) === TEAM_OS_PUBLIC_ENTRY_LOGIN) {
+  if (isTeamOsPublicEntry(headers().get(TEAM_OS_PUBLIC_ENTRY_HEADER))) {
     return children;
   }
 

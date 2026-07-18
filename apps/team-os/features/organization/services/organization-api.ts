@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
   addOrganizationMember,
@@ -24,7 +24,7 @@ const apiError = createTeamOsApiErrorHandler("ORGANIZATION");
 
 export async function handleOrganizationGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取组织信息"));
     }
@@ -37,7 +37,7 @@ export async function handleOrganizationGet(request: Request) {
 
 export async function handleOrganizationCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("创建团队"));
     }
@@ -50,7 +50,7 @@ export async function handleOrganizationCreate(request: Request) {
 
 export async function handleOrganizationUpdate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("更新团队"));
     }
@@ -63,7 +63,7 @@ export async function handleOrganizationUpdate(request: Request) {
 
 export async function handleMembersGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取成员列表"));
     }
@@ -76,7 +76,7 @@ export async function handleMembersGet(request: Request) {
 
 export async function handleMembersCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("添加成员"));
     }
@@ -89,7 +89,7 @@ export async function handleMembersCreate(request: Request) {
 
 export async function handleInvitationCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("创建成员邀请"));
     }

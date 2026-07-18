@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -55,7 +55,7 @@ async function rateLimit(request: Request, input: {
 
 export async function handleAiBrainCandidatesGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业 AI Brain"));
     const query = parseCandidateQuery(new URL(request.url).searchParams);
     const access = await resolveAiBrainAccess(user.id, query.companyId);
@@ -67,7 +67,7 @@ export async function handleAiBrainCandidatesGet(request: Request) {
 
 export async function handleAiBrainExtractPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("提取企业知识候选"));
     const input = parseExtractKnowledgeInput(await readJson(request));
     const access = await resolveAiBrainAccess(user.id, input.companyId);
@@ -88,7 +88,7 @@ export async function handleAiBrainExtractPost(request: Request) {
 
 export async function handleAiBrainFeedbackGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业知识反馈"));
     const query = parseBrainListQuery(new URL(request.url).searchParams);
     const access = await resolveAiBrainAccess(user.id, query.companyId);
@@ -103,7 +103,7 @@ export async function handleAiBrainFeedbackGet(request: Request) {
 
 export async function handleAiBrainFeedbackPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("提交企业知识反馈"));
     const input = parseKnowledgeFeedbackInput(await readJson(request));
     const access = await resolveAiBrainAccess(user.id, input.companyId);
@@ -125,7 +125,7 @@ export async function handleAiBrainFeedbackPost(request: Request) {
 
 export async function handleAiBrainOptimizationGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业知识优化建议"));
     const query = parseBrainListQuery(new URL(request.url).searchParams);
     const access = await resolveAiBrainAccess(user.id, query.companyId);
@@ -138,7 +138,7 @@ export async function handleAiBrainOptimizationGet(request: Request) {
 
 export async function handleAiBrainOptimizePost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("生成企业知识优化建议"));
     const input = parseOptimizeKnowledgeInput(await readJson(request));
     const access = await resolveAiBrainAccess(user.id, input.companyId);
@@ -160,7 +160,7 @@ export async function handleAiBrainOptimizePost(request: Request) {
 
 export async function handleAiBrainReviewPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "knowledge");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("审核企业候选知识"));
     const review = parseReviewKnowledgeInput(await readJson(request));
     const access = await resolveAiBrainAccess(user.id, review.companyId);

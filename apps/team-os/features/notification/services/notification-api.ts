@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError, ValidationError } from "@/lib/errors";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -168,7 +168,7 @@ function optionalStringConfig(value: unknown) {
 
 export async function handleNotificationsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业消息"));
     const params = new URL(request.url).searchParams;
     const data = await listNotificationsForViewer({
@@ -192,7 +192,7 @@ export async function handleNotificationsGet(request: Request) {
 
 export async function handleNotificationsReadPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("标记企业消息"));
     const headers = await writeRateLimit(request, user.id, "team-os-notifications-read", 120);
     const body = await readJsonObject(request);
@@ -222,7 +222,7 @@ export async function handleNotificationsReadPost(request: Request) {
 
 export async function handleNotificationPreferencesGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取通知设置"));
     const companyId = optionalIdentifier(new URL(request.url).searchParams.get("companyId"), "企业 ID");
     return apiSuccess(await getNotificationPreferencesForViewer({ userId: user.id, companyId }));
@@ -233,7 +233,7 @@ export async function handleNotificationPreferencesGet(request: Request) {
 
 export async function handleNotificationPreferencesPut(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("保存通知设置"));
     const headers = await writeRateLimit(request, user.id, "team-os-notification-preferences", 30);
     const body = await readJsonObject(request);
@@ -267,7 +267,7 @@ export async function handleNotificationPreferencesPut(request: Request) {
 
 export async function handleIntegrationsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业连接"));
     const companyId = optionalIdentifier(new URL(request.url).searchParams.get("companyId"), "企业 ID");
     return apiSuccess(await getIntegrationsForViewer({ userId: user.id, companyId }));
@@ -278,7 +278,7 @@ export async function handleIntegrationsGet(request: Request) {
 
 export async function handleIntegrationsPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("保存企业连接"));
     const headers = await writeRateLimit(request, user.id, "team-os-integration-config", 10);
     const body = await readJsonObject(request);
@@ -307,7 +307,7 @@ export async function handleIntegrationsPost(request: Request) {
 
 export async function handleNotificationTestPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request);
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("测试企业连接"));
     const headers = await writeRateLimit(request, user.id, "team-os-integration-test", 10);
     const body = await readJsonObject(request);

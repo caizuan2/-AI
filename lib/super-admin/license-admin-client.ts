@@ -2,7 +2,8 @@ import type {
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
   SuperAdminLicenseGenerationResult,
-  SuperAdminLicenseRecord
+  SuperAdminLicenseRecord,
+  SuperAdminLicenseRenewalInput
 } from "@/types/super-admin-licenses";
 
 type SuperAdminClientResponse<T> = {
@@ -58,5 +59,12 @@ export function generateSuperAdminLicenses(input: SuperAdminLicenseGenerationInp
 export function disableSuperAdminLicense(id: string) {
   return requestSuperAdmin<SuperAdminLicenseRecord>(`/api/super-admin/licenses/${encodeURIComponent(id)}/disable`, {
     method: "POST"
+  });
+}
+
+export function renewSuperAdminLicense(id: string, input: SuperAdminLicenseRenewalInput) {
+  return requestSuperAdmin<SuperAdminLicenseRecord>(`/api/super-admin/licenses/${encodeURIComponent(id)}/renew`, {
+    method: "POST",
+    body: JSON.stringify(input)
   });
 }

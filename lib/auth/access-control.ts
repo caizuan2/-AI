@@ -13,6 +13,21 @@ import {
 
 export type NormalizedProductAccess = "user_app" | "ingest_admin" | "super_admin" | null;
 
+type RedeemedLicenseProduct = Exclude<NormalizedProductAccess, null> | "team_os";
+
+const AUTHORITATIVE_LICENSE_AUDIT_ACTIONS = [
+  "generate_user_app_license_key",
+  "generate_ingest_admin_license_key",
+  "generate_team_os_license_key",
+  "generate_super_admin_license_key",
+  "redeem_license_key",
+  "redeem_team_os_license_key",
+  "renew_license_key",
+  "disable_license_key",
+  "SUPER_ADMIN_LICENSE_GENERATE",
+  "SUPER_ADMIN_LICENSE_DISABLE"
+] as const;
+
 export interface UserAccessProfile {
   id: string;
   role: AppRole;
@@ -23,6 +38,7 @@ export interface UserAccessProfile {
   productType: string | null;
   cardType: string | null;
   appType: string | null;
+  productAccesses: NormalizedProductAccess[];
   permissions: string[];
 }
 
@@ -35,6 +51,7 @@ export interface AccessSubject {
   productType?: unknown;
   cardType?: unknown;
   appType?: unknown;
+  productAccesses?: readonly unknown[];
   permissions?: readonly unknown[];
 }
 
@@ -82,19 +99,49 @@ export function normalizeAccessValue(value: unknown) {
   return normalizeAccessToken(value);
 }
 
-function readMetadataAppType(metadata: unknown): NormalizedProductAccess {
+function normalizeCanonicalLicenseProduct(value: unknown): RedeemedLicenseProduct | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "user_app" || normalized === "ingest_admin" || normalized === "super_admin") {
+    return normalized;
+  }
+  if (normalized === "team_os") {
+    return "team_os";
+  }
+  return null;
+}
+
+function productFromGenerationAction(action: string): RedeemedLicenseProduct | null {
+  if (action === "generate_user_app_license_key") return "user_app";
+  if (action === "generate_ingest_admin_license_key") return "ingest_admin";
+  if (action === "generate_team_os_license_key") return "team_os";
+  if (action === "generate_super_admin_license_key") return "super_admin";
+  return null;
+}
+
+function readMetadataAppType(action: string, metadata: unknown): RedeemedLicenseProduct | null {
+  const generatedProduct = productFromGenerationAction(action);
+  if (generatedProduct) {
+    return generatedProduct;
+  }
+
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
     return null;
   }
 
-  const value = (metadata as { appType?: unknown }).appType ??
-    (metadata as { requestedAppType?: unknown }).requestedAppType ??
-    (metadata as { licenseAppType?: unknown }).licenseAppType ??
-    (metadata as { product?: unknown }).product ??
-    (metadata as { cardType?: unknown }).cardType ??
-    (metadata as { licenseType?: unknown }).licenseType;
+  const canonicalAppType = normalizeCanonicalLicenseProduct(
+    (metadata as { appType?: unknown }).appType
+  );
+  if (canonicalAppType) {
+    return canonicalAppType;
+  }
 
-  return normalizeProductAccess(value);
+  return action === "redeem_license_key"
+    ? normalizeCanonicalLicenseProduct((metadata as { licenseAppType?: unknown }).licenseAppType)
+    : null;
 }
 
 function toExternalLicenseType(value: NormalizedProductAccess) {
@@ -192,7 +239,8 @@ function getProductSignals(subject: AccessSubject) {
     subject.licenseType,
     subject.productType,
     subject.cardType,
-    subject.appType
+    subject.appType,
+    ...readValues(subject.productAccesses)
   ];
 }
 
@@ -258,8 +306,8 @@ function isLegacyActivatedUserApp(
   return roleSignals.some((value) => normalizeAccessValue(value) === "user");
 }
 
-async function getLatestLicenseType(userId: string): Promise<NormalizedProductAccess> {
-  const license = await prisma.licenseKey.findFirst({
+async function getRedeemedLicenseAccess(userId: string) {
+  const licenses = await prisma.licenseKey.findMany({
     where: {
       redeemedByUserId: userId,
       status: LicenseKeyStatus.USED
@@ -268,38 +316,61 @@ async function getLatestLicenseType(userId: string): Promise<NormalizedProductAc
       { redeemedAt: "desc" },
       { createdAt: "desc" }
     ],
-    select: {
-      id: true
-    }
+    select: { id: true }
   });
 
-  if (!license) {
-    return null;
+  if (licenses.length === 0) {
+    return {
+      primary: null as NormalizedProductAccess,
+      products: [] as NormalizedProductAccess[]
+    };
   }
 
   const auditLogs = await prisma.auditLog.findMany({
     where: {
       targetType: "license_key",
-      targetId: license.id
+      targetId: { in: licenses.map((license) => license.id) },
+      action: { in: [...AUTHORITATIVE_LICENSE_AUDIT_ACTIONS] }
     },
     orderBy: {
       createdAt: "desc"
     },
     select: {
+      targetId: true,
+      action: true,
       metadata: true
-    },
-    take: 10
+    }
   });
 
+  const accessByLicenseId = new Map<string, RedeemedLicenseProduct>();
   for (const auditLog of auditLogs) {
-    const appType = readMetadataAppType(auditLog.metadata);
+    if (!auditLog.targetId || accessByLicenseId.has(auditLog.targetId)) {
+      continue;
+    }
+    const appType = readMetadataAppType(auditLog.action, auditLog.metadata);
 
     if (appType) {
-      return appType;
+      accessByLicenseId.set(auditLog.targetId, appType);
     }
   }
 
-  return null;
+  const orderedProducts = licenses.flatMap((license) => {
+    const product = accessByLicenseId.get(license.id);
+
+    if (product === "team_os") {
+      return [];
+    }
+    if (product) {
+      return [product];
+    }
+    return [];
+  });
+  const products = Array.from(new Set(orderedProducts));
+
+  return {
+    primary: orderedProducts[0] ?? null,
+    products
+  };
 }
 
 async function getBaseRole(userId: string) {
@@ -316,17 +387,17 @@ async function getBaseRole(userId: string) {
 }
 
 export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | "licenseActivated">): Promise<UserAccessProfile> {
-  const [roles, baseRole, licenseAccess] = await Promise.all([
+  const [roles, baseRole, redeemedAccess] = await Promise.all([
     getUserRoles(user),
     getBaseRole(user.id),
-    getLatestLicenseType(user.id)
+    getRedeemedLicenseAccess(user.id)
   ]);
   const role = getHighestRole(roles);
   const roleInferredAccess = inferAccessFromRoles(roles, baseRole);
   const legacyUserAppAccess = isLegacyActivatedUserApp(user, roles, baseRole, roleInferredAccess);
-  const inferredAccess = licenseAccess ?? roleInferredAccess ?? (legacyUserAppAccess ? "user_app" : null);
+  const inferredAccess = redeemedAccess.primary ?? roleInferredAccess ?? (legacyUserAppAccess ? "user_app" : null);
   const externalLicenseType = toExternalLicenseType(inferredAccess);
-  const hasRedeemedProductLicense = licenseAccess !== null;
+  const hasRedeemedProductLicense = redeemedAccess.products.length > 0;
 
   return {
     id: user.id,
@@ -338,6 +409,7 @@ export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | 
     productType: externalLicenseType,
     cardType: externalLicenseType,
     appType: externalLicenseType,
+    productAccesses: redeemedAccess.products,
     permissions: roles
   };
 }
@@ -345,6 +417,10 @@ export async function getUserAccessProfile(user: Pick<AppUser, "id" | "phone" | 
 export function hasUserClientAccess(profile: AccessSubject | null | undefined) {
   if (!profile || !isLicenseActivated(profile.licenseActivated)) {
     return false;
+  }
+
+  if (readValues(profile.productAccesses).some((value) => normalizeProductAccess(value) === "user_app")) {
+    return true;
   }
 
   const productSignals = getProductSignals(profile);
@@ -377,6 +453,10 @@ export function hasIngestAccess(profile: AccessSubject | null | undefined) {
   }
 
   if (hasSuperAdminSignal(profile)) {
+    return true;
+  }
+
+  if (readValues(profile.productAccesses).some((value) => normalizeProductAccess(value) === "ingest_admin")) {
     return true;
   }
 

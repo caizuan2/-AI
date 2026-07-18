@@ -1,14 +1,16 @@
 import "server-only";
 
 import { randomBytes } from "crypto";
-import { LicenseKeyStatus, type Prisma } from "@prisma/client";
+import { LicenseKeyStatus, Prisma } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
 import { hashLicenseKey } from "@/lib/auth/license";
+import { initializeTeamOsStandardPlans } from "@/apps/team-os/features/licensing/services/team-os-license-repository";
 import type { RbacUser } from "@/lib/auth/rbac";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
 import type {
   SuperAdminGeneratedLicense,
+  SuperAdminLicenseActivationRecord,
   SuperAdminLicenseAppType,
   SuperAdminLicenseAuditRecord,
   SuperAdminLicenseDashboardData,
@@ -16,16 +18,21 @@ import type {
   SuperAdminLicenseGenerationResult,
   SuperAdminLicensePlan,
   SuperAdminLicenseRecord,
-  SuperAdminLicenseSummary
+  SuperAdminLicenseSummary,
+  UnifiedLicenseProduct
 } from "@/types/super-admin-licenses";
 
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-const LICENSE_APP_TYPES: SuperAdminLicenseAppType[] = ["user_app", "ingest_admin", "super_admin"];
+const LICENSE_APP_TYPES: SuperAdminLicenseAppType[] = ["user_app", "ingest_admin", "team_os", "super_admin"];
+const GENERATABLE_LICENSE_APP_TYPES: UnifiedLicenseProduct[] = ["user_app", "ingest_admin", "team_os"];
 const LICENSE_PLANS: SuperAdminLicensePlan[] = ["free", "pro", "enterprise"];
 const LICENSE_AUDIT_ACTIONS = [
   "generate_user_app_license_key",
   "generate_ingest_admin_license_key",
+  "generate_team_os_license_key",
   "generate_super_admin_license_key",
+  "redeem_team_os_license_key",
+  "renew_license_key",
   "disable_license_key",
   "SUPER_ADMIN_LICENSE_GENERATE",
   "SUPER_ADMIN_LICENSE_DISABLE"
@@ -37,6 +44,19 @@ type LicenseMetadata = {
   tenantId: string | null;
   note: string | null;
   maxActivations: number;
+  planId: string | null;
+  planName: string | null;
+  subscriptionDays: number | null;
+  companyId: string | null;
+  teamId: string | null;
+  subscriptionId: string | null;
+  subscriptionEndsAt: string | null;
+};
+
+const TEAM_OS_PLAN_IDS: Record<SuperAdminLicensePlan, string> = {
+  free: "team-os-plan-basic-v1",
+  pro: "team-os-plan-professional-v1",
+  enterprise: "team-os-plan-enterprise-v1"
 };
 
 type LicenseWithRedeemer = Prisma.LicenseKeyGetPayload<{
@@ -70,17 +90,32 @@ function getLicensePrefix(appType: SuperAdminLicenseAppType) {
     return "XT-SUPER";
   }
 
+  if (appType === "team_os") {
+    return "XT-TEAM";
+  }
+
   return "XT-USER";
 }
 
 function generatePlainLicense(appType: SuperAdminLicenseAppType) {
-  return `${getLicensePrefix(appType)}-${randomGroup(4)}-${randomGroup(4)}-${randomGroup(4)}`;
+  const groupCount = appType === "team_os" ? 4 : 3;
+  return `${getLicensePrefix(appType)}-${Array.from({ length: groupCount }, () => randomGroup(4)).join("-")}`;
 }
 
-function normalizeAppType(value: unknown): SuperAdminLicenseAppType {
+function normalizeStoredAppType(value: unknown): SuperAdminLicenseAppType {
   return typeof value === "string" && LICENSE_APP_TYPES.includes(value as SuperAdminLicenseAppType)
     ? (value as SuperAdminLicenseAppType)
     : "user_app";
+}
+
+function normalizeGenerationAppType(value: unknown): UnifiedLicenseProduct {
+  if (value === undefined || value === null || value === "") {
+    return "user_app";
+  }
+  if (typeof value === "string" && GENERATABLE_LICENSE_APP_TYPES.includes(value as UnifiedLicenseProduct)) {
+    return value as UnifiedLicenseProduct;
+  }
+  throw new ValidationError("卡密类型必须是 user_app、ingest_admin 或 team_os。");
 }
 
 function normalizePlan(value: unknown): SuperAdminLicensePlan {
@@ -113,6 +148,17 @@ function normalizeExpiresInDays(value: unknown) {
   return Math.min(3650, Math.trunc(days));
 }
 
+function normalizeSubscriptionDays(value: unknown, appType: UnifiedLicenseProduct) {
+  if (appType !== "team_os") {
+    return null;
+  }
+  const days = value === null || value === undefined || value === "" ? 365 : Number(value);
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new ValidationError("AI Team OS 开通天数必须大于 0。");
+  }
+  return Math.min(3650, Math.trunc(days));
+}
+
 function normalizeMaxActivations(value: unknown) {
   if (value === null || value === undefined || value === "") {
     return 1;
@@ -138,11 +184,13 @@ function normalizeText(value: unknown, maxLength: number) {
 }
 
 function normalizeGenerationInput(input: SuperAdminLicenseGenerationInput) {
+  const appType = normalizeGenerationAppType(input.appType);
   return {
-    appType: normalizeAppType(input.appType),
+    appType,
     plan: normalizePlan(input.plan),
     count: normalizeCount(input.count),
     expiresInDays: normalizeExpiresInDays(input.expiresInDays),
+    subscriptionDays: normalizeSubscriptionDays(input.subscriptionDays, appType),
     tenantId: normalizeText(input.tenantId, 80),
     note: normalizeText(input.note, 200),
     maxActivations: normalizeMaxActivations(input.maxActivations)
@@ -163,11 +211,21 @@ function readMetadata(metadata: unknown): LicenseMetadata | null {
   }
 
   return {
-    appType: normalizeAppType(metadata.appType),
+    appType: normalizeStoredAppType(metadata.appType),
     plan: normalizePlan(metadata.plan),
     tenantId: typeof metadata.tenantId === "string" ? metadata.tenantId : null,
     note: typeof metadata.note === "string" ? metadata.note : null,
-    maxActivations: typeof metadata.maxActivations === "number" ? metadata.maxActivations : 1
+    maxActivations: typeof metadata.maxActivations === "number" ? metadata.maxActivations : 1,
+    planId: typeof metadata.planId === "string" ? metadata.planId : null,
+    planName: typeof metadata.planName === "string" ? metadata.planName : null,
+    subscriptionDays: typeof metadata.subscriptionDays === "number" ? metadata.subscriptionDays : null,
+    companyId: typeof metadata.companyId === "string" ? metadata.companyId : null,
+    teamId: typeof metadata.teamId === "string" ? metadata.teamId : null,
+    subscriptionId: typeof metadata.subscriptionId === "string" ? metadata.subscriptionId : null,
+    subscriptionEndsAt: typeof metadata.subscriptionEndsAt === "string" &&
+      !Number.isNaN(new Date(metadata.subscriptionEndsAt).getTime())
+      ? metadata.subscriptionEndsAt
+      : null
   };
 }
 
@@ -217,7 +275,14 @@ function getDefaultMetadata(): LicenseMetadata {
     plan: "pro",
     tenantId: null,
     note: null,
-    maxActivations: 1
+    maxActivations: 1,
+    planId: null,
+    planName: null,
+    subscriptionDays: null,
+    companyId: null,
+    teamId: null,
+    subscriptionId: null,
+    subscriptionEndsAt: null
   };
 }
 
@@ -268,7 +333,11 @@ function enrichLicense(license: LicenseWithRedeemer, metadata?: LicenseMetadata)
     redeemedAt: toIso(license.redeemedAt),
     redeemedByUserId: license.redeemedByUserId,
     redeemedByUserLabel: getRedeemerLabel(license),
-    redeemedByUserAccount: getRedeemerAccount(license)
+    redeemedByUserAccount: getRedeemerAccount(license),
+    teamOsCompanyId: resolvedMetadata.companyId,
+    teamOsTeamId: resolvedMetadata.teamId,
+    subscriptionDays: resolvedMetadata.subscriptionDays,
+    subscriptionEndsAt: resolvedMetadata.subscriptionEndsAt
   };
 }
 
@@ -281,6 +350,10 @@ function getGenerateAuditAction(appType: SuperAdminLicenseAppType) {
     return "generate_super_admin_license_key";
   }
 
+  if (appType === "team_os") {
+    return "generate_team_os_license_key";
+  }
+
   return "generate_user_app_license_key";
 }
 
@@ -290,25 +363,57 @@ async function createLicenseAuditLog(input: {
   licenseId: string;
   request?: Request;
   metadata: LicenseMetadata & Record<string, unknown>;
+  transaction?: Prisma.TransactionClient;
 }) {
   const requestContext = getAuditRequestContext(input.request);
+  const data = {
+    userId: input.actor.id,
+    role: input.actor.role,
+    action: input.action,
+    targetType: "license_key",
+    targetId: input.licenseId,
+    ip: requestContext.ip,
+    userAgent: requestContext.userAgent,
+    metadata: {
+      ...input.metadata,
+      operatorUserId: input.actor.id,
+      source: "super_admin_license_center"
+    } satisfies Prisma.InputJsonObject
+  };
+
+  if (input.transaction) {
+    await input.transaction.auditLog.create({ data });
+    return;
+  }
 
   await prisma.auditLog.create({
     data: {
-      userId: input.actor.id,
-      role: input.actor.role,
-      action: input.action,
-      targetType: "license_key",
-      targetId: input.licenseId,
-      ip: requestContext.ip,
-      userAgent: requestContext.userAgent,
-      metadata: {
-        ...input.metadata,
-        operatorUserId: input.actor.id,
-        source: "super_admin_license_center"
-      } satisfies Prisma.InputJsonObject
+      ...data
     }
   });
+}
+
+async function getLicenseMetadataForUpdate(transaction: Prisma.TransactionClient, licenseId: string) {
+  const logs = await transaction.auditLog.findMany({
+    where: {
+      action: { in: LICENSE_AUDIT_ACTIONS },
+      targetType: "license_key",
+      targetId: licenseId
+    },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true }
+  });
+
+  for (const log of logs) {
+    const metadata = readMetadata(log.metadata);
+    if (metadata) return metadata;
+  }
+
+  return getDefaultMetadata();
+}
+
+async function lockLicenseForUpdate(transaction: Prisma.TransactionClient, keyHash: string) {
+  await transaction.$queryRaw`SELECT 1::int AS "locked" FROM pg_advisory_xact_lock(hashtext(${`team-os:license:${keyHash}`}))`;
 }
 
 async function calculateSummary(): Promise<SuperAdminLicenseSummary> {
@@ -335,6 +440,7 @@ async function calculateSummary(): Promise<SuperAdminLicenseSummary> {
   const byAppType: SuperAdminLicenseSummary["byAppType"] = {
     user_app: 0,
     ingest_admin: 0,
+    team_os: 0,
     super_admin: 0
   };
 
@@ -380,6 +486,34 @@ export async function getSuperAdminLicenseAudit(limit = 30): Promise<SuperAdminL
   }));
 }
 
+async function getSuperAdminLicenseActivations(
+  licenses: LicenseWithRedeemer[],
+  metadataMap: Map<string, LicenseMetadata>,
+  limit = 100
+): Promise<SuperAdminLicenseActivationRecord[]> {
+  const licenseByHash = new Map(licenses.map((license) => [license.keyHash, license]));
+  const logs = await prisma.activationLog.findMany({
+    orderBy: { createdAt: "desc" },
+    take: limit
+  });
+
+  return logs.map((log) => {
+    const license = licenseByHash.get(log.codeHash);
+    return {
+      id: log.id,
+      licenseId: license?.id ?? null,
+      displayKey: license ? maskLicenseKey(license) : `HASH-${log.codeHash.slice(-8).toUpperCase()}`,
+      appType: license ? (metadataMap.get(license.id)?.appType ?? "user_app") : null,
+      userId: log.userId,
+      success: log.success,
+      message: log.message,
+      ip: log.ip,
+      userAgent: log.userAgent,
+      createdAt: log.createdAt.toISOString()
+    };
+  });
+}
+
 export async function getSuperAdminLicenseDashboard(): Promise<SuperAdminLicenseDashboardData> {
   const licenses = await prisma.licenseKey.findMany({
     orderBy: {
@@ -401,6 +535,7 @@ export async function getSuperAdminLicenseDashboard(): Promise<SuperAdminLicense
   return {
     summary: await calculateSummary(),
     licenses: licenses.map((license) => enrichLicense(license, metadataMap.get(license.id))),
+    activations: await getSuperAdminLicenseActivations(licenses, metadataMap),
     audit: await getSuperAdminLicenseAudit(10)
   };
 }
@@ -413,6 +548,21 @@ export async function generateSuperAdminLicenses(
   const normalized = normalizeGenerationInput(input);
   const expiresAt = getExpiresAt(normalized.expiresInDays);
   const generated: SuperAdminGeneratedLicense[] = [];
+  let teamOsPlan: { id: string; name: string } | null = null;
+
+  if (normalized.appType === "team_os") {
+    if ((process.env.LICENSE_SECRET?.trim().length ?? 0) < 32) {
+      throw new ValidationError("LICENSE_SECRET 未配置或长度不足，不能签发 XT-TEAM 企业授权码。");
+    }
+    await initializeTeamOsStandardPlans();
+    teamOsPlan = await prisma.subscriptionPlan.findFirst({
+      where: { id: TEAM_OS_PLAN_IDS[normalized.plan], status: "ACTIVE" },
+      select: { id: true, name: true }
+    });
+    if (!teamOsPlan) {
+      throw new ValidationError("AI Team OS 套餐初始化失败，请检查套餐配置。");
+    }
+  }
 
   for (let index = 0; index < normalized.count; index += 1) {
     let createdLicense: SuperAdminGeneratedLicense | null = null;
@@ -424,10 +574,17 @@ export async function generateSuperAdminLicenses(
         const metadata = {
           appType: normalized.appType,
           plan: normalized.plan,
-          tenantId: normalized.tenantId,
+          tenantId: normalized.appType === "team_os" ? null : normalized.tenantId,
           note: normalized.note,
           maxActivations: normalized.maxActivations,
-          expiresAt: toIso(expiresAt)
+          expiresAt: toIso(expiresAt),
+          planId: teamOsPlan?.id ?? null,
+          planName: teamOsPlan?.name ?? null,
+          subscriptionDays: normalized.subscriptionDays,
+          companyId: null,
+          teamId: null,
+          subscriptionId: null,
+          subscriptionEndsAt: null
         };
         const requestContext = getAuditRequestContext(request);
         const license = await prisma.$transaction(async (tx) => {
@@ -465,7 +622,8 @@ export async function generateSuperAdminLicenses(
           appType: normalized.appType,
           plan: normalized.plan,
           status: license.status,
-          expiresAt: toIso(license.expiresAt)
+          expiresAt: toIso(license.expiresAt),
+          subscriptionDays: normalized.subscriptionDays
         };
         break;
       } catch (error) {
@@ -493,56 +651,165 @@ export async function disableSuperAdminLicense(
   licenseId: string,
   request?: Request
 ) {
-  const license = await prisma.licenseKey.findUnique({
-    where: {
-      id: licenseId
-    },
-    include: {
-      redeemedByUser: {
-        select: {
-          phone: true,
-          email: true,
-          name: true
+  const result = await prisma.$transaction(async (transaction) => {
+    const initialLicense = await transaction.licenseKey.findUnique({
+      where: { id: licenseId },
+      select: { keyHash: true }
+    });
+    if (!initialLicense) throw new NotFoundError("卡密不存在。");
+    await lockLicenseForUpdate(transaction, initialLicense.keyHash);
+
+    const license = await transaction.licenseKey.findUnique({
+      where: { id: licenseId },
+      include: {
+        redeemedByUser: {
+          select: { phone: true, email: true, name: true }
         }
       }
+    });
+    if (!license) throw new NotFoundError("卡密不存在。");
+    const metadata = await getLicenseMetadataForUpdate(transaction, license.id);
+    if (metadata.appType === "team_os" && license.status === LicenseKeyStatus.USED && !metadata.companyId) {
+      throw new ValidationError("Team OS 卡密缺少企业绑定记录，禁止仅禁用卡片而遗漏企业订阅。");
     }
+
+    const updated = await transaction.licenseKey.update({
+      where: { id: license.id },
+      data: { status: LicenseKeyStatus.DISABLED },
+      include: {
+        redeemedByUser: {
+          select: { phone: true, email: true, name: true }
+        }
+      }
+    });
+
+    if (metadata.appType === "team_os" && metadata.companyId) {
+      await transaction.tenantSubscription.updateMany({
+        where: { companyId: metadata.companyId, status: "ACTIVE" },
+        data: { status: "CANCELLED" }
+      });
+    }
+
+    await createLicenseAuditLog({
+      actor,
+      action: "disable_license_key",
+      licenseId: updated.id,
+      request,
+      transaction,
+      metadata: {
+        ...metadata,
+        beforeStatus: license.status,
+        afterStatus: updated.status,
+        teamOsSubscriptionCancelled: metadata.appType === "team_os" && Boolean(metadata.companyId)
+      }
+    });
+
+    return { updated, metadata };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable
   });
 
-  if (!license) {
-    throw new NotFoundError("卡密不存在。");
+  return enrichLicense(result.updated, result.metadata);
+}
+
+function normalizeRenewDays(value: unknown) {
+  const days = typeof value === "number" ? value : Number(value ?? 365);
+  if (!Number.isFinite(days) || days <= 0) {
+    throw new ValidationError("续期天数必须大于 0。");
   }
+  return Math.min(3650, Math.trunc(days));
+}
 
-  const metadataMap = await getLicenseMetadataMap([license.id]);
-  const metadata = metadataMap.get(license.id) ?? getDefaultMetadata();
-  const updatedLicense = await prisma.licenseKey.update({
-    where: {
-      id: license.id
-    },
-    data: {
-      status: LicenseKeyStatus.DISABLED
-    },
-    include: {
-      redeemedByUser: {
-        select: {
-          phone: true,
-          email: true,
-          name: true
+export async function renewSuperAdminLicense(
+  actor: Pick<RbacUser, "id" | "role">,
+  licenseId: string,
+  input: { days?: number },
+  request?: Request
+) {
+  const days = normalizeRenewDays(input.days);
+  const dayMilliseconds = 24 * 60 * 60 * 1000;
+  const result = await prisma.$transaction(async (transaction) => {
+    const initialLicense = await transaction.licenseKey.findUnique({
+      where: { id: licenseId },
+      select: { keyHash: true }
+    });
+    if (!initialLicense) throw new NotFoundError("卡密不存在。");
+    await lockLicenseForUpdate(transaction, initialLicense.keyHash);
+
+    const license = await transaction.licenseKey.findUnique({
+      where: { id: licenseId },
+      include: {
+        redeemedByUser: {
+          select: { phone: true, email: true, name: true }
         }
       }
+    });
+    if (!license) throw new NotFoundError("卡密不存在。");
+    if (license.status === LicenseKeyStatus.DISABLED) {
+      throw new ValidationError("已禁用卡密不能直接续期，请先核对禁用原因。");
     }
+
+    const metadata = await getLicenseMetadataForUpdate(transaction, license.id);
+    const now = new Date();
+    const licenseBase = license.expiresAt && license.expiresAt > now ? license.expiresAt : now;
+    let nextLicenseExpiresAt = new Date(licenseBase.getTime() + days * dayMilliseconds);
+    let nextMetadata = metadata;
+
+    if (metadata.appType === "team_os" && license.status === LicenseKeyStatus.USED) {
+      if (!metadata.companyId) {
+        throw new ValidationError("Team OS 卡密缺少企业绑定记录，无法续期企业订阅。");
+      }
+      const subscription = metadata.subscriptionId
+        ? await transaction.tenantSubscription.findUnique({ where: { id: metadata.subscriptionId } })
+        : await transaction.tenantSubscription.findFirst({
+            where: { companyId: metadata.companyId },
+            orderBy: [{ endDate: "desc" }, { createdAt: "desc" }]
+          });
+      if (!subscription) throw new NotFoundError("Team OS 企业订阅不存在，无法续期。");
+      const subscriptionBase = subscription.endDate > now ? subscription.endDate : now;
+      const nextSubscriptionEnd = new Date(subscriptionBase.getTime() + days * dayMilliseconds);
+      await transaction.tenantSubscription.update({
+        where: { id: subscription.id },
+        data: { endDate: nextSubscriptionEnd, status: "ACTIVE" }
+      });
+      await transaction.tenantCompany.updateMany({
+        where: { id: metadata.companyId, status: "EXPIRED" },
+        data: { status: "ACTIVE" }
+      });
+      nextMetadata = {
+        ...metadata,
+        subscriptionId: subscription.id,
+        subscriptionEndsAt: nextSubscriptionEnd.toISOString()
+      };
+      nextLicenseExpiresAt = nextSubscriptionEnd;
+    }
+
+    const updated = await transaction.licenseKey.update({
+      where: { id: license.id },
+      data: { expiresAt: nextLicenseExpiresAt },
+      include: {
+        redeemedByUser: { select: { phone: true, email: true, name: true } }
+      }
+    });
+
+    await createLicenseAuditLog({
+      actor,
+      action: "renew_license_key",
+      licenseId: license.id,
+      request,
+      transaction,
+      metadata: {
+        ...nextMetadata,
+        beforeExpiresAt: toIso(license.expiresAt),
+        afterExpiresAt: toIso(updated.expiresAt),
+        renewalDays: days
+      }
+    });
+
+    return { updated, metadata: nextMetadata };
+  }, {
+    isolationLevel: Prisma.TransactionIsolationLevel.Serializable
   });
 
-  await createLicenseAuditLog({
-    actor,
-    action: "disable_license_key",
-    licenseId: updatedLicense.id,
-    request,
-    metadata: {
-      ...metadata,
-      beforeStatus: license.status,
-      afterStatus: updatedLicense.status
-    }
-  });
-
-  return enrichLicense(updatedLicense, metadata);
+  return enrichLicense(result.updated, result.metadata);
 }

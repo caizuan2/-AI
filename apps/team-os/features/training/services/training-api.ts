@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -57,7 +57,7 @@ async function enforceAiRateLimit(
 
 export async function handleTrainingCoursesGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取培训课程"));
     const filters = parseTrainingCourseFilters(new URL(request.url).searchParams);
     return apiSuccess(await listTrainingCoursesForUser(user.id, filters));
@@ -68,7 +68,7 @@ export async function handleTrainingCoursesGet(request: Request) {
 
 export async function handleTrainingCourseUpsert(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("保存培训课程"));
     const input = parseUpsertTrainingCourseInput(await readJson(request));
     let headers: HeadersInit | undefined;
@@ -96,7 +96,7 @@ export async function handleTrainingCourseUpsert(request: Request) {
 
 export async function handleTrainingRecordsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取培训学习记录"));
     const companyId = parseTrainingCompanyId(new URL(request.url).searchParams);
     return apiSuccess(await getTrainingDashboardForUser(user.id, companyId));
@@ -107,7 +107,7 @@ export async function handleTrainingRecordsGet(request: Request) {
 
 export async function handleTrainingRecordStart(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("开始培训课程"));
     const input = parseUpdateTrainingRecordInput(await readJson(request));
     return apiSuccess(await startTrainingCourseForUser(user.id, input));
@@ -118,7 +118,7 @@ export async function handleTrainingRecordStart(request: Request) {
 
 export async function handleTrainingAssignmentsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取培训管理数据"));
     const companyId = parseTrainingCompanyId(new URL(request.url).searchParams);
     return apiSuccess(await getTrainingManagementForUser(user.id, companyId));
@@ -129,7 +129,7 @@ export async function handleTrainingAssignmentsGet(request: Request) {
 
 export async function handleTrainingAssignmentCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("安排员工培训"));
     const input = parseCreateTrainingAssignmentInput(await readJson(request));
     return apiSuccess(await createTrainingAssignmentForUser(user.id, input), { status: 201 });
@@ -140,7 +140,7 @@ export async function handleTrainingAssignmentCreate(request: Request) {
 
 export async function handleTrainingSimulationCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("生成 AI 模拟训练"));
     const input = parseTrainingCourseSelectionInput(await readJson(request));
     await getTrainingCourseForUser(user.id, input.courseId, { requireActive: true });
@@ -163,7 +163,7 @@ export async function handleTrainingSimulationCreate(request: Request) {
 
 export async function handleTrainingEvaluate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("执行 AI 培训评分"));
     const input = parseEvaluateTrainingInput(await readJson(request));
     await getTrainingCourseForUser(user.id, input.courseId, { requireActive: true });
@@ -186,7 +186,7 @@ export async function handleTrainingEvaluate(request: Request) {
 
 export async function handleTrainingRecommendGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "training");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("生成个性化培训推荐"));
     const companyId = parseTrainingCompanyId(new URL(request.url).searchParams);
     await resolveTrainingAccess(user.id, companyId);

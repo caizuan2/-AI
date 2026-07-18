@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -42,7 +42,7 @@ export async function handleCopilotDashboardGet(
   assistantRole: CopilotAssistantRole
 ) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取企业助手数据"));
     const input = parseCopilotQuery(query(request));
     const scope = await resolveCopilotAccess(user.id, assistantRole, input.companyId);
@@ -54,7 +54,7 @@ export async function handleCopilotDashboardGet(
 
 export async function handleCopilotChatPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("使用企业助手对话"));
     const input = parseCopilotChatInput(await readJson(request));
     const scope = await resolveCopilotAccess(user.id, input.assistantRole, input.companyId);
@@ -102,7 +102,7 @@ export async function handleCopilotChatPost(request: Request) {
 
 export async function handleCopilotInsightsGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("读取 AI 洞察"));
     const input = parseCopilotInsightsQuery(query(request));
     const scope = await resolveCopilotAccess(user.id, input.assistantRole, input.companyId);
@@ -118,7 +118,7 @@ export async function handleCopilotInsightsGet(request: Request) {
 
 export async function handleCopilotInsightsPost(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "ai_coach");
     if (!hasDatabaseUrl()) return apiError(databaseConfigError("生成 AI 洞察"));
     const input = parseCopilotInsightSyncInput(await readJson(request));
     const scope = await resolveCopilotAccess(user.id, input.assistantRole, input.companyId);

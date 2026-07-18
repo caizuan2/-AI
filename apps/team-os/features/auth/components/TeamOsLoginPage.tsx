@@ -15,7 +15,15 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getSafeTeamOsNextPath } from "@/apps/team-os/features/auth/utils/team-os-next-path";
+import {
+  TEAM_OS_INVITE_PATH,
+  TEAM_OS_REGISTER_PATH
+} from "@/apps/team-os/features/auth/constants";
+import type { TeamOsAccessDecision } from "@/apps/team-os/features/auth/services/team-os-access";
+import {
+  getSafeTeamOsNextPath,
+  isTeamOsInvitationNextPath
+} from "@/apps/team-os/features/auth/utils/team-os-next-path";
 import { unwrapApiResponse } from "@/lib/api/client";
 
 interface LoginResponse {
@@ -36,6 +44,24 @@ function TeamOsLoginForm() {
     [searchParams]
   );
 
+  const getTeamOsDestination = useCallback(async () => {
+    const response = await fetch("/api/team-os/auth/access", {
+      method: "GET",
+      cache: "no-store"
+    });
+    const decision = await unwrapApiResponse<TeamOsAccessDecision>(
+      response,
+      "无法检查 AI Team OS 企业权限，请稍后重试。"
+    );
+
+    const requestedNextPath = getNextPath();
+    if (isTeamOsInvitationNextPath(requestedNextPath)) {
+      return requestedNextPath;
+    }
+
+    return decision.allowed ? requestedNextPath : decision.nextPath;
+  }, [getNextPath]);
+
   useEffect(() => {
     let active = true;
 
@@ -51,12 +77,18 @@ function TeamOsLoginForm() {
         }
 
         if (response.ok) {
-          router.replace(getNextPath());
+          router.replace(await getTeamOsDestination());
           router.refresh();
           return;
         }
-      } catch {
-        // A failed session probe leaves the user on the login form.
+      } catch (caughtError) {
+        if (active) {
+          setError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "无法检查 AI Team OS 企业权限，请稍后重试。"
+          );
+        }
       }
 
       if (active) {
@@ -69,7 +101,7 @@ function TeamOsLoginForm() {
     return () => {
       active = false;
     };
-  }, [getNextPath, router]);
+  }, [getTeamOsDestination, router]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -95,7 +127,7 @@ function TeamOsLoginForm() {
       });
 
       await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
-      router.replace(getNextPath());
+      router.replace(await getTeamOsDestination());
       router.refresh();
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
@@ -161,6 +193,21 @@ function TeamOsLoginForm() {
         {loading ? "正在登录" : "进入 AI Team OS"}
         <ArrowRight className="h-4 w-4" aria-hidden="true" />
       </Button>
+
+      <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-center text-sm sm:grid-cols-2">
+        <Link
+          href={TEAM_OS_REGISTER_PATH}
+          className="rounded-lg px-3 py-2 font-medium text-indigo-700 hover:bg-white hover:text-indigo-800"
+        >
+          没有企业账号？注册并开通
+        </Link>
+        <Link
+          href={TEAM_OS_INVITE_PATH}
+          className="rounded-lg px-3 py-2 font-medium text-slate-700 hover:bg-white hover:text-indigo-800"
+        >
+          已有企业邀请？接受邀请
+        </Link>
+      </div>
 
       <p className="text-center text-sm text-slate-500">
         需要进入原知识库？

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
-import { requireUserAppAccess } from "@/lib/auth/guards";
+import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
@@ -27,7 +27,7 @@ const apiError = createTeamOsApiErrorHandler("CRM");
 
 export async function handleCrmCustomersGet(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "crm");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取 CRM 客户列表"));
     }
@@ -40,7 +40,7 @@ export async function handleCrmCustomersGet(request: Request) {
 
 export async function handleCrmCustomerCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "crm");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("创建 CRM 客户"));
     }
@@ -53,7 +53,7 @@ export async function handleCrmCustomerCreate(request: Request) {
 
 export async function handleCrmCustomerDetailGet(request: Request, customerId: string) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "crm");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("读取 CRM 客户详情"));
     }
@@ -65,7 +65,7 @@ export async function handleCrmCustomerDetailGet(request: Request, customerId: s
 
 export async function handleCrmFollowUpCreate(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "crm");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("新增客户跟进记录"));
     }
@@ -81,7 +81,7 @@ export async function handleCrmFollowUpCreate(request: Request) {
 
 export async function handleCrmAnalyze(request: Request) {
   try {
-    const user = await requireUserAppAccess(request);
+    const user = await requireTeamOsAccess(request, "crm");
     if (!hasDatabaseUrl()) {
       return apiError(databaseConfigError("生成 AI 客户画像"));
     }

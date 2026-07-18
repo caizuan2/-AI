@@ -60,7 +60,7 @@ export function roleCanAccessProduct(product: ProductAccess, role: string | null
   }
 
   if (product === "user_app") {
-    return role === "user";
+    return role === "user" || role === "ingest_admin" || role === "kb_admin" || role === "enterprise_admin" || role === "super_admin";
   }
 
   if (product === "ingest_admin") {
