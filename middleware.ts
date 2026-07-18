@@ -1,5 +1,11 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
+import {
+  isTeamOsPath,
+  TEAM_OS_LOGIN_PATH,
+  TEAM_OS_PUBLIC_ENTRY_HEADER,
+  TEAM_OS_PUBLIC_ENTRY_LOGIN
+} from "@/apps/team-os/features/auth/constants";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { getProductFromPath } from "@/lib/auth/product";
 import { PRODUCT_ACCESS_HEADER } from "@/lib/auth/product-access";
@@ -138,11 +144,13 @@ const protectedPagePrefixes = [
   "/settings",
   "/feedback",
   "/admin",
-  "/super-admin"
+  "/super-admin",
+  "/team-os"
 ];
 const sessionOnlyPagePrefixes = ["/unlock"];
 const publicExactPaths = [
   "/login",
+  TEAM_OS_LOGIN_PATH,
   "/register",
   "/no-access",
   "/ingest/login",
@@ -206,6 +214,7 @@ function isSafeNextPath(value: string) {
 
   return !isPathUnder(value.split("?")[0] ?? value, [
     "/login",
+    TEAM_OS_LOGIN_PATH,
     "/register",
     "/ingest/login",
     "/ingest/register",
@@ -217,7 +226,7 @@ function redirectToLogin(request: NextRequest) {
   const loginUrl = request.nextUrl.clone();
   const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
 
-  loginUrl.pathname = "/login";
+  loginUrl.pathname = isTeamOsPath(request.nextUrl.pathname) ? TEAM_OS_LOGIN_PATH : "/login";
   loginUrl.search = "";
 
   if (isSafeNextPath(currentTarget)) {
@@ -460,6 +469,11 @@ async function applyPageAuth(request: NextRequest, requestHeaders: Headers, requ
 export async function middleware(request: NextRequest) {
   const requestId = getRequestIdFromHeaders(request.headers);
   const requestHeaders = new Headers(request.headers);
+
+  requestHeaders.delete(TEAM_OS_PUBLIC_ENTRY_HEADER);
+  if (request.nextUrl.pathname === TEAM_OS_LOGIN_PATH) {
+    requestHeaders.set(TEAM_OS_PUBLIC_ENTRY_HEADER, TEAM_OS_PUBLIC_ENTRY_LOGIN);
+  }
 
   requestHeaders.set(REQUEST_ID_HEADER, requestId);
 

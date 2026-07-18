@@ -1,11 +1,20 @@
 import type { ReactNode } from "react";
+import { headers } from "next/headers";
 import { TeamOsLayout } from "@/apps/team-os/app/layout";
-import { enforceUserAppPageAccess } from "@/lib/auth/page-guards";
+import {
+  TEAM_OS_PUBLIC_ENTRY_HEADER,
+  TEAM_OS_PUBLIC_ENTRY_LOGIN
+} from "@/apps/team-os/features/auth/constants";
+import { enforceTeamOsPageAccess } from "@/apps/team-os/features/auth/services/team-os-page-access";
 
 export const dynamic = "force-dynamic";
 
 export default async function TeamOsRouteLayout({ children }: { children: ReactNode }) {
-  const user = await enforceUserAppPageAccess("/team-os");
+  if (headers().get(TEAM_OS_PUBLIC_ENTRY_HEADER) === TEAM_OS_PUBLIC_ENTRY_LOGIN) {
+    return children;
+  }
+
+  const user = await enforceTeamOsPageAccess("/team-os");
 
   return (
     <TeamOsLayout
