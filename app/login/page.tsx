@@ -4,7 +4,7 @@ import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, KeyRound, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, KeyRound, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiClientError, unwrapApiResponse } from "@/lib/api/client";
@@ -97,6 +97,7 @@ function LoginForm() {
   const passwordReset = searchParams.get("reset") === "1";
   const firstUse = searchParams.get("first") === "1";
   const activationRequested = searchParams.get("activation") === "1";
+  const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
@@ -205,6 +206,7 @@ function LoginForm() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          ...(!isAdminEntry && showLicenseEntry ? { name } : {}),
           phone,
           password,
           ...(!isAdminEntry ? { licenseKey } : {})
@@ -278,7 +280,7 @@ function LoginForm() {
 
       {firstUse && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
-          首次使用请输入手机号、密码和用户端卡密，系统会自动创建并激活账号。
+          首次使用请输入用户名、手机号、密码和用户端卡密，系统会自动创建并激活账号。
         </div>
       ) : null}
 
@@ -286,6 +288,26 @@ function LoginForm() {
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
           请输入原账号的手机号和密码，并填写新的有效用户端卡密重新激活。
         </div>
+      ) : null}
+
+      {!isAdminEntry && showLicenseEntry ? (
+        <label className="block">
+          <span className="text-sm font-medium text-ink">用户名</span>
+          <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+            <UserRound className="h-4 w-4 text-muted" />
+            <Input
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              autoComplete="nickname"
+              maxLength={50}
+              className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+              placeholder="填写网名"
+            />
+          </span>
+          <span className="mt-1.5 block text-xs leading-5 text-muted">
+            首次开户时填写；原账号重新激活时可不填写，也不会修改原用户名。
+          </span>
+        </label>
       ) : null}
 
       <label className="block">
@@ -372,7 +394,7 @@ function LoginForm() {
             />
           </span>
           <span className="mt-1.5 block text-xs leading-5 text-muted">
-            首次使用填写卡密即可直接开户；卡密失效时会重新激活原账号并保留聊天记录。
+            首次使用填写网名和卡密即可直接开户；卡密失效时会重新激活原账号并保留聊天记录。
           </span>
         </div>
       ) : null}

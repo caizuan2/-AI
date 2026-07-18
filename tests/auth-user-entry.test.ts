@@ -12,7 +12,11 @@ const capacitorConfig = readFileSync("capacitor.config.ts", "utf8");
 
 assert.match(loginPage, /isAdminEntry \? "\/api\/auth\/login" : "\/api\/auth\/user-entry"/);
 assert.match(loginPage, /licenseKey/);
-assert.match(loginPage, /首次使用请输入手机号、密码和用户端卡密/);
+assert.match(loginPage, /首次使用请输入用户名、手机号、密码和用户端卡密/);
+assert.match(loginPage, /placeholder="填写网名"/);
+assert.match(loginPage, /首次开户时填写；原账号重新激活时可不填写，也不会修改原用户名/);
+assert.match(loginPage, /首次使用填写网名和卡密即可直接开户/);
+assert.match(loginPage, /!isAdminEntry && showLicenseEntry \? \{ name \} : \{\}/);
 assert.match(loginPage, /useState\(firstUse \|\| activationRequested\)/);
 assert.match(loginPage, /!isAdminEntry && !showLicenseEntry/);
 assert.match(loginPage, /首次使用或卡密失效？输入卡密/);
@@ -28,6 +32,7 @@ assert.match(registerPage, /redirect\("\/login\?first=1"\)/);
 assert.match(route, /checkPersistentRateLimit/);
 assert.match(route, /namespace: "auth-user-entry"/);
 assert.match(route, /enterUserApp/);
+assert.match(route, /const name = typeof body\.name === "string" \? body\.name\.trim\(\) : ""/);
 assert.match(route, /role !== "user" \|\| !hasUserClientAccess\(accessProfile\)/);
 assert.ok(
   route.indexOf("getUserAccessProfile") < route.indexOf("await createSession"),
@@ -42,6 +47,8 @@ assert.match(service, /getRedeemableUserLicense\(licenseKey\)/);
 assert.match(service, /redeemLicenseKey\(user\.id, licenseKey/);
 assert.match(service, /prisma\.\$transaction/);
 assert.match(service, /tx\.user\.create/);
+assert.match(service, /throw new ValidationError\("首次使用请填写网名。"\)/);
+assert.match(service, /name,\s*isActive: true/);
 assert.match(service, /tx\.licenseKey\.updateMany/);
 assert.match(service, /status: LicenseKeyStatus\.UNUSED/);
 assert.match(service, /redeemedByUserId: null/);

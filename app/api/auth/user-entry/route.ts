@@ -43,6 +43,7 @@ function parseUserEntryRequest(body: unknown) {
 
   const phone = typeof body.phone === "string" ? normalizePhone(body.phone) : "";
   const password = typeof body.password === "string" ? body.password : "";
+  const name = typeof body.name === "string" ? body.name.trim() : "";
   const licenseKey = typeof body.licenseKey === "string"
     ? body.licenseKey.trim()
     : typeof body.code === "string"
@@ -64,6 +65,7 @@ function parseUserEntryRequest(body: unknown) {
   return {
     phone,
     password,
+    name,
     licenseKey
   };
 }

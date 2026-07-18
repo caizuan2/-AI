@@ -67,6 +67,7 @@ export type UserEntryResult = {
 export type UserEntryInput = {
   phone: string;
   password: string;
+  name?: string;
   licenseKey?: string;
   context?: LicenseActivationContext;
 };
@@ -325,12 +326,22 @@ async function enterExistingUser(
 }
 
 async function createUserWithLicense(input: UserEntryInput): Promise<UserEntryResult> {
+  const name = input.name?.trim() || "";
+
   if (input.password.length < 8) {
     throw new ValidationError("首次使用时密码至少需要 8 位。");
   }
 
   if (!input.licenseKey) {
     throw new LicenseRequiredError("首次使用请输入有效用户端卡密。");
+  }
+
+  if (!name) {
+    throw new ValidationError("首次使用请填写网名。");
+  }
+
+  if (name.length > 50) {
+    throw new ValidationError("网名不能超过 50 个字符。");
   }
 
   const license = await getRedeemableUserLicense(input.licenseKey);
@@ -344,7 +355,7 @@ async function createUserWithLicense(input: UserEntryInput): Promise<UserEntryRe
           data: {
             phone: input.phone,
             passwordHash,
-            name: input.phone,
+            name,
             isActive: true,
             licenseActivated: true,
             role: "user"
