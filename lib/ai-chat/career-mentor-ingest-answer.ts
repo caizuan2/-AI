@@ -1,8 +1,16 @@
 import "server-only";
 
 import type { RagContext, RagRecentConversationTurn } from "@/lib/ai/rag-prompt";
+import {
+  buildCareerMentorDeepSeekDirection,
+  type CareerMentorKnowledgeMode,
+  type CareerMentorStage
+} from "@/lib/ai-chat/career-mentor";
 import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
-import type { GptKnowledgeDraft } from "@/lib/enterprise/gpt-knowledge-draft";
+import type {
+  GptIngestKnowledgeContext,
+  GptIngestMemoryAttachment
+} from "@/lib/enterprise/gpt-ingest-memory";
 import {
   resolveAdminIngestModelProvider,
   runAdminIngestWithSelectedModel
@@ -15,7 +23,9 @@ import {
 export const CAREER_MENTOR_INGEST_OUTPUT_MODE = "admin_ingest_reply_markdown" as const;
 
 export interface CareerMentorIngestAnswerInput {
-  question: string;
+  originalQuestion: string;
+  scenarioQuestion: string;
+  careerMentorStage: CareerMentorStage;
   contexts: RagContext[];
   recentConversation: RagRecentConversationTurn[];
   agentId: string;
@@ -31,31 +41,74 @@ export interface CareerMentorIngestAnswerResult {
   answerOutputMode: typeof CAREER_MENTOR_INGEST_OUTPUT_MODE;
 }
 
-function toKnowledgeDrafts(contexts: RagContext[]): Array<Partial<GptKnowledgeDraft>> {
-  return contexts.slice(0, 3).map((context) => ({
-    title: context.title || context.sourceTitle || "讲事业导师知识资料",
-    summary: context.summary || context.content,
-    category: context.category || "讲事业导师",
-    tags: context.tags ?? [],
-    standardQuestion: context.title || "讲事业导师相关问题",
-    standardAnswer: context.content,
-    scenarios: context.category ? [context.category] : ["讲事业沟通"],
-    sourceMaterials: [
-      context.sourceTitle,
-      context.sourceUrl,
-      context.sourceType,
-      context.id
-    ].filter((value): value is string => Boolean(value))
-  }));
+function normalizeSourceType(context: RagContext) {
+  return (context.sourceType ?? "").trim().toLowerCase();
+}
+
+function toFixedKnowledgeContexts(contexts: RagContext[]): GptIngestKnowledgeContext[] {
+  return contexts
+    .filter((context) => {
+      const sourceType = normalizeSourceType(context);
+      return sourceType !== "runtime_memory" && sourceType !== "attachment_ocr";
+    })
+    .slice(0, 6)
+    .map((context) => ({
+      id: context.id,
+      title: context.title || context.sourceTitle || "讲事业导师知识资料",
+      content: context.content,
+      sourceId: context.sourceId ?? null,
+      score: context.score ?? context.relevance_score ?? context.similarity ?? null
+    }));
+}
+
+function toRuntimeMemory(contexts: RagContext[]) {
+  const memories = contexts
+    .filter((context) => normalizeSourceType(context) === "runtime_memory")
+    .slice(0, 4);
+
+  return {
+    memoryContextText: memories.length > 0
+      ? memories.map((context, index) => [
+          `### 已发布长期记忆 ${index + 1}: ${context.title || context.sourceTitle || "讲事业训练记忆"}`,
+          context.content
+        ].join("\n")).join("\n\n")
+      : null,
+    usedMemoryIds: memories.map((context) => context.id.replace(/^runtime-memory:/, ""))
+  };
+}
+
+function toAttachmentContexts(contexts: RagContext[]): GptIngestMemoryAttachment[] {
+  return contexts
+    .filter((context) => normalizeSourceType(context) === "attachment_ocr")
+    .slice(0, 4)
+    .map((context, index) => ({
+      fileName: context.sourceTitle || context.title || `用户上传截图 ${index + 1}`,
+      fileType: "image",
+      parseStatus: "parsed",
+      extractedText: context.content,
+      summary: context.summary
+    }));
 }
 
 export async function runCareerMentorIngestAnswer(
   input: CareerMentorIngestAnswerInput
 ): Promise<CareerMentorIngestAnswerResult> {
+  const knowledgeContexts = toFixedKnowledgeContexts(input.contexts);
+  const runtimeMemory = toRuntimeMemory(input.contexts);
+  const attachments = toAttachmentContexts(input.contexts);
+  const knowledgeMode: CareerMentorKnowledgeMode = knowledgeContexts.length > 0
+    ? "knowledge_first"
+    : "five_step_guided_open";
+  const agentLearningInstruction = buildCareerMentorDeepSeekDirection({
+    originalQuestion: input.originalQuestion,
+    scenarioQuestion: input.scenarioQuestion,
+    stage: input.careerMentorStage,
+    knowledgeMode
+  });
   const modelOption = resolveAdminIngestModelProvider({
     modelProvider: "deepseek-pro",
     preferredModel: DEEPSEEK_PRO_MODEL_ID,
-    input: input.question,
+    input: input.originalQuestion,
     attachments: []
   });
   const modelRuntime = resolveIngestModelRuntime({
@@ -65,8 +118,8 @@ export async function runCareerMentorIngestAnswer(
     preferredModel: DEEPSEEK_PRO_MODEL_ID
   });
   const result = await runAdminIngestWithSelectedModel({
-    input: input.question,
-    attachments: [],
+    input: input.originalQuestion,
+    attachments,
     agentId: input.agentId,
     expertId: input.agentId,
     agentName: "讲事业导师",
@@ -86,7 +139,10 @@ export async function runCareerMentorIngestAnswer(
       role: message.role,
       content: message.content
     })),
-    previousKnowledgeDrafts: toKnowledgeDrafts(input.contexts),
+    agentLearningInstruction,
+    knowledgeContexts,
+    memoryContextText: runtimeMemory.memoryContextText,
+    usedMemoryIds: runtimeMemory.usedMemoryIds,
     requestId: input.requestId
   });
   const stylePassThrough = enhanceGPTStyle(result.replyMarkdown || "", {
