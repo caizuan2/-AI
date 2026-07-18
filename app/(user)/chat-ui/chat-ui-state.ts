@@ -6,8 +6,15 @@ import type {
   ChatAttachmentDraft,
   ChatMessageView,
   ChatMode,
-  CurrentChatUser
+  CurrentChatUser,
+  SelectedKnowledgeBase
 } from "./types";
+import type { ConversionFeedbackEvent } from "@/lib/agent/conversion-feedback-loop";
+import {
+  GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY,
+  type SessionOutcome,
+  type UserBehaviorSignal
+} from "@/lib/agent/global-learning-engine";
 
 export interface ChatUiResetState {
   conversationId: string | null;
@@ -31,6 +38,242 @@ export function createNewChatState(): ChatUiResetState {
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanScopeText(...values: unknown[]) {
+  for (const value of values) {
+    const text = cleanText(value).slice(0, 120);
+
+    if (text) {
+      return text;
+    }
+  }
+
+  return "";
+}
+
+function getRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function getAutoSalesAgentPayload(value: unknown) {
+  const businessExecution = getRecord(value);
+  const autoSalesAgent = getRecord(businessExecution?.autoSalesAgent);
+  const version = cleanText(autoSalesAgent?.version);
+
+  return version === "ai-knowledge-os-v8" || version === "ai-knowledge-os-v8.1" || version === "ai-knowledge-os-v9"
+    ? autoSalesAgent
+    : null;
+}
+
+const CONVERSION_FEEDBACK_STORAGE_KEY = "chat-ui:conversion-feedback:last";
+const GLOBAL_BEHAVIOR_SIGNAL_LIMIT = 12;
+
+function getConversionFeedbackStoragePayload() {
+  try {
+    const stored = getSessionStorage()?.getItem(CONVERSION_FEEDBACK_STORAGE_KEY);
+
+    return stored ? getRecord(JSON.parse(stored)) : null;
+  } catch {
+    return null;
+  }
+}
+
+function classifySessionOutcome(payload: {
+  action_clicked: string;
+  conversion_signal: number;
+  follow_up_question: boolean;
+  time_on_page: number;
+}): SessionOutcome {
+  if (payload.conversion_signal >= 0.78 && ["close_deal", "handoff_service"].includes(payload.action_clicked)) {
+    return "converted";
+  }
+
+  if (payload.conversion_signal >= 0.65 || payload.follow_up_question) {
+    return "advanced";
+  }
+
+  if (payload.action_clicked || payload.time_on_page >= 8) {
+    return "engaged";
+  }
+
+  if (payload.conversion_signal <= 0.18) {
+    return "lost";
+  }
+
+  if (payload.time_on_page <= 2 && !payload.action_clicked) {
+    return "stalled";
+  }
+
+  return "unknown";
+}
+
+function getStoredGlobalBehaviorSignals(): UserBehaviorSignal[] {
+  try {
+    const rawValue = getSessionStorage()?.getItem(GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY);
+    const parsed = rawValue ? JSON.parse(rawValue) : null;
+
+    return Array.isArray(parsed) ? parsed.slice(-GLOBAL_BEHAVIOR_SIGNAL_LIMIT) as UserBehaviorSignal[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberGlobalBehaviorSignal(signal: UserBehaviorSignal) {
+  try {
+    const signals = [...getStoredGlobalBehaviorSignals(), signal].slice(-GLOBAL_BEHAVIOR_SIGNAL_LIMIT);
+
+    getSessionStorage()?.setItem(GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY, JSON.stringify(signals));
+  } catch {
+    // Global learning is a local UI signal; storage failures must not block chat.
+  }
+}
+
+function getConversionFeedbackPayload(value: unknown) {
+  const autoSalesAgent = getAutoSalesAgentPayload(value);
+  const conversionFeedbackLoop = getRecord(autoSalesAgent?.conversionFeedbackLoop);
+  const existingFeedback = getRecord(conversionFeedbackLoop?.feedback);
+  const storedFeedback = getConversionFeedbackStoragePayload();
+
+  return {
+    ...existingFeedback,
+    ...(storedFeedback ?? {}),
+    intent: cleanText(storedFeedback?.intent) || cleanText(existingFeedback?.intent) || cleanText(autoSalesAgent?.sourceIntent) || "knowledge_user",
+    conversion_signal: Number(storedFeedback?.conversion_signal ?? existingFeedback?.conversion_signal ?? autoSalesAgent?.dealProbability ?? 0.45),
+    global_behavior: getStoredGlobalBehaviorSignals()
+  };
+}
+
+function normalizeAskSelectedKnowledgeBases(value: unknown): SelectedKnowledgeBase[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const items: SelectedKnowledgeBase[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const record = item as Record<string, unknown>;
+    const kbId = cleanScopeText(record.kb_id, record.kbId, record.knowledgeBaseId);
+    const expertId = cleanScopeText(record.expert_id, record.expertId, record.agentId);
+    const tenantId = cleanScopeText(record.tenant_id, record.tenantId);
+    const namespace = cleanScopeText(record.namespace, record.tenant_id, record.tenantId);
+    const title = cleanScopeText(record.title, record.name);
+
+    if (!kbId || !title || seen.has(kbId)) {
+      continue;
+    }
+
+    seen.add(kbId);
+    items.push({
+      kb_id: kbId,
+      kbId,
+      knowledgeBaseId: kbId,
+      expert_id: expertId || undefined,
+      expertId: expertId || undefined,
+      agentId: expertId || undefined,
+      tenant_id: tenantId || undefined,
+      tenantId: tenantId || undefined,
+      namespace: namespace || "default",
+      title,
+      name: title,
+      expertName: cleanText(record.expertName).slice(0, 120) || undefined,
+      category: cleanText(record.category).slice(0, 80) || undefined,
+      description: cleanText(record.description).slice(0, 240) || undefined,
+      active: record.active === true
+    });
+
+    if (items.length >= 8) {
+      break;
+    }
+  }
+
+  if (items.length === 0) {
+    return [];
+  }
+
+  const activeIndex = items.findIndex((item) => item.active);
+
+  return items.map((item, index) => ({
+    ...item,
+    active: activeIndex >= 0 ? index === activeIndex : index === 0
+  }));
+}
+
+function normalizeAskActiveKnowledgeBase(
+  selectedKnowledgeBases: SelectedKnowledgeBase[],
+  activeKnowledgeBase: AskChatRequest["activeKnowledgeBase"]
+) {
+  const selectedActive = selectedKnowledgeBases.find((item) => item.active) ?? selectedKnowledgeBases[0] ?? null;
+
+  if (!activeKnowledgeBase) {
+    return selectedActive;
+  }
+
+  const kbId = cleanScopeText(activeKnowledgeBase.kb_id, activeKnowledgeBase.kbId, activeKnowledgeBase.knowledgeBaseId);
+  const expertId = cleanScopeText(activeKnowledgeBase.expert_id, activeKnowledgeBase.expertId, activeKnowledgeBase.agentId);
+  const tenantId = cleanScopeText(activeKnowledgeBase.tenant_id, activeKnowledgeBase.tenantId);
+  const namespace = cleanScopeText(activeKnowledgeBase.namespace, activeKnowledgeBase.tenant_id, activeKnowledgeBase.tenantId);
+  const title = cleanScopeText(activeKnowledgeBase.title, activeKnowledgeBase.name);
+
+  if (!kbId || !title) {
+    return selectedActive;
+  }
+
+  return {
+    kb_id: kbId,
+    kbId,
+    knowledgeBaseId: kbId,
+    expert_id: expertId || undefined,
+    expertId: expertId || undefined,
+    agentId: expertId || undefined,
+    tenant_id: tenantId || undefined,
+    tenantId: tenantId || undefined,
+    namespace: namespace || "default",
+    title,
+    name: title,
+    expertName: cleanText(activeKnowledgeBase.expertName).slice(0, 120) || undefined,
+    category: cleanText(activeKnowledgeBase.category).slice(0, 80) || undefined,
+    description: cleanText(activeKnowledgeBase.description).slice(0, 240) || undefined,
+    active: true
+  };
+}
+
+export function rememberConversionFeedbackEvent(event: Partial<ConversionFeedbackEvent>) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const payload = {
+    intent: cleanText(event.intent) || "knowledge_user",
+    action_clicked: cleanText(event.action_clicked),
+    time_on_page: Math.max(0, Math.round(typeof event.time_on_page === "number" ? event.time_on_page : performance.now() / 1000)),
+    follow_up_question: event.follow_up_question === true,
+    conversion_signal: Math.max(0, Math.min(1, typeof event.conversion_signal === "number" ? event.conversion_signal : 0.45))
+  };
+  const sessionOutcome = classifySessionOutcome(payload);
+
+  try {
+    getSessionStorage()?.setItem(CONVERSION_FEEDBACK_STORAGE_KEY, JSON.stringify(payload));
+    rememberGlobalBehaviorSignal({
+      intent: payload.intent as UserBehaviorSignal["intent"],
+      action_clicked: payload.action_clicked ? payload.action_clicked as UserBehaviorSignal["action_clicked"] : null,
+      conversion_signal: payload.conversion_signal,
+      session_outcome: sessionOutcome,
+      time_to_action: payload.time_on_page,
+      time_on_page: payload.time_on_page,
+      follow_up_question: payload.follow_up_question,
+      source: "client_session_history"
+    });
+  } catch {
+    // Feedback is optional; failing to store it must not block chat.
+  }
 }
 
 function cleanMetadataUrl(value: unknown) {
@@ -144,8 +387,10 @@ export function getCachedChatAttachmentPreviewUrl(attachment: ChatAttachmentDraf
 
 export function getCurrentChatUserDisplayName(user: CurrentChatUser | null | undefined) {
   const displayName =
+    cleanText(user?.displayName) ||
     cleanText(user?.nickname) ||
     cleanText(user?.name) ||
+    cleanText(user?.username) ||
     cleanText(user?.phone) ||
     cleanText(user?.email) ||
     cleanText(user?.account);
@@ -178,8 +423,61 @@ export function getChatUserAvatarStorageKey(user: CurrentChatUser | null | undef
   return `chat-ui:user-avatar:${identity}`;
 }
 
+const loopbackAvatarHostPattern = /^(?:localhost|0\.0\.0\.0|127(?:\.\d{1,3}){3}|\[?::1\]?)$/i;
+
+export function normalizeCurrentChatUserAvatarUrl(url: string | null | undefined) {
+  const value = cleanText(url);
+
+  if (!value) {
+    return null;
+  }
+
+  if (!/^https?:\/\//i.test(value)) {
+    return value;
+  }
+
+  try {
+    const parsedUrl = new URL(value);
+
+    if (loopbackAvatarHostPattern.test(parsedUrl.hostname)) {
+      return `${parsedUrl.pathname}${parsedUrl.search}${parsedUrl.hash}`;
+    }
+  } catch {
+    return value;
+  }
+
+  return value;
+}
+
+function withAvatarCacheVersion(url: string | null, version: string | null) {
+  if (!url || !version || url.startsWith("data:") || url.startsWith("blob:")) {
+    return url;
+  }
+
+  let value = url;
+
+  if (url.startsWith("/") && typeof window !== "undefined") {
+    value = new URL(url, window.location.origin).toString();
+  }
+
+  const separator = value.includes("?") ? "&" : "?";
+
+  return `${value}${separator}avatar_v=${encodeURIComponent(version)}`;
+}
+
 export function getCurrentChatUserAvatarUrl(user: CurrentChatUser | null | undefined) {
-  return cleanText(user?.avatar_url) || cleanText(user?.avatarUrl) || cleanText(user?.avatar) || null;
+  const avatarUrl = (
+    cleanText(user?.avatar_url) ||
+    cleanText(user?.avatarUrl) ||
+    cleanText(user?.avatar) ||
+    cleanText(user?.profile_image) ||
+    cleanText(user?.profileImage) ||
+    cleanText(user?.image) ||
+    null
+  );
+  const avatarVersion = cleanText(user?.avatar_updated_at) || cleanText(user?.avatarUpdatedAt) || null;
+
+  return withAvatarCacheVersion(normalizeCurrentChatUserAvatarUrl(avatarUrl), avatarVersion);
 }
 
 export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
@@ -212,6 +510,15 @@ export function createAskAttachmentPayload(attachment: ChatAttachmentDraft) {
 
 export function createAskRequestPayload(input: AskChatRequest) {
   const text = input.text.trim();
+  const businessExecutionPrompt = cleanText(input.business_execution_prompt);
+  const autoSalesAgent = getAutoSalesAgentPayload(input.business_execution);
+  const conversionFeedback = input.conversion_feedback ?? getConversionFeedbackPayload(input.business_execution);
+  const selectedKnowledgeBases = normalizeAskSelectedKnowledgeBases(input.selectedKnowledgeBases);
+  const activeKnowledgeBase = normalizeAskActiveKnowledgeBase(selectedKnowledgeBases, input.activeKnowledgeBase);
+  const knowledgeBaseId = cleanScopeText(activeKnowledgeBase?.knowledgeBaseId, activeKnowledgeBase?.kbId, activeKnowledgeBase?.kb_id, input.knowledgeBaseId, input.kb_id);
+  const agentId = cleanScopeText(activeKnowledgeBase?.agentId, activeKnowledgeBase?.expertId, activeKnowledgeBase?.expert_id, input.agentId, input.expert_id);
+  const tenantId = cleanScopeText(activeKnowledgeBase?.tenantId, activeKnowledgeBase?.tenant_id, input.tenant_id);
+  const namespace = cleanScopeText(activeKnowledgeBase?.namespace, input.namespace, tenantId);
 
   return {
     question: text,
@@ -219,8 +526,31 @@ export function createAskRequestPayload(input: AskChatRequest) {
     attachments: input.attachments.map(createAskAttachmentPayload),
     conversation_id: input.conversation_id,
     mode: normalizeChatMode(input.mode),
+    ...(input.userMode ? { userMode: input.userMode } : {}),
+    ...(input.modeSource ? { modeSource: input.modeSource } : {}),
+    ...(input.modeLabel ? { modeLabel: input.modeLabel } : {}),
+    ...(input.modePrompt ? { modePrompt: input.modePrompt } : {}),
+    ...(typeof input.modeConfidence === "number" ? { modeConfidence: input.modeConfidence } : {}),
+    ...(input.modeReason ? { modeReason: input.modeReason } : {}),
+    ...(input.modeAlternatives ? { modeAlternatives: input.modeAlternatives } : {}),
+    ...(input.classifierVersion ? { classifierVersion: input.classifierVersion } : {}),
     enable_deep_thinking: input.enable_deep_thinking,
-    enable_web_search: input.enable_web_search
+    enable_web_search: input.enable_web_search,
+    ...(input.business_execution ? { business_execution: input.business_execution } : {}),
+    ...(businessExecutionPrompt ? { business_execution_prompt: businessExecutionPrompt } : {}),
+    ...(autoSalesAgent ? { auto_sales_agent: autoSalesAgent } : {}),
+    ...(conversionFeedback ? { conversion_feedback: conversionFeedback } : {}),
+    selectedKnowledgeBases,
+    activeKnowledgeBase,
+    kb_id: knowledgeBaseId || null,
+    kbId: knowledgeBaseId || null,
+    knowledgeBaseId: knowledgeBaseId || null,
+    expert_id: agentId || null,
+    expertId: agentId || null,
+    agentId: agentId || null,
+    tenant_id: tenantId || null,
+    tenantId: tenantId || null,
+    namespace: namespace || null
   };
 }
 
@@ -252,10 +582,25 @@ export function appendAskResult(
       id: result.message_id,
       role: "assistant",
       content: result.answer,
+      rawContent: result.rawAnswerBeforeFinalizer ?? result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
+      rawText: result.rawAnswerBeforeFinalizer ?? result.rawText ?? result.rawAnswer ?? null,
+      customerCopy: result.customerCopy ?? result.customer_answer ?? null,
       customer_answer: result.customer_answer ?? null,
+      finalized_answer: result.finalized_answer ?? null,
       provider_status: result.provider_status ?? null,
       sources: result.sources,
       confidence: result.confidence,
+      metadata: {
+        customerCopy: result.customerCopy ?? result.customer_answer ?? null,
+        nextStep: result.nextStep ?? null,
+        traceId: result.traceId ?? null,
+        rawAnswerBeforeFinalizer: result.rawAnswerBeforeFinalizer ?? null,
+        rawCustomerAnswerBeforeFinalizer: result.rawCustomerAnswerBeforeFinalizer ?? null,
+        rawContent: result.rawAnswerBeforeFinalizer ?? result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
+        rawText: result.rawAnswerBeforeFinalizer ?? result.rawText ?? result.rawAnswer ?? null,
+        runtimeOutput: result.runtime_output ?? null,
+        runtimeSources: result.runtime_sources ?? null
+      },
       created_at: new Date().toISOString()
     }
   ];

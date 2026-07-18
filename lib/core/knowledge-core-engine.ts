@@ -65,6 +65,8 @@ export interface CoreIngestInput {
   source?: CoreKnowledgeSource;
   sourceUrl?: string | null;
   agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   agentName?: string | null;
   autoSave?: boolean;
   requestId?: string;
@@ -74,6 +76,9 @@ export interface CoreQueryInput {
   question: string;
   topK?: number;
   semantic?: boolean;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   requestId?: string;
 }
 
@@ -375,6 +380,8 @@ export async function ingestKnowledgeCore(actor: KnowledgeCoreActor, input: Core
     sourceType: enterpriseSourceType,
     sourceUrl: input.sourceUrl,
     agentId: input.agentId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    namespace: input.namespace,
     agentName: input.agentName,
     structured
   });
@@ -398,7 +405,10 @@ export async function ingestKnowledgeCore(actor: KnowledgeCoreActor, input: Core
     jobId: log.job.id,
     structured,
     originalInput: rawInput,
-    sourceUrl: input.sourceUrl
+    sourceUrl: input.sourceUrl,
+    agentId: input.agentId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    namespace: input.namespace
   });
   const embedding = saved.knowledgeItem
     ? await indexKnowledgeItemEmbedding({
@@ -466,6 +476,9 @@ export async function queryKnowledgeCore(actor: KnowledgeCoreActor, input: CoreQ
       userId: actor.id,
       query: question,
       topK,
+      agentId: input.agentId,
+      knowledgeBaseId: input.knowledgeBaseId,
+      namespace: input.namespace,
       requestId: input.requestId
     });
   const retrieval = await retrieveKnowledge({
@@ -475,6 +488,9 @@ export async function queryKnowledgeCore(actor: KnowledgeCoreActor, input: CoreQ
     minResults: 3,
     userId: actor.id,
     tenantId: tenant.tenantId,
+    agentId: input.agentId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    namespace: input.namespace,
     requestId: input.requestId
   });
   const semanticSources = semantic?.results.map(semanticResultToSource) ?? [];
@@ -496,6 +512,9 @@ export async function queryKnowledgeCore(actor: KnowledgeCoreActor, input: CoreQ
         userId: actor.id,
         provider,
         model,
+        agentId: input.agentId,
+        knowledgeBaseId: input.knowledgeBaseId,
+        namespace: input.namespace,
         answerMode: retrieval.answerMode,
         confidence: retrieval.confidence,
         intentLabel: retrieval.intent.label,

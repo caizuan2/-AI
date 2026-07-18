@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { estimateTokenCount } from "@/lib/logger";
 import { ValidationError } from "@/lib/errors";
 import type { AppRole } from "@/lib/rbac/roles";
+import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 
 export type AdminKbIngestSourceType = "text" | "chat" | "file";
 export type AdminKbJobStatus =
@@ -80,11 +81,13 @@ const CHUNK_TARGET_CHARS = 1_000;
 const CHUNK_OVERLAP_CHARS = 150;
 const PRIVATE_STORAGE_DIR = process.env.KB_FILE_STORAGE_DIR?.trim() || path.join(process.cwd(), "storage", "knowledge-files");
 
-const allowedFileTypes: Record<string, { mimeTypes: string[]; processor: "text" | "pending" }> = {
+type AdminKbFileProcessor = "text" | "pdf" | "pending";
+
+const allowedFileTypes: Record<string, { mimeTypes: string[]; processor: AdminKbFileProcessor }> = {
   ".txt": { mimeTypes: ["text/plain", "application/octet-stream"], processor: "text" },
   ".md": { mimeTypes: ["text/markdown", "text/plain", "application/octet-stream"], processor: "text" },
   ".markdown": { mimeTypes: ["text/markdown", "text/plain", "application/octet-stream"], processor: "text" },
-  ".pdf": { mimeTypes: ["application/pdf"], processor: "pending" },
+  ".pdf": { mimeTypes: ["application/pdf", "application/octet-stream"], processor: "pdf" },
   ".doc": { mimeTypes: ["application/msword", "application/octet-stream"], processor: "pending" },
   ".docx": { mimeTypes: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/octet-stream"], processor: "pending" },
   ".xls": { mimeTypes: ["application/vnd.ms-excel", "application/octet-stream"], processor: "pending" },
@@ -141,6 +144,12 @@ function normalizeMetadata(value: unknown): Prisma.InputJsonValue | undefined {
   }
 
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+function metadataRecord(value: Prisma.InputJsonValue | undefined): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
 }
 
 export function cleanIngestText(content: string) {
@@ -292,7 +301,7 @@ function buildKnowledgeCreateData(input: {
     completenessScore: 3,
     usefulnessScore: 3,
     confidenceScore: 3,
-    sourceType: input.sourceType,
+    sourceType: normalizeKnowledgeSourceType(input.sourceType),
     sourceId: input.sourceId ?? null,
     sourceTitle: input.sourceTitle ?? null,
     status: "active",
@@ -330,9 +339,12 @@ export async function createAdminKbTextIngestion(
   const category = trimString(input.categoryId) || "未分类";
   const title = trimString(input.title) || inferTitle(content);
   const metadata = normalizeMetadata(input.metadata);
+  const metadataScope = metadataRecord(metadata);
   const sourceType = input.sourceType ?? "text";
+  const knowledgeSourceType = normalizeKnowledgeSourceType(sourceType);
   const chunks = splitAdminKbChunks(content, {
-    sourceType,
+    ...metadataScope,
+    sourceType: knowledgeSourceType,
     title,
     category,
     tags,
@@ -366,7 +378,7 @@ export async function createAdminKbTextIngestion(
         content,
         category,
         tags,
-        sourceType: sourceType === "chat" ? "admin_chat" : "admin_text",
+        sourceType: knowledgeSourceType,
         sourceId: String(job.id),
         metadata,
         chunks
@@ -478,8 +490,158 @@ async function saveAdminKbUpload(fileName: string, bytes: Uint8Array) {
   return storagePath;
 }
 
-function decodeTextFile(bytes: Uint8Array) {
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+type DecodedAdminKbText = {
+  text: string;
+  encoding: string;
+  warnings: string[];
+};
+
+type ExtractedAdminKbFileText = {
+  content: string;
+  metadata: Record<string, unknown>;
+};
+
+function decodeWithEncoding(bytes: Uint8Array, encoding: string) {
+  try {
+    return new TextDecoder(encoding, { fatal: false }).decode(bytes);
+  } catch {
+    return "";
+  }
+}
+
+function scoreDecodedText(text: string) {
+  if (!text) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+
+  const replacementCount = (text.match(/\uFFFD/g) ?? []).length;
+  const suspiciousCount = (text.match(/[ÃÂ锟斤拷]/g) ?? []).length;
+  const controlCount = (text.match(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g) ?? []).length;
+
+  return replacementCount * 20 + suspiciousCount * 8 + controlCount * 4;
+}
+
+function hasUtf8Bom(bytes: Uint8Array) {
+  return bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+}
+
+function hasUtf16LeBom(bytes: Uint8Array) {
+  return bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe;
+}
+
+function hasUtf16BeBom(bytes: Uint8Array) {
+  return bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff;
+}
+
+function looksLikeUtf16Le(bytes: Uint8Array) {
+  if (bytes.length < 8) {
+    return false;
+  }
+
+  let nullOddBytes = 0;
+  const sampleLength = Math.min(bytes.length, 200);
+
+  for (let index = 1; index < sampleLength; index += 2) {
+    if (bytes[index] === 0) {
+      nullOddBytes += 1;
+    }
+  }
+
+  return nullOddBytes / Math.max(1, Math.floor(sampleLength / 2)) > 0.35;
+}
+
+export function decodeAdminKbTextFile(bytes: Uint8Array): DecodedAdminKbText {
+  const warnings: string[] = [];
+
+  if (hasUtf8Bom(bytes)) {
+    return {
+      text: decodeWithEncoding(bytes.slice(3), "utf-8"),
+      encoding: "utf-8-bom",
+      warnings
+    };
+  }
+
+  if (hasUtf16LeBom(bytes)) {
+    return {
+      text: decodeWithEncoding(bytes.slice(2), "utf-16le"),
+      encoding: "utf-16le-bom",
+      warnings
+    };
+  }
+
+  if (hasUtf16BeBom(bytes)) {
+    return {
+      text: decodeWithEncoding(bytes.slice(2), "utf-16be"),
+      encoding: "utf-16be-bom",
+      warnings
+    };
+  }
+
+  const candidates = [
+    { encoding: "utf-8", text: decodeWithEncoding(bytes, "utf-8") },
+    { encoding: "gb18030", text: decodeWithEncoding(bytes, "gb18030") },
+    ...(looksLikeUtf16Le(bytes) ? [{ encoding: "utf-16le", text: decodeWithEncoding(bytes, "utf-16le") }] : [])
+  ].filter((candidate) => candidate.text);
+  const best = candidates.reduce((currentBest, candidate) => {
+    return scoreDecodedText(candidate.text) < scoreDecodedText(currentBest.text) ? candidate : currentBest;
+  }, candidates[0] ?? { encoding: "utf-8", text: "" });
+
+  if (best.encoding !== "utf-8") {
+    warnings.push(`TXT 自动按 ${best.encoding} 解码，已避免中文乱码。`);
+  }
+
+  return {
+    text: best.text,
+    encoding: best.encoding,
+    warnings
+  };
+}
+
+async function extractPdfText(bytes: Uint8Array) {
+  const pdfParse = (await import("pdf-parse")).default;
+  const result = await pdfParse(Buffer.from(bytes));
+
+  return result.text;
+}
+
+async function extractAdminKbFileText(
+  input: AdminKbFileInput,
+  validation: ReturnType<typeof validateAdminKbUpload>
+): Promise<ExtractedAdminKbFileText | null> {
+  if (validation.processor === "text") {
+    const decoded = decodeAdminKbTextFile(input.bytes);
+
+    return {
+      content: cleanIngestText(decoded.text),
+      metadata: {
+        textEncoding: decoded.encoding,
+        decodeWarnings: decoded.warnings
+      }
+    };
+  }
+
+  if (validation.processor !== "pdf") {
+    return null;
+  }
+
+  try {
+    const content = cleanIngestText(await extractPdfText(input.bytes));
+
+    if (!content || content.length < 20) {
+      return null;
+    }
+
+    return {
+      content,
+      metadata: {
+        extractedBy: "pdf-parse",
+        processorStatus: "text",
+        textEncoding: "pdf-text-layer"
+      }
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function createAdminKbFileIngestion(
@@ -492,9 +654,12 @@ export async function createAdminKbFileIngestion(
   const category = trimString(input.categoryId) || "未分类";
   const originalName = sanitizeOriginalFileName(input.originalName);
   const metadata = normalizeMetadata(input.metadata);
+  const metadataScope = metadataRecord(metadata);
   const storagePath = await saveAdminKbUpload(originalName, input.bytes);
 
-  if (validation.processor !== "text") {
+  const extractedText = await extractAdminKbFileText(input, validation);
+
+  if (!extractedText) {
     return db.$transaction(async (tx) => {
       const file = await tx.knowledgeFile.create({
         data: {
@@ -509,7 +674,11 @@ export async function createAdminKbFileIngestion(
           metadata: {
             ...(metadata && typeof metadata === "object" ? metadata : {}),
             mimeType: validation.mimeType,
-            processorStatus: "pending_processor"
+            processorStatus: "pending_processor",
+            ...(validation.processor === "pdf" ? {
+              requiresOcr: true,
+              processorNote: "pdf_text_layer_unavailable"
+            } : {})
           }
         }
       });
@@ -524,7 +693,11 @@ export async function createAdminKbFileIngestion(
           metadata: {
             processorStatus: "pending_processor",
             extension: validation.extension,
-            mimeType: validation.mimeType
+            mimeType: validation.mimeType,
+            ...(validation.processor === "pdf" ? {
+              requiresOcr: true,
+              processorNote: "pdf_text_layer_unavailable"
+            } : {})
           }
         }
       });
@@ -540,7 +713,8 @@ export async function createAdminKbFileIngestion(
             jobId: String(job.id),
             extension: validation.extension,
             fileSize: input.size,
-            processorStatus: "pending_processor"
+            processorStatus: "pending_processor",
+            ...(validation.processor === "pdf" ? { requiresOcr: true } : {})
           }
         }
       });
@@ -553,19 +727,23 @@ export async function createAdminKbFileIngestion(
     });
   }
 
-  const content = cleanIngestText(decodeTextFile(input.bytes));
+  const content = extractedText.content;
 
   if (!content) {
     throw new ValidationError("文件内容为空，无法入库。");
   }
 
   const title = originalName;
+  const knowledgeSourceType = normalizeKnowledgeSourceType("file");
   const chunks = splitAdminKbChunks(content, {
-    sourceType: "file",
+    ...metadataScope,
+    sourceType: knowledgeSourceType,
     title,
     category,
     tags,
-    contentHash: buildContentHash(content)
+    contentHash: buildContentHash(content),
+    fileType: validation.extension.slice(1),
+    ...extractedText.metadata
   });
 
   return db.$transaction(async (tx) => {
@@ -582,7 +760,8 @@ export async function createAdminKbFileIngestion(
         metadata: {
           ...(metadata && typeof metadata === "object" ? metadata : {}),
           mimeType: validation.mimeType,
-          processorStatus: "text"
+          processorStatus: "text",
+          ...extractedText.metadata
         }
       }
     });
@@ -596,7 +775,8 @@ export async function createAdminKbFileIngestion(
         fileId: String(file.id),
         metadata: {
           extension: validation.extension,
-          mimeType: validation.mimeType
+          mimeType: validation.mimeType,
+          ...extractedText.metadata
         }
       }
     });
@@ -607,7 +787,7 @@ export async function createAdminKbFileIngestion(
         content,
         category,
         tags,
-        sourceType: "admin_file",
+        sourceType: knowledgeSourceType,
         sourceId: String(file.id),
         sourceTitle: originalName,
         metadata,
@@ -649,7 +829,8 @@ export async function createAdminKbFileIngestion(
           knowledgeItemId: String(knowledgeItem.id),
           extension: validation.extension,
           fileSize: input.size,
-          chunkCount: chunks.length
+          chunkCount: chunks.length,
+          ...extractedText.metadata
         }
       }
     });

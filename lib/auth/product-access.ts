@@ -2,8 +2,8 @@ export type ProductAccess = "user_app" | "ingest_admin" | "super_admin" | "publi
 
 export const PRODUCT_ACCESS_HEADER = "x-aikb-product";
 
-const userAppPagePrefixes = ["/chat-ui", "/user"];
-const userAppApiPrefixes = ["/api/auth", "/api/user", "/api/chat", "/api/ai/chat"];
+const userAppPagePrefixes = ["/app", "/chat-ui", "/user", "/unlock"];
+const userAppApiPrefixes = ["/api/auth", "/api/user", "/api/chat"];
 const ingestPagePrefixes = ["/ingest", "/admin-ingest"];
 const ingestApiPrefixes = ["/api/ingest", "/api/admin/ingest", "/api/admin/kb/ingest", "/api/core/ingest"];
 const superAdminPagePrefixes = ["/super-admin"];
@@ -60,11 +60,11 @@ export function roleCanAccessProduct(product: ProductAccess, role: string | null
   }
 
   if (product === "user_app") {
-    return role === "user";
+    return role === "user" || role === "ingest_admin" || role === "kb_admin" || role === "enterprise_admin" || role === "super_admin";
   }
 
   if (product === "ingest_admin") {
-    return role === "ingest_admin" || role === "kb_admin";
+    return role === "ingest_admin" || role === "kb_admin" || role === "super_admin";
   }
 
   if (product === "super_admin") {

@@ -1,36 +1,88 @@
 "use client";
 
 import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import {
+  getEntryPathForRole,
+  getEntryRoleFromRoles,
+  getProductFromPath,
+  isPathAllowedForEntryRole,
+  type EntryRole
+} from "@/lib/auth/product";
 
 interface LoginResponse {
   success: true;
   licenseActivated: boolean;
   isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+  entryPath?: string;
 }
 
 interface MeResponse {
   user: {
     licenseActivated: boolean;
     isSuperAdmin?: boolean;
+    role?: EntryRole;
+    roles?: string[];
+    entryPath?: string;
   };
 }
 
-function getPostLoginPath(input: { nextPath?: string; licenseActivated?: boolean; isSuperAdmin?: boolean }) {
-  if (input.nextPath) {
+function getPostLoginPath(input: {
+  nextPath?: string;
+  licenseActivated?: boolean;
+  isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+  entryPath?: string;
+}) {
+  const role = input.role ?? getEntryRoleFromRoles({
+    roles: input.roles,
+    isSuperAdmin: input.isSuperAdmin
+  });
+  const normalizedNextPath = input.nextPath?.split("?")[0] || "";
+  const nextProduct = normalizedNextPath ? getProductFromPath(normalizedNextPath) : "public";
+
+  if (
+    input.nextPath &&
+    !(normalizedNextPath === "/unlock" && input.licenseActivated) &&
+    isPathAllowedForEntryRole(input.nextPath, role)
+  ) {
     return input.nextPath;
   }
 
-  if (input.isSuperAdmin) {
-    return "/super-admin";
+  if (role !== "user" && (!input.nextPath || nextProduct === "user_app")) {
+    return "/no-access";
   }
 
-  return input.licenseActivated ? "/ingest" : "/unlock";
+  if (input.entryPath && isPathAllowedForEntryRole(input.entryPath, role)) {
+    return input.entryPath;
+  }
+
+  return getEntryPathForRole(role, Boolean(input.licenseActivated));
+}
+
+function shouldStayOnUserLogin(input: {
+  nextPath?: string;
+  isSuperAdmin?: boolean;
+  role?: EntryRole;
+  roles?: string[];
+}) {
+  const role = input.role ?? getEntryRoleFromRoles({
+    roles: input.roles,
+    isSuperAdmin: input.isSuperAdmin
+  });
+  const normalizedNextPath = input.nextPath?.split("?")[0] || "";
+  const nextProduct = normalizedNextPath ? getProductFromPath(normalizedNextPath) : "user_app";
+
+  return role !== "user" && nextProduct === "user_app";
 }
 
 function LoginForm() {
@@ -39,8 +91,9 @@ function LoginForm() {
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [checkingSession, setCheckingSession] = useState(true);
+  const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
+  const activated = searchParams.get("activated") === "1";
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -52,6 +105,10 @@ function LoginForm() {
     const pathname = candidate.split("?")[0] || candidate;
 
     if (pathname === "/login" || pathname.startsWith("/login/") || pathname === "/register" || pathname.startsWith("/register/")) {
+      return "";
+    }
+
+    if (pathname === "/api" || pathname.startsWith("/api/")) {
       return "";
     }
 
@@ -77,11 +134,30 @@ function LoginForm() {
             data?: MeResponse;
           } | null;
           const nextPath = getSafeNextPath();
+          const currentUser = payload?.data?.user;
+
+          if (!currentUser) {
+            setCheckingSession(false);
+            return;
+          }
+
+          if (shouldStayOnUserLogin({
+            nextPath,
+            isSuperAdmin: currentUser.isSuperAdmin,
+            role: currentUser.role,
+            roles: currentUser.roles
+          })) {
+            setCheckingSession(false);
+            return;
+          }
 
           router.replace(getPostLoginPath({
             nextPath,
-            licenseActivated: payload?.data?.user.licenseActivated,
-            isSuperAdmin: payload?.data?.user.isSuperAdmin
+            licenseActivated: currentUser.licenseActivated,
+            isSuperAdmin: currentUser.isSuperAdmin,
+            role: currentUser.role,
+            roles: currentUser.roles,
+            entryPath: currentUser.entryPath
           }));
           return;
         }
@@ -129,7 +205,10 @@ function LoginForm() {
       router.replace(getPostLoginPath({
         nextPath,
         licenseActivated: data.licenseActivated,
-        isSuperAdmin: data.isSuperAdmin
+        isSuperAdmin: data.isSuperAdmin,
+        role: data.role,
+        roles: data.roles,
+        entryPath: data.entryPath
       }));
       router.refresh();
     } catch (caughtError) {
@@ -149,6 +228,12 @@ function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit} className="mt-8 space-y-4">
+      {activated ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          激活成功，请重新登录进入小董AI用户端。
+        </div>
+      ) : null}
+
       <label className="block">
         <span className="text-sm font-medium text-ink">手机号</span>
         <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
@@ -160,7 +245,7 @@ function LoginForm() {
             inputMode="tel"
             autoComplete="tel"
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder="请输入手机号，例如 13352833702"
+            placeholder="请输入手机号"
           />
         </span>
       </label>
@@ -208,25 +293,32 @@ export default function LoginPage() {
       <section className="relative hidden overflow-hidden bg-ink px-10 py-10 text-white lg:flex lg:flex-col">
         <div className="login-grid absolute inset-0 opacity-[0.08]" />
         <div className="relative z-10 flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-xl bg-white text-ink">
-            <Database className="h-5 w-5" />
+          <span className="relative block h-11 w-11 overflow-hidden rounded-xl bg-white ring-1 ring-white/30">
+            <Image
+              src="/brand/xiaodong-ai-logo.png"
+              alt="小董AI Logo"
+              fill
+              sizes="44px"
+              className="object-cover"
+              priority
+            />
           </span>
           <div>
-            <p className="text-base font-semibold">AI 知识库</p>
-            <p className="text-xs text-slate-300">Knowledge Ops Console</p>
+            <p className="text-base font-semibold">小董AI</p>
+            <p className="text-xs text-slate-300">小董AI大脑🧠 + AI思考</p>
           </div>
         </div>
 
         <div className="relative z-10 mt-auto max-w-2xl pb-8">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1.5 text-sm text-teal-100 ring-1 ring-white/15">
             <Sparkles className="h-4 w-4" />
-            License Gate
+            GPT OS 用户端
           </div>
           <h1 className="text-5xl font-semibold leading-tight">
-            用手机号和密码进入你的 AI 知识库。
+            小董AI，帮你处理客户问题
           </h1>
           <p className="mt-5 max-w-xl text-base leading-7 text-slate-300">
-            登录后输入卡密激活，即可使用投喂、检索和问答功能。
+            基于投喂知识库 + AI 思考，输出回复话术、解决步骤和下一步建议。
           </p>
         </div>
       </section>
@@ -234,16 +326,25 @@ export default function LoginPage() {
       <section className="flex items-center justify-center px-4 py-10 sm:px-6">
         <div className="w-full max-w-md rounded-lg border border-line bg-white p-6 shadow-soft sm:p-8">
           <div className="mb-8 lg:hidden">
-            <span className="grid h-11 w-11 place-items-center rounded-xl bg-ink text-white">
-              <Database className="h-5 w-5" />
+            <span className="relative block h-11 w-11 overflow-hidden rounded-xl bg-white ring-1 ring-slate-200">
+              <Image
+                src="/brand/xiaodong-ai-logo.png"
+                alt="小董AI Logo"
+                fill
+                sizes="44px"
+                className="object-cover"
+                priority
+              />
             </span>
-            <h1 className="mt-4 text-2xl font-semibold text-ink">AI 知识库</h1>
+            <h1 className="mt-4 text-2xl font-semibold text-ink">小董AI</h1>
           </div>
 
           <div>
             <p className="text-sm font-medium text-teal-700">欢迎回来</p>
-            <h2 className="mt-2 text-3xl font-semibold text-ink">手机号登录</h2>
-            <p className="mt-2 text-sm leading-6 text-muted">使用手机号和密码继续。</p>
+            <h2 className="mt-2 text-3xl font-semibold text-ink">登录小董AI</h2>
+            <p className="mt-2 text-sm leading-6 text-muted">
+              用手机号登录，进入你的AI沟通助手。上传客户对话、输入沟通问题，小董AI大脑🧠生成可执行回复方案。
+            </p>
           </div>
 
           <Suspense fallback={<div className="mt-8 text-sm text-muted">正在加载登录表单...</div>}>

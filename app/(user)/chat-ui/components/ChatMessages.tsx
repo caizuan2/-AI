@@ -1,12 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { Check, Copy, FileText, Image as ImageIcon, Loader2, Pencil, User } from "lucide-react";
+import { Check, Copy, FileText, Image as ImageIcon, Pencil, User, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CustomerAnswerCard } from "./CustomerAnswerCard";
+import { sanitizeVisibleText } from "@/lib/ai-chat/visible-output-sanitizer";
+import { ChatMessageRenderer } from "@/app/(user)/app/components/chat/message-renderer";
+import { submitChatBehaviorFeedback, type ChatBehaviorFeedbackInput } from "../api";
 import { EmptyState } from "./EmptyState";
-import { RichAnswerView } from "./RichAnswerView";
-import { SourceList } from "./SourceList";
+import { safeCopyTextDetailed } from "../lib/clipboard";
 import {
   getCachedChatAttachmentPreviewUrl,
   getCurrentChatUserAvatarUrl,
@@ -21,7 +22,9 @@ interface ChatMessagesProps {
   onModeChange: (mode: ChatMode) => void;
   onEditUserMessage?: (content: string) => void;
   currentUser?: CurrentChatUser | null;
+  userName?: string | null;
   userAvatarUrl?: string | null;
+  focusMessageId?: string | null;
 }
 
 function formatMessageTime(value: string) {
@@ -49,15 +52,23 @@ function formatAttachmentSize(size?: number) {
   return `${Math.max(1, Math.round(size / 1024))}KB`;
 }
 
-function shouldShowDebugSources() {
-  return process.env.NEXT_PUBLIC_CHAT_UI_DEBUG_SOURCES === "true";
-}
-
 type UserAttachment = NonNullable<ChatMessageView["attachments"]>[number];
 
 function getStringValue(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
+
+function getRecordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function getBooleanValue(value: unknown) {
+  return typeof value === "boolean" ? value : false;
+}
+
+const localPublicAttachmentFileNamePattern = /^[A-Za-z0-9_-]+-\d{10,}-[A-Fa-f0-9-]+\.[A-Za-z0-9]+$/;
 
 function looksLikeImageUrl(value: string) {
   const normalizedValue = value.trim().toLowerCase();
@@ -69,10 +80,22 @@ function looksLikeImageUrl(value: string) {
   );
 }
 
+function getUrlPath(value: string) {
+  if (/^https?:\/\//i.test(value)) {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return "";
+    }
+  }
+
+  return value.split("?")[0]?.split("#")[0] ?? "";
+}
+
 function normalizeAttachmentImageUrl(value: unknown) {
   const text = getStringValue(value).replace(/\\/g, "/");
 
-  if (!text || text.startsWith("data:") && !text.startsWith("data:image/")) {
+  if (!text || (text.startsWith("data:") && !text.startsWith("data:image/"))) {
     return "";
   }
 
@@ -98,43 +121,127 @@ function normalizeAttachmentImageUrl(value: unknown) {
     return fileName ? `/uploads/${fileName}` : text;
   }
 
-  return text;
+  return "";
 }
 
-function getAttachmentPreviewUrl(attachment: UserAttachment) {
-  const metadata = attachment.metadata ?? {};
-  const directUrl = (
-    normalizeAttachmentImageUrl(attachment.previewUrl) ||
-    normalizeAttachmentImageUrl(attachment.url) ||
-    normalizeAttachmentImageUrl(attachment.publicUrl) ||
-    normalizeAttachmentImageUrl(attachment.fileUrl) ||
-    normalizeAttachmentImageUrl(attachment.downloadUrl) ||
-    normalizeAttachmentImageUrl(attachment.src) ||
-    normalizeAttachmentImageUrl(attachment.dataUrl) ||
-    normalizeAttachmentImageUrl(attachment.path) ||
-    normalizeAttachmentImageUrl(attachment.storagePath) ||
-    normalizeAttachmentImageUrl(metadata.url) ||
-    normalizeAttachmentImageUrl(metadata.publicUrl) ||
-    normalizeAttachmentImageUrl(metadata.fileUrl) ||
-    normalizeAttachmentImageUrl(metadata.downloadUrl) ||
-    normalizeAttachmentImageUrl(metadata.previewUrl) ||
-    normalizeAttachmentImageUrl(metadata.src) ||
-    normalizeAttachmentImageUrl(metadata.dataUrl) ||
-    normalizeAttachmentImageUrl(metadata.path) ||
-    normalizeAttachmentImageUrl(metadata.storagePath)
-  );
+function normalizeLocalPublicAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
 
-  return directUrl || getCachedChatAttachmentPreviewUrl(attachment);
+  if (!text || text.startsWith("blob:") || text.startsWith("data:")) {
+    return "";
+  }
+
+  const path = getUrlPath(text);
+  const fileName = path.match(/(?:^|\/)uploads\/chat-attachments\/([^/?#]+)$/i)?.[1];
+
+  if (fileName) {
+    return `/api/ai/chat/attachments/download?key=${encodeURIComponent(fileName)}`;
+  }
+
+  return localPublicAttachmentFileNamePattern.test(text)
+    ? `/api/ai/chat/attachments/download?key=${encodeURIComponent(text)}`
+    : "";
+}
+
+function normalizeAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
+
+  if (
+    !text ||
+    text.startsWith("http://") ||
+    text.startsWith("https://") ||
+    text.startsWith("blob:") ||
+    text.startsWith("data:") ||
+    text.startsWith("/")
+  ) {
+    return "";
+  }
+
+  return `/api/ai/chat/attachments/download?key=${encodeURIComponent(text)}`;
+}
+
+function normalizeBlobAttachmentDownloadUrl(value: unknown) {
+  const text = getStringValue(value).replace(/\\/g, "/");
+
+  return text.includes("/") ? normalizeAttachmentDownloadUrl(text) : "";
+}
+
+function appendUnique(values: string[], value: string) {
+  if (value && !values.includes(value)) {
+    values.push(value);
+  }
+}
+
+export function getAttachmentPreviewUrls(attachment: UserAttachment) {
+  const metadata = getRecordValue(attachment.metadata);
+  const record = getRecordValue(attachment);
+  const urls: string[] = [];
+  const pushImageUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentImageUrl(value));
+  const pushDownloadUrl = (value: unknown) => appendUnique(urls, normalizeAttachmentDownloadUrl(value));
+  const pushLocalPublicDownloadUrl = (value: unknown) => appendUnique(urls, normalizeLocalPublicAttachmentDownloadUrl(value));
+
+  [
+    attachment.previewUrl,
+    attachment.url,
+    attachment.publicUrl,
+    attachment.fileUrl,
+    attachment.downloadUrl,
+    attachment.src,
+    attachment.dataUrl,
+    attachment.path,
+    metadata.url,
+    metadata.publicUrl,
+    metadata.fileUrl,
+    metadata.downloadUrl,
+    metadata.previewUrl,
+    metadata.src,
+    metadata.dataUrl,
+    metadata.path
+  ].forEach((value) => {
+    pushImageUrl(value);
+    pushLocalPublicDownloadUrl(value);
+  });
+
+  [
+    attachment.storagePath,
+    record.storageKey,
+    record.blobKey,
+    record.key,
+    metadata.storagePath,
+    metadata.storageKey,
+    metadata.blobKey,
+    metadata.key
+  ].forEach((value) => {
+    pushImageUrl(value);
+    pushDownloadUrl(value);
+    pushLocalPublicDownloadUrl(value);
+  });
+
+  [
+    attachment.reference_id,
+    record.referenceId,
+    record.reference_id,
+    metadata.referenceId,
+    metadata.reference_id
+  ].forEach((value) => {
+    appendUnique(urls, normalizeBlobAttachmentDownloadUrl(value));
+    pushLocalPublicDownloadUrl(value);
+  });
+
+  appendUnique(urls, getCachedChatAttachmentPreviewUrl(attachment) || "");
+
+  return urls;
 }
 
 export function getUserMessageCopyText(message: Pick<ChatMessageView, "content" | "attachments">) {
-  const content = message.content.trim();
+  const content = sanitizeVisibleText(message.content.trim());
 
   if (content) {
     return content;
   }
 
   const names = normalizeMessageAttachments(message.attachments)
+    .filter((attachment) => !isImageAttachment(attachment))
     .map((attachment, index) => attachment.name || attachment.filename || `附件 ${index + 1}`)
     .filter(Boolean);
 
@@ -145,13 +252,15 @@ export async function copyUserMessageToClipboard(content: string, clipboard: Pic
   await clipboard.writeText(content);
 }
 
-function looksLikeImageFileName(value: string) {
-  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(value.trim().split("?")[0]?.split("#")[0] ?? "");
+function looksLikeImageFileName(value: unknown) {
+  return /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(getStringValue(value).split("?")[0]?.split("#")[0] ?? "");
 }
 
 function isImageAttachment(attachment: UserAttachment) {
   const mimeType = attachment.mimeType || attachment.mime_type || "";
-  const previewUrl = getAttachmentPreviewUrl(attachment);
+  const metadata = getRecordValue(attachment.metadata);
+  const record = getRecordValue(attachment);
+  const previewUrls = getAttachmentPreviewUrls(attachment);
   const fileName = getStringValue(attachment.name) || getStringValue(attachment.filename);
 
   return (
@@ -159,48 +268,143 @@ function isImageAttachment(attachment: UserAttachment) {
     attachment.type === "gallery_photo" ||
     attachment.type === "camera_photo" ||
     mimeType.startsWith("image/") ||
-    looksLikeImageUrl(previewUrl) ||
-    looksLikeImageFileName(fileName)
+    previewUrls.some(looksLikeImageUrl) ||
+    looksLikeImageFileName(fileName) ||
+    looksLikeImageFileName(attachment.storagePath) ||
+    looksLikeImageFileName(record.storageKey) ||
+    looksLikeImageFileName(record.blobKey) ||
+    looksLikeImageFileName(record.key) ||
+    looksLikeImageFileName(metadata.storagePath) ||
+    looksLikeImageFileName(metadata.storageKey) ||
+    looksLikeImageFileName(metadata.blobKey) ||
+    looksLikeImageFileName(metadata.key)
   );
 }
 
 function UserImageAttachment({
-  name,
-  previewUrl
+  index,
+  previewUrls,
+  compact
 }: {
-  name: string;
-  previewUrl: string;
+  index: number;
+  previewUrls: string[];
+  compact: boolean;
 }) {
-  const [failed, setFailed] = React.useState(false);
+  const [activeIndex, setActiveIndex] = React.useState(0);
+  const [failed, setFailed] = React.useState(previewUrls.length === 0);
+  const [previewOpen, setPreviewOpen] = React.useState(false);
+  const fallbackKey = previewUrls.join("\n");
+  const previewUrl = previewUrls[activeIndex] ?? "";
 
-  if (failed) {
+  React.useEffect(() => {
+    setActiveIndex(0);
+    setFailed(previewUrls.length === 0);
+    setPreviewOpen(false);
+  }, [fallbackKey, previewUrls.length]);
+
+  React.useEffect(() => {
+    if (!previewOpen) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPreviewOpen(false);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewOpen]);
+
+  function handleImageError() {
+    if (activeIndex + 1 < previewUrls.length) {
+      setActiveIndex((index) => index + 1);
+      return;
+    }
+
+    setFailed(true);
+    setPreviewOpen(false);
+  }
+
+  if (failed || !previewUrl) {
     return (
-      <div className="max-w-[260px] rounded-2xl border border-slate-200 bg-slate-100 px-3 py-3 text-xs font-medium text-slate-500">
-        图片加载失败
-        <span className="mt-1 block truncate text-slate-400">{name}</span>
+      <div
+        className={cn(
+          "flex items-center justify-center rounded-2xl border border-white/40 bg-white/90 px-3 py-3 text-center text-xs font-medium text-slate-500 shadow-sm",
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+        )}
+      >
+        <span>
+          <ImageIcon className="mx-auto mb-1 h-4 w-4" aria-hidden="true" />
+          图片预览不可用
+        </span>
       </div>
     );
   }
 
   return (
-    <a
-      href={previewUrl}
-      target="_blank"
-      rel="noreferrer"
-      className="block max-w-[260px] overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
-      aria-label={`打开图片预览 ${name}`}
-    >
-      <span className="block max-h-[260px] overflow-hidden bg-slate-100">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={previewUrl}
-          alt={name}
-          className="max-h-[260px] w-full object-cover"
-          onError={() => setFailed(true)}
-        />
-      </span>
-      <span className="block truncate px-2.5 py-1.5">{name}</span>
-    </a>
+    <>
+      <button
+        type="button"
+        onClick={() => setPreviewOpen(true)}
+        className={cn(
+          "block overflow-hidden rounded-2xl border border-white/40 bg-white/90 text-left text-xs font-medium text-slate-500 shadow-sm transition hover:border-white hover:bg-white",
+          compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+        )}
+        aria-label={`打开图片预览 ${index + 1}`}
+        data-chat-image-thumbnail="true"
+        data-fallback-count={previewUrls.length}
+      >
+        <span
+          className={cn(
+            "block overflow-hidden bg-slate-100",
+            compact ? "h-full w-full" : "max-h-[260px] max-w-[min(220px,62vw)] sm:max-w-[260px]"
+          )}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt=""
+            className={cn(
+              compact ? "h-full w-full object-cover" : "max-h-[260px] max-w-[min(220px,62vw)] object-contain sm:max-w-[260px]"
+            )}
+            onError={handleImageError}
+          />
+        </span>
+      </button>
+      {previewOpen ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="图片预览"
+          onClick={() => setPreviewOpen(false)}
+        >
+          <button
+            type="button"
+            className="absolute right-4 top-4 inline-flex items-center gap-1 rounded-full bg-white/95 px-3 py-2 text-sm font-medium text-slate-900 shadow-lg transition hover:bg-white"
+            aria-label="关闭图片预览"
+            onClick={(event) => {
+              event.stopPropagation();
+              setPreviewOpen(false);
+            }}
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+            关闭
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewUrl}
+            alt="图片预览"
+            className="max-h-[88vh] max-w-[92vw] rounded-lg bg-white object-contain shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+            onError={handleImageError}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -231,20 +435,50 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
     return null;
   }
 
+  const compact = normalizedAttachments.length > 1;
+
   return (
-    <div className="grid max-w-[280px] grid-cols-1 justify-items-end gap-2 sm:max-w-[560px] sm:grid-cols-2">
+    <div
+      className={cn(
+        "grid justify-items-end gap-1.5",
+        compact
+          ? "max-w-[min(220px,68vw)] grid-cols-2 sm:max-w-[352px]"
+          : "max-w-[min(220px,62vw)] grid-cols-1 sm:max-w-[260px]",
+        normalizedAttachments.length > 4 ? "sm:grid-cols-3" : null
+      )}
+      data-chat-attachment-grid={compact ? "multi" : "single"}
+    >
       {normalizedAttachments.map((attachment, index) => {
         const isImage = isImageAttachment(attachment);
-        const previewUrl = getAttachmentPreviewUrl(attachment);
+        const previewUrls = getAttachmentPreviewUrls(attachment);
+        const previewUrl = previewUrls[0] ?? "";
         const name = attachment.name || attachment.filename || `附件 ${index + 1}`;
 
         if (isImage && previewUrl) {
           return (
             <UserImageAttachment
               key={attachment.reference_id || attachment.id || `${name}-${index}`}
-              name={name}
-              previewUrl={previewUrl}
+              index={index}
+              previewUrls={previewUrls}
+              compact={compact}
             />
+          );
+        }
+
+        if (isImage) {
+          return (
+            <div
+              key={attachment.reference_id || attachment.id || `${name}-${index}`}
+              className={cn(
+                "flex items-center justify-center rounded-2xl border border-white/40 bg-white/90 px-3 py-3 text-center text-xs font-medium text-slate-500 shadow-sm",
+                compact ? "h-24 w-24 sm:h-28 sm:w-28" : "max-w-[min(220px,62vw)] sm:max-w-[260px]"
+              )}
+            >
+              <span>
+                <ImageIcon className="mx-auto mb-1 h-4 w-4" aria-hidden="true" />
+                图片预览不可用
+              </span>
+            </div>
           );
         }
 
@@ -299,6 +533,50 @@ function UserMessageAttachments({ attachments }: { attachments: ChatMessageView[
   );
 }
 
+function UserMessageBubble({
+  message,
+  content
+}: {
+  message: ChatMessageView;
+  content: string;
+}) {
+  const hasAttachments = normalizeMessageAttachments(message.attachments).length > 0;
+
+  if (!hasAttachments && !content) {
+    return message.pending ? (
+      <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
+        <div className="text-xs text-blue-100">发送中...</div>
+      </div>
+    ) : null;
+  }
+
+  if (!hasAttachments) {
+    return (
+      <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
+        <div className="whitespace-pre-wrap break-words">{content}</div>
+        {message.pending ? (
+          <div className="mt-2 text-xs text-blue-100">发送中...</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 p-2 text-white shadow-sm"
+      data-chat-user-message-bubble="attachments"
+    >
+      <UserMessageAttachments attachments={message.attachments} />
+      {content ? (
+        <div className="mt-2 whitespace-pre-wrap break-words px-2 py-1.5 leading-7">{content}</div>
+      ) : null}
+      {message.pending ? (
+        <div className={cn("px-2 text-xs text-blue-100", content ? "mt-1" : "mt-2")}>发送中...</div>
+      ) : null}
+    </div>
+  );
+}
+
 function UserMessageActions({
   message,
   onEditUserMessage
@@ -306,45 +584,78 @@ function UserMessageActions({
   message: ChatMessageView;
   onEditUserMessage?: (content: string) => void;
 }) {
-  const [copied, setCopied] = React.useState(false);
+  const [copyState, setCopyState] = React.useState<"idle" | "copied" | "manual" | "failed">("idle");
+  const [copyStatusMessage, setCopyStatusMessage] = React.useState("");
+  const selectionRef = React.useRef<HTMLTextAreaElement>(null);
 
   async function handleCopy() {
     const copyText = getUserMessageCopyText(message);
 
-    if (!navigator.clipboard) {
+    const result = await safeCopyTextDetailed(copyText, { selectTarget: selectionRef.current });
+
+    if (result.copied) {
+      setCopyState("copied");
+      setCopyStatusMessage(result.message);
+      window.setTimeout(() => setCopyState("idle"), 1200);
       return;
     }
 
-    await copyUserMessageToClipboard(copyText, navigator.clipboard);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1200);
+    if (result.selected) {
+      setCopyState("manual");
+      setCopyStatusMessage(result.message);
+      window.setTimeout(() => setCopyState("idle"), 2400);
+      return;
+    }
+
+    setCopyState("failed");
+    setCopyStatusMessage(result.message);
+    window.setTimeout(() => setCopyState("idle"), 1800);
   }
 
   function handleEdit() {
     onEditUserMessage?.(message.content);
   }
 
+  const copyLabel = copyState === "copied"
+    ? "已复制"
+    : copyState === "manual"
+      ? "已选中"
+      : copyState === "failed"
+        ? "复制失败"
+        : "复制";
+
   return (
-    <div className="flex items-center justify-end gap-2 pr-1">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-        aria-label="复制用户消息"
-      >
-        {copied ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
-        {copied ? "已复制" : "复制"}
-      </button>
-      <button
-        type="button"
-        onClick={handleEdit}
-        className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-        aria-label="编辑用户消息"
-      >
-        <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-        编辑
-      </button>
-    </div>
+    <>
+      <textarea
+        ref={selectionRef}
+        value={getUserMessageCopyText(message)}
+        readOnly
+        tabIndex={-1}
+        aria-hidden="true"
+        className="fixed -left-[9999px] top-0 h-px w-px opacity-0"
+      />
+      <div className="flex items-center justify-end gap-2 pr-1">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+          aria-label="复制用户消息"
+          title={copyStatusMessage || "复制用户消息"}
+        >
+          {copyState === "copied" || copyState === "manual" ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Copy className="h-3.5 w-3.5" aria-hidden="true" />}
+          {copyLabel}
+        </button>
+        <button
+          type="button"
+          onClick={handleEdit}
+          className="focus-ring inline-flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
+          aria-label="编辑用户消息"
+        >
+          <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+          编辑
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -359,7 +670,7 @@ function UserMessageBlock({
   currentUser?: CurrentChatUser | null;
   userAvatarUrl?: string | null;
 }) {
-  const content = message.content.trim();
+  const content = sanitizeVisibleText(message.content.trim());
   const messageTime = formatMessageTime(message.created_at);
 
   return (
@@ -370,20 +681,19 @@ function UserMessageBlock({
             {messageTime}
           </div>
         ) : null}
-        <UserMessageAttachments attachments={message.attachments} />
-        {content ? (
-          <div className="max-w-full rounded-3xl rounded-br-lg bg-blue-600 px-4 py-3 text-white shadow-sm">
-            <div className="whitespace-pre-wrap break-words">{content}</div>
-            {message.pending ? (
-              <div className="mt-2 text-xs text-blue-100">发送中...</div>
-            ) : null}
-          </div>
-        ) : null}
+        <UserMessageBubble message={message} content={content} />
+        <UserCommercialIntentBadge message={message} />
         <UserMessageActions message={message} onEditUserMessage={onEditUserMessage} />
       </div>
       <UserMessageAvatar currentUser={currentUser} userAvatarUrl={userAvatarUrl} />
     </>
   );
+}
+
+function UserCommercialIntentBadge({ message }: { message: ChatMessageView }) {
+  void message;
+
+  return null;
 }
 
 function UserMessageAvatar({
@@ -405,6 +715,7 @@ function UserMessageAvatar({
       <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-slate-200 text-sm font-bold text-slate-700">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
+          key={avatarUrl}
           src={avatarUrl}
           alt="当前用户头像"
           className="h-full w-full object-cover"
@@ -431,51 +742,145 @@ function UserMessageAvatar({
 
 export function ChatMessages({
   messages,
-  loading,
   mode,
   onModeChange,
   onEditUserMessage,
   currentUser = null,
-  userAvatarUrl = null
+  userName = null,
+  userAvatarUrl = null,
+  focusMessageId = null
 }: ChatMessagesProps) {
   const messagesRef = React.useRef(messages);
+  const dwellReportedRef = React.useRef(new Set<string>());
+  const clickReportedRef = React.useRef(new Set<string>());
+  const copyReportedRef = React.useRef(new Set<string>());
+  const dwellTimersRef = React.useRef(new Map<string, number>());
 
   React.useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
 
   React.useEffect(() => {
+    const dwellTimers = dwellTimersRef.current;
+
     return () => {
       const blobUrls = new Set<string>();
 
       for (const message of messagesRef.current) {
         for (const attachment of normalizeMessageAttachments(message.attachments)) {
-          const previewUrl = getAttachmentPreviewUrl(attachment);
+          const previewUrls = getAttachmentPreviewUrls(attachment);
 
-          if (previewUrl.startsWith("blob:")) {
-            blobUrls.add(previewUrl);
+          for (const previewUrl of previewUrls) {
+            if (previewUrl.startsWith("blob:")) {
+              blobUrls.add(previewUrl);
+            }
           }
         }
       }
 
       blobUrls.forEach((url) => URL.revokeObjectURL(url));
+      dwellTimers.forEach((timer) => window.clearTimeout(timer));
+      dwellTimers.clear();
     };
   }, []);
 
+  const reportAssistantBehavior = React.useCallback((
+    message: ChatMessageView,
+    eventType: ChatBehaviorFeedbackInput["eventType"],
+    overrides: Partial<ChatBehaviorFeedbackInput> = {}
+  ) => {
+    if (message.role !== "assistant" || message.pending) {
+      return;
+    }
+
+    const metadata = getRecordValue(message.metadata);
+    const seed = getRecordValue(metadata.behaviorFeedbackSeed);
+    const responseId = getStringValue(metadata.responseId) || message.id;
+    const query = getStringValue(metadata.userQuery);
+
+    void submitChatBehaviorFeedback({
+      userId: currentUser?.id ?? null,
+      query,
+      responseId,
+      eventType,
+      clickCount: 0,
+      copyCount: 0,
+      dwellTime: 0,
+      followUp: getBooleanValue(seed.followUp),
+      converted: getBooleanValue(seed.converted),
+      metadata: {
+        messageId: message.id,
+        confidence: message.confidence ?? null,
+        hasCustomerAnswer: Boolean(message.customer_answer),
+        providerStatus: message.provider_status ?? null
+      },
+      ...overrides
+    }).catch(() => undefined);
+  }, [currentUser?.id]);
+
+  React.useEffect(() => {
+    for (const message of messages) {
+      if (
+        message.role !== "assistant" ||
+        message.pending ||
+        !message.content.trim() ||
+        dwellReportedRef.current.has(message.id) ||
+        dwellTimersRef.current.has(message.id)
+      ) {
+        continue;
+      }
+
+      const timer = window.setTimeout(() => {
+        dwellReportedRef.current.add(message.id);
+        dwellTimersRef.current.delete(message.id);
+        reportAssistantBehavior(message, "dwellTime", {
+          dwellTime: 8000
+        });
+      }, 8000);
+
+      dwellTimersRef.current.set(message.id, timer);
+    }
+  }, [messages, reportAssistantBehavior]);
+
+  function handleAssistantClickCapture(event: React.MouseEvent<HTMLElement>, message: ChatMessageView) {
+    if (!clickReportedRef.current.has(message.id)) {
+      clickReportedRef.current.add(message.id);
+      reportAssistantBehavior(message, "click", {
+        clickCount: 1
+      });
+    }
+
+    const target = event.target instanceof Element ? event.target : null;
+    const button = target?.closest("button");
+    const buttonText = `${button?.getAttribute("aria-label") ?? ""} ${button?.textContent ?? ""}`;
+
+    if (/复制/.test(buttonText) && !copyReportedRef.current.has(message.id)) {
+      copyReportedRef.current.add(message.id);
+      reportAssistantBehavior(message, "copy", {
+        copyCount: 1
+      });
+    }
+  }
+
   if (messages.length === 0) {
-    return <EmptyState mode={mode} onModeChange={onModeChange} />;
+    return <EmptyState mode={mode} onModeChange={onModeChange} userName={userName} />;
   }
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-5 px-4 py-6 md:px-6">
-      {messages.map((message) => {
+      {messages.map((message, index) => {
         const isUser = message.role === "user";
-        const showSources = !isUser && shouldShowDebugSources();
+        const previousUserMessage = !isUser
+          ? [...messages.slice(0, index)].reverse().find((item) => item.role === "user")
+          : null;
 
         return (
           <article
             key={message.id}
+            data-chat-message-id={message.id}
+            data-chat-message-role={message.role}
             className={cn("flex gap-3", isUser ? "justify-end" : "justify-start")}
+            onClickCapture={isUser ? undefined : (event) => handleAssistantClickCapture(event, message)}
           >
             {isUser ? (
               <UserMessageBlock
@@ -485,38 +890,20 @@ export function ChatMessages({
                 userAvatarUrl={userAvatarUrl}
               />
             ) : (
-              <div
-                className="max-w-[min(760px,88%)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white px-4 py-3 text-sm leading-7 text-slate-900 shadow-sm"
-              >
-                <RichAnswerView
-                  answer={message.content}
-                  customerAnswer={message.customer_answer}
-                  providerStatus={message.provider_status}
-                />
-                {message.pending ? (
-                  <div className="mt-2 text-xs opacity-80">发送中...</div>
-                ) : null}
-                <CustomerAnswerCard content={message.customer_answer} />
-                {showSources ? (
-                  <SourceList sources={message.sources} confidence={message.confidence} />
-                ) : null}
-                <div className="mt-2 text-xs text-slate-400">
-                  {formatMessageTime(message.created_at)}
-                </div>
-              </div>
+              <ChatMessageRenderer message={message} userQuery={previousUserMessage?.content ?? null} />
             )}
           </article>
         );
       })}
 
-      {loading ? (
-        <div className="flex items-center gap-3 text-sm text-slate-500">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-50 text-blue-600">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          </span>
-          AI 正在检索知识库并生成回答...
-        </div>
+      {focusMessageId ? (
+        <div
+          aria-hidden="true"
+          data-chat-focus-spacer={focusMessageId}
+          className="min-h-[calc(100vh-18rem)] shrink-0"
+        />
       ) : null}
+
     </div>
   );
 }

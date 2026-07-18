@@ -4,7 +4,11 @@ import path from "path";
 import { getStore } from "@netlify/blobs";
 import { NextResponse } from "next/server";
 import { apiError } from "@/lib/api-response";
-import { requireRole } from "@/lib/auth/guards";
+import {
+  createChatImageOcrMetadata,
+  extractChatImageText
+} from "@/lib/ai-chat/image-ocr";
+import { requireAiChatAccess } from "@/lib/auth/guards";
 import { AppError, ValidationError, toAppError } from "@/lib/errors";
 
 export const runtime = "nodejs";
@@ -326,17 +330,10 @@ export function GET() {
 }
 
 export async function POST(request: Request) {
-  let actor: Awaited<ReturnType<typeof requireRole>>;
+  let actor: Awaited<ReturnType<typeof requireAiChatAccess>>;
 
   try {
-    actor = await requireRole("user", {
-      request,
-      requireLicense: true,
-      requiredAppType: "user_app",
-      product: "user_app",
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "ai_chat_attachment",
-    });
+    actor = await requireAiChatAccess(request, "ai_chat_attachment");
   } catch (error) {
     if (toAppError(error).code === "UNAUTHORIZED") {
       return unauthorizedUploadResponse();
@@ -364,6 +361,13 @@ export async function POST(request: Request) {
     const extension = allowedAttachmentMimeTypes.get(mimeType) ?? "bin";
     const originalName = safeFileBaseName(file.name);
     const arrayBuffer = await file.arrayBuffer();
+    const ocrMetadata = createChatImageOcrMetadata(
+      await extractChatImageText({
+        arrayBuffer,
+        filename: originalName,
+        mimeType
+      }),
+    );
     const savedAttachment = shouldUseLocalUploadFallback()
       ? await saveAttachmentToLocalPublicUploads({
           actorId: actor.id,
@@ -382,6 +386,9 @@ export async function POST(request: Request) {
           mimeType,
           size: file.size,
         });
+    const downloadUrl = savedAttachment.blobKey
+      ? savedAttachment.url
+      : `/api/ai/chat/attachments/download?key=${encodeURIComponent(savedAttachment.referenceId)}`;
 
     const responseData = {
       attachment: {
@@ -395,7 +402,7 @@ export async function POST(request: Request) {
         url: savedAttachment.url,
         publicUrl: savedAttachment.url,
         fileUrl: savedAttachment.url,
-        downloadUrl: savedAttachment.url,
+        downloadUrl,
         storage: savedAttachment.storage,
         blobKey: savedAttachment.blobKey,
         reference_id: savedAttachment.referenceId,
@@ -404,6 +411,7 @@ export async function POST(request: Request) {
           ...(savedAttachment.blobKey
             ? { blobKey: savedAttachment.blobKey }
             : {}),
+          ...ocrMetadata,
         },
       },
     };

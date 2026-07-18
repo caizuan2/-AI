@@ -26,7 +26,11 @@ function license(input: Partial<SuperAdminLicenseRecord> = {}): SuperAdminLicens
     redeemedAt: input.redeemedAt ?? null,
     redeemedByUserId: input.redeemedByUserId ?? null,
     redeemedByUserLabel: input.redeemedByUserLabel ?? null,
-    redeemedByUserAccount: input.redeemedByUserAccount ?? null
+    redeemedByUserAccount: input.redeemedByUserAccount ?? null,
+    teamOsCompanyId: input.teamOsCompanyId ?? null,
+    teamOsTeamId: input.teamOsTeamId ?? null,
+    subscriptionDays: input.subscriptionDays ?? null,
+    subscriptionEndsAt: input.subscriptionEndsAt ?? null
   };
 }
 
@@ -43,10 +47,12 @@ const data: SuperAdminLicenseDashboardData = {
     byAppType: {
       user_app: 2,
       ingest_admin: 0,
+      team_os: 0,
       super_admin: 0
     }
   },
   licenses: [originalLicense, untouchedLicense],
+  activations: [],
   audit: []
 };
 

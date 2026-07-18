@@ -1,0 +1,80 @@
+name: Admin Ingest Web Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Build environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+  push:
+    tags:
+      - "release/admin-ingest-*"
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_ENV: ${{ inputs.environment || 'prod' }}
+  RELEASE_HEAD: ${{ github.sha }}
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+
+jobs:
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    outputs:
+      web-head: ${{ steps.web_manifest.outputs.web_head }}
+      web-build-id: ${{ steps.web_manifest.outputs.web_build_id }}
+      web-available: ${{ steps.web_manifest.outputs.web_available }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build Web and write manifest
+        shell: pwsh
+        run: ./scripts/build/build-admin-ingest-web.ps1
+
+      - name: Read web manifest outputs
+        id: web_manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f artifacts/admin-ingest/web/manifest.json
+          echo "web_head=$(node -e 'const m=require("./artifacts/admin-ingest/web/manifest.json"); console.log(m.head || "")')" >> "$GITHUB_OUTPUT"
+          echo "web_build_id=$(node -e 'const m=require("./artifacts/admin-ingest/web/manifest.json"); console.log(m.buildId || "")')" >> "$GITHUB_OUTPUT"
+          echo "web_available=true" >> "$GITHUB_OUTPUT"
+          echo "WEB_HEAD=$(node -e 'const m=require("./artifacts/admin-ingest/web/manifest.json"); console.log(m.head || "")')"
+          echo "WEB_BUILD_ID=$(node -e 'const m=require("./artifacts/admin-ingest/web/manifest.json"); console.log(m.buildId || "")')"
+          echo "WEB_AVAILABLE=true"
+
+      - name: Upload web artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-web-manifest
+          path: |
+            artifacts/admin-ingest/web/manifest.json
+            .next/BUILD_ID
+          if-no-files-found: error

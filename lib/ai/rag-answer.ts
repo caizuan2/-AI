@@ -4,10 +4,12 @@ import { chatWithFallback } from "@/lib/ai/providers";
 import {
   buildRagPromptMessages,
   type RagAnswerMode,
-  type RagContext
+  type RagContext,
+  type RagRecentConversationTurn
 } from "@/lib/ai/rag-prompt";
-import type { ChatProviderName } from "@/lib/ai/types";
+import type { ChatProviderName, ModelFeedbackEvent } from "@/lib/ai/types";
 import { recordAiUsage } from "@/lib/analytics";
+import { AIRuntimeOrchestrator, type AIRuntimeResult } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
 export type { RagContext } from "@/lib/ai/rag-prompt";
@@ -22,21 +24,79 @@ export interface RagCitation {
 export interface RagAnswerResult {
   answer: string;
   citations: RagCitation[];
+  messageId?: string;
+  answerHash: string;
   model: string;
   providerUsed: string;
   fallbackUsed: boolean;
+  answer_grounding_score: number;
+  model_feedback_event: ModelFeedbackEvent;
   originalProviderErrorCode?: string;
+  ai_runtime?: AIRuntimeResult;
 }
 
 export interface GenerateRagAnswerOptions {
   requestId?: string;
+  messageId?: string;
   userId?: string;
   provider?: ChatProviderName;
+  providerChain?: ChatProviderName[];
   model?: string;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   answerMode?: RagAnswerMode;
   confidence?: number;
   intentLabel?: string;
   retrievalMessage?: string | null;
+  businessExecutionContext?: string | null;
+  recentConversation?: RagRecentConversationTurn[];
+}
+
+function clamp01(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(0, Math.min(1, value));
+}
+
+function averageContextRelevance(contexts: RagContext[]) {
+  if (contexts.length === 0) {
+    return 0;
+  }
+
+  const total = contexts.reduce((sum, context) => {
+    const score = typeof context.relevance_score === "number"
+      ? context.relevance_score
+      : typeof context.score === "number"
+        ? context.score
+        : 0;
+
+    return sum + score;
+  }, 0);
+
+  return clamp01(total / contexts.length);
+}
+
+function calculateAnswerGroundingScore(answer: string, contexts: RagContext[]) {
+  const relevance = averageContextRelevance(contexts);
+  const hasStructuredOutput = /(^|\n)#{1,3}\s|\n[-*]\s|\*\*|\|/.test(answer);
+  const answerPresence = answer.trim() ? 0.2 : 0;
+  const structureBonus = hasStructuredOutput ? 0.1 : 0;
+
+  return clamp01((relevance * 0.7) + answerPresence + structureBonus);
+}
+
+function buildAnswerHash(text: string) {
+  let hash = 0;
+
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) - hash) + text.charCodeAt(index);
+    hash |= 0;
+  }
+
+  return `ans_${Math.abs(hash).toString(36)}`;
 }
 
 export async function generateRagAnswer(
@@ -54,11 +114,36 @@ export async function generateRagAnswer(
     throw new Error("generateRagAnswer failed: at least one context is required.");
   }
 
+  const runtimeOrchestrator = new AIRuntimeOrchestrator();
+  const runtimeResult = runtimeOrchestrator.handleRequest(normalizedQuestion, {
+    source: "user_chat",
+    runtimeEntry: "server_route",
+    userId: options.userId ?? null,
+    platform: "server",
+    category: options.answerMode,
+    agentRole: options.intentLabel,
+    model: options.model,
+    provider: options.provider,
+    previousKnowledgeDrafts: contexts.map((context) => ({
+      id: context.id,
+      title: context.title,
+      summary: context.content,
+      category: context.sourceType,
+      tags: context.sourceType ? [context.sourceType] : [],
+      standardQuestion: normalizedQuestion,
+      standardAnswer: context.content,
+      scenarios: context.sourceType ? [context.sourceType] : [],
+      sourceMaterials: [context.sourceId, "retrieval-only:rag-answer"].filter(Boolean) as string[]
+    }))
+  });
+
   const messages = buildRagPromptMessages(normalizedQuestion, contexts, {
     answerMode: options.answerMode,
     confidence: options.confidence,
     intentLabel: options.intentLabel,
-    retrievalMessage: options.retrievalMessage
+    retrievalMessage: options.retrievalMessage,
+    businessExecutionContext: options.businessExecutionContext,
+    recentConversation: options.recentConversation
   });
   const startedAt = Date.now();
   const estimatedInputTokens = estimateTokenCount(messages.map((message) => message.content).join("\n\n"));
@@ -69,6 +154,7 @@ export async function generateRagAnswer(
       messages,
       requestId: options.requestId,
       provider: options.provider,
+      providerChain: options.providerChain,
       model: options.model
     });
     const answer = response.text.trim();
@@ -79,6 +165,31 @@ export async function generateRagAnswer(
 
     const estimatedOutputTokens = estimateTokenCount(answer);
     const durationMs = Date.now() - startedAt;
+    const answerGroundingScore = calculateAnswerGroundingScore(answer, contexts);
+    const modelFeedbackEvent: ModelFeedbackEvent = {
+      ...response.model_feedback_event,
+      response_quality: answerGroundingScore,
+      latency: durationMs,
+    };
+    const answerHash = buildAnswerHash(answer);
+    const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
+      query: normalizedQuestion,
+      baseResponse: answer,
+      retrieval: runtimeResult.retrieval,
+      decision: runtimeResult.decision,
+      strategy: runtimeResult.strategy
+    });
+    const runtimeFeedback = runtimeOrchestrator.collectFeedbackLoop({
+      query: normalizedQuestion,
+      responseText: runtimeFinalOutput.replyMarkdown,
+      retrieval: runtimeResult.retrieval,
+      decision: runtimeResult.decision
+    });
+    const aiRuntime = {
+      ...runtimeResult,
+      finalOutput: runtimeFinalOutput,
+      feedback: runtimeFeedback
+    };
 
     logger.info("ai.call", {
       requestId: options.requestId,
@@ -90,7 +201,9 @@ export async function generateRagAnswer(
       estimatedOutputTokens,
       estimatedTotalTokens: estimatedInputTokens + estimatedOutputTokens,
       fallbackUsed: response.fallbackUsed,
+      model_feedback_event: modelFeedbackEvent,
       contextCount: contexts.length,
+      answerGroundingScore,
       answerMode: options.answerMode,
       confidence: options.confidence,
       intentLabel: options.intentLabel
@@ -104,13 +217,24 @@ export async function generateRagAnswer(
       estimatedInputTokens,
       estimatedOutputTokens,
       metadata: {
+        messageId: options.messageId,
+        questionHash: buildAnswerHash(normalizedQuestion),
+        answerHash,
+        chunkIds: contexts.map((context) => context.sourceId).filter(Boolean).slice(0, 30),
+        evidenceIds: contexts.map((context) => context.id).filter(Boolean).slice(0, 30),
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
+        model_feedback_event: modelFeedbackEvent,
         originalProviderErrorCode: response.originalProviderErrorCode,
         contextCount: contexts.length,
+        answerGroundingScore,
         answerMode: options.answerMode,
         confidence: options.confidence,
-        intentLabel: options.intentLabel
+      intentLabel: options.intentLabel,
+      agentId: options.agentId,
+      knowledgeBaseId: options.knowledgeBaseId,
+      namespace: options.namespace,
+      aiRuntime
       }
     });
 
@@ -122,10 +246,15 @@ export async function generateRagAnswer(
         sourceType: context.sourceType,
         sourceId: context.sourceId
       })),
+      messageId: options.messageId,
+      answerHash,
       model: response.model,
       providerUsed: response.provider,
       fallbackUsed: response.fallbackUsed,
-      originalProviderErrorCode: response.originalProviderErrorCode
+      answer_grounding_score: answerGroundingScore,
+      model_feedback_event: modelFeedbackEvent,
+      originalProviderErrorCode: response.originalProviderErrorCode,
+      ai_runtime: aiRuntime
     };
   } catch (error) {
     logger.error("ai.call_failed", {

@@ -1,12 +1,55 @@
+import type {
+  AdminIngestPlatform,
+  AdminIngestSyncTarget
+} from "@/lib/enterprise/admin-ingest-app-config";
+import type { GptCallProof, OpenAIGptUsage } from "@/lib/enterprise/gpt-call-proof";
+import type { GptOSRouteResult } from "@/lib/enterprise/gpt-os-agent-router";
+import type { GptUserClientCallPlan } from "@/lib/enterprise/gpt-user-client-call-plan";
+import type { KnowledgeFactoryV2Result } from "@/lib/enterprise/knowledge-factory-v2";
+import type { KnowledgeFactoryV3Result } from "@/lib/enterprise/knowledge-factory-v3";
+import type { KnowledgeFactoryV4Result } from "@/lib/enterprise/knowledge-factory-v4";
+import type { KnowledgeFactoryV5Result } from "@/lib/enterprise/knowledge-factory-v5";
+import type { KnowledgeEvolutionResult } from "@/lib/enterprise/knowledge-evolution-engine";
+import type {
+  KnowledgeLoopCandidate,
+  KnowledgeLoopResult,
+  KnowledgeStoreDecision
+} from "@/lib/enterprise/knowledge-loop-engine";
+import type {
+  KnowledgeMemoryPlan,
+  KnowledgeMemoryReport
+} from "@/lib/enterprise/knowledge-memory-adapter";
+import type { AIRuntimeResult } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
+
 export type IngestChatAgentTone = "green" | "blue" | "amber" | "rose" | "slate";
+export type IngestChatAgentStatus = "active" | "archived" | "deleted_local";
+export type IngestChatAgentSource = "super_admin_category" | "ingest_custom" | "expert_marketplace";
 
 export interface IngestChatAgent {
   id: string;
+  expertId?: string | null;
   name: string;
   role: string;
   description: string;
   avatar: string;
   tone: IngestChatAgentTone;
+  category?: string;
+  tenantId?: string | null;
+  userId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
+  platform?: AdminIngestPlatform;
+  syncTarget?: AdminIngestSyncTarget[];
+  createdAt?: string;
+  status?: IngestChatAgentStatus;
+  isSystem?: boolean;
+  knowledgeCount?: number;
+  source?: IngestChatAgentSource;
+  sourceApp?: "admin_ingest";
+  managedBySuperAdmin?: boolean;
+  editableByIngestAdmin?: boolean;
+  deletableByIngestAdmin?: boolean;
+  visibleToUserClient?: boolean;
 }
 
 export interface IngestChatMessage {
@@ -14,6 +57,51 @@ export interface IngestChatMessage {
   role: "user" | "assistant";
   content: string;
   time: string;
+  isRestored?: boolean;
+  isHistorical?: boolean;
+  isStreaming?: boolean;
+  isGenerating?: boolean;
+  typing?: boolean;
+  status?: "pending" | "streaming" | "completed" | "failed";
+  attachments?: Array<{
+    id: string;
+    fileName: string;
+    fileType: string;
+    fileSize: number;
+    isImage?: boolean;
+    previewUrl?: string;
+    extractedText?: string;
+    summary?: string;
+    mimeType?: string;
+    parseStatus?: "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
+    pageSummaries?: string[];
+    slideTexts?: Array<{ slideIndex: number; text: string }>;
+    limitationNote?: string;
+    status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
+    source: "admin_ingest";
+    platform: AdminIngestPlatform;
+    syncTarget: AdminIngestSyncTarget[];
+    tenantId?: string | null;
+    userId?: string | null;
+    agentId?: string | null;
+    createdAt: string;
+  }>;
+  source?: "admin_ingest";
+  platform?: AdminIngestPlatform;
+  syncTarget?: AdminIngestSyncTarget[];
+  tenantId?: string | null;
+  userId?: string | null;
+  agentId?: string | null;
+  expertId?: string | null;
+  conversationId?: string | null;
+  agentName?: string | null;
+  expertName?: string | null;
+  model?: string;
+  provider?: string;
+  saveSuggestion?: boolean;
+  gptProof?: GptCallProof;
+  gptOS?: GptOSRouteResult;
+  runtimeOrchestrator?: AIRuntimeResult;
 }
 
 export interface IngestKnowledgeDraft {
@@ -21,32 +109,98 @@ export interface IngestKnowledgeDraft {
   jobId?: string | null;
   title: string;
   category: string;
+  categories?: string[];
   tags: string[];
   summary?: string;
   qaPairs?: Array<{ q: string; a: string }>;
   standardQuestion: string;
   standardAnswer: string;
+  standardQuestions?: string[];
+  standardAnswers?: string[];
   trainingScore: number;
   recommendation: "建议入库" | "需要复核" | "暂不入库";
-  saveStatus: "待确认" | "已保存" | "已拒绝";
+  saveStatus: "待确认" | "已保存" | "已拒绝" | "保存失败";
   sourceType?: "chat" | "text" | "file" | "image" | "url";
+  scenarios?: string[];
+  sourceMaterials?: string[];
+  complianceNotes?: string[];
+  missingFields?: string[];
+  suggestedQuestions?: string[];
+  userClientCallPlan?: GptUserClientCallPlan;
+  saveRecommendation?: string;
+  sourceModel?: string;
+  generatedBy?: string;
   providerUsed?: string;
   model?: string;
+  modelMode?: "highest" | "fixed";
+  replyMarkdown?: string;
   fallbackUsed?: boolean;
+  gptProof?: GptCallProof;
+  gptOS?: GptOSRouteResult;
+  actualModel?: string;
+  responseId?: string;
+  usage?: OpenAIGptUsage;
+  knowledgeFactory?: KnowledgeFactoryV2Result;
+  knowledgeFactoryV3?: KnowledgeFactoryV3Result;
+  knowledgeFactoryV4?: KnowledgeFactoryV4Result;
+  knowledgeFactoryV5?: KnowledgeFactoryV5Result;
+  knowledgeLoop?: KnowledgeLoopResult;
+  evolution?: KnowledgeEvolutionResult;
+  storeDecision?: KnowledgeStoreDecision;
+  reusableKnowledgeUnits?: KnowledgeLoopCandidate[];
+  reviewRequiredUnits?: KnowledgeLoopCandidate[];
+  autoStoreCandidates?: KnowledgeLoopCandidate[];
+  memory?: KnowledgeMemoryReport;
+  memoryPlan?: KnowledgeMemoryPlan;
+  knowledgeIntelligence?: {
+    overallScore?: number;
+    qualityLevel?: "high" | "medium" | "low";
+    highValueCount?: number;
+    reviewRequiredCount?: number;
+    lowQualityCount?: number;
+    improvementSuggestions?: string[];
+  };
+  ragOptimization?: {
+    ragFitScore?: number;
+    suggestedQueries?: string[];
+    retrievalHints?: string[];
+    rerankHints?: string[];
+    warnings?: string[];
+  };
+  runtimeOrchestrator?: AIRuntimeResult;
 }
 
 export interface IngestTrainingRecord {
   id: string;
   jobId?: string | null;
+  tenantId?: string | null;
+  userId?: string | null;
+  agentId?: string | null;
+  expertId?: string | null;
+  agentName?: string | null;
+  expertName?: string | null;
   input: string;
   resultTitle: string;
-  saveStatus: "待确认" | "已保存" | "已拒绝";
+  saveStatus: "待确认" | "已保存" | "已拒绝" | "失败";
   category: string;
   time: string;
   hits: number;
   sourceType?: string;
+  source?: "admin_ingest";
+  platform?: AdminIngestPlatform;
+  syncTarget?: AdminIngestSyncTarget[];
+  createdAt?: string;
+  updatedAt?: string;
   aiOutput?: IngestKnowledgeDraft | null;
 }
+
+const superAdminAgentMeta = {
+  source: "super_admin_category" as const,
+  managedBySuperAdmin: true,
+  editableByIngestAdmin: false,
+  deletableByIngestAdmin: false,
+  visibleToUserClient: true
+};
 
 export const ingestChatAgents: IngestChatAgent[] = [
   {
@@ -55,7 +209,9 @@ export const ingestChatAgents: IngestChatAgent[] = [
     role: "默认 Agent",
     description: "把原始材料整理成标题、分类、标签和标准问答。",
     avatar: "知",
-    tone: "green"
+    tone: "green",
+    knowledgeCount: 128,
+    ...superAdminAgentMeta
   },
   {
     id: "product",
@@ -63,7 +219,9 @@ export const ingestChatAgents: IngestChatAgent[] = [
     role: "产品知识库",
     description: "适合功能说明、版本差异、FAQ 和使用边界。",
     avatar: "产",
-    tone: "blue"
+    tone: "blue",
+    knowledgeCount: 86,
+    ...superAdminAgentMeta
   },
   {
     id: "service",
@@ -71,7 +229,9 @@ export const ingestChatAgents: IngestChatAgent[] = [
     role: "客服话术库",
     description: "适合客户解释、异议处理和可复制回复。",
     avatar: "客",
-    tone: "amber"
+    tone: "amber",
+    knowledgeCount: 213,
+    ...superAdminAgentMeta
   },
   {
     id: "after-sale",
@@ -79,7 +239,9 @@ export const ingestChatAgents: IngestChatAgent[] = [
     role: "售后知识库",
     description: "适合退款、换货、保修和工单处理流程。",
     avatar: "售",
-    tone: "rose"
+    tone: "rose",
+    knowledgeCount: 74,
+    ...superAdminAgentMeta
   },
   {
     id: "policy",
@@ -87,7 +249,19 @@ export const ingestChatAgents: IngestChatAgent[] = [
     role: "企业制度库",
     description: "适合制度流程、审批规范和内部执行口径。",
     avatar: "制",
-    tone: "slate"
+    tone: "slate",
+    knowledgeCount: 51,
+    ...superAdminAgentMeta
+  },
+  {
+    id: "sales",
+    name: "销售 Agent",
+    role: "销售知识库",
+    description: "适合客户需求挖掘、报价说明和成交推进知识。",
+    avatar: "销",
+    tone: "green",
+    knowledgeCount: 97,
+    ...superAdminAgentMeta
   }
 ];
 

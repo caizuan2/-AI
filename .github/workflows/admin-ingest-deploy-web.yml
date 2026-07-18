@@ -1,0 +1,164 @@
+name: Admin Ingest Web Build Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      deploy:
+        description: Deploy to Aliyun after build
+        required: true
+        default: false
+        type: boolean
+      runQa:
+        description: Run health checks after deploy
+        required: true
+        default: true
+        type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      deploy:
+        required: true
+        type: boolean
+      runQa:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_ENV: ${{ inputs.environment || 'prod' }}
+  RELEASE_HEAD: ${{ github.sha }}
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+
+jobs:
+  build-web:
+    name: Build Web
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build Web and write manifest
+        shell: pwsh
+        run: ./scripts/build/build-admin-ingest-web.ps1
+
+      - name: Upload web manifest
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-web-manifest
+          path: artifacts/admin-ingest/web/manifest.json
+          if-no-files-found: error
+
+  deploy-web:
+    name: Deploy Web to Aliyun
+    runs-on: ubuntu-latest
+    needs: build-web
+    if: ${{ inputs.deploy == true }}
+    environment: ${{ inputs.environment || 'prod' }}
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check deploy secrets
+        id: deploy_secrets
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALIYUN_HOST:-}" ] || [ -z "${ALIYUN_USER:-}" ] || [ -z "${ALIYUN_SSH_KEY:-}" ] || [ -z "${ALIYUN_APP_DIR:-}" ]; then
+            echo "DEPLOY_SKIPPED_MISSING_SECRETS=true"
+            echo "deploy_ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "DEPLOY_SKIPPED_MISSING_SECRETS=false"
+          echo "deploy_ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH key
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready == 'true' }}
+        shell: bash
+        env:
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+        run: |
+          test -n "$ALIYUN_SSH_KEY"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ALIYUN_SSH_KEY" > ~/.ssh/aliyun_admin_ingest
+          chmod 600 ~/.ssh/aliyun_admin_ingest
+
+      - name: Deploy remote release
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready == 'true' }}
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          test -n "$ALIYUN_HOST"
+          test -n "$ALIYUN_USER"
+          test -n "$ALIYUN_APP_DIR"
+          ssh -i ~/.ssh/aliyun_admin_ingest -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" "RELEASE_SHA='$RELEASE_SHA' APP_DIR='$ALIYUN_APP_DIR' bash -s" <<'REMOTE'
+          set -euo pipefail
+          cd "$APP_DIR"
+          echo "REMOTE_APP_DIR=$APP_DIR"
+          git fetch origin --tags
+          git checkout main
+          git pull --ff-only origin main
+          test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          npm install --include=dev
+          npx prisma generate
+          npx prisma validate
+          npm run typecheck
+          npm run lint
+          npm run build
+          pm2 restart ai-knowledge-main --update-env
+          sleep 3
+          curl -fsS -I "http://127.0.0.1:3021/admin-ingest?app=ingest-admin&platform=web"
+          curl -fsS -I "http://127.0.0.1:3021/api/public/expert-market"
+          echo "DEPLOYMENT_DONE=true"
+          REMOTE
+
+      - name: Deployment skipped
+        if: ${{ steps.deploy_secrets.outputs.deploy_ready != 'true' }}
+        run: echo "DEPLOY_SKIPPED_MISSING_SECRETS=true"
+
+  qa:
+    name: Web health checks
+    needs:
+      - build-web
+      - deploy-web
+    if: ${{ always() && inputs.runQa == true && (needs.deploy-web.result == 'success' || needs.deploy-web.result == 'skipped') }}
+    uses: ./.github/workflows/admin-ingest-qa.yml
+    with:
+      environment: ${{ inputs.environment || 'prod' }}
+      baseUrl: ${{ vars.ADMIN_INGEST_BASE_URL || 'http://47.238.0.23' }}
+    secrets: inherit

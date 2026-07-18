@@ -15,8 +15,9 @@ import {
 } from "../lib/app-update";
 import { detectPlatform, openLink, resolveDownload } from "../lib/update-core";
 import { normalizeAppStoreManifest } from "../lib/app-store";
+import { checkCurrentAppUpdate, getCurrentAppVersion } from "../lib/update-checker";
 import { AppUpdateNoticeDialog } from "../components/AppUpdateNotice";
-import { APP_BUILD, APP_VERSION } from "../lib/app-version";
+import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
 
 const parsedManifest = normalizeLatestReleaseManifest(releaseInfo);
@@ -37,6 +38,8 @@ assert.equal(APP_VERSION, releaseInfo.version);
 assert.equal(APP_BUILD, releaseInfo.build);
 assert.equal(manifest.user.build, APP_BUILD);
 assert.equal(manifest.admin.build, APP_BUILD);
+assert.equal(manifest.user.web_release_sha, releaseInfo.web_release_sha);
+assert.equal(APP_WEB_RELEASE_SHA, releaseInfo.web_release_sha || APP_WEB_RELEASE_SHA);
 assert.equal(releaseInfo.forceUpdate, false);
 assert.equal(releaseInfo.force_update, false);
 assert.equal(releaseInfo.download.android, manifest.user.apk_url);
@@ -83,6 +86,7 @@ async function main() {
 
   assert.equal(userUpdate.hasUpdate, true);
   assert.equal(userUpdate.forceUpdate, false);
+  assert.equal(userUpdate.updateKind, "package");
   assert.equal(userUpdate.latest?.version, manifest.user.version);
 
   const currentUserUpdate = await checkAppUpdate({
@@ -94,6 +98,100 @@ async function main() {
 
   assert.equal(currentUserUpdate.hasUpdate, false);
   assert.equal(currentUserUpdate.forceUpdate, false);
+  assert.equal(currentUserUpdate.updateKind, "none");
+
+  const legacyNativeVersion = getCurrentAppVersion({
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(legacyNativeVersion.version, "旧安装包");
+  assert.equal(legacyNativeVersion.build, 0);
+
+  const legacyNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(legacyNativeUpdate.hasUpdate, true);
+  assert.equal(legacyNativeUpdate.updateKind, "web");
+  assert.equal(legacyNativeUpdate.forceUpdate, false);
+  assert.equal(legacyNativeUpdate.currentBuild, 0);
+  assert.equal(legacyNativeUpdate.currentVersion, "旧安装包");
+
+  const currentNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    search: `?shellVersion=${encodeURIComponent(APP_VERSION)}&shellBuild=${APP_BUILD}`,
+    runtimeWindow: {
+      Capacitor: {
+        isNativePlatform: () => true,
+        getPlatform: () => "android"
+      }
+    }
+  });
+  assert.equal(currentNativeUpdate.hasUpdate, false);
+  assert.equal(currentNativeUpdate.updateKind, "none");
+
+  const staleNativeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    runtimeWindow: {
+      aiKnowledge: {
+        appVersion: "1.0.1"
+      }
+    }
+  });
+  assert.equal(staleNativeUpdate.hasUpdate, true);
+  assert.equal(staleNativeUpdate.updateKind, "web");
+  assert.equal(staleNativeUpdate.forceUpdate, false);
+
+  const browserRuntimeUpdate = await checkCurrentAppUpdate({
+    appKind: "user",
+    fetcher: createFetch(manifest),
+    userAgent: "Mozilla/5.0 (Windows NT 10.0) Chrome/120.0.0.0"
+  });
+  assert.equal(browserRuntimeUpdate.hasUpdate, false);
+  assert.equal(browserRuntimeUpdate.updateKind, "none");
+
+  const webManifest: LatestReleaseManifest = {
+    ...manifest,
+    user: {
+      ...manifest.user,
+      web_release_sha: "remote-web-release-sha"
+    }
+  };
+  const webContentUpdate = await checkAppUpdate({
+    appKind: "user",
+    currentVersion: APP_VERSION,
+    currentBuild: APP_BUILD,
+    currentWebReleaseSha: "local-web-release-sha",
+    fetcher: createFetch(webManifest)
+  });
+
+  assert.equal(webContentUpdate.hasUpdate, true);
+  assert.equal(webContentUpdate.forceUpdate, false);
+  assert.equal(webContentUpdate.updateKind, "web");
+
+  const nativeWebShellUpdate = await checkAppUpdate({
+    appKind: "user",
+    currentVersion: "旧安装包",
+    currentBuild: 0,
+    preferWebContentUpdate: true,
+    fetcher: createFetch(manifest)
+  });
+
+  assert.equal(nativeWebShellUpdate.hasUpdate, true);
+  assert.equal(nativeWebShellUpdate.forceUpdate, false);
+  assert.equal(nativeWebShellUpdate.updateKind, "web");
 
   const equalBuildForceManifest: LatestReleaseManifest = {
     ...manifest,
@@ -111,6 +209,7 @@ async function main() {
 
   assert.equal(equalBuildForceUpdate.hasUpdate, false);
   assert.equal(equalBuildForceUpdate.forceUpdate, false);
+  assert.equal(equalBuildForceUpdate.updateKind, "none");
 
   const forceManifest: LatestReleaseManifest = {
     ...manifest,
@@ -128,6 +227,7 @@ async function main() {
 
   assert.equal(forceUpdate.hasUpdate, true);
   assert.equal(forceUpdate.forceUpdate, true);
+  assert.equal(forceUpdate.updateKind, "package");
   assert.equal(canDismissUpdate(forceUpdate), false);
 
   assert.equal(resolveUpdateUrl(manifest.user, "android"), manifest.user.apk_url);
@@ -175,8 +275,10 @@ async function main() {
         appKind: "user",
         currentVersion: "1.0.1",
         currentBuild: manifest.user.build - 1,
+        currentWebReleaseSha: manifest.user.web_release_sha,
         hasUpdate: true,
         forceUpdate: false,
+        updateKind: "package",
         latest: manifest.user,
         updatedAt: manifest.updated_at
       },
@@ -189,7 +291,8 @@ async function main() {
   );
 
   assert.match(userDialogMarkup, /发现新版本/);
-  assert.match(userDialogMarkup, new RegExp(manifest.user.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(userDialogMarkup, /小董AI/);
+  assert.doesNotMatch(userDialogMarkup, /AI知识库助手/);
   assert.match(userDialogMarkup, /当前版本：1\.0\.1/);
   assert.match(userDialogMarkup, new RegExp(`最新版本：${manifest.user.version}`.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   for (const item of manifest.user.changelog) {
@@ -202,6 +305,33 @@ async function main() {
   assert.match(userDialogMarkup, new RegExp(manifest.user.apk_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(userDialogMarkup, /稍后提醒/);
   assert.doesNotMatch(userDialogMarkup, /<a[^>]*\sdisabled(?:=|\s|>)/);
+
+  const webDialogMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "user",
+      update: {
+        appKind: "user",
+        currentVersion: APP_VERSION,
+        currentBuild: APP_BUILD,
+        currentWebReleaseSha: "local-web-release-sha",
+        hasUpdate: true,
+        forceUpdate: false,
+        updateKind: "web",
+        latest: webManifest.user,
+        updatedAt: manifest.updated_at
+      },
+      updateUrl: webManifest.user.web_url,
+      platform: "web",
+      dismissible: true,
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+
+  assert.match(webDialogMarkup, /发现内容更新/);
+  assert.match(webDialogMarkup, /立即更新/);
+  assert.match(webDialogMarkup, /不需要重新安装 APK\/EXE/);
+  assert.doesNotMatch(webDialogMarkup, /Android 安装包需要下载/);
 
   const androidBridgeCalls: string[] = [];
   assert.equal(openLink(manifest.user.apk_url, {
@@ -301,8 +431,10 @@ async function main() {
         appKind: "admin",
         currentVersion: "1.0.1",
         currentBuild: manifest.admin.minimum_build - 1,
+        currentWebReleaseSha: manifest.admin.web_release_sha,
         hasUpdate: true,
         forceUpdate: true,
+        updateKind: "package",
         latest: manifest.admin,
         updatedAt: manifest.updated_at
       },
@@ -327,21 +459,38 @@ async function main() {
   assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1000), false);
   snoozeUpdateNotice("user", manifest.user.build, storageAdapter, 1000);
   assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001), true);
+  assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001, "remote-web-release-sha"), false);
+  snoozeUpdateNotice("user", manifest.user.build, storageAdapter, 1000, "remote-web-release-sha");
+  assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001, "remote-web-release-sha"), true);
 
   const appUpdateNotice = readFileSync("components/AppUpdateNotice.tsx", "utf8");
   assert.match(appUpdateNotice, /localStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
+  assert.match(appUpdateNotice, /reloadCurrentWebShell/);
+  assert.match(appUpdateNotice, /runWebContentRefresh/);
+  assert.match(appUpdateNotice, /xiaodongai\.appliedWebRelease/);
+  assert.match(appUpdateNotice, /hasAppliedWebRelease/);
+  assert.match(appUpdateNotice, /writeAppliedWebRelease/);
+  assert.match(appUpdateNotice, /window\.setTimeout\(\(\) => \{/);
+  assert.doesNotMatch(appUpdateNotice, /triggerBrowserDownload|downloadWithBrowserFetch|createObjectURL/);
 
   const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");
   assert.match(updateModal, /必须更新到最新版本后才能继续使用/);
   assert.match(updateModal, /当前版本/);
   assert.match(updateModal, /最新版本/);
+  assert.match(updateModal, /进度完成后自动进入系统/);
+
+  const electronMain = readFileSync("electron/main.cjs", "utf8");
+  assert.match(electronMain, /getUpdateDownloadDir/);
+  assert.doesNotMatch(electronMain, /app\.getPath\("downloads"\)/);
 
   const enterpriseAutoUpdate = readFileSync("components/EnterpriseAutoUpdate.tsx", "utf8");
   assert.match(enterpriseAutoUpdate, /AppUpdateNotice/);
   assert.match(enterpriseAutoUpdate, /\/chat-ui/);
   assert.match(enterpriseAutoUpdate, /\/ingest/);
   assert.match(readFileSync("app/layout.tsx", "utf8"), /EnterpriseAutoUpdate/);
+  assert.match(readFileSync("electron/preload.cjs", "utf8"), /appVersion/);
+  assert.match(readFileSync("capacitor.config.ts", "utf8"), /shellBuild/);
 
   const releaseScriptPath = "scripts/release-all-installers.ps1";
   assert.ok(existsSync(releaseScriptPath), "release-all-installers.ps1 should exist.");

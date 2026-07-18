@@ -1,4 +1,7 @@
 const { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, shell } = require("electron");
+const fs = require("node:fs");
+const http = require("node:http");
+const https = require("node:https");
 const path = require("node:path");
 
 const USER_APP_URL =
@@ -44,6 +47,149 @@ function isHttpUrl(targetUrl) {
   } catch {
     return false;
   }
+}
+
+function sendUpdateProgress(webContents, detail) {
+  if (!webContents || webContents.isDestroyed()) {
+    return;
+  }
+
+  webContents.send("ai-knowledge:update-download-progress", detail);
+}
+
+function getInstallerFileName(fileName, targetUrl) {
+  const fallback = "小董AI.exe";
+  const inputName = getString(fileName).trim();
+
+  if (/^[^<>:"/\\|?*]+\.exe$/i.test(inputName)) {
+    return inputName;
+  }
+
+  try {
+    const urlName = decodeURIComponent(new URL(targetUrl).pathname.split("/").filter(Boolean).pop() || "");
+
+    if (/^[^<>:"/\\|?*]+\.exe$/i.test(urlName)) {
+      return urlName;
+    }
+  } catch {
+    // Fall through to the branded fallback.
+  }
+
+  return fallback;
+}
+
+function getUpdateDownloadDir() {
+  return path.join(app.getPath("userData"), "updates");
+}
+
+function downloadHttpFile(targetUrl, destinationPath, onProgress, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) {
+      reject(new Error("下载地址重定向次数过多。"));
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(targetUrl);
+    } catch {
+      reject(new Error("下载地址格式不正确。"));
+      return;
+    }
+
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const request = client.get(parsedUrl, (response) => {
+      const statusCode = response.statusCode || 0;
+      const redirectUrl = response.headers.location;
+
+      if (statusCode >= 300 && statusCode < 400 && redirectUrl) {
+        response.resume();
+        const nextUrl = new URL(redirectUrl, parsedUrl).toString();
+        resolve(downloadHttpFile(nextUrl, destinationPath, onProgress, redirectCount + 1));
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        response.resume();
+        reject(new Error(`下载地址不可用（HTTP ${statusCode}）。`));
+        return;
+      }
+
+      const total = Number(response.headers["content-length"]) || 0;
+      let loaded = 0;
+      const file = fs.createWriteStream(destinationPath);
+
+      response.on("data", (chunk) => {
+        loaded += chunk.length;
+
+        if (total > 0) {
+          onProgress(Math.min(95, Math.round((loaded / total) * 90) + 5));
+        }
+      });
+
+      response.pipe(file);
+
+      file.on("finish", () => {
+        file.close(resolve);
+      });
+      file.on("error", reject);
+    });
+
+    request.on("error", reject);
+  });
+}
+
+async function downloadDesktopUpdate(targetUrl, fileName, webContents) {
+  if (!isHttpUrl(targetUrl)) {
+    throw new Error("下载地址格式不正确。");
+  }
+
+  const installerFileName = getInstallerFileName(fileName, targetUrl);
+  const downloadDir = getUpdateDownloadDir();
+  const destinationPath = path.join(downloadDir, installerFileName);
+  const temporaryPath = `${destinationPath}.download`;
+
+  sendUpdateProgress(webContents, {
+    phase: "preparing",
+    progress: 5,
+    message: "正在准备下载更新包..."
+  });
+
+  await fs.promises.mkdir(downloadDir, { recursive: true });
+  await fs.promises.rm(temporaryPath, { force: true });
+
+  await downloadHttpFile(targetUrl, temporaryPath, (progress) => {
+    sendUpdateProgress(webContents, {
+      phase: "downloading",
+      progress,
+      message: "正在当前应用内下载更新包..."
+    });
+  });
+
+  await fs.promises.rm(destinationPath, { force: true });
+  await fs.promises.rename(temporaryPath, destinationPath);
+
+  sendUpdateProgress(webContents, {
+    phase: "installing",
+    progress: 96,
+    message: "更新包已下载完成，正在打开安装程序..."
+  });
+
+  const openError = await shell.openPath(destinationPath);
+  if (openError) {
+    throw new Error(openError);
+  }
+
+  sendUpdateProgress(webContents, {
+    phase: "ready",
+    progress: 100,
+    message: "更新进度已完成，正在进入安装流程。"
+  });
+
+  return {
+    ok: true,
+    filePath: destinationPath
+  };
 }
 
 function getNumber(value) {
@@ -154,7 +300,14 @@ async function checkLatestJsonUpdate() {
     });
 
     if (result.response === 0 || forceUpdate) {
-      openExternalUrl(updateUrl);
+      try {
+        await downloadDesktopUpdate(updateUrl, "", mainWindow?.webContents);
+      } catch (error) {
+        dialog.showErrorBox(
+          "更新下载失败",
+          error instanceof Error ? error.message : "请稍后再试，或联系管理员检查安装包地址。"
+        );
+      }
     }
   } catch {
     // Update checks must never block app startup.
@@ -280,6 +433,28 @@ ipcMain.handle("ai-knowledge:open-external", (_event, targetUrl) => {
 
   openExternalUrl(targetUrl);
   return true;
+});
+
+ipcMain.handle("ai-knowledge:download-update", async (event, payload) => {
+  const targetUrl = typeof payload?.url === "string" ? payload.url : "";
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : "";
+
+  try {
+    return await downloadDesktopUpdate(targetUrl, fileName, event.sender);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "请稍后再试，或联系管理员检查安装包地址。";
+    sendUpdateProgress(event.sender, {
+      phase: "error",
+      progress: 0,
+      message: "更新包下载失败。",
+      error: message
+    });
+
+    return {
+      ok: false,
+      error: message
+    };
+  }
 });
 
 app.whenReady().then(() => {

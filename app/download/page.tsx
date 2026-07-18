@@ -45,7 +45,7 @@ const downloadLinks = [
   {
     label: "用户 Web 入口",
     href: userRelease.web_url,
-    compatibilityHref: "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui",
+    compatibilityHref: "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/app/chat",
     description: "不安装客户端时，可从浏览器进入用户端问答页面。"
   }
 ];
@@ -60,9 +60,9 @@ export default function DownloadPage() {
       <section className="mx-auto flex max-w-3xl flex-col gap-8 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm sm:p-10">
         <div className="space-y-3">
           <p className="text-sm font-semibold text-blue-600">用户端安装包</p>
-          <h1 className="text-3xl font-bold tracking-tight">AI知识库助手下载</h1>
+          <h1 className="text-3xl font-bold tracking-tight">小董AI下载</h1>
           <p className="text-sm leading-6 text-slate-600">
-            用户端安装后请登录普通用户账号，进入 AI 知识库助手问答页面。
+            用户端安装后请登录普通用户账号，进入小董AI业务问题处理页面。
           </p>
         </div>
 

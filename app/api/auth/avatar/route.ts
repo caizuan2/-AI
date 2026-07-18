@@ -4,6 +4,11 @@ import path from "path";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { requireUser } from "@/lib/auth";
 import { ValidationError } from "@/lib/errors";
+import {
+  clearUserAvatarProfile,
+  getAvatarDirectory,
+  writeUserAvatarProfile
+} from "@/lib/user-avatar";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,7 +30,11 @@ allowedAvatarExtensions.set("jpeg", "image/jpeg");
 allowedAvatarExtensions.set("jpg", "image/jpeg");
 
 interface AvatarResponse {
-  avatar_url: string;
+  avatar_url: string | null;
+  avatarUrl?: string | null;
+  updated_at?: string | null;
+  avatar_updated_at?: string | null;
+  avatarUpdatedAt?: string | null;
 }
 
 function inferAvatarMimeType(file: File) {
@@ -60,16 +69,6 @@ function validateAvatarFile(file: File, mimeType: string) {
   }
 }
 
-function getUploadRoot() {
-  return (
-    process.env.CHAT_AVATAR_UPLOAD_DIR?.trim() ||
-    process.env.UPLOAD_DIR?.trim() ||
-    (process.env.NODE_ENV === "production"
-      ? "/var/www/ai-knowledge/uploads"
-      : path.join(process.cwd(), "public", "uploads"))
-  );
-}
-
 function getPublicBaseUrl(request: Request) {
   const configured =
     process.env.CHAT_ATTACHMENT_PUBLIC_BASE_URL?.trim() ||
@@ -81,6 +80,22 @@ function getPublicBaseUrl(request: Request) {
   }
 
   return new URL(request.url).origin;
+}
+
+export async function DELETE() {
+  try {
+    const user = await requireUser();
+    const result = await clearUserAvatarProfile(user.id);
+
+    return apiSuccess<AvatarResponse>({
+      ...result,
+      avatarUrl: result.avatar_url,
+      avatar_updated_at: result.updated_at,
+      avatarUpdatedAt: result.updated_at
+    });
+  } catch (error) {
+    return apiError(error);
+  }
 }
 
 export async function POST(request: Request) {
@@ -104,25 +119,34 @@ export async function POST(request: Request) {
     validateAvatarFile(avatar, mimeType);
 
     const extension = allowedAvatarMimeTypes.get(mimeType) ?? "png";
-    const avatarDirectory = path.join(getUploadRoot(), "avatars");
+    const avatarDirectory = getAvatarDirectory();
     const fileName = `${user.id}-${randomUUID()}.${extension}`;
     const storagePath = path.join(avatarDirectory, fileName);
     const avatarBytes = Buffer.from(await avatar.arrayBuffer());
-    const publicUrl = new URL(
-      `/uploads/avatars/${fileName}`,
-      getPublicBaseUrl(request),
-    ).toString();
 
     try {
       await mkdir(avatarDirectory, { recursive: true });
       await writeFile(storagePath, avatarBytes);
+      const profile = await writeUserAvatarProfile(user.id, fileName, request);
+      const avatarUrl = profile?.avatar_url ?? new URL(`/api/auth/avatar/${fileName}`, getPublicBaseUrl(request)).toString();
 
       return apiSuccess<AvatarResponse>({
-        avatar_url: publicUrl,
+        avatar_url: avatarUrl,
+        avatarUrl,
+        updated_at: profile?.updated_at ?? null,
+        avatar_updated_at: profile?.updated_at ?? null,
+        avatarUpdatedAt: profile?.updated_at ?? null
       });
     } catch {
+      const avatarUrl = `data:${mimeType};base64,${avatarBytes.toString("base64")}`;
+      const updatedAt = new Date().toISOString();
+
       return apiSuccess<AvatarResponse>({
-        avatar_url: `data:${mimeType};base64,${avatarBytes.toString("base64")}`,
+        avatar_url: avatarUrl,
+        avatarUrl,
+        updated_at: updatedAt,
+        avatar_updated_at: updatedAt,
+        avatarUpdatedAt: updatedAt
       });
     }
   } catch (error) {

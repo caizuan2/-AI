@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { FileText, Image as ImageIcon, Mic, Plus, SendHorizontal, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Plus, SendHorizontal, X } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { AttachmentMenu } from "./AttachmentMenu";
 import { rememberChatAttachmentPreviewUrl } from "../chat-ui-state";
@@ -10,120 +10,21 @@ import type { ChatAttachmentDraft, ChatAttachmentSource, AttachmentType } from "
 interface ChatInputProps {
   value: string;
   loading: boolean;
+  placeholder?: string;
   onValueChange: (value: string) => void;
   onSubmit: (attachments?: ChatAttachmentDraft[]) => Promise<boolean> | boolean | void;
+  onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
-  openAttachmentSignal?: number;
-  openCameraSignal?: number;
+  onAttachmentsChange?: (attachments: ChatAttachmentDraft[]) => void;
+  knowledgeBaseSelector?: React.ReactNode;
 }
-
-type SpeechRecognitionResultLike = {
-  readonly 0: {
-    transcript: string;
-  };
-  readonly isFinal?: boolean;
-};
-
-type SpeechRecognitionEventLike = {
-  results: ArrayLike<SpeechRecognitionResultLike>;
-};
-
-type SpeechRecognitionErrorEventLike = {
-  error?: string;
-};
-
-type SpeechRecognitionLike = {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  maxAlternatives: number;
-  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-};
-
-type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
-
-type SpeechWindow = Window & typeof globalThis & {
-  SpeechRecognition?: SpeechRecognitionConstructor;
-  webkitSpeechRecognition?: SpeechRecognitionConstructor;
-};
 
 export const MAX_CHAT_ATTACHMENTS = 5;
 export const MAX_CHAT_ATTACHMENT_SIZE_MB = 100;
 export const MAX_CHAT_ATTACHMENT_SIZE_BYTES = MAX_CHAT_ATTACHMENT_SIZE_MB * 1024 * 1024;
 export const CHAT_FILE_ACCEPT = ".pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.txt,.md,image/*";
-export const SPEECH_UNSUPPORTED_MESSAGE = "当前环境暂不支持语音输入，请使用文字输入。";
-export const SPEECH_RECORDING_ONLY_MESSAGE = "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。";
-export const SPEECH_PERMISSION_MESSAGE = "麦克风权限未开启，请在浏览器或系统设置中允许麦克风权限。";
-export const SPEECH_NO_MICROPHONE_MESSAGE = "未检测到麦克风设备。";
 
 const imageAttachmentTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-
-export function mergeVoiceTranscript(currentValue: string, transcript: string) {
-  const trimmedTranscript = transcript.trim();
-
-  if (!trimmedTranscript) {
-    return currentValue;
-  }
-
-  const trimmedCurrent = currentValue.trimEnd();
-
-  return trimmedCurrent ? `${trimmedCurrent} ${trimmedTranscript}` : trimmedTranscript;
-}
-
-export function getSpeechRecognitionErrorMessage(error?: string) {
-  if (error === "not-allowed" || error === "service-not-allowed") {
-    return SPEECH_RECORDING_ONLY_MESSAGE;
-  }
-
-  if (error === "audio-capture") {
-    return SPEECH_NO_MICROPHONE_MESSAGE;
-  }
-
-  return "语音输入失败，请使用文字输入或稍后重试。";
-}
-
-function getErrorName(error: unknown) {
-  return error && typeof error === "object" && "name" in error && typeof error.name === "string"
-    ? error.name
-    : "";
-}
-
-export function getMicrophoneAccessErrorMessage(error: unknown) {
-  const name = getErrorName(error);
-
-  if (name === "NotAllowedError" || name === "PermissionDeniedError" || name === "SecurityError") {
-    return SPEECH_PERMISSION_MESSAGE;
-  }
-
-  if (name === "NotFoundError" || name === "DevicesNotFoundError") {
-    return SPEECH_NO_MICROPHONE_MESSAGE;
-  }
-
-  return "语音输入启动失败，请使用文字输入或稍后重试。";
-}
-
-export function readSpeechRecognitionTranscript(event: SpeechRecognitionEventLike) {
-  const results = Array.from(event.results);
-  const finalTranscript = results
-    .filter((result) => result.isFinal !== false)
-    .map((result) => result[0]?.transcript ?? "")
-    .join("")
-    .trim();
-  const interimTranscript = results
-    .filter((result) => result.isFinal === false)
-    .map((result) => result[0]?.transcript ?? "")
-    .join("")
-    .trim();
-
-  return {
-    finalTranscript,
-    interimTranscript
-  };
-}
 
 export function validateChatAttachmentFile(file: File) {
   if (file.size > MAX_CHAT_ATTACHMENT_SIZE_BYTES) {
@@ -202,16 +103,15 @@ export function cleanupChatAttachments(items: ChatAttachmentDraft[]) {
   }
 }
 
-function formatAttachmentSize(size?: number) {
-  if (!size || !Number.isFinite(size)) {
-    return "";
-  }
+function isImageAttachmentDraft(attachment: ChatAttachmentDraft) {
+  const mimeType = attachment.mime_type || attachment.mimeType || "";
 
-  if (size >= 1024 * 1024) {
-    return `${(size / 1024 / 1024).toFixed(1)}MB`;
-  }
-
-  return `${Math.max(1, Math.round(size / 1024))}KB`;
+  return (
+    attachment.type === "image" ||
+    attachment.type === "gallery_photo" ||
+    attachment.type === "camera_photo" ||
+    mimeType.startsWith("image/")
+  );
 }
 
 export function SelectedAttachmentList({
@@ -226,17 +126,17 @@ export function SelectedAttachmentList({
   }
 
   return (
-    <div className="mb-2 flex max-h-28 flex-wrap gap-2 overflow-y-auto px-1">
-      {attachments.map((attachment) => {
-        const isImage = attachment.type === "image" || attachment.type === "gallery_photo" || attachment.type === "camera_photo";
-        const name = attachment.name || "未命名附件";
+    <div className="mb-2 flex max-w-full gap-2 overflow-x-auto px-1 pb-1">
+      {attachments.map((attachment, index) => {
+        const isImage = isImageAttachmentDraft(attachment);
+        const name = attachment.name || `附件 ${index + 1}`;
 
         return (
           <div
-            key={attachment.id || name}
-            className="flex max-w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-2 py-1.5 text-xs text-slate-700"
+            key={attachment.id || `${name}-${index}`}
+            className="relative h-14 w-14 shrink-0 overflow-hidden rounded-xl border border-slate-200 bg-slate-50 text-slate-500"
           >
-            <span className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white text-slate-500">
+            <span className="flex h-full w-full items-center justify-center overflow-hidden bg-white">
               {attachment.previewUrl && isImage ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={attachment.previewUrl} alt="" className="h-full w-full object-cover" />
@@ -246,18 +146,15 @@ export function SelectedAttachmentList({
                 <FileText className="h-4 w-4" aria-hidden="true" />
               )}
             </span>
-            <span className="min-w-0">
-              <span className="block max-w-[160px] truncate font-semibold">{name}</span>
-              <span className="text-[11px] text-slate-400">{formatAttachmentSize(attachment.size)}</span>
-            </span>
             {onRemove ? (
               <button
                 type="button"
                 onClick={() => onRemove(attachment.id || name)}
-                className="focus-ring inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg hover:bg-white"
-                aria-label={`删除附件 ${name}`}
+                className="focus-ring absolute right-0 top-0 inline-flex h-5 w-5 items-center justify-center rounded-bl-lg bg-slate-900/80 text-white shadow-sm transition hover:bg-slate-950"
+                aria-label={`删除附件 ${index + 1}`}
+                title="删除附件"
               >
-                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                <X className="h-3 w-3" aria-hidden="true" />
               </button>
             ) : null}
           </div>
@@ -270,37 +167,67 @@ export function SelectedAttachmentList({
 export function ChatInput({
   value,
   loading,
+  placeholder = "问问 小董AI",
   onValueChange,
   onSubmit,
+  onCancel,
   onStatusMessage,
-  openAttachmentSignal = 0,
-  openCameraSignal = 0
+  onAttachmentsChange,
+  knowledgeBaseSelector
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
-  const [listening, setListening] = React.useState(false);
-  const [interimTranscript, setInterimTranscript] = React.useState("");
   const photoInputRef = React.useRef<HTMLInputElement | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const cameraInputRef = React.useRef<HTMLInputElement | null>(null);
-  const recognitionRef = React.useRef<SpeechRecognitionLike | null>(null);
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const attachmentsRef = React.useRef<ChatAttachmentDraft[]>([]);
-  const valueRef = React.useRef(value);
   const hasText = value.trim().length > 0;
-  const canSend = hasText && !loading;
+  const hasImageAttachment = attachments.some(isImageAttachmentDraft);
+  const canSend = (hasText || hasImageAttachment) && !loading;
+
+  const resizeTextarea = React.useCallback(() => {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(Math.max(textarea.scrollHeight, 40), 176);
+
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 176 ? "auto" : "hidden";
+  }, []);
 
   React.useEffect(() => {
     attachmentsRef.current = attachments;
-  }, [attachments]);
+    onAttachmentsChange?.(attachments);
+  }, [attachments, onAttachmentsChange]);
 
   React.useEffect(() => {
-    valueRef.current = value;
-  }, [value]);
+    resizeTextarea();
+  }, [resizeTextarea, value]);
 
   async function submitCurrentMessage() {
-    const submitted = await onSubmit(attachments);
+    const submittedAttachments = attachmentsRef.current;
+    const shouldClearOptimistically = canSend && submittedAttachments.length > 0;
 
-    if (submitted !== false) {
+    if (shouldClearOptimistically) {
+      setAttachments([]);
+    }
+
+    const submitted = await onSubmit(submittedAttachments);
+
+    if (submitted === false) {
+      if (shouldClearOptimistically) {
+        setAttachments((current) => (current.length === 0 ? submittedAttachments : current));
+      }
+
+      return;
+    }
+
+    if (!shouldClearOptimistically) {
       setAttachments([]);
     }
   }
@@ -346,105 +273,9 @@ export function ChatInput({
     }
   }
 
-  async function handleVoiceInput() {
-    if (loading) {
-      return;
-    }
-
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
-      setInterimTranscript("");
-      return;
-    }
-
-    if (!navigator.mediaDevices?.getUserMedia) {
-      onStatusMessage?.(SPEECH_UNSUPPORTED_MESSAGE);
-      return;
-    }
-
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-      stream.getTracks().forEach((track) => track.stop());
-      onStatusMessage?.("麦克风已开启，正在启动语音识别...");
-    } catch (error) {
-      setListening(false);
-      setInterimTranscript("");
-      onStatusMessage?.(getMicrophoneAccessErrorMessage(error));
-      return;
-    }
-
-    const speechWindow = window as SpeechWindow;
-    const Recognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
-
-    if (!Recognition) {
-      onStatusMessage?.(SPEECH_RECORDING_ONLY_MESSAGE);
-      return;
-    }
-
-    const recognition = new Recognition();
-
-    recognition.lang = "zh-CN";
-    recognition.interimResults = true;
-    recognition.continuous = false;
-    recognition.maxAlternatives = 1;
-    recognition.onresult = (event) => {
-      const {
-        finalTranscript,
-        interimTranscript: nextInterimTranscript
-      } = readSpeechRecognitionTranscript(event);
-
-      if (finalTranscript) {
-        const nextValue = mergeVoiceTranscript(valueRef.current, finalTranscript);
-
-        valueRef.current = nextValue;
-        onValueChange(nextValue);
-        setInterimTranscript("");
-        onStatusMessage?.("语音内容已填入输入框。");
-        return;
-      }
-
-      setInterimTranscript(nextInterimTranscript);
-    };
-    recognition.onerror = (event) => {
-      setListening(false);
-      setInterimTranscript("");
-      onStatusMessage?.(getSpeechRecognitionErrorMessage(event.error));
-    };
-    recognition.onend = () => {
-      setListening(false);
-      setInterimTranscript("");
-    };
-    recognitionRef.current = recognition;
-
-    try {
-      recognition.start();
-      setListening(true);
-      onStatusMessage?.("正在听...");
-    } catch {
-      setListening(false);
-      setInterimTranscript("");
-      onStatusMessage?.("语音输入启动失败，请使用文字输入或稍后重试。");
-    }
-  }
-
   React.useEffect(() => () => {
-    recognitionRef.current?.stop();
     cleanupChatAttachments(attachmentsRef.current);
   }, []);
-
-  React.useEffect(() => {
-    if (openAttachmentSignal > 0) {
-      setAttachmentMenuOpen(true);
-    }
-  }, [openAttachmentSignal]);
-
-  React.useEffect(() => {
-    if (openCameraSignal > 0) {
-      cameraInputRef.current?.click();
-    }
-  }, [openCameraSignal]);
 
   return (
     <form
@@ -465,7 +296,7 @@ export function ChatInput({
         onRemove={(attachmentId) => setAttachments((current) => removeChatAttachment(current, attachmentId))}
       />
 
-      <div className="relative flex min-h-[56px] items-center gap-2 rounded-full bg-white px-3 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
+      <div className="relative flex min-h-[56px] items-end gap-2 rounded-[28px] bg-white px-3 py-1.5 shadow-xl shadow-slate-200/90 ring-1 ring-slate-100">
         <div className="relative">
           <button
             type="button"
@@ -486,6 +317,7 @@ export function ChatInput({
         </div>
 
         <Textarea
+          ref={textareaRef}
           value={value}
           onChange={(event) => onValueChange(event.target.value)}
           onKeyDown={(event) => {
@@ -494,39 +326,37 @@ export function ChatInput({
               void submitCurrentMessage();
             }
           }}
-          placeholder="发消息或按住说话..."
-          className="max-h-28 min-h-10 flex-1 resize-none border-0 bg-transparent px-1 py-3 text-base font-medium shadow-none placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
+          placeholder={placeholder}
+          className="max-h-44 min-h-10 flex-1 resize-none overflow-hidden whitespace-pre-wrap break-words border-0 bg-transparent px-1 py-2.5 text-base font-medium leading-6 shadow-none [overflow-wrap:anywhere] placeholder:text-slate-400 focus-visible:ring-0 focus-visible:ring-offset-0"
           disabled={loading}
           rows={1}
+          wrap="soft"
         />
 
-        <button
-          type="button"
-          onClick={handleVoiceInput}
-          className="focus-ring inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100 data-[listening=true]:bg-blue-600 data-[listening=true]:text-white"
-          aria-label={listening ? "停止语音输入" : "语音输入"}
-          aria-pressed={listening}
-          data-listening={listening}
-          title={listening ? "正在听，再次点击停止" : "语音输入"}
-        >
-          <Mic className="h-7 w-7" strokeWidth={2.2} aria-hidden="true" />
-        </button>
+        {knowledgeBaseSelector}
 
         <button
           type="button"
-          onClick={() => void submitCurrentMessage()}
-          disabled={!canSend}
-          className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-400 transition enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed"
-          aria-label="发送消息"
+          onClick={() => {
+            if (loading) {
+              onCancel?.();
+              return;
+            }
+
+            void submitCurrentMessage();
+          }}
+          disabled={!loading && !canSend}
+          className="focus-ring inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-200 text-slate-400 transition enabled:bg-blue-600 enabled:text-white enabled:hover:bg-blue-700 disabled:cursor-not-allowed data-[loading=true]:bg-slate-950 data-[loading=true]:text-white data-[loading=true]:hover:bg-slate-800"
+          aria-label={loading ? "停止生成" : "发送消息"}
+          data-loading={loading}
         >
-          <SendHorizontal className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          {loading ? (
+            <X className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          ) : (
+            <SendHorizontal className="h-4 w-4" strokeWidth={2.2} aria-hidden="true" />
+          )}
         </button>
       </div>
-      {listening || interimTranscript ? (
-        <div className="mt-2 px-3 text-xs font-medium text-blue-600">
-          {interimTranscript ? `正在听：${interimTranscript}` : "正在听..."}
-        </div>
-      ) : null}
       <input
         ref={photoInputRef}
         type="file"

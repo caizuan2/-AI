@@ -1,7 +1,21 @@
 import versionInfo from "../version.json";
 
-export const APP_VERSION = versionInfo.version;
-export const APP_BUILD = versionInfo.build;
+const resolvedVersionInfo = versionInfo as {
+  version: string;
+  build: number;
+  web_release_sha?: string;
+  webReleaseSha?: string;
+};
+
+export const APP_VERSION = resolvedVersionInfo.version;
+export const APP_BUILD = resolvedVersionInfo.build;
+export const APP_WEB_RELEASE_SHA =
+  process.env.NEXT_PUBLIC_WEB_RELEASE_SHA
+  || process.env.NEXT_PUBLIC_RELEASE_SHA
+  || process.env.NEXT_PUBLIC_GIT_SHA
+  || resolvedVersionInfo.web_release_sha
+  || resolvedVersionInfo.webReleaseSha
+  || "";
 
 export const USER_APP_KIND = "user";
 export const ADMIN_APP_KIND = "admin";

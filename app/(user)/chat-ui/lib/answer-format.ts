@@ -61,7 +61,7 @@ function firstUsefulLine(...values: Array<string | null | undefined>) {
     }
   }
 
-  return "当前问题可以先按知识库资料做保守、清晰的回复。";
+  return "当前问题可以先按小董AI大脑🧠资料做保守、清晰的回复。";
 }
 
 function joinUsefulLines(values: string[], fallback: string, maxLines = 2) {
@@ -87,7 +87,7 @@ export function buildRichAnswerSections(input: BuildRichAnswerInput): RichAnswer
         id: "core",
         title: "核心判断",
         subtitle: "先明确当前资料状态",
-        content: "目前知识库中暂无该问题的明确资料，建议先不要给出确定性承诺。",
+        content: "目前小董AI大脑🧠中暂无该问题的明确资料，建议先不要给出确定性承诺。",
         icon: "judge"
       },
       {
@@ -114,7 +114,7 @@ export function buildRichAnswerSections(input: BuildRichAnswerInput): RichAnswer
       subtitle: "把依据换成更容易理解的表达",
       content: joinUsefulLines(
         answerLines.slice(1, 3),
-        "这个回复基于当前知识库资料整理，重点是先讲清适用范围，再避免超出资料边界的承诺。"
+        "这个回复基于当前小董AI大脑🧠资料整理，重点是先讲清适用范围，再避免超出资料边界的承诺。"
       ),
       icon: "why"
     },

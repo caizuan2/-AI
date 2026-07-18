@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { ValidationError } from "../lib/errors";
 import {
   createAdminKbTextIngestion,
+  decodeAdminKbTextFile,
   retryAdminKbIngestionJob,
   validateAdminKbUpload,
   adminKbUploadLimits
@@ -195,6 +196,20 @@ async function main() {
     mimeType: "text/plain",
     size: adminKbUploadLimits.maxFileSizeBytes + 1
   }), ValidationError);
+
+  const utf8Decoded = decodeAdminKbTextFile(new TextEncoder().encode("瘦身KKS TXT 解析测试"));
+  assert.equal(utf8Decoded.text, "瘦身KKS TXT 解析测试");
+  assert.equal(utf8Decoded.encoding, "utf-8");
+
+  const gb18030Decoded = decodeAdminKbTextFile(Uint8Array.from([0xd6, 0xd0, 0xce, 0xc4, 0xb2, 0xe2, 0xca, 0xd4]));
+  assert.equal(gb18030Decoded.text, "中文测试");
+  assert.equal(gb18030Decoded.encoding, "gb18030");
+
+  assert.equal(validateAdminKbUpload({
+    originalName: "招商资料.pdf",
+    mimeType: "application/octet-stream",
+    size: 100
+  }).processor, "pdf");
 
   const retryDb = createFakeDb();
   retryDb.state.jobs.push({

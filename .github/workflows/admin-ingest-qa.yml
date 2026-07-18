@@ -1,0 +1,74 @@
+name: Admin Ingest QA
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: QA environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      baseUrl:
+        description: Base URL, for example http://47.238.0.23
+        required: true
+        default: http://47.238.0.23
+        type: string
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      baseUrl:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    name: HTTP QA checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check admin-ingest routes
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="${{ inputs.baseUrl }}"
+          echo "QA_ENV=${{ inputs.environment }}"
+          curl -fsSI "$BASE_URL/ingest/login?app=ingest-admin&next=/admin-ingest" | tee ingest-login.headers
+          curl -fsSI "$BASE_URL/admin-ingest?app=ingest-admin&platform=web" | tee admin-ingest.headers
+          curl -fsSI "$BASE_URL/chat-ui?app=user&platform=web" | tee chat-ui.headers
+          curl -fsS "$BASE_URL/api/ingest/auth/me" | tee ingest-auth-me.json
+          node -e 'const fs=require("fs"); const v=JSON.parse(fs.readFileSync("ingest-auth-me.json","utf8")); if (typeof v !== "object") process.exit(1); console.log("AUTH_ME_JSON_OK=true")'
+          curl -fsSI "$BASE_URL/api/public/expert-market" | tee expert-market.headers
+          curl -fsS "$BASE_URL/api/public/expert-market" -o expert-market.json
+          head -c 300 expert-market.json
+          echo
+          if [ -z "${QA_USER_PHONE:-}" ] || [ -z "${QA_USER_PASSWORD:-}" ]; then
+            echo "QA_LOGIN_SKIPPED_MISSING_SECRETS=true"
+          else
+            echo "QA_LOGIN_SECRETS_PRESENT=true"
+          fi
+          echo "ADMIN_INGEST_QA_OK=true"
+        env:
+          QA_USER_PHONE: ${{ secrets.QA_USER_PHONE }}
+          QA_USER_PASSWORD: ${{ secrets.QA_USER_PASSWORD }}
+
+      - name: Upload QA headers
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-qa-headers
+          path: |
+            ingest-login.headers
+            admin-ingest.headers
+            chat-ui.headers
+            ingest-auth-me.json
+            expert-market.headers
+            expert-market.json
+          if-no-files-found: warn

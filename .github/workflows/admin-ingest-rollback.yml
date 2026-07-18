@@ -1,0 +1,107 @@
+name: Admin Ingest Rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Rollback environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - staging
+          - prod
+      rollbackRef:
+        description: release/admin-ingest-* or backup/admin-ingest-* ref
+        required: true
+        type: string
+      confirm:
+        description: Set true to allow an unsafe ref, or CONFIRM_ROLLBACK when deploy=true
+        required: true
+        default: "false"
+        type: string
+      deploy:
+        description: Execute rollback on Aliyun. False only prints the rollback plan.
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    name: Rollback admin-ingest
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    steps:
+      - name: Checkout rollback script
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate rollback ref and print plan
+        shell: bash
+        env:
+          ROLLBACK_REF: ${{ inputs.rollbackRef }}
+          CONFIRM: ${{ inputs.confirm }}
+          DEPLOY: ${{ inputs.deploy }}
+        run: |
+          set -euo pipefail
+          ALLOWED=false
+          if [[ "$ROLLBACK_REF" == release/admin-ingest-* || "$ROLLBACK_REF" == backup/admin-ingest-* ]]; then
+            ALLOWED=true
+          fi
+          if [[ "$ALLOWED" != "true" && "$CONFIRM" != "true" && "$CONFIRM" != "CONFIRM_ROLLBACK" ]]; then
+            echo "ROLLBACK_REF_REJECTED=true"
+            echo "rollbackRef must start with release/admin-ingest- or backup/admin-ingest-, unless confirm=true."
+            exit 1
+          fi
+          if [[ "$DEPLOY" == "true" && "$CONFIRM" != "CONFIRM_ROLLBACK" ]]; then
+            echo "ROLLBACK_DEPLOY_CONFIRM_REQUIRED=true"
+            echo "Set confirm=CONFIRM_ROLLBACK to execute deployment rollback."
+            exit 1
+          fi
+          echo "ROLLBACK_PLAN_ONLY=$([[ "$DEPLOY" == "true" ]] && echo false || echo true)"
+          echo "ROLLBACK_REF=$ROLLBACK_REF"
+          echo "ROLLBACK_ENV=${{ inputs.environment }}"
+          echo "ROLLBACK_SCRIPT=scripts/rollback/rollback-admin-ingest.sh"
+
+      - name: Check deploy secrets
+        if: ${{ inputs.deploy == true }}
+        id: deploy_secrets
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ALIYUN_HOST:-}" ] || [ -z "${ALIYUN_USER:-}" ] || [ -z "${ALIYUN_SSH_KEY:-}" ] || [ -z "${ALIYUN_APP_DIR:-}" ]; then
+            echo "ROLLBACK_DEPLOY_SKIPPED_MISSING_SECRETS=true"
+            echo "deploy_ready=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "deploy_ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH key
+        if: ${{ inputs.deploy == true && steps.deploy_secrets.outputs.deploy_ready == 'true' }}
+        shell: bash
+        env:
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ALIYUN_SSH_KEY" > ~/.ssh/aliyun_admin_ingest
+          chmod 600 ~/.ssh/aliyun_admin_ingest
+
+      - name: Execute remote rollback
+        if: ${{ inputs.deploy == true && steps.deploy_secrets.outputs.deploy_ready == 'true' }}
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_APP_DIR: ${{ secrets.ALIYUN_APP_DIR }}
+          ROLLBACK_REF: ${{ inputs.rollbackRef }}
+        run: |
+          ssh -i ~/.ssh/aliyun_admin_ingest -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" "APP_DIR='$ALIYUN_APP_DIR' ROLLBACK_REF='$ROLLBACK_REF' CONFIRM_ROLLBACK=true bash -s" < scripts/rollback/rollback-admin-ingest.sh

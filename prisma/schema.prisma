@@ -95,6 +95,917 @@ enum LicenseStatus {
   revoked
 }
 
+enum TeamRole {
+  TEAM_OWNER
+  TEAM_MANAGER
+  TRAINER
+  TEAM_MEMBER
+}
+
+enum TeamOrganizationStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TeamMemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum TeamInvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+enum IndustryStandardStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum CustomerStage {
+  LEAD
+  CONTACTED
+  INTERESTED
+  NEGOTIATING
+  CUSTOMER
+  LOST
+}
+
+enum CustomerLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerFollowUpType {
+  CHAT
+  CALL
+  MEETING
+  OTHER
+}
+
+enum CustomerRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum CustomerIntent {
+  HIGH_INTENT
+  HESITANT
+  REGULAR
+  CHURN_RISK
+}
+
+enum TrainingCourseCategory {
+  PRODUCT
+  SALES
+  CUSTOMER_SERVICE
+  MANAGEMENT
+  OTHER
+}
+
+enum TrainingCourseLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum TrainingCourseStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum TrainingRecordStatus {
+  STARTED
+  COMPLETED
+  FAILED
+}
+
+enum TrainingAssignmentStatus {
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum BusinessMetricType {
+  TASK
+  CRM
+  TRAINING
+  AI_USAGE
+}
+
+enum AIAssistantRole {
+  EMPLOYEE_ASSISTANT
+  MANAGER_ASSISTANT
+  OWNER_ASSISTANT
+}
+
+enum AIInsightType {
+  TASK
+  CRM
+  TRAINING
+  TEAM
+  BUSINESS
+}
+
+enum AIInsightPriority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum AIInsightStatus {
+  ACTIVE
+  DISMISSED
+  RESOLVED
+}
+
+enum AIRecommendationStatus {
+  ACTIVE
+  DISMISSED
+  COMPLETED
+}
+
+enum WorkflowTriggerType {
+  TASK
+  CRM
+  AI_COACH
+  TRAINING
+  ANALYTICS
+  SYSTEM
+}
+
+enum WorkflowEventType {
+  TASK_COMPLETED
+  TASK_OVERDUE
+  CRM_RISK_FOUND
+  EMPLOYEE_SCORE_LOW
+  TRAINING_FINISHED
+  BUSINESS_METRIC_ALERT
+  SYSTEM_TRIGGERED
+}
+
+enum WorkflowDefinitionStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum WorkflowExecutionStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+enum WorkflowExecutionMode {
+  TEST
+  PRODUCTION
+}
+
+enum WorkflowActionType {
+  CREATE_TASK
+  SEND_NOTIFICATION
+  ASSIGN_TRAINING
+  CREATE_FOLLOWUP
+  GENERATE_REPORT
+}
+
+enum KnowledgeCandidateSourceType {
+  CHAT
+  CRM
+  AI_COACH
+  TRAINING
+  WORKFLOW
+}
+
+enum KnowledgeCandidateStatus {
+  PENDING
+  REVIEWING
+  APPROVED
+  REJECTED
+}
+
+enum KnowledgeFeedbackType {
+  GOOD
+  BAD
+  MISSING
+}
+
+enum KnowledgeOptimizationStatus {
+  PENDING
+  APPLIED
+  REJECTED
+}
+
+enum TenantCompanyStatus {
+  ACTIVE
+  DISABLED
+  EXPIRED
+}
+
+enum TenantSubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum SubscriptionPlanStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum NotificationType {
+  TASK
+  AI_COACH
+  CRM
+  TRAINING
+  SYSTEM
+}
+
+enum NotificationReadStatus {
+  UNREAD
+  READ
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WECHAT
+  DINGTALK
+  FEISHU
+}
+
+enum IntegrationProvider {
+  WECHAT_WORK
+  DINGTALK
+  FEISHU
+}
+
+enum TaskStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum TaskSubmissionStatus {
+  SUBMITTED
+  REVIEWING
+  ANALYZED
+}
+
+model TeamOrganization {
+  id          String                 @id @default(cuid())
+  companyId   String                 @map("company_id")
+  name        String
+  description String                 @default("") @db.Text
+  ownerId     String                 @map("owner_id")
+  status      TeamOrganizationStatus @default(ACTIVE)
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  members     TeamMember[]
+  invitations TeamInvitation[]
+  tasks       Task[]
+  analysisReports EmployeeAnalysisReport[]
+  customers   Customer[]
+  trainingAssignments TrainingAssignment[]
+  workflowDefinitions WorkflowDefinition[]
+  knowledgeCandidates KnowledgeCandidate[]
+  knowledgeFeedback KnowledgeFeedback[]
+  knowledgeOptimizations KnowledgeOptimization[]
+
+  @@unique([id, companyId], map: "team_organizations_id_company_id_key")
+  @@index([companyId], map: "team_organizations_company_id_idx")
+  @@index([companyId, status, createdAt], map: "team_organizations_company_status_created_idx")
+  @@index([ownerId], map: "team_organizations_owner_id_idx")
+  @@index([status], map: "team_organizations_status_idx")
+  @@map("team_organizations")
+}
+
+model TeamMember {
+  id        String           @id @default(cuid())
+  teamId    String           @map("team_id")
+  userId    String           @map("user_id")
+  role      TeamRole         @default(TEAM_MEMBER)
+  status    TeamMemberStatus @default(ACTIVE)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+  team      TeamOrganization @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([teamId, userId])
+  @@index([teamId], map: "team_members_team_id_idx")
+  @@index([teamId, status, createdAt], map: "team_members_team_status_created_idx")
+  @@index([userId], map: "team_members_user_id_idx")
+  @@index([userId, status, createdAt], map: "team_members_user_status_created_idx")
+  @@index([status], map: "team_members_status_idx")
+  @@map("team_members")
+}
+
+model TeamInvitation {
+  id         String               @id @default(cuid())
+  teamId     String               @map("team_id")
+  email      String
+  role       TeamRole             @default(TEAM_MEMBER)
+  inviteCode String               @unique @map("invite_code")
+  status     TeamInvitationStatus @default(PENDING)
+  expiresAt  DateTime             @map("expires_at")
+  createdAt  DateTime             @default(now()) @map("created_at")
+  team       TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([teamId], map: "team_invitations_team_id_idx")
+  @@index([teamId, status, expiresAt], map: "team_invitations_team_status_expires_idx")
+  @@index([email], map: "team_invitations_email_idx")
+  @@index([status], map: "team_invitations_status_idx")
+  @@index([expiresAt], map: "team_invitations_expires_at_idx")
+  @@map("team_invitations")
+}
+
+model IndustryStandard {
+  id        String                 @id @default(cuid())
+  companyId String                 @map("company_id")
+  category  String
+  title     String
+  content   String                 @db.Text
+  version   Int                    @default(1)
+  status    IndustryStandardStatus @default(ACTIVE)
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+
+  @@unique([companyId, category, title, version], map: "industry_standards_company_id_category_title_version_key")
+  @@index([companyId, status, updatedAt], map: "industry_standards_company_id_status_updated_at_idx")
+  @@map("industry_standards")
+}
+
+model CoachRule {
+  id          String   @id @default(cuid())
+  companyId   String   @map("company_id")
+  name        String
+  description String   @db.Text
+  rules       Json
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, name], map: "coach_rules_company_id_name_key")
+  @@index([companyId, createdAt], map: "coach_rules_company_id_created_at_idx")
+  @@map("coach_rules")
+}
+
+model Customer {
+  id        String        @id @default(cuid())
+  companyId String        @map("company_id")
+  teamId    String        @map("team_id")
+  ownerId   String        @map("owner_id")
+  name      String
+  phone     String?
+  wechat    String?
+  source    String
+  tags      String[]      @default([])
+  stage     CustomerStage @default(LEAD)
+  level     CustomerLevel @default(LOW)
+  notes     String        @default("") @db.Text
+  createdAt DateTime      @default(now()) @map("created_at")
+  updatedAt DateTime      @updatedAt @map("updated_at")
+  team      TeamOrganization @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  followUps CustomerFollowUp[]
+  aiProfile CustomerAIProfile?
+
+  @@index([companyId, teamId, updatedAt], map: "crm_customers_company_id_team_id_updated_at_idx")
+  @@index([companyId, ownerId, updatedAt], map: "crm_customers_company_id_owner_id_updated_at_idx")
+  @@index([companyId, stage, level, updatedAt], map: "crm_customers_company_id_stage_level_updated_at_idx")
+  @@index([companyId, phone], map: "crm_customers_company_id_phone_idx")
+  @@index([companyId, wechat], map: "crm_customers_company_id_wechat_idx")
+  @@index([tags], type: Gin, map: "crm_customers_tags_idx")
+  @@map("crm_customers")
+}
+
+model CustomerFollowUp {
+  id           String               @id @default(cuid())
+  customerId   String               @map("customer_id")
+  userId       String               @map("user_id")
+  content      String               @db.Text
+  type         CustomerFollowUpType
+  summary      String               @default("") @db.Text
+  nextPlan     String               @default("") @map("next_plan") @db.Text
+  aiSuggestion String               @default("") @map("ai_suggestion") @db.Text
+  createdAt    DateTime             @default(now()) @map("created_at")
+  customer     Customer             @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([customerId, createdAt], map: "customer_follow_ups_customer_id_created_at_idx")
+  @@index([userId, createdAt], map: "customer_follow_ups_user_id_created_at_idx")
+  @@map("customer_follow_ups")
+}
+
+model CustomerAIProfile {
+  id                  String            @id @default(cuid())
+  customerId          String            @unique @map("customer_id")
+  intent              CustomerIntent
+  painPoints          String[]          @default([]) @map("pain_points")
+  riskLevel           CustomerRiskLevel @map("risk_level")
+  purchaseProbability Int               @map("purchase_probability")
+  nextAction          String            @map("next_action") @db.Text
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  customer            Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@map("customer_ai_profiles")
+}
+
+model TrainingCourse {
+  id          String                 @id @default(cuid())
+  companyId   String                 @map("company_id")
+  title       String
+  description String                 @db.Text
+  category    TrainingCourseCategory
+  content     String                 @db.Text
+  level       TrainingCourseLevel
+  status      TrainingCourseStatus   @default(ACTIVE)
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+  records     TrainingRecord[]
+  assignments TrainingAssignment[]
+  evaluations AITrainingEvaluation[]
+
+  @@unique([id, companyId], map: "training_courses_id_company_id_key")
+  @@unique([companyId, title], map: "training_courses_company_id_title_key")
+  @@index([companyId, status, updatedAt], map: "training_courses_company_id_status_updated_at_idx")
+  @@index([companyId, category, level, status], map: "training_courses_company_id_category_level_status_idx")
+  @@map("training_courses")
+}
+
+model TrainingRecord {
+  id          String               @id @default(cuid())
+  courseId    String               @map("course_id")
+  userId      String               @map("user_id")
+  score       Int                  @default(0)
+  status      TrainingRecordStatus @default(STARTED)
+  completedAt DateTime?            @map("completed_at")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  course      TrainingCourse       @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([courseId, userId], map: "training_records_course_id_user_id_key")
+  @@index([userId, status, createdAt], map: "training_records_user_id_status_created_at_idx")
+  @@index([courseId, status], map: "training_records_course_id_status_idx")
+  @@map("training_records")
+}
+
+model TrainingAssignment {
+  id         String                   @id @default(cuid())
+  courseId   String                   @map("course_id")
+  companyId  String                   @map("company_id")
+  teamId     String                   @map("team_id")
+  userId     String                   @map("user_id")
+  assignedBy String                   @map("assigned_by")
+  deadline   DateTime
+  status     TrainingAssignmentStatus @default(ASSIGNED)
+  createdAt  DateTime                 @default(now()) @map("created_at")
+  course     TrainingCourse           @relation(fields: [courseId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  team       TeamOrganization         @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([courseId, teamId, userId], map: "training_assignments_course_id_team_id_user_id_key")
+  @@index([userId, status, deadline], map: "training_assignments_user_id_status_deadline_idx")
+  @@index([companyId, teamId, status, deadline], map: "training_assignments_company_id_team_id_status_deadline_idx")
+  @@index([assignedBy, createdAt], map: "training_assignments_assigned_by_created_at_idx")
+  @@index([courseId, status], map: "training_assignments_course_id_status_idx")
+  @@map("training_assignments")
+}
+
+model AITrainingEvaluation {
+  id        String         @id @default(cuid())
+  userId    String         @map("user_id")
+  courseId  String         @map("course_id")
+  question  String         @db.Text
+  answer    String         @db.Text
+  score     Int
+  feedback  String         @db.Text
+  createdAt DateTime       @default(now()) @map("created_at")
+  course    TrainingCourse @relation(fields: [courseId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([userId, createdAt], map: "ai_training_evaluations_user_id_created_at_idx")
+  @@index([courseId, createdAt], map: "ai_training_evaluations_course_id_created_at_idx")
+  @@map("ai_training_evaluations")
+}
+
+model AnalyticsSnapshot {
+  id                     String   @id @default(cuid())
+  companyId              String   @map("company_id")
+  date                   DateTime @db.Date
+  taskCompletionRate     Float?   @map("task_completion_rate")
+  customerConversionRate Float?   @map("customer_conversion_rate")
+  employeeAverageScore   Float?   @map("employee_average_score")
+  trainingCompletionRate Float?   @map("training_completion_rate")
+  aiUsageCount           Int?     @map("ai_usage_count")
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, date], map: "analytics_snapshots_company_id_date_key")
+  @@index([date], map: "analytics_snapshots_date_idx")
+  @@map("analytics_snapshots")
+}
+
+model EmployeeGrowthMetric {
+  id            String   @id @default(cuid())
+  companyId     String   @map("company_id")
+  teamId        String   @map("team_id")
+  userId        String   @map("user_id")
+  date          DateTime @db.Date
+  skillScore    Float?   @map("skill_score")
+  taskScore     Float?   @map("task_score")
+  trainingScore Float?   @map("training_score")
+  customerScore Float?   @map("customer_score")
+  growthLevel   String   @map("growth_level")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([companyId, teamId, userId, date], map: "employee_growth_metrics_company_id_team_id_user_id_date_key")
+  @@index([companyId, teamId, date], map: "employee_growth_metrics_company_id_team_id_date_idx")
+  @@index([userId, date], map: "employee_growth_metrics_user_id_date_idx")
+  @@map("employee_growth_metrics")
+}
+
+model BusinessMetric {
+  id          String             @id @default(cuid())
+  companyId   String             @map("company_id")
+  metricType  BusinessMetricType @map("metric_type")
+  metricValue Float              @map("metric_value")
+  date        DateTime           @db.Date
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  @@unique([companyId, metricType, date], map: "business_metrics_company_id_metric_type_date_key")
+  @@index([metricType, date], map: "business_metrics_metric_type_date_idx")
+  @@index([date], map: "business_metrics_date_idx")
+  @@map("business_metrics")
+}
+
+model AIAssistantSession {
+  id           String          @id @default(cuid())
+  companyId    String          @map("company_id")
+  userId       String          @map("user_id")
+  role         AIAssistantRole
+  conversation Json
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+
+  @@unique([companyId, userId, role], map: "ai_assistant_sessions_company_id_user_id_role_key")
+  @@index([companyId, role, updatedAt], map: "ai_assistant_sessions_company_id_role_updated_at_idx")
+  @@index([userId, updatedAt], map: "ai_assistant_sessions_user_id_updated_at_idx")
+  @@map("ai_assistant_sessions")
+}
+
+model AIInsight {
+  id           String            @id @default(cuid())
+  companyId    String            @map("company_id")
+  teamId       String?           @map("team_id")
+  targetUserId String            @map("target_user_id")
+  role         AIAssistantRole
+  sourceKey    String            @map("source_key")
+  type         AIInsightType
+  title        String
+  content      String            @db.Text
+  priority     AIInsightPriority
+  status       AIInsightStatus   @default(ACTIVE)
+  notifiedAt   DateTime?         @map("notified_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+
+  @@unique([companyId, targetUserId, role, sourceKey], map: "ai_insights_company_id_target_user_id_role_source_key_key")
+  @@index([companyId, targetUserId, status, createdAt], map: "ai_insights_company_id_target_user_id_status_created_at_idx")
+  @@index([companyId, teamId, role, priority], map: "ai_insights_company_id_team_id_role_priority_idx")
+  @@map("ai_insights")
+}
+
+model AITaskRecommendation {
+  id             String                 @id @default(cuid())
+  companyId      String                 @map("company_id")
+  teamId         String?                @map("team_id")
+  userId         String                 @map("user_id")
+  role           AIAssistantRole
+  source         String
+  recommendation String                 @db.Text
+  status         AIRecommendationStatus @default(ACTIVE)
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  @@unique([companyId, userId, role, source], map: "ai_task_recommendations_company_id_user_id_role_source_key")
+  @@index([companyId, userId, status, createdAt], map: "ai_task_recs_company_user_status_created_idx")
+  @@index([companyId, teamId, role, status], map: "ai_task_recommendations_company_id_team_id_role_status_idx")
+  @@map("ai_task_recommendations")
+}
+
+model WorkflowDefinition {
+  id           String                   @id @default(cuid())
+  companyId    String                   @map("company_id")
+  teamId       String?                  @map("team_id")
+  name         String
+  description  String                   @db.Text
+  triggerType  WorkflowTriggerType      @map("trigger_type")
+  eventType    WorkflowEventType        @map("event_type")
+  status       WorkflowDefinitionStatus @default(ACTIVE)
+  config       Json
+  createdBy    String                   @map("created_by")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+  updatedAt    DateTime                 @updatedAt @map("updated_at")
+  actions      WorkflowAction[]
+  executions   WorkflowExecution[]
+  team         TeamOrganization?        @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([id, companyId], map: "workflow_definitions_id_company_id_key")
+  @@index([companyId, status, eventType, updatedAt], map: "workflow_defs_company_status_event_updated_idx")
+  @@index([companyId, teamId, status], map: "workflow_defs_company_team_status_idx")
+  @@index([createdBy, updatedAt], map: "workflow_defs_created_by_updated_at_idx")
+  @@map("workflow_definitions")
+}
+
+model WorkflowAction {
+  id         String             @id @default(cuid())
+  workflowId String             @map("workflow_id")
+  companyId  String             @map("company_id")
+  actionType WorkflowActionType @map("action_type")
+  config     Json
+  order      Int                @map("action_order")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  workflow   WorkflowDefinition @relation(fields: [workflowId, companyId], references: [id, companyId], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([companyId, workflowId, order], map: "workflow_actions_company_workflow_order_key")
+  @@index([companyId, actionType], map: "workflow_actions_company_action_type_idx")
+  @@map("workflow_actions")
+}
+
+model WorkflowExecution {
+  id             String                  @id @default(cuid())
+  workflowId     String                  @map("workflow_id")
+  companyId      String                  @map("company_id")
+  teamId         String?                 @map("team_id")
+  triggeredBy    String?                 @map("triggered_by")
+  eventId        String                  @map("event_id")
+  idempotencyKey String                  @map("idempotency_key")
+  eventType      WorkflowEventType       @map("event_type")
+  mode           WorkflowExecutionMode
+  triggerData    Json                    @map("trigger_data")
+  status         WorkflowExecutionStatus @default(RUNNING)
+  decision       Json?
+  result         Json?
+  error          Json?
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  finishedAt     DateTime?               @map("finished_at")
+  workflow       WorkflowDefinition      @relation(fields: [workflowId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([companyId, workflowId, idempotencyKey], map: "workflow_execs_company_workflow_idempotency_key")
+  @@index([companyId, status, createdAt], map: "workflow_execs_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "workflow_execs_company_team_status_created_idx")
+  @@index([workflowId, createdAt], map: "workflow_execs_workflow_created_idx")
+  @@map("workflow_executions")
+}
+
+model KnowledgeCandidate {
+  id                   String                       @id @default(cuid())
+  companyId            String                       @map("company_id")
+  teamId               String?                      @map("team_id")
+  sourceType           KnowledgeCandidateSourceType @map("source_type")
+  sourceId             String                       @map("source_id")
+  title                String
+  content              String                       @db.Text
+  category             String
+  status               KnowledgeCandidateStatus     @default(PENDING)
+  reviewedBy           String?                      @map("reviewed_by")
+  reviewedAt           DateTime?                    @map("reviewed_at")
+  publishedKnowledgeId String?                      @map("published_knowledge_id")
+  reviewNote           String?                      @map("review_note") @db.Text
+  createdAt            DateTime                     @default(now()) @map("created_at")
+  updatedAt            DateTime                     @updatedAt @map("updated_at")
+  team                 TeamOrganization?            @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_candidates_team_company_fkey")
+
+  @@unique([companyId, sourceType, sourceId], map: "knowledge_candidates_company_source_key")
+  @@index([companyId, status, createdAt], map: "knowledge_candidates_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "knowledge_candidates_company_team_status_created_idx")
+  @@index([publishedKnowledgeId], map: "knowledge_candidates_published_id_idx")
+  @@map("team_os_knowledge_candidates")
+}
+
+model KnowledgeFeedback {
+  id           String                @id @default(cuid())
+  companyId    String                @map("company_id")
+  teamId       String?               @map("team_id")
+  userId       String                @map("user_id")
+  question     String                @db.Text
+  answer       String                @db.Text
+  feedbackType KnowledgeFeedbackType @map("feedback_type")
+  comment      String                @default("") @db.Text
+  createdAt    DateTime              @default(now()) @map("created_at")
+  team         TeamOrganization?     @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_feedback_team_company_fkey")
+
+  @@index([companyId, feedbackType, createdAt], map: "knowledge_feedback_company_type_created_idx")
+  @@index([companyId, teamId, createdAt], map: "knowledge_feedback_company_team_created_idx")
+  @@index([userId, createdAt], map: "knowledge_feedback_user_created_idx")
+  @@map("team_os_knowledge_feedback")
+}
+
+model KnowledgeOptimization {
+  id          String                      @id @default(cuid())
+  companyId   String                      @map("company_id")
+  teamId      String?                     @map("team_id")
+  knowledgeId String                      @map("knowledge_id")
+  suggestion  String                      @db.Text
+  suggestionKey String                    @map("suggestion_key")
+  status      KnowledgeOptimizationStatus @default(PENDING)
+  createdAt   DateTime                    @default(now()) @map("created_at")
+  team        TeamOrganization?           @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_optimizations_team_company_fkey")
+
+  @@unique([companyId, suggestionKey], map: "knowledge_optimizations_company_key_key")
+  @@index([companyId, status, createdAt], map: "knowledge_optimizations_company_status_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "knowledge_optimizations_company_team_status_created_idx")
+  @@index([knowledgeId], map: "knowledge_optimizations_knowledge_id_idx")
+  @@map("team_os_knowledge_optimizations")
+}
+
+model TenantCompany {
+  id            String               @id
+  name          String
+  logo          String?
+  industry      String?
+  ownerId       String               @map("owner_id")
+  status        TenantCompanyStatus  @default(ACTIVE)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  subscriptions TenantSubscription[]
+
+  @@index([ownerId, status], map: "team_os_tenant_companies_owner_id_status_idx")
+  @@index([status, updatedAt], map: "team_os_tenant_companies_status_updated_at_idx")
+  @@map("team_os_tenant_companies")
+}
+
+model TenantSubscription {
+  id        String                   @id @default(cuid())
+  companyId String                   @map("company_id")
+  planId    String                   @map("plan_id")
+  startDate DateTime                 @map("start_date")
+  endDate   DateTime                 @map("end_date")
+  status    TenantSubscriptionStatus @default(ACTIVE)
+  createdAt DateTime                 @default(now()) @map("created_at")
+  company   TenantCompany            @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  plan      SubscriptionPlan         @relation(fields: [planId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([companyId, status, endDate], map: "team_os_tenant_subscriptions_company_id_status_end_date_idx")
+  @@index([companyId, createdAt], map: "team_os_tenant_subscriptions_company_created_idx")
+  @@index([planId, status], map: "team_os_tenant_subscriptions_plan_id_status_idx")
+  @@index([status, endDate], map: "team_os_tenant_subscriptions_status_end_date_idx")
+  @@map("team_os_tenant_subscriptions")
+}
+
+model SubscriptionPlan {
+  id                 String                 @id @default(cuid())
+  name               String
+  description        String                 @db.Text
+  maxUsers           Int                    @map("max_users")
+  maxStorage         Int                    @map("max_storage")
+  features           Json
+  price              Decimal                @db.Decimal(12, 2)
+  status             SubscriptionPlanStatus @default(ACTIVE)
+  subscriptions      TenantSubscription[]
+  featurePermissions FeaturePermission[]
+
+  @@index([status], map: "team_os_subscription_plans_status_idx")
+  @@map("team_os_subscription_plans")
+}
+
+model FeaturePermission {
+  id         String           @id @default(cuid())
+  planId     String           @map("plan_id")
+  featureKey String           @map("feature_key")
+  enabled    Boolean          @default(false)
+  plan       SubscriptionPlan @relation(fields: [planId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([planId, featureKey], map: "team_os_feature_permissions_plan_id_feature_key_key")
+  @@index([featureKey, enabled], map: "team_os_feature_permissions_feature_key_enabled_idx")
+  @@map("team_os_feature_permissions")
+}
+
+model Notification {
+  id         String                 @id @default(cuid())
+  companyId  String                 @map("company_id")
+  teamId     String?                @map("team_id")
+  userId     String                 @map("user_id")
+  type       NotificationType
+  title      String
+  content    String                 @db.Text
+  readStatus NotificationReadStatus @default(UNREAD) @map("read_status")
+  source     String
+  createdAt  DateTime               @default(now()) @map("created_at")
+
+  @@index([companyId, userId, createdAt], map: "team_os_notifications_company_id_user_id_created_at_idx")
+  @@index([companyId, teamId, createdAt], map: "team_os_notifications_company_id_team_id_created_at_idx")
+  @@index([userId, readStatus, createdAt], map: "team_os_notifications_user_id_read_status_created_at_idx")
+  @@index([companyId, type, createdAt], map: "team_os_notifications_company_id_type_created_at_idx")
+  @@map("team_os_notifications")
+}
+
+model NotificationPreference {
+  id        String              @id @default(cuid())
+  userId    String              @map("user_id")
+  channel   NotificationChannel
+  enabled   Boolean             @default(true)
+  createdAt DateTime            @default(now()) @map("created_at")
+
+  @@unique([userId, channel], map: "team_os_notification_preferences_user_id_channel_key")
+  @@map("team_os_notification_preferences")
+}
+
+model IntegrationConfig {
+  id        String              @id @default(cuid())
+  companyId String              @map("company_id")
+  provider  IntegrationProvider
+  enabled   Boolean             @default(false)
+  config    Json
+  createdAt DateTime            @default(now()) @map("created_at")
+  updatedAt DateTime            @updatedAt @map("updated_at")
+
+  @@unique([companyId, provider], map: "team_os_integration_configs_company_id_provider_key")
+  @@index([provider, enabled], map: "team_os_integration_configs_provider_enabled_idx")
+  @@map("team_os_integration_configs")
+}
+
+model Task {
+  id          String           @id @default(cuid())
+  title       String
+  description String           @db.Text
+  creatorId   String           @map("creator_id")
+  teamId      String           @map("team_id")
+  deadline    DateTime
+  targetCount Int              @default(1) @map("target_count")
+  status      TaskStatus       @default(PENDING)
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  team        TeamOrganization @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  submissions TaskSubmission[]
+
+  @@index([teamId], map: "team_tasks_team_id_idx")
+  @@index([teamId, status, deadline, createdAt], map: "team_tasks_team_status_deadline_created_idx")
+  @@index([creatorId], map: "team_tasks_creator_id_idx")
+  @@index([status], map: "team_tasks_status_idx")
+  @@index([deadline], map: "team_tasks_deadline_idx")
+  @@map("team_tasks")
+}
+
+model TaskSubmission {
+  id          String               @id @default(cuid())
+  taskId      String               @map("task_id")
+  userId      String               @map("user_id")
+  content     String               @db.Text
+  images      String[]             @default([])
+  attachments String[]             @default([])
+  summary     String               @db.Text
+  status      TaskSubmissionStatus @default(SUBMITTED)
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  task        Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  analysisReport EmployeeAnalysisReport?
+
+  @@index([taskId], map: "task_submissions_task_id_idx")
+  @@index([userId], map: "task_submissions_user_id_idx")
+  @@index([userId, createdAt], map: "task_submissions_user_created_idx")
+  @@index([status], map: "task_submissions_status_idx")
+  @@index([createdAt], map: "task_submissions_created_at_idx")
+  @@map("task_submissions")
+}
+
+model EmployeeAnalysisReport {
+  id               String               @id @default(cuid())
+  userId           String               @map("user_id")
+  teamId           String               @map("team_id")
+  submissionId     String?              @unique @map("submission_id")
+  score            Int
+  industryScore    Int?                 @map("industry_score")
+  summary          String               @db.Text
+  problems         String[]             @default([])
+  suggestions      String[]             @default([])
+  trainingPlan     String               @map("training_plan") @db.Text
+  matchedStandards Json?                @map("matched_standards")
+  coachFeedback    String?              @map("coach_feedback") @db.Text
+  improvementPlan  String?              @map("improvement_plan") @db.Text
+  createdAt        DateTime             @default(now()) @map("created_at")
+  updatedAt        DateTime             @updatedAt @map("updated_at")
+  team             TeamOrganization     @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  submission       TaskSubmission?      @relation(fields: [submissionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  skillScores      EmployeeSkillScore[]
+
+  @@index([userId, createdAt], map: "employee_analysis_reports_user_id_created_at_idx")
+  @@index([teamId, createdAt], map: "employee_analysis_reports_team_id_created_at_idx")
+  @@map("employee_analysis_reports")
+}
+
+model EmployeeSkillScore {
+  id        String                 @id @default(cuid())
+  reportId  String                 @map("report_id")
+  userId    String                 @map("user_id")
+  skillName String                 @map("skill_name")
+  score     Int
+  level     String
+  createdAt DateTime               @default(now()) @map("created_at")
+  report    EmployeeAnalysisReport @relation(fields: [reportId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([reportId, skillName])
+  @@index([userId, createdAt], map: "employee_skill_scores_user_id_created_at_idx")
+  @@map("employee_skill_scores")
+}
+
 model Tenant {
   id             String              @id @default(cuid())
   name           String

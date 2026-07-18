@@ -25,7 +25,7 @@ export function RichAnswerView({ answer, customerAnswer, providerStatus }: RichA
           <h3 className="text-base font-semibold text-slate-950">现在建议你这样回复</h3>
         </div>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          以下内容基于知识库资料整理，并补充了更易理解的表达方式。
+          以下内容基于小董AI大脑🧠资料整理，并补充了更易理解的表达方式。
         </p>
       </header>
 

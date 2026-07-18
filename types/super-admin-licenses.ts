@@ -1,14 +1,19 @@
 import type { LicenseKeyStatus } from "@prisma/client";
 
-export type SuperAdminLicenseAppType = "user_app" | "ingest_admin" | "super_admin";
+export type UnifiedLicenseProduct = "user_app" | "ingest_admin" | "team_os";
+
+// Historical records may still contain this value, but new cards are only
+// generated for the three unified products above.
+export type SuperAdminLicenseAppType = UnifiedLicenseProduct | "super_admin";
 
 export type SuperAdminLicensePlan = "free" | "pro" | "enterprise";
 
 export type SuperAdminLicenseGenerationInput = {
-  appType?: SuperAdminLicenseAppType;
+  appType?: UnifiedLicenseProduct;
   plan?: SuperAdminLicensePlan;
   count?: number;
   expiresInDays?: number | null;
+  subscriptionDays?: number | null;
   maxActivations?: number | null;
   tenantId?: string | null;
   note?: string | null;
@@ -21,6 +26,7 @@ export type SuperAdminGeneratedLicense = {
   plan: SuperAdminLicensePlan;
   status: LicenseKeyStatus;
   expiresAt: string | null;
+  subscriptionDays: number | null;
 };
 
 export type SuperAdminLicenseRecord = {
@@ -41,6 +47,23 @@ export type SuperAdminLicenseRecord = {
   redeemedByUserId: string | null;
   redeemedByUserLabel: string | null;
   redeemedByUserAccount: string | null;
+  teamOsCompanyId: string | null;
+  teamOsTeamId: string | null;
+  subscriptionDays: number | null;
+  subscriptionEndsAt: string | null;
+};
+
+export type SuperAdminLicenseActivationRecord = {
+  id: string;
+  licenseId: string | null;
+  displayKey: string;
+  appType: SuperAdminLicenseAppType | null;
+  userId: string;
+  success: boolean;
+  message: string;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
 };
 
 export type SuperAdminLicenseRevealResult = {
@@ -72,10 +95,15 @@ export type SuperAdminLicenseAuditRecord = {
 export type SuperAdminLicenseDashboardData = {
   summary: SuperAdminLicenseSummary;
   licenses: SuperAdminLicenseRecord[];
+  activations: SuperAdminLicenseActivationRecord[];
   audit: SuperAdminLicenseAuditRecord[];
 };
 
 export type SuperAdminLicenseGenerationResult = {
   generated: SuperAdminGeneratedLicense[];
   summary: SuperAdminLicenseSummary;
+};
+
+export type SuperAdminLicenseRenewalInput = {
+  days?: number;
 };

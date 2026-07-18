@@ -58,8 +58,15 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
   {
     title: "卡密授权",
     href: "/super-admin/licenses",
-    description: "授权、激活与到期管理",
+    description: "用户端、投喂端统一授权",
     icon: "KeyRound"
+  },
+  {
+    title: "Team OS 授权",
+    href: "/super-admin/licenses/team-os",
+    description: "企业卡密、激活、禁用与续期",
+    icon: "KeyRound",
+    badge: "New"
   },
   {
     title: "商业化概览",

@@ -2,6 +2,7 @@ import "server-only";
 
 import { chatWithFallback } from "@/lib/ai/providers";
 import { recordAiUsage } from "@/lib/analytics";
+import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { normalizeQualityScores, type KnowledgeQualityScores } from "@/lib/knowledge/quality";
 import { estimateTokenCount, logger, toSafeErrorLog } from "@/lib/logger";
 
@@ -134,6 +135,22 @@ export async function structureKnowledge(input: StructureKnowledgeInput): Promis
   ].join("\n");
 
   try {
+    const runtimeOrchestrator = new AIRuntimeOrchestrator();
+    const runtimeResult = runtimeOrchestrator.handleRequest(content, {
+      source: "admin_ingest",
+      runtimeEntry: "server_route",
+      userId: input.userId ?? null,
+      category: existingCategories[0] ?? undefined,
+      previousKnowledgeDrafts: [
+        {
+          title: input.sourceType ?? "投喂内容",
+          summary: content.slice(0, 240),
+          category: existingCategories[0] ?? undefined,
+          sourceMaterials: [content]
+        }
+      ]
+    });
+
     const response = await chatWithFallback({
       temperature: 0.2,
       messages: [
@@ -185,7 +202,8 @@ export async function structureKnowledge(input: StructureKnowledgeInput): Promis
       metadata: {
         provider: response.provider,
         fallbackUsed: response.fallbackUsed,
-        originalProviderErrorCode: response.originalProviderErrorCode
+        originalProviderErrorCode: response.originalProviderErrorCode,
+        aiRuntime: runtimeResult
       }
     });
 

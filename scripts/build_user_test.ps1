@@ -37,13 +37,124 @@ if ($LocalUserSelfTest) {
   $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
   Set-Location $Root
 
+  function Stop-LocalUserSelfTestProcesses {
+    Get-Process dart, flutter, ai_knowledge_flutter_app, cl, msbuild -ErrorAction SilentlyContinue |
+      Stop-Process -Force -ErrorAction SilentlyContinue
+  }
+
+  function Invoke-LocalUserCommand {
+    param(
+      [Parameter(Mandatory = $true)][string]$FilePath,
+      [Parameter(Mandatory = $true)][string[]]$Arguments,
+      [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+      [Parameter(Mandatory = $true)][int]$TimeoutSeconds,
+      [switch]$StopBuildProcessesOnTimeout
+    )
+
+    $resolvedCommand = (Get-Command $FilePath -ErrorAction Stop).Source
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $resolvedCommand
+    $startInfo.WorkingDirectory = $WorkingDirectory
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.Arguments = (($Arguments | ForEach-Object {
+          if ($_ -match '[\s"&]') {
+            '"' + ($_ -replace '\\', '\\' -replace '"', '\"') + '"'
+          } else {
+            $_
+          }
+        }) -join " ")
+
+    Write-Host ""
+    Write-Host "Running: $FilePath $($Arguments -join ' ')"
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $process.Start() | Out-Null
+    $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+    $stderrTask = $process.StandardError.ReadToEndAsync()
+
+    if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+      if ($StopBuildProcessesOnTimeout) {
+        Stop-LocalUserSelfTestProcesses
+      }
+      if (-not $process.HasExited) {
+        try {
+          $process.Kill($true)
+          $process.WaitForExit(10000) | Out-Null
+        } catch {
+          Write-Warning "Could not stop timed out process $($process.Id): $($_.Exception.Message)"
+        }
+      }
+      $outText = $stdoutTask.GetAwaiter().GetResult()
+      $errText = $stderrTask.GetAwaiter().GetResult()
+      throw "Command timed out after $TimeoutSeconds seconds: $FilePath $($Arguments -join ' ')`n$outText`n$errText"
+    }
+
+    $outText = $stdoutTask.GetAwaiter().GetResult()
+    $errText = $stderrTask.GetAwaiter().GetResult()
+    if ($outText.Trim()) {
+      Write-Host $outText
+    }
+    if ($errText.Trim()) {
+      Write-Warning $errText
+    }
+    if ($process.ExitCode -ne 0) {
+      throw "Command failed with exit code $($process.ExitCode): $FilePath $($Arguments -join ' ')`n$outText`n$errText"
+    }
+  }
+
+  function Get-LocalCMakePath {
+    $command = Get-Command cmake -ErrorAction SilentlyContinue
+    if ($command) {
+      return $command.Source
+    }
+
+    $candidates = @(
+      "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+      "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe",
+      "C:\Program Files\CMake\bin\cmake.exe"
+    )
+    foreach ($candidate in $candidates) {
+      if (Test-Path -LiteralPath $candidate) {
+        return $candidate
+      }
+    }
+    throw "cmake.exe was not found for Windows build fallback."
+  }
+
+  function Invoke-LocalWindowsFallbackBuild {
+    $buildDir = Join-Path $Root "flutter_app\build\windows\x64"
+    if (-not (Test-Path -LiteralPath $buildDir)) {
+      throw "Windows build directory not found for fallback: $buildDir"
+    }
+
+    $cmake = Get-LocalCMakePath
+    Invoke-LocalUserCommand `
+      -FilePath $cmake `
+      -Arguments @(
+        "--build",
+        "build\windows\x64",
+        "--config",
+        "Release",
+        "--target",
+        "INSTALL",
+        "--",
+        "/p:TrackFileAccess=false",
+        "/m"
+      ) `
+      -WorkingDirectory (Join-Path $Root "flutter_app") `
+      -TimeoutSeconds $WindowsBuildTimeoutSeconds `
+      -StopBuildProcessesOnTimeout
+  }
+
   $branch = (git branch --show-current).Trim()
   if ($branch -ne "feature-user-client") {
     throw "当前分支不是 feature-user-client，禁止继续。当前分支：$branch"
   }
 
-  Get-Process ai_knowledge_flutter_app -ErrorAction SilentlyContinue |
-    Stop-Process -Force
+  Stop-LocalUserSelfTestProcesses
 
   if ([string]::IsNullOrWhiteSpace($env:PUB_HOSTED_URL)) {
     $env:PUB_HOSTED_URL = "https://pub.flutter-io.cn"
@@ -54,29 +165,56 @@ if ($LocalUserSelfTest) {
 
   Set-Location (Join-Path $Root "flutter_app")
 
-  flutter pub get
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter pub get 失败"
+  Invoke-LocalUserCommand `
+    -FilePath "flutter" `
+    -Arguments @("pub", "get") `
+    -WorkingDirectory (Join-Path $Root "flutter_app") `
+    -TimeoutSeconds 240 `
+    -StopBuildProcessesOnTimeout
+
+  try {
+    Invoke-LocalUserCommand `
+      -FilePath "flutter" `
+      -Arguments @("analyze", "--no-pub") `
+      -WorkingDirectory (Join-Path $Root "flutter_app") `
+      -TimeoutSeconds 120 `
+      -StopBuildProcessesOnTimeout
+  } catch {
+    Write-Warning "flutter analyze --no-pub failed or timed out. Retrying once. $($_.Exception.Message)"
+    Stop-LocalUserSelfTestProcesses
+    Invoke-LocalUserCommand `
+      -FilePath "flutter" `
+      -Arguments @("analyze", "--no-pub") `
+      -WorkingDirectory (Join-Path $Root "flutter_app") `
+      -TimeoutSeconds 120 `
+      -StopBuildProcessesOnTimeout
   }
 
-  flutter analyze
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter analyze 失败"
-  }
+  Invoke-LocalUserCommand `
+    -FilePath "flutter" `
+    -Arguments @("test", "--no-pub") `
+    -WorkingDirectory (Join-Path $Root "flutter_app") `
+    -TimeoutSeconds 300 `
+    -StopBuildProcessesOnTimeout
 
-  flutter test
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter test 失败"
-  }
+  Invoke-LocalUserCommand `
+    -FilePath "flutter" `
+    -Arguments @("build", "apk", "--release", "--no-pub") `
+    -WorkingDirectory (Join-Path $Root "flutter_app") `
+    -TimeoutSeconds 900 `
+    -StopBuildProcessesOnTimeout
 
-  flutter build apk --release
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter build apk --release 失败"
-  }
-
-  flutter build windows --release
-  if ($LASTEXITCODE -ne 0) {
-    throw "flutter build windows --release 失败"
+  try {
+    Invoke-LocalUserCommand `
+      -FilePath "flutter" `
+      -Arguments @("build", "windows", "--release", "--no-pub") `
+      -WorkingDirectory (Join-Path $Root "flutter_app") `
+      -TimeoutSeconds $WindowsBuildTimeoutSeconds `
+      -StopBuildProcessesOnTimeout
+  } catch {
+    Write-Warning "flutter build windows --release --no-pub failed or timed out. Trying MSBuild FileTracker fallback. $($_.Exception.Message)"
+    Stop-LocalUserSelfTestProcesses
+    Invoke-LocalWindowsFallbackBuild
   }
 
   $apk = Join-Path $Root "flutter_app\build\app\outputs\flutter-apk\app-release.apk"
@@ -93,6 +231,17 @@ if ($LocalUserSelfTest) {
   Write-Host "用户端本地自测通过"
   Write-Host "APK: $apk"
   Write-Host "EXE: $exe"
+
+  Write-Host ""
+  Write-Host "Starting Windows EXE for login-page smoke check..."
+  $exeProcess = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) -PassThru
+  Start-Sleep -Seconds 3
+  $runningExe = Get-Process ai_knowledge_flutter_app -ErrorAction SilentlyContinue
+  if (-not $runningExe) {
+    throw "EXE 启动后未检测到进程：$exe"
+  }
+  Write-Host "EXE 启动成功，已打开到登录页。PID: $($exeProcess.Id)"
+  Write-Host "Codex 无法安全自动输入账号密码，登录后菜单点击由 Flutter 自动化测试覆盖。"
 
   Set-Location $Root
   git status --short

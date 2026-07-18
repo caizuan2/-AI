@@ -3,7 +3,9 @@ import type {
   SuperAdminLicenseGenerationInput,
   SuperAdminLicenseGenerationResult,
   SuperAdminLicenseRecord,
-  SuperAdminLicenseRevealResult
+  SuperAdminLicenseRenewalInput,
+  SuperAdminLicenseRevealResult,
+  UnifiedLicenseProduct
 } from "@/types/super-admin-licenses";
 
 type SuperAdminClientResponse<T> = {
@@ -51,7 +53,7 @@ export function fetchSuperAdminLicenses() {
 
 export function searchSuperAdminLicenses(input: {
   query: string;
-  appType: "user_app" | "ingest_admin";
+  appType: UnifiedLicenseProduct;
 }) {
   return requestSuperAdmin<SuperAdminLicenseRecord[]>("/api/super-admin/licenses", {
     method: "POST",
@@ -76,5 +78,12 @@ export function revealSuperAdminLicense(id: string) {
   return requestSuperAdmin<SuperAdminLicenseRevealResult>(`/api/super-admin/licenses/${encodeURIComponent(id)}/reveal`, {
     method: "POST",
     cache: "no-store"
+  });
+}
+
+export function renewSuperAdminLicense(id: string, input: SuperAdminLicenseRenewalInput) {
+  return requestSuperAdmin<SuperAdminLicenseRecord>(`/api/super-admin/licenses/${encodeURIComponent(id)}/renew`, {
+    method: "POST",
+    body: JSON.stringify(input)
   });
 }

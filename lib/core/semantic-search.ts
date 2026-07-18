@@ -5,6 +5,7 @@ import {
   createCoreEmbedding,
   readEmbeddingVector
 } from "@/lib/core/embedding-service";
+import { resolveAgentKnowledgeScope } from "@/lib/enterprise/knowledge-access-scope";
 import { ValidationError } from "@/lib/errors";
 
 export interface SemanticSearchInput {
@@ -12,6 +13,9 @@ export interface SemanticSearchInput {
   userId: string;
   query: string;
   topK?: number;
+  agentId?: string | null;
+  knowledgeBaseId?: string | null;
+  namespace?: string | null;
   requestId?: string;
 }
 
@@ -115,6 +119,41 @@ function extractTerms(query: string) {
   return Array.from(new Set(query.split(/[^a-z0-9\u4e00-\u9fa5]+/i).map((term) => term.trim()).filter(Boolean))).slice(0, 8);
 }
 
+function knowledgeItemScopeWhere(input: SemanticSearchInput) {
+  const scope = resolveAgentKnowledgeScope({
+    agentId: input.agentId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    namespace: input.namespace
+  });
+
+  return {
+    chunks: {
+      some: {
+        OR: [
+          {
+            metadata: {
+              path: ["knowledgeBaseId"],
+              equals: scope.knowledgeBaseId
+            }
+          },
+          {
+            metadata: {
+              path: ["namespace"],
+              equals: scope.namespace
+            }
+          },
+          {
+            metadata: {
+              path: ["agentId"],
+              equals: scope.agentId
+            }
+          }
+        ]
+      }
+    }
+  };
+}
+
 async function keywordFallback(input: SemanticSearchInput, topK: number): Promise<SemanticSearchResult[]> {
   const query = cleanText(input.query);
   const terms = extractTerms(query);
@@ -133,6 +172,7 @@ async function keywordFallback(input: SemanticSearchInput, topK: number): Promis
       tenantId: input.tenantId,
       deletedAt: null,
       status: "active",
+      ...knowledgeItemScopeWhere(input),
       OR: filters
     },
     orderBy: [
@@ -162,6 +202,11 @@ async function keywordFallback(input: SemanticSearchInput, topK: number): Promis
 
 export async function semanticSearch(input: SemanticSearchInput) {
   const query = cleanText(input.query);
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: input.agentId,
+    knowledgeBaseId: input.knowledgeBaseId,
+    namespace: input.namespace
+  });
 
   if (!query) {
     throw new ValidationError("语义搜索内容不能为空。");
@@ -170,6 +215,12 @@ export async function semanticSearch(input: SemanticSearchInput) {
   if (!input.tenantId) {
     throw new ValidationError("缺少企业租户上下文，无法执行语义搜索。");
   }
+
+  console.info("RAG_SCOPE: agentId + knowledgeBaseId", {
+    agentId: agentScope.agentId,
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace
+  });
 
   const topK = normalizeTopK(input.topK);
   const queryEmbedding = await createCoreEmbedding(query, {
@@ -182,6 +233,7 @@ export async function semanticSearch(input: SemanticSearchInput) {
       tenantId: input.tenantId,
       deletedAt: null,
       status: "active",
+      ...knowledgeItemScopeWhere(input),
       indexedAt: { not: null }
     },
     orderBy: { updatedAt: "desc" },

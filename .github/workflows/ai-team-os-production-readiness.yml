@@ -1,0 +1,180 @@
+name: AI Team OS Production Readiness
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_android_shell:
+        description: Build an unsigned Android technical-validation APK
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - "apps/team-os/**"
+      - "apps/team-os-mobile/**"
+      - "app/team-os/**"
+      - "app/api/team-os/**"
+      - "prisma/**"
+      - ".env.production.example"
+      - ".env.production.template"
+      - "deploy/**"
+      - ".dockerignore"
+      - "Dockerfile"
+      - "docker-compose.production.yml"
+      - "RELEASE_CHECKLIST.md"
+      - "docs/ai-team-os-production-deployment.md"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/ai-team-os-production-readiness.yml"
+  push:
+    branches:
+      - feature-ai-team-os
+    tags:
+      - "ai-team-os-phase*-stable"
+      - "ai-team-os-phase13-production-release-ready"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ai-team-os-production-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "10.12.4"
+  DATABASE_URL: "postgresql://ci_user:ci_password@127.0.0.1:5432/ci_database?schema=public"
+  DIRECT_URL: "postgresql://ci_user:ci_password@127.0.0.1:5432/ci_database?schema=public"
+
+jobs:
+  web-readiness:
+    name: Web, Prisma, and Team OS contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate Prisma schema
+        run: pnpm exec prisma validate
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Run Team OS contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm test:team-os:production
+          pnpm test:team-os:deployment
+          pnpm exec tsx apps/team-os/features/workflow/tests/workflow-contract.test.ts
+          pnpm exec tsx apps/team-os/features/copilot/tests/copilot-contract.test.ts
+          pnpm exec tsx apps/team-os/features/ai-brain/tests/ai-brain-contract.test.ts
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Check shell and Compose contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n deploy/scripts/deploy.sh
+          bash -n deploy/scripts/backup.sh
+          bash -n deploy/scripts/rollback.sh
+          bash -n deploy/scripts/load-env.sh
+          bash -n deploy/scripts/test-env-loader.sh
+          bash -n deploy/scripts/server-init.sh
+          bash -n deploy/scripts/cloud-preflight-check.sh
+          bash -n deploy/scripts/production-health-check.sh
+          bash deploy/scripts/test-env-loader.sh
+          cp .env.production.example .env.production
+          trap 'rm -f .env.production' EXIT
+          docker compose --env-file .env.production -f docker-compose.production.yml config --quiet
+          docker compose --env-file .env.production.template -f deploy/docker/docker-compose.yml config --quiet
+
+      - name: Validate production Dockerfiles
+        run: |
+          docker build --check --file Dockerfile .
+          docker build --check --file deploy/docker/Dockerfile.production .
+
+      - name: Validate Team OS Nginx configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          mkdir -p "$temp_dir/tls" "$temp_dir/updates"
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -subj '/CN=team-os.example.com' \
+            -keyout "$temp_dir/tls/privkey.pem" \
+            -out "$temp_dir/tls/fullchain.pem" >/dev/null 2>&1
+          cp deploy/VERSION_CHECK.json "$temp_dir/updates/VERSION_CHECK.json"
+          docker run --rm \
+            -v "$PWD/deploy/nginx/ai-team-os.conf:/etc/nginx/conf.d/ai-team-os.conf:ro" \
+            -v "$temp_dir/tls:/etc/ai-team-os/tls:ro" \
+            -v "$temp_dir/updates:/var/www/ai-team-os/updates:ro" \
+            nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10 nginx -t
+
+      - name: Report generated build metadata only
+        if: always()
+        shell: bash
+        run: |
+          echo "The existing prebuild may update root version metadata in the ephemeral runner."
+          git status --short
+
+  flutter-quality:
+    name: Flutter shell static validation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: apps/team-os-mobile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Test
+        run: flutter test
+
+      - name: Verify release base URL contract
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_android_shell }}
+        run: >-
+          flutter build apk --release
+          --dart-define=TEAM_OS_BASE_URL=https://team-os.example.com
+
+      - name: Mark technical build as non-distributable
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.build_android_shell }}
+        run: >-
+          echo "Unsigned or placeholder-identifier artifacts are technical validation only and must not be published."

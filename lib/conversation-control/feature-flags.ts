@@ -81,12 +81,20 @@ const flagDefinitions: FlagDefinition[] = [
 ];
 
 export const defaultConversationFeatureFlags: ConversationFeatureFlags = {
-  rename: false,
-  archive: false,
-  delete: false,
-  share: false,
-  groupChat: false,
+  rename: true,
+  archive: true,
+  delete: true,
+  share: true,
+  groupChat: true,
   pinCloudSync: false
+};
+
+const releasedConversationFeatureFloor: Partial<ConversationFeatureFlags> = {
+  rename: true,
+  archive: true,
+  delete: true,
+  share: true,
+  groupChat: true
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -172,6 +180,13 @@ function extractFlagsFromMetadata(metadata: unknown) {
   return normalizeConversationFeatureFlags(metadata, { includeDefaults: true }) as ConversationFeatureFlags | null;
 }
 
+function applyReleasedFeatureFloor(flags: ConversationFeatureFlags): ConversationFeatureFlags {
+  return {
+    ...flags,
+    ...releasedConversationFeatureFloor
+  };
+}
+
 function buildDisabledReasons(flags: ConversationFeatureFlags) {
   return flagDefinitions.reduce<Partial<Record<keyof ConversationFeatureFlags, string>>>((reasons, definition) => {
     if (!flags[definition.name]) {
@@ -239,7 +254,7 @@ export async function getConversationFeatureFlagSnapshot(): Promise<{
 
     if (flags) {
       return {
-        flags,
+        flags: applyReleasedFeatureFloor(flags),
         source: "audit_log",
         sourceAuditLogId: update.id,
         sourceCreatedAt: update.createdAt.toISOString()
@@ -248,7 +263,7 @@ export async function getConversationFeatureFlagSnapshot(): Promise<{
   }
 
   return {
-    flags: { ...defaultConversationFeatureFlags },
+    flags: applyReleasedFeatureFloor({ ...defaultConversationFeatureFlags }),
     source: "default",
     sourceAuditLogId: null,
     sourceCreatedAt: null

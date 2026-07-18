@@ -1,0 +1,40 @@
+name: ai-team-os
+
+services:
+  app:
+    image: ${TEAM_OS_IMAGE:-ai-team-os:1.0.0}
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    env_file:
+      - .env.production
+    environment:
+      HOSTNAME: 0.0.0.0
+      NODE_ENV: production
+      PORT: 3000
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - "${TEAM_OS_BIND_ADDRESS:-127.0.0.1}:${TEAM_OS_PORT:-3000}:3000"
+    volumes:
+      - team_os_storage:/app/storage
+      - team_os_uploads:/app/public/uploads
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3000/api/team-os/status')
+          .then((response) => { if (!response.ok) process.exit(1); })
+          .catch(() => process.exit(1))
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+
+volumes:
+  team_os_storage:
+  team_os_uploads:

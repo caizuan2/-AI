@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { writeAuditLog } from "@/lib/audit-log";
 import { authorize } from "@/lib/auth/authorize";
 import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
+import { UnauthorizedError } from "@/lib/errors";
 
 export async function requireSuperAdminAccess(request?: Request) {
   const authorization = await authorize(request, {
@@ -42,7 +43,11 @@ export async function requireSuperAdminAccess(request?: Request) {
 export async function enforceSuperAdminPageAccess() {
   try {
     return await requireSuperAdminAccess();
-  } catch {
-    redirect("/login?next=/super-admin");
+  } catch (error) {
+    if (error instanceof UnauthorizedError) {
+      redirect("/login?next=/super-admin");
+    }
+
+    redirect("/no-access");
   }
 }

@@ -4,8 +4,8 @@ import { ChatShell } from "./components/ChatShell";
 import { ClientAuthGate } from "./components/ClientAuthGate";
 
 export const metadata: Metadata = {
-  title: "AI 知识库助手",
-  description: "DeepSeek / 豆包风格的用户端知识库问答页面"
+  title: "小董AI",
+  description: "小董AI用户端业务问题处理助手"
 };
 
 export default function ChatUiPage() {

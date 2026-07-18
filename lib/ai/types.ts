@@ -13,6 +13,7 @@ export type ChatProviderInput = {
   system?: string;
   messages: ChatMessage[];
   model?: string;
+  providerChain?: ChatProviderName[];
   temperature?: number;
   maxTokens?: number;
   requestId?: string;
@@ -25,9 +26,18 @@ export type ChatProviderResult = {
   model: string;
 };
 
+export type ModelFeedbackEvent = {
+  model_used: string;
+  was_successful: boolean;
+  fallback_triggered: boolean;
+  response_quality: number | null;
+  latency: number;
+};
+
 export type ChatWithFallbackResult = ChatProviderResult & {
   fallbackUsed: boolean;
   originalProviderErrorCode?: string;
+  model_feedback_event: ModelFeedbackEvent;
 };
 
 export type EmbeddingProviderInput = {

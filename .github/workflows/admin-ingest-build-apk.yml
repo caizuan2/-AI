@@ -1,0 +1,100 @@
+name: Admin Ingest APK Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Build environment
+        required: true
+        default: prod
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+      strict:
+        description: Fail when APK cannot be produced
+        required: true
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      environment:
+        required: true
+        type: string
+      strict:
+        required: true
+        type: boolean
+  push:
+    tags:
+      - "release/admin-ingest-*"
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_ENV: ${{ inputs.environment || 'prod' }}
+  RELEASE_HEAD: ${{ github.sha }}
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+  DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
+
+jobs:
+  build-apk:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22.13.0"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Install dependencies
+        run: npm install --include=dev
+
+      - name: Build APK and write manifest
+        id: build_apk
+        shell: pwsh
+        run: |
+          $argsList = @()
+          if ("${{ inputs.strict || false }}" -eq "true") {
+            $argsList += "-FailOnMissingApk"
+          }
+          ./scripts/build/build-admin-ingest-apk.ps1 @argsList
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: admin-ingest-apk
+          path: |
+            artifacts/admin-ingest/apk/manifest.json
+            artifacts/admin-ingest/apk/admin-ingest.apk
+            dist-app/admin-android/*.apk
+            android/app/build/outputs/apk/**/*.apk
+            flutter_app/build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: warn
+
+      - name: Print APK manifest
+        if: always()
+        shell: bash
+        run: |
+          if [ -f artifacts/admin-ingest/apk/manifest.json ]; then
+            cat artifacts/admin-ingest/apk/manifest.json
+          fi

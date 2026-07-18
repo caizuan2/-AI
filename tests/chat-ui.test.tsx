@@ -24,6 +24,7 @@ import {
   getCurrentChatUserDisplayAccount,
   getCurrentChatUserDisplayName,
   getCachedChatAttachmentPreviewUrl,
+  normalizeCurrentChatUserAvatarUrl,
   normalizeChatMode
 } from "../app/(user)/chat-ui/chat-ui-state";
 import {
@@ -35,22 +36,15 @@ import {
   CHAT_FILE_ACCEPT,
   ChatInput,
   createChatAttachmentFromFile,
-  getMicrophoneAccessErrorMessage,
-  getSpeechRecognitionErrorMessage,
-  mergeVoiceTranscript,
-  readSpeechRecognitionTranscript,
   removeChatAttachment,
   SelectedAttachmentList,
-  SPEECH_NO_MICROPHONE_MESSAGE,
-  SPEECH_PERMISSION_MESSAGE,
-  SPEECH_RECORDING_ONLY_MESSAGE,
-  SPEECH_UNSUPPORTED_MESSAGE,
   validateChatAttachmentFile
 } from "../app/(user)/chat-ui/components/ChatInput";
 import { ChatShell } from "../app/(user)/chat-ui/components/ChatShell";
 import {
   ChatMessages,
   copyUserMessageToClipboard,
+  getAttachmentPreviewUrls,
   getUserMessageCopyText
 } from "../app/(user)/chat-ui/components/ChatMessages";
 import { ChatQuickActions } from "../app/(user)/chat-ui/components/ChatQuickActions";
@@ -66,6 +60,10 @@ import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarD
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
 import {
+  ProductAnswerView,
+  splitNaturalAnswerForCustomerScriptCards
+} from "../app/(user)/chat-ui/components/ProductAnswerView";
+import {
   CustomerAnswerCard,
   copyCustomerAnswerToClipboard
 } from "../app/(user)/chat-ui/components/CustomerAnswerCard";
@@ -74,8 +72,462 @@ import {
   buildRichAnswerSections,
   splitCustomerAnswerParagraphs
 } from "../app/(user)/chat-ui/lib/answer-format";
+import { buildRagPromptMessages, type RagContext } from "../lib/ai/rag-prompt";
+import { cleanUserFacingRagAnswer } from "../lib/ai/rag-output";
+import {
+  finalizeUserAnswer,
+  formatFinalizedAnswerForDisplay
+} from "../lib/ai-chat/response-finalizer";
+import { normalizeUserChatMarkdown } from "../lib/ai-chat/user-chat-markdown";
 
 async function main() {
+  const naturalCustomerScriptAnswer = [
+    "好的，我先保留完整分析。这类场景重点不是马上替伙伴下结论，而是先让他把客户画像、当前动作和真正卡住的点说清楚。",
+    "如果一开始只给一个很泛的答案，伙伴拿去对客户沟通时会缺少抓手，所以回答里需要保留判断逻辑、提问顺序和可直接复制的沟通话术。",
+    "下面这段就是在完整正文里额外标出一段可直接给客户使用的话术，正文其他部分仍然照常展示。",
+    "",
+    "话术一（通用版）：",
+    "收到。您先把客户的基本情况说一下，我再帮您组织更稳妥的回复。比如客户现在最担心的是安全性、效果，还是使用周期，我会根据这个点来给您一段更贴合的回复。",
+    "",
+    "使用前建议：",
+    "不要直接承诺结果，先确认客户最关心的问题，再根据对方回复决定下一步怎么讲。"
+  ].join("\n");
+  const naturalScriptSegments = splitNaturalAnswerForCustomerScriptCards(naturalCustomerScriptAnswer);
+
+  assert.equal(naturalScriptSegments.some((segment) => segment.kind === "customerScript"), true);
+
+  const naturalScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: naturalCustomerScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={naturalCustomerScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(naturalScriptMarkup, /复制答案/);
+  assert.match(naturalScriptMarkup, /复制话术/);
+  assert.match(naturalScriptMarkup, /话术一（通用版）/);
+  assert.match(naturalScriptMarkup, /收到。您先把客户的基本情况说一下/);
+  assert.match(naturalScriptMarkup, /使用前建议/);
+
+  const htmlListAnswer = [
+    "第三步｜讲事业通心 + 流程 + 注意事项｜三位一体完成认知建设｜",
+    "<ul><li><strong>通心</strong>：唤醒内在动力（如“为什么现在是改变的好时机？”）</li><li><strong>流程</strong>：清晰呈现事业路径（入门→成长→复制→收获）</li><li><strong>注意事项</strong>：提前划清边界，增强可信度</li></ul>",
+    "第四步 &amp; 第五步｜锁定问题 + 扎口袋成交。"
+  ].join("\n");
+  const normalizedHtmlListAnswer = normalizeUserChatMarkdown(htmlListAnswer);
+
+  assert.doesNotMatch(normalizedHtmlListAnswer, /<\/?(?:ul|li|strong|b)>/i);
+  assert.match(normalizedHtmlListAnswer, /- \*\*通心\*\*：唤醒内在动力/);
+  assert.match(normalizedHtmlListAnswer, /- \*\*流程\*\*：清晰呈现事业路径/);
+  assert.match(normalizedHtmlListAnswer, /第四步 & 第五步/);
+
+  const htmlListMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: htmlListAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={htmlListAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.doesNotMatch(htmlListMarkup, /&lt;\/?(?:ul|li|strong|b)/i);
+  assert.match(htmlListMarkup, /通心/);
+  assert.match(htmlListMarkup, /流程/);
+
+  const courseMetadataAnswer = [
+    "根据《讲事业导师》知识库中的标准课程结构，“沟通五步骤”是讲事业价值成交体系中的核心方法论。",
+    "",
+    "✅ 沟通五步骤",
+    "| 步骤 | 名称 | 核心目的 |",
+    "| 第一步 | 建立信任与需求探询 | 打开对话，识别真实动机 |",
+    "| 第二步 | 促单跟进 | 强化兴趣，推动决策节奏 |",
+    "",
+    "🔍 **依据来源：** 该结构源自《讲事业导师 · T0标准用语替换审计SOP草稿》及多源课程融合规范，明确标注为“沟通五步的思路课程”，并在知识库中按【第一步】至【第四五步】分段定义（见检索文档 pub-1moqfi5 / pub-103efva / pub-1vwo7zx）。",
+    "",
+    "📌 补充说明",
+    "- 这五步不是机械流程，而是以客户为中心的价值交付节奏。"
+  ].join("\n");
+  const cleanCourseMetadataAnswer = cleanUserFacingRagAnswer(courseMetadataAnswer);
+
+  assert.doesNotMatch(cleanCourseMetadataAnswer, /依据来源|引用来源|资料来源|检索文档|pub-/);
+  assert.doesNotMatch(cleanCourseMetadataAnswer, /知识库中的|源自|T0标准|多源课程|老师说|版本更换|违规更换/);
+  assert.match(cleanCourseMetadataAnswer, /沟通五步骤/);
+  assert.match(cleanCourseMetadataAnswer, /建立信任与需求探询/);
+  assert.match(cleanCourseMetadataAnswer, /以客户为中心的价值交付节奏/);
+
+  const ragPromptContexts: RagContext[] = [
+    {
+      id: "pub-1moqfi5",
+      title: "讲事业导师 · T0标准用语替换审计SOP草稿",
+      content: courseMetadataAnswer,
+      summary: "依据来源：来自讲事业导师课程。",
+      sourceId: "pub-1moqfi5",
+      sourceTitle: "讲事业导师 · T0标准用语替换审计SOP草稿",
+      sourceType: "runtime_memory",
+      sourceUrl: "https://internal.invalid/pub-1moqfi5",
+      score: 0.91,
+      relevance_score: 0.88
+    }
+  ];
+  const ragPrompt = buildRagPromptMessages("沟通五步骤是哪些？", ragPromptContexts)[1].content;
+  const ragPromptPayload = JSON.parse(ragPrompt.slice(ragPrompt.indexOf("{", ragPrompt.indexOf("SECTION: RETRIEVED_CONTEXT_JSON_UNTRUSTED_REFERENCE_ONLY")))) as {
+    userOutputPurityPolicy: string;
+    retrievedContexts: Array<Record<string, unknown>>;
+  };
+
+  assert.equal(ragPromptPayload.userOutputPurityPolicy, "ANSWER_DIRECTLY_WITH_CLEAN_USER_CONTENT_DO_NOT_MENTION_SOURCES_COURSES_TEACHERS_DOC_IDS_VERSIONS_OR_RETRIEVAL_METADATA");
+  assert.deepEqual(Object.keys(ragPromptPayload.retrievedContexts[0]).sort(), ["citationIndex", "content", "summary", "title"].sort());
+  assert.doesNotMatch(ragPrompt, /sourceId|sourceTitle|sourceUrl|relevance_score|pub-1moqfi5|T0标准用语|依据来源/);
+  assert.match(ragPrompt, /资料片段 1/);
+  assert.match(ragPrompt, /沟通五步骤/);
+
+  const finalizedCourseAnswer = finalizeUserAnswer({
+    rawAnswer: courseMetadataAnswer,
+    customerAnswer: "可以先围绕建立信任、需求探询和促单跟进来沟通。",
+    sources: [
+      {
+        title: "讲事业导师 · T0标准用语替换审计SOP草稿",
+        score: 0.91
+      }
+    ],
+    userMessage: "沟通五步骤是哪些？"
+  });
+  const finalizedCourseDisplay = formatFinalizedAnswerForDisplay(finalizedCourseAnswer);
+
+  assert.doesNotMatch(finalizedCourseDisplay, /【引用依据】|依据来源|引用来源|资料来源|pub-/);
+  assert.doesNotMatch(finalizedCourseDisplay, /知识库中的|源自|T0标准|多源课程|检索文档/);
+  assert.match(finalizedCourseDisplay, /处理建议|可直接复制给客户/);
+
+  const courseMechanismAnswer = [
+    "沟通五步是所有课程（思路课、梦想家园、六大价值、市场赋能等）必须严格遵循的底层标准化框架，已写死为机制，不可拆分或跳步。具体如下：",
+    "",
+    "✅ 讲事业沟通五步（标准结构）",
+    "| 步骤 | 名称 | 核心要点 |",
+    "| 第一步 | 破冰 | 建立信任感，消除陌生与防备 |",
+    "| 第二步 | 促单跟进 | 通过开放式提问，引导对方说出真实顾虑 |",
+    "| 第三步 | 讲事业通心 + 流程 + 注意事项 | 链接个人梦想、家庭责任和成长渴望 |",
+    "| 第四五步 | 锁定问题 + 扎口袋成交 | 聚焦顾虑，推动下一步行动 |",
+    "",
+    "客户话术",
+    "你现在是想先了解这五步怎么用在具体场景里，还是已经有某个沟通卡点，想我们一起拆解？"
+  ].join("\n");
+  const cleanCourseMechanismAnswer = cleanUserFacingRagAnswer(courseMechanismAnswer);
+
+  assert.doesNotMatch(cleanCourseMechanismAnswer, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
+  assert.match(cleanCourseMechanismAnswer, /沟通五步可以按下面五个阶段理解/);
+  assert.match(cleanCourseMechanismAnswer, /讲事业沟通五步/);
+  assert.match(cleanCourseMechanismAnswer, /破冰/);
+  assert.match(cleanCourseMechanismAnswer, /促单跟进/);
+  assert.match(cleanCourseMechanismAnswer, /讲事业通心/);
+  assert.match(cleanCourseMechanismAnswer, /扎口袋成交/);
+
+  const courseMechanismPrompt = buildRagPromptMessages("读取知识库沟通五步都是什么", [
+    {
+      id: "course-mechanism",
+      title: "讲事业导师",
+      content: courseMechanismAnswer,
+      sourceId: "pub-course-mechanism",
+      sourceTitle: "讲事业导师课程机制"
+    }
+  ])[1].content;
+
+  assert.doesNotMatch(courseMechanismPrompt, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构|pub-course-mechanism/);
+  assert.match(courseMechanismPrompt, /沟通五步可以按下面五个阶段理解/);
+  assert.match(courseMechanismPrompt, /讲事业沟通五步/);
+  assert.match(courseMechanismPrompt, /破冰/);
+
+  const courseMechanismMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "讲事业导师",
+        rawContent: courseMechanismAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={courseMechanismAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.doesNotMatch(courseMechanismMarkup, /所有课程|思路课|梦想家园|六大价值|市场赋能|底层标准化框架|写死|不可拆分|不可跳步|标准结构/);
+  assert.match(courseMechanismMarkup, /复制答案/);
+  assert.match(courseMechanismMarkup, /复制话术/);
+  assert.match(courseMechanismMarkup, /沟通五步可以按下面五个阶段理解/);
+  assert.match(courseMechanismMarkup, /讲事业沟通五步/);
+  assert.match(courseMechanismMarkup, /你现在是想先了解这五步怎么用/);
+
+  const implicitCustomerScriptAnswer = [
+    "好的，这个问题很典型。先共情，再指出为什么过去的方法不持久，最后用轻量邀请降低他的压力。",
+    "",
+    "直接可复制的话术（微信/私聊发送）",
+    "第一步：先共情，打开话匣子（不要一上来就推销）",
+    "",
+    "宝/兄弟，听你试了那么多种减肥方法都没达到想要的效果，我特别能理解那种感觉。节食饿得心慌，运动累得要死，要么反弹，要么坚持不下来，确实太折磨人了。",
+    "",
+    "第二步：点出本质差别，让他觉得这次可能不一样",
+    "",
+    "脂达人它的思路不是硬扛，而是先把身体内部的代谢环境调顺了，让你自然瘦。",
+    "",
+    "💡 给你的沟通要点（话术背后的策略）",
+    "1. 关键词要对味：少用“减肥”，多用“调理”“代谢”“轻松”“不反弹”。",
+    "2. 制造闭环感：一定要提到反弹，这是所有折腾过的人心里永远的痛。"
+  ].join("\n");
+  const implicitScriptSegments = splitNaturalAnswerForCustomerScriptCards(implicitCustomerScriptAnswer);
+  const implicitScriptCards = implicitScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(implicitScriptCards.length, 1);
+  assert.match(implicitScriptCards[0].text, /宝\/兄弟，听你试了那么多种减肥方法/);
+  assert.match(implicitScriptCards[0].text, /脂达人它的思路不是硬扛/);
+  assert.doesNotMatch(implicitScriptCards[0].text, /话术背后的策略/);
+  assert.equal(
+    implicitScriptSegments.some((segment) => segment.kind === "markdown" && /话术背后的策略/.test(segment.text)),
+    true
+  );
+  const implicitScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: implicitCustomerScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={implicitCustomerScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(implicitScriptMarkup, /复制话术/);
+  assert.match(implicitScriptMarkup, /直接可复制的话术（微信\/私聊发送）/);
+  assert.match(implicitScriptMarkup, /宝\/兄弟，听你试了那么多种减肥方法/);
+  assert.match(implicitScriptMarkup, /给你的沟通要点/);
+
+  const standaloneQuotedScriptAnswer = [
+    "客户用KKS体重下降慢，情绪急躁。这个情况在减脂初期很常见，下面给你一套完整跟进方案。",
+    "",
+    "一、先快速稳住客户情绪",
+    "客户急躁的时候，别急着讲道理，先共情、接住情绪。",
+    "",
+    "“姐/哥，我特别理解你现在的心情。花钱又花时间，谁不希望快点看到变化对吧？你这样想是正常的，别急，我帮你分析一下为什么这几天体重变化慢，以及接下来怎么调整。” 关键点：",
+    "",
+    "- 第一时间认可对方感受，不要否定或讲大道理",
+    "- 给信心：这个情况我见得多，基本都能解决",
+    "- 把问题明确化：我们一起来看看是哪一步需要优化"
+  ].join("\n");
+  const standaloneQuotedScriptSegments = splitNaturalAnswerForCustomerScriptCards(standaloneQuotedScriptAnswer);
+  const standaloneQuotedScriptCards = standaloneQuotedScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(standaloneQuotedScriptCards.length, 1);
+  assert.match(standaloneQuotedScriptCards[0].text, /姐\/哥，我特别理解你现在的心情/);
+  assert.equal(
+    standaloneQuotedScriptSegments.some((segment) => segment.kind === "markdown" && /关键点/.test(segment.text)),
+    true
+  );
+  const standaloneQuotedScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: standaloneQuotedScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={standaloneQuotedScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(standaloneQuotedScriptMarkup, /复制话术/);
+  assert.match(standaloneQuotedScriptMarkup, /姐\/哥，我特别理解你现在的心情/);
+  assert.match(standaloneQuotedScriptMarkup, /关键点/);
+
+  const coreScriptAnswer = [
+    "好的，面对朋友各种减肥方法都没达到想要效果的情况，关键不是直接推产品，而是先接住他的挫败感。",
+    "",
+    "客户话术",
+    "",
+    "场景一：理解挫败感，重塑信心",
+    "核心话术：",
+    "",
+    "兄弟/姐妹，我特别懂你说的那种感觉，试了那么多方法，要么饿得头昏眼花，要么累得半死，好不容易瘦了几斤，一停下又反弹了，真的很打击人。",
+    "",
+    "这个话术为什么有效：",
+    "- 共情优先，先承认他的痛苦是真的。",
+    "- 把问题从意志力转到方法不对。",
+    "",
+    "场景二：用效果和安全说话",
+    "核心话术：",
+    "",
+    "我跟你说个实话，如果只是让你换一种药丸吃，我肯定不会推荐给你，因为那只是换汤不换药。"
+  ].join("\n");
+  const coreScriptSegments = splitNaturalAnswerForCustomerScriptCards(coreScriptAnswer);
+  const coreScriptCards = coreScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(coreScriptCards.length, 2);
+  assert.match(coreScriptCards[0].text, /兄弟\/姐妹，我特别懂你说的那种感觉/);
+  assert.doesNotMatch(coreScriptCards[0].text, /这个话术为什么有效/);
+  assert.match(coreScriptCards[1].text, /如果只是让你换一种药丸吃/);
+  assert.equal(
+    coreScriptSegments.some((segment) => segment.kind === "markdown" && /这个话术为什么有效/.test(segment.text)),
+    true
+  );
+
+  const proseLeadScriptAnswer = [
+    "准备好一个或者几个案例最有效。如果他认识故事里的人，可信度会翻倍。可以这样说：",
+    "",
+    "我有好几个朋友刚开始也是你这种想法，觉得我都试过这么多了，肯定没用。但他们抱着最后试试的心态，跟着我们调整了饮食结构和生活习惯，没有节食，也没有疯狂运动。第一个月就干净地掉了8-10斤，而且最关键的是，他们是看着自己肚子下降，腰围小一圈，整个人状态好了很多。",
+    "",
+    "你的下一步行动",
+    "你可以直接复制上面这段，看看他的反应。"
+  ].join("\n");
+  const proseLeadScriptSegments = splitNaturalAnswerForCustomerScriptCards(proseLeadScriptAnswer);
+  const proseLeadScriptCards = proseLeadScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(proseLeadScriptCards.length, 1);
+  assert.match(proseLeadScriptCards[0].text, /我有好几个朋友刚开始也是你这种想法/);
+  assert.doesNotMatch(proseLeadScriptCards[0].text, /你的下一步行动/);
+  assert.equal(
+    proseLeadScriptSegments.some((segment) => segment.kind === "markdown" && /你的下一步行动/.test(segment.text)),
+    true
+  );
+  const proseLeadScriptMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: proseLeadScriptAnswer,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={proseLeadScriptAnswer}
+      sources={[]}
+    />
+  );
+
+  assert.match(proseLeadScriptMarkup, /复制话术/);
+  assert.match(proseLeadScriptMarkup, /我有好几个朋友刚开始也是你这种想法/);
+  assert.match(proseLeadScriptMarkup, /你的下一步行动/);
+
+  const inlineLabeledScriptAnswer = [
+    "这个问题很典型。客户真正担心的是安全感和刻板印象。",
+    "",
+    "✅ 标准回应要点（可直接发给客户）：“完全不用饿肚子！KKS不是节食，而是通过营养重组和代谢调整来优化身体对能量的利用。很多客户反馈，吃够了反而不馋了，肚子也不咕咕叫了。”",
+    "",
+    "为什么这么说？依据来自KKS体系里对节食、断食和极低热量方案的区分。"
+  ].join("\n");
+  const inlineLabeledScriptSegments = splitNaturalAnswerForCustomerScriptCards(inlineLabeledScriptAnswer);
+  const inlineLabeledScriptCards = inlineLabeledScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(inlineLabeledScriptCards.length, 1);
+  assert.match(inlineLabeledScriptCards[0].title, /标准回应要点/);
+  assert.match(inlineLabeledScriptCards[0].text, /完全不用饿肚子/);
+  assert.equal(
+    inlineLabeledScriptSegments.some((segment) => segment.kind === "markdown" && /为什么这么说/.test(segment.text)),
+    true
+  );
+
+  const preciseReferenceScriptAnswer = [
+    "✅ 动作2：勾起好奇心，让ta主动想来聊",
+    "客户看完资料后，ta可能已经产生兴趣，但不知道该怎么开口。你可以主动抛一个低门槛、有价值感的问题，让ta觉得“这个人在认真帮我”。",
+    "",
+    "话术",
+    "参考（跟进 + 价值感）：",
+    "“视频里提到的不囤货、不用辞职的模式，其实很多宝妈做起来之后一个月能多出几千到上万的零花钱。我身边就有几个真实案例，你要是看完觉得有意思，我可以具体说说她们是怎么开始的。”",
+    "• 核心技巧：用“真实案例”具体说“创造悬念”，让客户产生“想继续听”的冲动。"
+  ].join("\n");
+  const preciseReferenceScriptSegments = splitNaturalAnswerForCustomerScriptCards(preciseReferenceScriptAnswer);
+  const preciseReferenceScriptCards = preciseReferenceScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(preciseReferenceScriptCards.length, 1);
+  assert.match(preciseReferenceScriptCards[0].text, /视频里提到的不囤货/);
+  assert.doesNotMatch(preciseReferenceScriptCards[0].text, /参考|核心技巧|真实案例”具体说/);
+  assert.equal(
+    preciseReferenceScriptSegments.some((segment) => segment.kind === "markdown" && /核心技巧/.test(segment.text)),
+    true
+  );
+
+  const splitNumberedScriptAnswer = [
+    "四、如果你现在要发给客户的完整话术（直接复制可用）",
+    "",
+    "第1条（资料发完后，当晚或第二天发）：“姐姐，刚发你的视频你抽空看一下就好。主要是讲宝妈如何兼顾家庭和一份小事业的思路，不用有压力。看完有啥想法随便问我。” 第2条（如果ta回复了或你主动跟进）：“视频里提到的不囤货、不用辞职的模式，其实很多宝妈做起来之后一个月多个几千到上万的零花钱很常见。我身边就有几个真实案例，你要是看完觉得有意思，我可以具体说说她们是怎么开始的。” 第3条（如果ta说没或没回，直接约时间）：“我约你大概20分钟，我帮你把视频里的重点过一遍，再结合你的情况看看这个事能不能做、怎么做，比你自己研究有效率多了。你看明天上午还是下午方便？”"
+  ].join("\n");
+  const splitNumberedScriptSegments = splitNaturalAnswerForCustomerScriptCards(splitNumberedScriptAnswer);
+  const splitNumberedScriptCards = splitNumberedScriptSegments.filter((segment) => segment.kind === "customerScript");
+
+  assert.equal(splitNumberedScriptCards.length, 3);
+  assert.match(splitNumberedScriptCards[0].title, /第1条/);
+  assert.match(splitNumberedScriptCards[0].text, /刚发你的视频/);
+  assert.doesNotMatch(splitNumberedScriptCards[0].text, /第2条|第3条/);
+  assert.match(splitNumberedScriptCards[1].text, /不囤货、不用辞职/);
+  assert.doesNotMatch(splitNumberedScriptCards[1].text, /第1条|第3条/);
+  assert.match(splitNumberedScriptCards[2].text, /我约你大概20分钟/);
+  assert.doesNotMatch(splitNumberedScriptCards[2].text, /第1条|第2条/);
+
+  const globalPreciseScriptAnswer = [
+    "方案A：先肯定对方资源，再提出你的渠道价值。",
+    "",
+    "话术",
+    "模板：X总，看您这边是源头直供，资源确实不错。我们这边也有一批稳定的终端代理和经销商，一直想找这种一手资源对接。想请教下，针对我们渠道这边的合作，除了供货价，有没有专门的扶持政策？方便的话发个合作方案我先看看？",
+    "",
+    "• 核心作用：一句话就把角色反转——你不是求着买货的，你是他有价值的资源方。方案B：通过问“门槛”来降低对方的预期。",
+    "• 思路：不拒绝，但明确告诉他“我们不走零售逻辑”。通过问门槛，让对方意识到你不是散户，需要拿出诚意。",
+    "",
+    "话术",
+    "模板：X总，您那边主要做批发的话，合作门槛和结算方式是什么样的？我们这边拿货量相对稳定，但需要先明确合作规则，才好往下对接。",
+    "",
+    "• 核心作用：让话题从“你买不买”变成“你门槛是什么”，掌控对话节奏。方案C：拖着，先加好友再聊。",
+    "• 思路：不深入，不拒绝，先建联，后面用生活化内容慢慢养。",
+    "",
+    "客户话术",
+    "1. 如果对方给了方案/报价：别说“价格高了”或“折扣不够”。你要回：“方案我仔细看了，整体不错。有几个细节我整理一下，下次跟您细聊。”——目的是进入“细节商讨”阶段，而不是“价格辩论”阶段。",
+    "",
+    "2. 如果对方没回：2-3天后，别发“在吗/考虑得怎么样”，发一段生活视频，配一句：“刚忙完，X总，您上次说的那个XX产品，我帮朋友问一下，还有吗？”——用生活内容和具体需求双重破冰。提醒你的伙伴一句话：对付这类上游业务，你的价值不在于你多懂产品，而在于你手上有没有终端客户资源。"
+  ].join("\n");
+  const globalPreciseScriptSegments = splitNaturalAnswerForCustomerScriptCards(globalPreciseScriptAnswer);
+  const globalPreciseScriptCards = globalPreciseScriptSegments.filter((segment) => segment.kind === "customerScript");
+  const globalPreciseScriptCardText = globalPreciseScriptCards.map((segment) => segment.text).join("\n\n");
+
+  assert.equal(globalPreciseScriptCards.length, 4);
+  assert.match(globalPreciseScriptCards[0].text, /^X总，看您这边是源头直供/);
+  assert.doesNotMatch(globalPreciseScriptCards[0].text, /模板|核心作用|思路|方案B|方案C/);
+  assert.match(globalPreciseScriptCards[1].text, /^X总，您那边主要做批发的话/);
+  assert.match(globalPreciseScriptCards[2].text, /方案我仔细看了，整体不错/);
+  assert.match(globalPreciseScriptCards[3].text, /刚忙完，X总/);
+  assert.doesNotMatch(globalPreciseScriptCardText, /核心作用|思路|方案B|方案C|目的是|价格辩论|细节商讨|提醒你的伙伴/);
+  assert.equal(
+    globalPreciseScriptSegments.some((segment) => segment.kind === "markdown" && /核心作用/.test(segment.text)),
+    true
+  );
+  assert.equal(
+    globalPreciseScriptSegments.some((segment) => segment.kind === "markdown" && /提醒你的伙伴/.test(segment.text)),
+    true
+  );
+
   const chatUiPageSource = readFileSync("app/(user)/chat-ui/page.tsx", "utf8");
 
   assert.match(chatUiPageSource, /<ClientAuthGate>/);
@@ -83,19 +535,12 @@ async function main() {
 
   const shellMarkup = renderToStaticMarkup(<ChatShell />);
 
-  assert.match(shellMarkup, /使用快速模式开始对话/);
-  assert.match(shellMarkup, /新对话/);
-  assert.match(shellMarkup, /内容由 AI 生成/);
+  assert.match(shellMarkup, /Hi，我是你的沟通助手/);
   assert.match(shellMarkup, /打开历史会话/);
   assert.match(shellMarkup, /新建对话/);
-  assert.match(shellMarkup, /快速/);
-  assert.match(shellMarkup, /AI 创作/);
-  assert.match(shellMarkup, /照片动起来/);
-  assert.match(shellMarkup, /视频通话/);
-  assert.match(shellMarkup, /发消息或按住说话/);
-  assert.match(shellMarkup, /语音输入/);
+  assert.doesNotMatch(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
-  assert.match(shellMarkup, /发送消息/);
+  assert.match(shellMarkup, /问问 小董AI/);
   assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
   assert.doesNotMatch(shellMarkup, /11:54/);
   assert.doesNotMatch(shellMarkup, /⌁/);
@@ -111,14 +556,20 @@ async function main() {
   assert.match(chatShellSource, /setMessages\(Array\.isArray\(history\.messages\)/);
   assert.match(chatShellSource, /uploadChatAttachments\(attachments\)/);
   assert.ok(
-    chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChat({")
+    chatShellSource.indexOf("uploadChatAttachments(attachments)") < chatShellSource.indexOf("askChatStream({")
   );
+  assert.match(chatShellSource, /IMAGE_ONLY_DEFAULT_PROMPT/);
+  assert.match(chatShellSource, /const canSubmit = Boolean\(text\) \|\| hasImageAttachment/);
+  assert.match(chatShellSource, /const askText = text \|\| IMAGE_ONLY_DEFAULT_PROMPT/);
+  assert.match(chatShellSource, /text: askText/);
+  assert.match(chatShellSource, /createUserMessage\(text, uploadedAttachments\)/);
   assert.doesNotMatch(chatShellSource, /文件上传失败，请重新选择后再发送/);
+  assert.doesNotMatch(chatShellSource, /请先输入问题，再随问题一起发送附件/);
   assert.match(chatShellSource, /inputCleared/);
   assert.match(chatShellSource, /setInput\(text\)/);
   assert.match(chatShellSource, /正在加载历史记录/);
   assert.match(chatShellSource, /该会话暂无消息/);
-  assert.match(chatShellSource, /历史记录加载失败，请稍后重试/);
+  assert.match(chatShellSource, /historyLoadError/);
 
   const quickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -145,11 +596,7 @@ async function main() {
     />
   );
 
-  assert.doesNotMatch(quickActionsMarkup, /AI 创作/);
-  assert.match(quickActionsMarkup, /专家/);
-  assert.match(quickActionsMarkup, /深度思考/);
-  assert.match(quickActionsMarkup, /智能搜索/);
-  assert.match(quickActionsMarkup, /售后/);
+  assert.equal(quickActionsMarkup, "");
 
   const fallbackQuickActionsMarkup = renderToStaticMarkup(
     <ChatQuickActions
@@ -162,10 +609,7 @@ async function main() {
     />
   );
 
-  assert.match(fallbackQuickActionsMarkup, /快速/);
-  assert.match(fallbackQuickActionsMarkup, /AI 创作/);
-  assert.match(fallbackQuickActionsMarkup, /照片动起来/);
-  assert.match(fallbackQuickActionsMarkup, /视频通话/);
+  assert.equal(fallbackQuickActionsMarkup, "");
 
   const drawerMarkup = renderToStaticMarkup(
     <ChatSidebarDrawer
@@ -188,9 +632,8 @@ async function main() {
   );
 
   assert.match(drawerMarkup, /搜索/);
-  assert.match(drawerMarkup, /AI 知识库/);
-  assert.match(drawerMarkup, /AI 内容获客系统设计框架与路径/);
-  assert.match(drawerMarkup, /企业科技化转型与授信获取/);
+  assert.match(drawerMarkup, /小董AI/);
+  assert.match(drawerMarkup, /暂无历史会话/);
   assert.match(drawerMarkup, /扫描内容/);
   assert.match(drawerMarkup, /消息/);
   assert.match(drawerMarkup, /设置/);
@@ -346,7 +789,7 @@ async function main() {
   assert.match(settingsSource, /onSwitchAccount\?\.\(\)/);
   assert.match(settingsSource, /onClick=\{onLogout\}/);
   assert.ok(settingsSource.indexOf("setSwitchAccountOpen(true)") < settingsSource.indexOf("onSwitchAccount?.()"));
-  assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/chat-ui");
+  assert.equal(USER_CHAT_LOGIN_URL, "/login?app=user&next=/app");
   assert.equal(isChatUiAuthReady(200), true);
   assert.equal(isChatUiAuthReady(204), true);
   assert.equal(shouldRedirectChatUiAuth(401), true);
@@ -360,9 +803,13 @@ async function main() {
 
   const attachmentMenuMarkup = renderToStaticMarkup(<AttachmentMenu open />);
 
-  assert.match(attachmentMenuMarkup, /上传手机照片/);
-  assert.match(attachmentMenuMarkup, /上传文件/);
-  assert.match(attachmentMenuMarkup, /打开相机/);
+  assert.match(attachmentMenuMarkup, /aria-label="相机"/);
+  assert.match(attachmentMenuMarkup, /aria-label="照片"/);
+  assert.match(attachmentMenuMarkup, /aria-label="文件"/);
+  assert.match(attachmentMenuMarkup, /rounded-\[28px\]/);
+  assert.doesNotMatch(attachmentMenuMarkup, /上传入口/);
+  assert.doesNotMatch(attachmentMenuMarkup, /上传手机照片|上传文件|打开相机/);
+  assert.doesNotMatch(attachmentMenuMarkup, /从相册选择图片|选择文档或图片|拍摄一张照片/);
   assert.doesNotMatch(attachmentMenuMarkup, /占位/);
 
   const chatInputMarkup = renderToStaticMarkup(
@@ -381,6 +828,8 @@ async function main() {
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
   assert.match(chatInputMarkup, /disabled=""/);
   assert.match(chatInputMarkup, /bg-slate-200/);
   assert.doesNotMatch(chatInputMarkup, /麦克风权限未开启/);
@@ -423,10 +872,11 @@ async function main() {
   );
 
   assert.match(selectedAttachmentMarkup, /<img/);
-  assert.match(selectedAttachmentMarkup, /photo\.jpg/);
-  assert.match(selectedAttachmentMarkup, /contract\.pdf/);
-  assert.match(selectedAttachmentMarkup, /1KB/);
-  assert.match(selectedAttachmentMarkup, /删除附件 contract\.pdf/);
+  assert.match(selectedAttachmentMarkup, /h-14 w-14/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /photo\.jpg/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /contract\.pdf/);
+  assert.doesNotMatch(selectedAttachmentMarkup, /1KB/);
+  assert.match(selectedAttachmentMarkup, /删除附件 2/);
   assert.equal(validateChatAttachmentFile({
     size: 99 * 1024 * 1024
   } as File), null);
@@ -445,52 +895,32 @@ async function main() {
     enable_web_search: false
   }).attachments.length, 0);
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
-  assert.equal(mergeVoiceTranscript("已有内容", "  继续提问  "), "已有内容 继续提问");
-  assert.equal(SPEECH_UNSUPPORTED_MESSAGE, "当前环境暂不支持语音输入，请使用文字输入。");
-  assert.equal(SPEECH_RECORDING_ONLY_MESSAGE, "当前环境可使用麦克风，但暂不支持语音转文字，请使用文字输入。");
-  assert.equal(getSpeechRecognitionErrorMessage("not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
-  assert.equal(getSpeechRecognitionErrorMessage("service-not-allowed"), SPEECH_RECORDING_ONLY_MESSAGE);
-  assert.equal(getSpeechRecognitionErrorMessage("audio-capture"), SPEECH_NO_MICROPHONE_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("denied", "NotAllowedError")), SPEECH_PERMISSION_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage({ name: "PermissionDeniedError" }), SPEECH_PERMISSION_MESSAGE);
-  assert.equal(getMicrophoneAccessErrorMessage(new DOMException("not found", "NotFoundError")), SPEECH_NO_MICROPHONE_MESSAGE);
-  assert.equal(readSpeechRecognitionTranscript({
-    results: [
-      {
-        0: {
-          transcript: "临时内容"
-        },
-        isFinal: false
-      },
-      {
-        0: {
-          transcript: "最终内容"
-        },
-        isFinal: true
-      }
-    ]
-  }).finalTranscript, "最终内容");
   const chatInputSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
 
-  assert.match(chatInputSource, /recognition\.interimResults\s*=\s*true/);
-  assert.match(chatInputSource, /recognition\.continuous\s*=\s*false/);
-  assert.match(chatInputSource, /recognitionRef\.current\?\.stop\(\)/);
-  assert.match(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
-  assert.match(chatInputSource, /getUserMedia\(\{\s*audio:\s*true\s*\}\)/);
-  assert.ok(
-    chatInputSource.indexOf("getUserMedia({ audio: true })") < chatInputSource.indexOf("const speechWindow = window as SpeechWindow;")
-  );
-  assert.match(chatInputSource, /SPEECH_RECORDING_ONLY_MESSAGE/);
-  assert.match(chatInputSource, /麦克风已开启，正在启动语音识别/);
-  assert.match(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
+  assert.doesNotMatch(chatInputSource, /<Mic className=/);
+  assert.doesNotMatch(chatInputSource, /SPEECH_/);
+  assert.doesNotMatch(chatInputSource, /SpeechRecognition/);
+  assert.doesNotMatch(chatInputSource, /aria-label=\{listening \? "停止语音输入" : "语音输入"\}/);
+  assert.doesNotMatch(chatInputSource, /navigator\.mediaDevices\?\.getUserMedia/);
+  assert.doesNotMatch(chatInputSource, /麦克风已开启，正在启动语音识别/);
+  assert.doesNotMatch(chatInputSource, /onStatusMessage\?\.\("正在听\.\.\."\)/);
   assert.match(chatInputSource, /const hasText = value\.trim\(\)\.length > 0/);
-  assert.match(chatInputSource, /const canSend = hasText && !loading/);
-  assert.match(chatInputSource, /onClick=\{\(\) => void submitCurrentMessage\(\)\}/);
-  assert.match(chatInputSource, /disabled=\{!canSend\}/);
+  assert.match(chatInputSource, /const hasImageAttachment = attachments\.some\(isImageAttachmentDraft\)/);
+  assert.match(chatInputSource, /const canSend = \(hasText \|\| hasImageAttachment\) && !loading/);
+  assert.match(chatInputSource, /textareaRef = React\.useRef<HTMLTextAreaElement/);
+  assert.match(chatInputSource, /const resizeTextarea = React\.useCallback/);
+  assert.match(chatInputSource, /wrap="soft"/);
+  assert.match(chatInputSource, /\[overflow-wrap:anywhere\]/);
+  assert.match(chatInputSource, /rounded-\[28px\]/);
+  assert.match(chatInputSource, /onSubmit=\{handleSubmit\}/);
+  assert.match(chatInputSource, /disabled=\{!loading && !canSend\}/);
   assert.match(chatInputSource, /enabled:bg-blue-600/);
   assert.match(chatInputSource, /disabled:cursor-not-allowed/);
   assert.match(chatInputSource, /<SendHorizontal className="h-4 w-4"/);
   assert.match(chatInputSource, /<Plus className="h-6 w-6" strokeWidth=\{2\.2\}/);
+  assert.match(chatInputSource, /const submittedAttachments = attachmentsRef\.current/);
+  assert.match(chatInputSource, /shouldClearOptimistically/);
+  assert.match(chatInputSource, /setAttachments\(\(current\) => \(current\.length === 0 \? submittedAttachments : current\)\)/);
   assert.doesNotMatch(chatInputSource, /border-2 border-slate-950/);
 
   const chatInputReadyMarkup = renderToStaticMarkup(
@@ -519,8 +949,42 @@ async function main() {
   assert.equal(validateAvatarFile(validAvatarFile), null);
   assert.match(validateAvatarFile(invalidAvatarFile) ?? "", /仅支持/);
   assert.match(validateAvatarFile(oversizedAvatarFile) ?? "", /2MB/);
-  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /setCurrentUser/);
-  assert.match(readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8"), /avatar_url:\s*nextAvatarUrl/);
+  const chatShellText = readFileSync("app/(user)/chat-ui/components/ChatShell.tsx", "utf8");
+  const avatarDialogSource = readFileSync("app/(user)/chat-ui/components/AvatarSettingsDialog.tsx", "utf8");
+
+  assert.match(chatShellText, /setCurrentUser/);
+  assert.match(chatShellText, /function normalizeAvatarUrl/);
+  assert.match(chatShellText, /const nextAvatarUrl = storedAvatarUrl \|\| remoteAvatarUrl/);
+  assert.match(chatShellText, /setCurrentAvatarUrl\(storedAvatarUrl \|\| remoteAvatarUrl\)/);
+  assert.match(chatShellText, /const immediateAvatarUrl = normalizeAvatarUrl\(nextAvatarUrl\)/);
+  assert.match(chatShellText, /writeStoredAvatarUrl\(currentUser, immediateAvatarUrl\)/);
+  assert.match(chatShellText, /mergeCurrentUserAvatar\(user, immediateAvatarUrl\)/);
+  assert.match(chatShellText, /stableAvatarUrl = immediateAvatarUrl === null \? null : immediateAvatarUrl \|\| readStoredAvatarUrl\(user\) \|\| refreshedAvatarUrl/);
+  assert.match(chatShellText, /mergeCurrentUserAvatar\(\{[\s\S]*stableAvatarUrl\)/);
+  assert.match(avatarDialogSource, /rawValue && !\/\^\(\?:https\?:\|data:\|blob:\|\\\/\)\/i\.test\(rawValue\)/);
+  assert.match(chatShellText, /pendingScrollToUserMessageIdRef\.current = nextUserMessage\.id/);
+  assert.match(chatShellText, /setScrollFocusMessageId\(nextUserMessage\.id\)/);
+  assert.match(chatShellText, /scrollChatMessageToTop\(targetMessageId, "auto"\)/);
+  assert.match(chatShellText, /PROMPT_HISTORY_RAIL_MARK_COUNT/);
+  assert.match(chatShellText, /type PromptHistoryItem =/);
+  assert.match(chatShellText, /function buildPromptHistoryItems\(messages: ChatMessageView\[\]\): PromptHistoryItem\[\]/);
+  assert.match(chatShellText, /const promptHistory = React\.useMemo\(\(\) => buildPromptHistoryItems\(messages\), \[messages\]\)/);
+  assert.match(chatShellText, /if \(prompts\.length === 0\) \{\s*return null;/);
+  assert.match(chatShellText, /<PromptHistoryRail prompts=\{promptHistory\}/);
+  assert.match(chatShellText, /aria-label="提示词记录条"/);
+  assert.match(chatShellText, /onSelect: \(item: PromptHistoryItem\) => void/);
+  assert.match(chatShellText, /onSelect\(item\)/);
+  assert.match(chatShellText, /scrollChatMessageToTop\(item\.messageId, "smooth"\)/);
+  assert.match(chatShellText, /已定位到对应提示词/);
+  assert.match(chatShellText, /setPromptHistoryPanelOpen\(true\)/);
+  assert.match(chatShellText, /setPromptHistoryPanelOpen\(false\)/);
+  assert.match(chatShellText, /promptHistoryPanelOpen \? "block" : "hidden"/);
+  assert.match(chatShellText, /right-10 top-1\/2/);
+  assert.doesNotMatch(chatShellText, /setInput\(prompt\)/);
+  assert.doesNotMatch(chatShellText, /PROMPT_HISTORY_STORAGE_KEY_PREFIX|readPromptHistory|writePromptHistory/);
+  assert.doesNotMatch(chatShellText, /right-3 top-24 z-20 hidden lg:flex/);
+  assert.match(chatShellText, /aria-label="滚动到底部"/);
+  assert.match(chatShellText, /<ArrowDown className="h-5 w-5"/);
   assert.equal(getCurrentChatUserDisplayName({
     id: "user_1",
     nickname: "蔡姑",
@@ -546,8 +1010,13 @@ async function main() {
     "app/api/ai/chat/conversations/route.ts",
     "app/api/ai/chat/history/route.ts"
   ]) {
-    assert.match(readFileSync(routeFile, "utf8"), /requireLicense:\s*true/);
+    assert.match(readFileSync(routeFile, "utf8"), /requireAiChatAccess/);
   }
+
+  const chatApiSource = readFileSync("app/(user)/chat-ui/api.ts", "utf8");
+
+  assert.match(chatApiSource, /fetch\("\/api\/ai\/chat\/conversations", \{\s*method: "GET",\s*credentials: "include"/);
+  assert.match(chatApiSource, /fetch\(`\/api\/ai\/chat\/history\?\$\{params\.toString\(\)\}`, \{\s*method: "GET",\s*credentials: "include"/);
 
   const schemaText = readFileSync("prisma/schema.prisma", "utf8");
   const migrationText = readFileSync("prisma/migrations/20260607140000_add_quick_action_categories/migration.sql", "utf8");
@@ -573,8 +1042,8 @@ async function main() {
     <ModeToggle mode="fast" onChange={() => undefined} />
   );
 
-  assert.match(modeMarkup, /快速模式/);
-  assert.match(modeMarkup, /专家模式/);
+  assert.match(modeMarkup, /业务处理/);
+  assert.match(modeMarkup, /专家研判/);
   assert.equal(normalizeChatMode("expert"), "expert");
   assert.equal(normalizeChatMode("unknown"), "fast");
 
@@ -671,20 +1140,22 @@ async function main() {
   );
 
   assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
-  assert.match(chatMessagesMarkup, /打开图片预览 photo\.jpg/);
+  assert.match(chatMessagesMarkup, /打开图片预览 1/);
+  assert.match(chatMessagesMarkup, /data-chat-user-message-bubble="attachments"/);
   assert.match(chatMessagesMarkup, /<img/);
   assert.match(chatMessagesMarkup, /blob:chat-image-preview/);
+  assert.doesNotMatch(chatMessagesMarkup, /photo\.jpg/);
   assert.match(chatMessagesMarkup, /contract\.pdf/);
   assert.match(chatMessagesMarkup, /aria-label="复制用户消息"/);
   assert.match(chatMessagesMarkup, /aria-label="编辑用户消息"/);
   assert.ok(
-    chatMessagesMarkup.indexOf("打开图片预览 photo.jpg") < chatMessagesMarkup.indexOf("退款流程怎么处理？")
+    chatMessagesMarkup.indexOf('data-chat-user-message-bubble="attachments"') < chatMessagesMarkup.indexOf('data-chat-image-thumbnail="true"')
+  );
+  assert.ok(
+    chatMessagesMarkup.indexOf('data-chat-image-thumbnail="true"') < chatMessagesMarkup.indexOf("退款流程怎么处理？")
   );
   assert.ok(
     chatMessagesMarkup.indexOf("退款流程怎么处理？") < chatMessagesMarkup.indexOf("aria-label=\"复制用户消息\"")
-  );
-  assert.ok(
-    chatMessagesMarkup.indexOf("bg-slate-100") < chatMessagesMarkup.indexOf("bg-blue-600")
   );
   assert.ok(
     chatMessagesMarkup.indexOf("bg-blue-600") < chatMessagesMarkup.indexOf("aria-label=\"编辑用户消息\"")
@@ -713,6 +1184,19 @@ async function main() {
   assert.doesNotMatch(chatAvatarMarkup, /lucide-bot/);
   assert.equal(drawerWithAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
   assert.equal(chatAvatarMarkup.includes('src="/uploads/avatars/user_1.png"'), true);
+  assert.equal(
+    normalizeCurrentChatUserAvatarUrl("http://127.0.0.1:3021/api/auth/avatar/user_1.png?v=123"),
+    "/api/auth/avatar/user_1.png?v=123"
+  );
+  assert.equal(
+    getCurrentChatUserAvatarUrl({
+      id: "user_loopback",
+      name: "内网头像",
+      avatar_url: "http://127.0.0.1:3021/api/auth/avatar/user_loopback.png?v=456",
+      licenseActivated: true
+    }),
+    "/api/auth/avatar/user_loopback.png?v=456"
+  );
 
   const chatCamelAvatarMarkup = renderToStaticMarkup(
     <ChatMessages
@@ -785,7 +1269,7 @@ async function main() {
   assert.equal(getUserMessageCopyText({
     content: "",
     attachments: [imageAttachment]
-  }), "photo.jpg");
+  }), "暂无文字可复制");
   let copiedUserText = "";
 
   await copyUserMessageToClipboard(getUserMessageCopyText(messages[0]), {
@@ -801,7 +1285,6 @@ async function main() {
   assert.doesNotMatch(chatMessagesSource, /<Bot className=/);
   assert.match(chatMessagesSource, /text-\[11px\] leading-none text-slate-400/);
   assert.doesNotMatch(chatMessagesSource, /bg-blue-600[\s\S]{0,220}formatMessageTime\(message\.created_at\)/);
-  assert.match(chatMessagesSource, /图片加载失败/);
   assert.match(chatMessagesSource, /图片预览不可用/);
   assert.match(chatMessagesSource, /文件暂不可预览/);
   assert.match(chatMessagesSource, /打开文件 \$\{name\}/);
@@ -809,11 +1292,24 @@ async function main() {
   assert.match(chatMessagesSource, /function UserMessageBlock/);
   assert.match(chatMessagesSource, /function UserMessageAvatar/);
   assert.match(chatMessagesSource, /function UserMessageActions/);
+  assert.match(chatMessagesSource, /safeCopyTextDetailed\(copyText, \{ selectTarget: selectionRef\.current \}\)/);
+  assert.match(chatMessagesSource, /copyState === "manual"/);
+  assert.doesNotMatch(chatMessagesSource, /if \(!navigator\.clipboard\)\s*\{\s*return;/);
+  assert.match(chatMessagesSource, /data-chat-message-id=\{message\.id\}/);
+  assert.match(chatMessagesSource, /data-chat-focus-spacer=\{focusMessageId\}/);
   assert.match(chatMessagesSource, /getCurrentChatUserAvatarUrl\(currentUser\)/);
   assert.match(chatMessagesSource, /getCurrentChatUserInitial\(currentUser\)/);
   assert.match(chatMessagesSource, /alt="当前用户头像"/);
   assert.match(chatMessagesSource, /onEditUserMessage\?\.\(message\.content\)/);
-  assert.match(chatMessagesSource, /onError=\{\(\) => setFailed\(true\)\}/);
+  assert.match(chatMessagesSource, /data-chat-user-message-bubble="attachments"/);
+  assert.match(chatMessagesSource, /data-chat-image-thumbnail="true"/);
+  assert.match(chatMessagesSource, /max-w-\[min\(220px,62vw\)\]/);
+  assert.match(chatMessagesSource, /max-h-\[260px\]/);
+  assert.match(chatMessagesSource, /getAttachmentPreviewUrls/);
+  assert.match(chatMessagesSource, /data-fallback-count=\{previewUrls\.length\}/);
+  assert.match(chatMessagesSource, /onError=\{handleImageError\}/);
+  assert.match(chatMessagesSource, /activeIndex \+ 1 < previewUrls\.length/);
+  assert.match(chatMessagesSource, /关闭图片预览/);
   assert.match(chatMessagesSource, /attachment\.src/);
   assert.match(chatMessagesSource, /attachment\.dataUrl/);
   assert.match(chatMessagesSource, /attachment\.fileUrl/);
@@ -854,7 +1350,7 @@ async function main() {
   assert.match(chatShellSourceForEdit, /onEditUserMessage=\{handleEditUserMessage\}/);
   assert.match(chatShellSourceForEdit, /userAvatarUrl=\{currentAvatarUrl\}/);
   assert.match(chatShellSourceForEdit, /currentUser=\{currentUser\}/);
-  assert.match(chatShellSourceForEdit, /avatarUrl:\s*nextAvatarUrl/);
+  assert.match(chatShellSourceForEdit, /mergeCurrentUserAvatar\(user, immediateAvatarUrl\)/);
   const historyImageMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
@@ -920,6 +1416,17 @@ async function main() {
             },
             {
               type: "image",
+              name: "local-public-photo.jpg",
+              url: "/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"
+            },
+            {
+              type: "image",
+              name: "local-reference-photo.jpg",
+              storage: "local-public",
+              reference_id: "user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+            },
+            {
+              type: "image",
               name: "cached-photo.jpg",
               metadata: {
                 local_id: imageAttachment.id
@@ -967,43 +1474,80 @@ async function main() {
     />
   );
 
-  assert.match(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
+  assert.match(historyImageMarkup, /打开图片预览 1/);
+  assert.doesNotMatch(historyImageMarkup, /打开图片预览 preview-photo\.jpg/);
+  assert.match(historyImageMarkup, /data-fallback-count/);
   assert.match(historyImageMarkup, /blob:history-preview-url/);
-  assert.match(historyImageMarkup, /打开图片预览 url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 history-photo\.png/);
   assert.match(historyImageMarkup, /https:\/\/example\.com\/history-photo\.png/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-photo\.webp/);
   assert.match(historyImageMarkup, /data:image\/webp;base64,AAAA/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/metadata-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 file-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/file-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 public-url-photo\.jpg/);
   assert.match(historyImageMarkup, /https:\/\/example\.com\/public-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 download-url-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/files\/download-url-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/path-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 storage-path-photo\.jpg/);
   assert.match(historyImageMarkup, /\/uploads\/storage-path-photo\.jpg/);
-  assert.match(historyImageMarkup, /打开图片预览 cached-photo\.jpg/);
+  assert.match(historyImageMarkup, /\/uploads\/chat-attachments\/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000\.jpg/);
   assert.match(historyImageMarkup, /blob:chat-image-preview/);
-  assert.match(historyImageMarkup, /打开图片预览 filename-photo\.png/);
   assert.match(historyImageMarkup, /\/uploads\/filename-photo\.png/);
-  assert.match(historyImageMarkup, /打开图片预览 priority-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/priority\.jpg/);
   assert.doesNotMatch(historyImageMarkup, /wrong-src-photo|WRONG/);
-  assert.match(historyImageMarkup, /打开图片预览 metadata-priority-photo\.jpg/);
   assert.match(historyImageMarkup, /\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/metadata-priority\.jpg/);
   assert.doesNotMatch(historyImageMarkup, /wrong-metadata-src-photo/);
-  assert.match(historyImageMarkup, /lost-photo\.jpg/);
+  assert.doesNotMatch(historyImageMarkup, /lost-photo\.jpg/);
   assert.match(historyImageMarkup, /图片预览不可用/);
   assert.match(historyImageMarkup, /打开文件 history-contract\.pdf/);
   assert.match(historyImageMarkup, /\/uploads\/chat-attachments\/history-contract\.pdf/);
   assert.match(historyImageMarkup, /2KB/);
   assert.match(historyImageMarkup, /contract\.pdf/);
   assert.match(historyImageMarkup, /文件暂不可预览/);
+
+  const localPublicUrls = getAttachmentPreviewUrls({
+    type: "image",
+    name: "local-public-photo.jpg",
+    url: "/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.ok(localPublicUrls.includes("/uploads/chat-attachments/user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg"));
+  assert.ok(
+    localPublicUrls.includes("/api/ai/chat/attachments/download?key=user_1-1719800000000-123e4567-e89b-12d3-a456-426614174000.jpg")
+  );
+
+  const localReferenceUrls = getAttachmentPreviewUrls({
+    type: "image",
+    name: "local-reference-photo.jpg",
+    reference_id: "user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.deepEqual(localReferenceUrls, [
+    "/api/ai/chat/attachments/download?key=user_1-1719800000001-123e4567-e89b-12d3-a456-426614174001.jpg"
+  ]);
+
+  const fallbackUrls = getAttachmentPreviewUrls({
+    id: "fallback-attachment",
+    type: "image",
+    name: "fallback.png",
+    previewUrl: "blob:expired-preview",
+    publicUrl: "https://cdn.example.com/fallback.png",
+    storagePath: "user_1/2026/07/fallback.png",
+    reference_id: "user_1-1719800000002-123e4567-e89b-12d3-a456-426614174002.png",
+    metadata: {
+      storagePath: "user_1/2026/07/fallback-metadata.png"
+    }
+  } as Parameters<typeof getAttachmentPreviewUrls>[0]);
+
+  assert.equal(fallbackUrls[0], "blob:expired-preview");
+  assert.ok(fallbackUrls.includes("https://cdn.example.com/fallback.png"));
+  assert.ok(fallbackUrls.includes("/uploads/fallback.png"));
+  assert.ok(fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1%2F2026%2F07%2Ffallback.png"));
+  assert.ok(fallbackUrls.includes("/uploads/fallback-metadata.png"));
+  assert.ok(
+    fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1%2F2026%2F07%2Ffallback-metadata.png")
+  );
+  assert.ok(
+    fallbackUrls.includes("/api/ai/chat/attachments/download?key=user_1-1719800000002-123e4567-e89b-12d3-a456-426614174002.png")
+  );
+
   const stringAttachmentsMarkup = renderToStaticMarkup(
     <ChatMessages
       messages={[
@@ -1029,20 +1573,16 @@ async function main() {
     />
   );
 
-  assert.match(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
+  assert.match(stringAttachmentsMarkup, /打开图片预览 1/);
+  assert.doesNotMatch(stringAttachmentsMarkup, /打开图片预览 json-string-photo\.jpg/);
   assert.match(stringAttachmentsMarkup, /\/uploads\/json-string-photo\.jpg/);
-  assert.match(chatMessagesMarkup, /现在建议你这样回复/);
-  assert.match(chatMessagesMarkup, /以下内容基于知识库资料整理/);
-  assert.match(chatMessagesMarkup, /核心判断/);
-  assert.match(chatMessagesMarkup, /为什么/);
-  assert.match(chatMessagesMarkup, /怎么做/);
-  assert.match(chatMessagesMarkup, /可直接复制给客户/);
-  assert.match(chatMessagesMarkup, /复制全部话术/);
-  assert.match(chatMessagesMarkup, /复制本段/);
+  assert.match(chatMessagesMarkup, /小董AI/);
+  assert.match(chatMessagesMarkup, /退款需要先核对订单号/);
+  assert.doesNotMatch(chatMessagesMarkup, /引用来源/);
+  assert.doesNotMatch(chatMessagesMarkup, /退款处理流程/);
+  assert.match(chatMessagesMarkup, /复制答案/);
   assert.doesNotMatch(chatMessagesMarkup, /RAG confidence/);
-  assert.doesNotMatch(chatMessagesMarkup, /来源/);
   assert.doesNotMatch(chatMessagesMarkup, /chunk: chunk_1/);
-  assert.doesNotMatch(chatMessagesMarkup, /82%/);
 
   const richSections = buildRichAnswerSections({
     answer: messages[1].content,
@@ -1499,16 +2039,17 @@ async function main() {
   const changePasswordRouteText = readFileSync("app/api/auth/change-password/route.ts", "utf8");
 
   assert.match(avatarRouteText, /formData\.get\("avatar"\)\s*\?\?\s*formData\.get\("file"\)/);
-  assert.match(avatarRouteText, /data:\$\{avatar\.type\};base64/);
-  assert.match(chatAttachmentRouteText, /formData\.get\("file"\)\s*\?\?\s*formData\.get\("attachment"\)\s*\?\?\s*formData\.get\("attachments"\)/);
-  assert.match(chatAttachmentRouteText, /public", "uploads", "chat-attachments"/);
+  assert.match(avatarRouteText, /data:\$\{mimeType\};base64/);
+  assert.match(chatAttachmentRouteText, /function getFirstUploadedFile\(formData: FormData\)/);
+  assert.match(chatAttachmentRouteText, /\["file", "files", "attachment", "attachments"\]/);
+  assert.match(chatAttachmentRouteText, /path\.join\(uploadRoot, "chat-attachments"\)/);
   assert.match(chatAttachmentRouteText, /@netlify\/blobs/);
   assert.match(chatAttachmentRouteText, /getStore/);
   assert.match(chatAttachmentRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
   assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_SITE_ID/);
   assert.match(chatAttachmentRouteText, /NETLIFY_BLOBS_TOKEN/);
   assert.match(chatAttachmentRouteText, /文件上传服务未配置：缺少 Netlify Blobs 环境变量。/);
-  assert.match(chatAttachmentRouteText, /process\.env\.NODE_ENV !== "production"/);
+  assert.match(chatAttachmentRouteText, /CHAT_ATTACHMENT_STORAGE\?\.trim\(\) !== "netlify-blobs"/);
   assert.match(chatAttachmentRouteText, /saveAttachmentToLocalPublicUploads/);
   assert.match(chatAttachmentRouteText, /saveAttachmentToNetlifyBlobs/);
   assert.match(chatAttachmentRouteText, /store\.set\(blobKey,\s*input\.arrayBuffer/);
@@ -1523,20 +2064,23 @@ async function main() {
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.presentationml\.presentation/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.ms-excel/);
   assert.match(chatAttachmentRouteText, /application\/vnd\.openxmlformats-officedocument\.spreadsheetml\.sheet/);
-  assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*100/);
-  assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB。/);
+  assert.match(chatAttachmentRouteText, /MAX_CHAT_ATTACHMENT_SIZE_MB\s*=\s*300/);
+  assert.match(chatAttachmentRouteText, /单个附件不能超过 \$\{MAX_CHAT_ATTACHMENT_SIZE_MB\}MB/);
   assert.match(chatAttachmentRouteText, /url:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /publicUrl:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /fileUrl:\s*savedAttachment\.url/);
   assert.match(chatAttachmentRouteText, /storage:\s*savedAttachment\.storage/);
   assert.match(chatAttachmentRouteText, /blobKey:\s*savedAttachment\.blobKey/);
+  assert.match(chatAttachmentRouteText, /const downloadUrl = savedAttachment\.blobKey/);
   assert.match(chatAttachmentRouteText, /attachment:\s*responseData\.attachment/);
   assert.doesNotMatch(avatarRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.doesNotMatch(chatAttachmentRouteText, /knowledge_files|ingestion_jobs|knowledge_chunks|\/api\/admin/);
   assert.match(chatAttachmentDownloadRouteText, /CHAT_ATTACHMENT_STORE_NAME\s*=\s*"chat-attachments"/);
-  assert.match(chatAttachmentDownloadRouteText, /requireRole\("user"/);
-  assert.match(chatAttachmentDownloadRouteText, /targetType:\s*"ai_chat_attachment_download"/);
+  assert.match(chatAttachmentDownloadRouteText, /requireAiChatAccess\(request, "ai_chat_attachment_download"\)/);
   assert.match(chatAttachmentDownloadRouteText, /safeBlobKeyPattern/);
+  assert.match(chatAttachmentDownloadRouteText, /safeLocalPublicAttachmentKeyPattern/);
+  assert.match(chatAttachmentDownloadRouteText, /readLocalPublicAttachment/);
+  assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actorId\)\}-`\)/);
   assert.match(chatAttachmentDownloadRouteText, /key\.startsWith\(`\$\{getSafeUserPrefix\(actor\.id\)\}\/`\)/);
   assert.match(chatAttachmentDownloadRouteText, /getWithMetadata\(key/);
   assert.match(chatAttachmentDownloadRouteText, /type:\s*"arrayBuffer"/);
