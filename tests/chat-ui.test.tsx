@@ -348,6 +348,161 @@ async function main() {
       < liveCareerFollowUpVisibleMarkup.indexOf("重点是：每次出现")
   );
 
+  const implicitCutInCareerAnswers = [
+    {
+      label: "parent heading with numbered cut-in scenes",
+      answer: [
+        "## 传统生意老板破冰的关键，是先说出他没对人讲的焦虑",
+        "",
+        "### 三个高成功率的切入角度（选一个最像你说话语气的来用）",
+        "",
+        "#### 1. 从“生意压力”破冰——适合实体店老板",
+        "**他不敢对人说的痛点：** 客流少、利润薄。",
+        "",
+        "> 哥，现在做实体生意的，十个有八个都说钱在货上、利在账上。不知道你这几年下来，有没有这种感觉？",
+        ">",
+        "> 我最近接触到一个轻资产的方向，第一个想到的就是你这种有经验、会算账的人。你有空我再和你聊聊。",
+        "",
+        "**为什么有效：** 先说出辛苦，再给一个低压力的新思路。",
+        "",
+        "> **关键心态提醒：** 这里是分析提醒，不是发给客户的话术。",
+        "",
+        "#### 2. 从“时间全被绑死”破冰——适合需要守店的老板",
+        "",
+        "> 哥，像你这样自己做实体的，一天到晚被拴在店里，时间根本不是自己的，对不？",
+        ">",
+        "> 我之前认识一个做了十几年建材的朋友。你要是哪天想聊这个思路，我给你看看他怎么转出来的。",
+        "",
+        "#### 3. 从“想转型又怕被骗”破冰——适合谨慎的老板",
+        "",
+        "> 哥，我接触过不少像你这样做传统生意出身的，时间越久越谨慎。你有空，我用三句话把这个方向说清楚。",
+        "",
+        "### 发送第一段话之后，必须遵守的收尾原则",
+        "",
+        "> **关键心态提醒：** 第一轮只需要让客户觉得你不烦人，而且听得懂他的难处。",
+        "",
+        "### 帮你检查：这句话是不是不该说？",
+        "> ❌ 赶紧加入吧，这个机会不能错过。"
+      ].join("\n"),
+      titles: [
+        "1. 从“生意压力”破冰——适合实体店老板",
+        "2. 从“时间全被绑死”破冰——适合需要守店的老板",
+        "3. 从“想转型又怕被骗”破冰——适合谨慎的老板"
+      ]
+    },
+    {
+      label: "standalone cut-in scene headings",
+      answer: [
+        "## 传统生意老板的破冰",
+        "下面给你三个可以直接用的切入点，挑一个最像你说话方式的发出去。",
+        "",
+        "### 切入一：从“生意压力”破冰",
+        "**踩准的痛点：** 客流少、利润薄。",
+        "> 哥，现在做实体生意的，十个有八个都说钱在货上。不知道你这几年下来，有没有这种感觉？",
+        "",
+        "**为什么有效：** 先替他说出辛苦。",
+        "",
+        "### 切入二：从“时间被绑死”破冰",
+        "> 哥，像你这样自己做实体的，一天到晚被拴在店里，时间根本不是自己的，对不？",
+        "",
+        "### 切入三：从“想转型又怕被骗”破冰",
+        "> 哥，我接触过不少像你这样做传统生意出身的。你要是有兴趣，我用三句话跟你说清楚。",
+        "",
+        "### 一条不能踩的红线",
+        "> 不要催问客户为什么还没有决定。"
+      ].join("\n"),
+      titles: [
+        "切入一：从“生意压力”破冰",
+        "切入二：从“时间被绑死”破冰",
+        "切入三：从“想转型又怕被骗”破冰"
+      ]
+    },
+    {
+      label: "standalone cut-in angle headings",
+      answer: [
+        "## 传统生意老板的破冰",
+        "下面按三个可以直接使用的切入角度来讲。",
+        "",
+        "### 切入角度一：从“生意压力”破冰",
+        "> 哥，现在做实体生意的，真正留在手里的没多少。不知道你这几年下来，有没有这种感觉？",
+        "",
+        "### 切入角度二：从“忙到没时间”破冰",
+        "> 哥，像你这样自己做实体的，时间根本不是自己的，对不？有空我给你讲一个朋友转出来的故事。",
+        "",
+        "### 切入角度三：从“转型焦虑”破冰",
+        "> 哥，你这么多年生意做下来，肯定看过不少项目。我现在做的这个方向不用囤货，你可以先听听。",
+        "",
+        "### 发完第一段话之后的关键动作",
+        "> 姐/哥，我发你个小资料，你空了扫一眼就行。"
+      ].join("\n"),
+      titles: [
+        "切入角度一：从“生意压力”破冰",
+        "切入角度二：从“忙到没时间”破冰",
+        "切入角度三：从“转型焦虑”破冰"
+      ]
+    }
+  ];
+
+  for (const fixture of implicitCutInCareerAnswers) {
+    const targets = extractCareerMentorInlineCopyTargets(fixture.answer);
+
+    assert.equal(targets.length, 3, fixture.label);
+    assert.deepEqual(targets.map((target) => target.title), fixture.titles, fixture.label);
+    assert.equal(targets.every((target) => target.nodeKind === "blockquote"), true, fixture.label);
+    assert.equal(targets.every((target) => target.variant === "careerKnowledge"), true, fixture.label);
+    assert.equal(
+      targets.some((target) => /为什么有效|痛点|关键心态|红线|赶紧加入|小资料/.test(target.text)),
+      false,
+      fixture.label
+    );
+
+    const markup = renderToStaticMarkup(
+      <ProductAnswerView
+        answer={{
+          title: "讲事业导师",
+          rawContent: fixture.answer,
+          problemUnderstanding: "",
+          keyConclusion: "",
+          suggestedSteps: [],
+          customerReply: "",
+          nextAction: ""
+        }}
+        rawAnswerText={fixture.answer}
+        sources={[]}
+        careerMentorMode
+      />
+    );
+    const visibleMarkup = markup.replace(/<textarea[^>]*>[\s\S]*?<\/textarea>/g, "");
+
+    assert.equal((markup.match(/data-inline-copy="career-mentor"/g) ?? []).length, 3, fixture.label);
+    assert.equal((markup.match(/复制话术/g) ?? []).length, 3, fixture.label);
+    assert.equal((visibleMarkup.match(/传统生意老板/g) ?? []).length, 1, fixture.label);
+  }
+
+  for (const frozenExpertTitle of ["瘦身KKS", "大健康专家"]) {
+    const nonCareerImplicitCutInMarkup = renderToStaticMarkup(
+      <ProductAnswerView
+        answer={{
+          title: frozenExpertTitle,
+          rawContent: implicitCutInCareerAnswers[0].answer,
+          problemUnderstanding: "",
+          keyConclusion: "",
+          suggestedSteps: [],
+          customerReply: "",
+          nextAction: ""
+        }}
+        rawAnswerText={implicitCutInCareerAnswers[0].answer}
+        sources={[]}
+      />
+    );
+
+    assert.doesNotMatch(
+      nonCareerImplicitCutInMarkup,
+      /data-inline-copy="career-mentor"|复制话术/,
+      frozenExpertTitle
+    );
+  }
+
   const plainParagraphCareerAnswer = [
     "## 可以直接复制的话术模板",
     "",
