@@ -1,0 +1,82 @@
+# syntax=docker/dockerfile:1.8.1@sha256:e87caa74dcb7d46cd820352bfea12591f3dba3ddc4285e19c7dcd13359f7cefd
+
+ARG NODE_IMAGE=node:22.13.1-bookworm-slim@sha256:83fdfa2a4de32d7f8d79829ea259bd6a4821f8b2d123204ac467fbe3966450fc
+ARG PNPM_VERSION=10.12.4
+
+FROM ${NODE_IMAGE} AS base
+ARG PNPM_VERSION
+ENV NEXT_TELEMETRY_DISABLED=1
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates openssl \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install --global --ignore-scripts "pnpm@${PNPM_VERSION}" \
+  && pnpm --version
+
+FROM base AS dependencies
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY prisma ./prisma
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile --store-dir /pnpm/store
+
+FROM dependencies AS builder
+ARG WEB_RELEASE_SHA=unreleased
+ARG NEXT_PUBLIC_APP_URL=https://team-os.example.com
+ENV NODE_ENV=production \
+    WEB_RELEASE_SHA=${WEB_RELEASE_SHA} \
+    NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL}
+COPY . .
+RUN DATABASE_URL='postgresql://build:build@127.0.0.1:5432/build?schema=public' \
+    DIRECT_URL='postgresql://build:build@127.0.0.1:5432/build?schema=public' \
+    pnpm exec prisma validate \
+  && pnpm run lint \
+  && pnpm run typecheck \
+  && pnpm run test:team-os:deployment \
+  && pnpm run build
+
+FROM dependencies AS production-dependencies
+RUN set -eux; \
+  generated_client="$(node -e 'const path = require("node:path"); const manifest = require.resolve("@prisma/client/package.json"); process.stdout.write(path.join(path.dirname(path.dirname(path.dirname(manifest))), ".prisma", "client"));')"; \
+  test -d "$generated_client"; \
+  cp -a "$generated_client" /tmp/prisma-client; \
+  CI=true pnpm prune --prod --ignore-scripts; \
+  generated_client="$(node -e 'const path = require("node:path"); const manifest = require.resolve("@prisma/client/package.json"); process.stdout.write(path.join(path.dirname(path.dirname(path.dirname(manifest))), ".prisma", "client"));')"; \
+  mkdir -p "$generated_client"; \
+  cp -a /tmp/prisma-client/. "$generated_client/"; \
+  node -e 'const { PrismaClient } = require("@prisma/client"); new PrismaClient();'
+
+# One-shot image used only by `docker compose --profile tools run migrate`.
+# It intentionally keeps the version-matched Prisma CLI from devDependencies.
+FROM dependencies AS migration
+ENV NODE_ENV=production
+COPY prisma ./prisma
+COPY deploy/scripts/verify-team-os-schema.mjs ./deploy/scripts/verify-team-os-schema.mjs
+USER node
+ENTRYPOINT ["node", "node_modules/prisma/build/index.js"]
+CMD ["migrate", "deploy"]
+
+FROM base AS runtime
+ENV NODE_ENV=production \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+
+COPY --from=builder --chown=node:node /app/.next ./.next
+COPY --from=builder --chown=node:node /app/public ./public
+COPY --from=builder --chown=node:node /app/next.config.mjs ./next.config.mjs
+COPY --from=builder --chown=node:node /app/package.json ./package.json
+COPY --from=builder --chown=node:node /app/pnpm-lock.yaml ./pnpm-lock.yaml
+COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=builder --chown=node:node /app/prisma ./prisma
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+
+RUN mkdir -p /app/storage /app/public/uploads \
+  && chown -R node:node /app/storage /app/public/uploads
+
+USER node
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:3000/api/team-os/status').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+
+CMD ["node", "node_modules/next/dist/bin/next", "start"]

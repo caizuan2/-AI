@@ -13,7 +13,10 @@ public/uploads/
 coverage/
 
 .env
-.env*.local
+.env.*
+!.env.example
+!.env.*.example
+!.env.*.template
 *.log
 *.tsbuildinfo
 package-lock.json
@@ -27,5 +30,11 @@ pnpm-debug.log*
 *.exe
 *.asar
 *.app
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
 
 test-license.ps1

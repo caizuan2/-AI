@@ -134,7 +134,7 @@ function inferProductFromRequiredRoles(requiredRoles: AppRole[], requireLicense?
   return requireLicense ? "user_app" : "public";
 }
 
-function isRoleAllowedForProduct(product: AppProduct, roles: AppRole[], highestRole: AppRole) {
+function isRoleAllowedForProduct(product: AppProduct, roles: AppRole[]) {
   if (product === "public") {
     return true;
   }
@@ -147,7 +147,7 @@ function isRoleAllowedForProduct(product: AppProduct, roles: AppRole[], highestR
     return roles.includes("ingest_admin") || roles.includes("kb_admin") || roles.includes("enterprise_admin") || roles.includes("super_admin");
   }
 
-  return highestRole === "user";
+  return roles.includes("user");
 }
 
 export async function requireRole(required: AppRole | AppRole[], options: RoleGuardOptions = {}): Promise<RbacUser> {
@@ -177,7 +177,7 @@ export async function requireRole(required: AppRole | AppRole[], options: RoleGu
     throw new ForbiddenError("当前账号没有权限访问该资源。");
   }
 
-  if (!isRoleAllowedForProduct(product, roles, highestRole)) {
+  if (!isRoleAllowedForProduct(product, roles)) {
     await writeAuditLog({
       userId: user.id,
       role: highestRole,

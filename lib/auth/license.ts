@@ -19,20 +19,28 @@ import {
 const LICENSE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const LICENSE_KEY_PATTERN = /^AIKB-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
 const BOOTSTRAP_ADMIN_PHONES = [BOOTSTRAP_SUPER_ADMIN_PHONE];
-const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "super_admin"] as const;
+const LICENSE_APP_TYPES = ["user_app", "ingest_admin", "team_os", "super_admin"] as const;
 const INGEST_ADMIN_DB_ROLE = "kb_admin" as const;
 const LICENSE_TRANSACTION_MAX_WAIT_MS = 15_000;
 const LICENSE_TRANSACTION_TIMEOUT_MS = 10_000;
 const LICENSE_METADATA_ACTIONS = [
   "generate_user_app_license_key",
   "generate_ingest_admin_license_key",
+  "generate_team_os_license_key",
   "generate_super_admin_license_key",
+  "redeem_license_key",
+  "redeem_team_os_license_key",
+  "renew_license_key",
   "disable_license_key",
   "SUPER_ADMIN_LICENSE_GENERATE",
   "SUPER_ADMIN_LICENSE_DISABLE"
 ];
 
 export type LicenseAppType = (typeof LICENSE_APP_TYPES)[number];
+
+function getDatabaseRoleForLicenseAppType(appType: LicenseAppType) {
+  return appType === "ingest_admin" ? INGEST_ADMIN_DB_ROLE : null;
+}
 
 export interface LicenseActivationContext {
   ip?: string;
@@ -82,6 +90,10 @@ export function normalizeLicenseAppType(value: unknown, fallback: LicenseAppType
     return "super_admin";
   }
 
+  if (normalized === "team" || normalized === "team-os" || normalized === "teamos") {
+    return "team_os";
+  }
+
   return LICENSE_APP_TYPES.includes(normalized as LicenseAppType) ? (normalized as LicenseAppType) : fallback;
 }
 
@@ -94,6 +106,10 @@ function getLicensePrefix(key: string) {
 
   if (normalized.startsWith("XT-SUPER-")) {
     return "XT-SUPER";
+  }
+
+  if (normalized.startsWith("XT-TEAM-")) {
+    return "XT-TEAM";
   }
 
   if (normalized.startsWith("XT-USER-") || normalized.startsWith("AIKB-")) {
@@ -114,6 +130,10 @@ export function inferLicenseAppTypeFromKey(key: string): LicenseAppType | null {
     return "super_admin";
   }
 
+  if (prefix === "XT-TEAM") {
+    return "team_os";
+  }
+
   if (prefix === "XT-USER" || prefix === "AIKB") {
     return "user_app";
   }
@@ -123,10 +143,6 @@ export function inferLicenseAppTypeFromKey(key: string): LicenseAppType | null {
 
 export function getLicenseAppTypeFromKey(key: string): LicenseAppType | null {
   return inferLicenseAppTypeFromKey(key);
-}
-
-function getDatabaseRoleForLicenseAppType(appType: LicenseAppType) {
-  return appType === "ingest_admin" ? INGEST_ADMIN_DB_ROLE : null;
 }
 
 function randomLicenseGroup(length: number) {
@@ -192,7 +208,8 @@ export function isSupportedLicenseKeyInput(key: string) {
     LICENSE_KEY_PATTERN.test(normalized) ||
     /^XT-USER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized) ||
     /^XT-INGEST-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized) ||
-    /^XT-SUPER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized)
+    /^XT-SUPER-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(normalized) ||
+    /^XT-TEAM(?:-[A-Z0-9]{4}){3,4}$/.test(normalized)
   );
 }
 
@@ -213,19 +230,55 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function readLicenseMetadata(metadata: unknown): LicenseMetadata | null {
+function normalizeCanonicalLicenseAppType(value: unknown): LicenseAppType | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return LICENSE_APP_TYPES.includes(normalized as LicenseAppType)
+    ? (normalized as LicenseAppType)
+    : null;
+}
+
+function appTypeFromMetadataAction(action: string): LicenseAppType | null {
+  if (action === "generate_user_app_license_key") return "user_app";
+  if (action === "generate_ingest_admin_license_key") return "ingest_admin";
+  if (action === "generate_team_os_license_key") return "team_os";
+  if (action === "generate_super_admin_license_key") return "super_admin";
+  return null;
+}
+
+function readLicenseMetadata(action: string, metadata: unknown): LicenseMetadata | null {
+  const actionAppType = appTypeFromMetadataAction(action);
+  if (actionAppType) {
+    return {
+      appType: actionAppType,
+      maxActivations: isRecord(metadata) && typeof metadata.maxActivations === "number"
+        ? Math.max(1, metadata.maxActivations)
+        : 1
+    };
+  }
+
   if (!isRecord(metadata)) {
     return null;
   }
 
+  const appType = normalizeCanonicalLicenseAppType(
+    metadata.appType ?? (action === "redeem_license_key" ? metadata.licenseAppType : null)
+  );
+  if (!appType) {
+    return null;
+  }
+
   return {
-    appType: normalizeLicenseAppType(metadata.appType),
+    appType,
     maxActivations: typeof metadata.maxActivations === "number" ? Math.max(1, metadata.maxActivations) : 1
   };
 }
 
-async function getLicenseMetadata(licenseId: string, fallbackAppType: LicenseAppType = "user_app"): Promise<LicenseMetadata> {
-  const auditLog = await prisma.auditLog.findFirst({
+async function findCanonicalLicenseMetadata(licenseId: string): Promise<LicenseMetadata | null> {
+  const auditLogs = await prisma.auditLog.findMany({
     where: {
       action: {
         in: LICENSE_METADATA_ACTIONS
@@ -237,11 +290,23 @@ async function getLicenseMetadata(licenseId: string, fallbackAppType: LicenseApp
       createdAt: "desc"
     },
     select: {
+      action: true,
       metadata: true
     }
   });
 
-  return readLicenseMetadata(auditLog?.metadata) ?? {
+  for (const auditLog of auditLogs) {
+    const metadata = readLicenseMetadata(auditLog.action, auditLog.metadata);
+    if (metadata) {
+      return metadata;
+    }
+  }
+
+  return null;
+}
+
+async function getLicenseMetadata(licenseId: string, fallbackAppType: LicenseAppType = "user_app"): Promise<LicenseMetadata> {
+  return (await findCanonicalLicenseMetadata(licenseId)) ?? {
     appType: fallbackAppType,
     maxActivations: 1
   };
@@ -319,6 +384,23 @@ async function getRedeemedLicenseStates(userId: string): Promise<RedeemedLicense
       appType: (await getLicenseMetadata(license.id)).appType
     }))
   );
+}
+
+export async function hasRedeemedLicenseForAppType(
+  userId: string,
+  requiredAppType: LicenseAppType,
+  options?: {
+    licenses?: RedeemedLicenseState[];
+    now?: Date;
+  }
+) {
+  const licenses = options?.licenses ?? (await getRedeemedLicenseStates(userId));
+
+  return resolveRedeemedLicenseAccessState(
+    licenses,
+    requiredAppType,
+    options?.now ?? new Date()
+  ).state === "active";
 }
 
 async function recordLicenseAuditLog(input: {
@@ -443,6 +525,10 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
     throw new LicenseAppTypeMismatchError("超级管理员账号不通过普通卡密激活。");
   }
 
+  if (requiredAppType === "team_os") {
+    throw new LicenseAppTypeMismatchError("AI Team OS 使用企业成员与套餐权限，不通过普通用户卡密判断。");
+  }
+
   if (bootstrapSuperAdmin && !requiredAppType) {
     return true;
   }
@@ -498,11 +584,17 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
 
   const licenseAppType = accessState.activeLicense.appType;
   const role = user.role;
+  const hasRequiredAppLicense = requiredAppType
+    ? await hasRedeemedLicenseForAppType(userId, requiredAppType, {
+        licenses: redeemedLicenses,
+        now
+      })
+    : true;
 
   if (requiredAppType === "ingest_admin") {
     const roleAllowed = role === "ingest_admin" || role === "kb_admin" || role === "enterprise_admin";
 
-    if (!roleAllowed || licenseAppType !== "ingest_admin") {
+    if (!roleAllowed || !hasRequiredAppLicense || licenseAppType !== "ingest_admin") {
       await recordLicenseAuditLog({
         userId,
         action: "license.mismatch",
@@ -520,7 +612,7 @@ export async function checkUserLicense(userId: string, requiredAppType?: License
   }
 
   if (requiredAppType === "user_app") {
-    if (role !== "user" || licenseAppType !== "user_app") {
+    if (!hasRequiredAppLicense || licenseAppType !== "user_app") {
       await recordLicenseAuditLog({
         userId,
         action: "license.mismatch",
@@ -560,7 +652,12 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
   const primaryHash = hashLicenseKey(key);
   let licenses = await findAcceptedLicenseKeys(keyHashes);
 
-  if (requestedAppType === "super_admin" || keyAppType === "super_admin") {
+  if (
+    requestedAppType === "super_admin" ||
+    keyAppType === "super_admin" ||
+    requestedAppType === "team_os" ||
+    keyAppType === "team_os"
+  ) {
     await recordLicenseAuditLog({
       userId,
       action: "license.mismatch",
@@ -568,10 +665,16 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
       metadata: {
         requestedAppType,
         keyAppType,
-        reason: "super_admin_license_redeem_blocked"
+        reason: keyAppType === "team_os" || requestedAppType === "team_os"
+          ? "team_os_license_requires_company_activation"
+          : "super_admin_license_redeem_blocked"
       }
     });
-    throw new LicenseAppTypeMismatchError("超级管理员账号不通过普通卡密激活。");
+    throw new LicenseAppTypeMismatchError(
+      keyAppType === "team_os" || requestedAppType === "team_os"
+        ? "XT-TEAM 必须在 AI Team OS 企业激活页面使用。"
+        : "超级管理员账号不通过普通卡密激活。"
+    );
   }
 
   if (keyAppType && keyAppType !== requestedAppType) {
@@ -780,13 +883,12 @@ export async function redeemLicenseKey(userId: string, key: string, context?: Li
     throw new LicenseExpiredError("卡密已过期。");
   }
 
-  const dbRole = getDatabaseRoleForLicenseAppType(requestedAppType);
-
   let redeemedUser: {
     id: string;
     phone: string;
     licenseActivated: boolean;
   };
+  const dbRole = getDatabaseRoleForLicenseAppType(requestedAppType);
 
   try {
     redeemedUser = await prisma.$transaction(

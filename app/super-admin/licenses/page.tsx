@@ -21,7 +21,7 @@ export default function SuperAdminLicensesPage() {
             卡密 / 授权 / 到期管理
           </h1>
           <p className="mt-3 max-w-4xl text-sm leading-6 text-slate-600">
-            基于现有 LicenseKey 模型建立超级管理员授权中心，默认只开放用户端卡密和投喂管理员端卡密生成，超级管理员端卡密仅保留后端兼容。
+            统一管理用户端、投喂管理员端与 AI Team OS 企业授权。超级管理员历史卡密只保留后端兼容，不再开放生成。
           </p>
         </div>
       </section>
