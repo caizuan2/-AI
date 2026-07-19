@@ -644,6 +644,39 @@ function parseCareerMentorInlineCopySection(line: string): Exclude<CustomerScrip
   return null;
 }
 
+function isCareerMentorImplicitCutInSectionHeading(text: string) {
+  const normalized = normalizeScriptHeadingText(text);
+
+  return /(?:切入角度|破冰切入)/.test(normalized)
+    && /(?:三个|三种|多种|高成功率|三选一|选一个|挑一个|直接用|来用)/.test(normalized);
+}
+
+function parseCareerMentorImplicitCutInSceneTitle(
+  line: string,
+  heading: { depth: number; text: string },
+  parentDepth: number | null
+) {
+  const normalized = normalizeScriptHeadingText(heading.text);
+  const numberedHeading = line
+    .replace(/^ {0,3}#{1,6}\s+/, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const explicitScene = normalized.match(
+    /^(?:(?:第)?\d+[.、]\s*)?(?:(?:破冰)?切入(?:角度)?|角度)[一二三四五六七八九十\d]+[：:]?.+$/
+  );
+
+  if (explicitScene) {
+    return normalized;
+  }
+
+  return parentDepth !== null
+    && heading.depth === parentDepth + 1
+    && /^\d+[.、]\s*.+/.test(numberedHeading)
+    ? numberedHeading
+    : null;
+}
+
 function toCareerMentorInlineCopyText(lines: string[]) {
   const text = lines
     .map((line) => line.replace(/^ {0,3}> ?/, ""))
@@ -661,7 +694,7 @@ function isCareerMentorCopyMetaText(text: string) {
     return true;
   }
 
-  return /^(?:下面|以上|这些|这几条|这组|使用时|使用前|重点(?:是|在于)?|原理|说明|为什么|注意事项|跟进节奏|操作口诀|底层逻辑|三条.*铁律|请记住)(?:$|[：:，,、。\s])/.test(normalized)
+  return /^(?:下面|以上|这些|这几条|这组|使用时|使用前|重点(?:是|在于)?|关键(?:心态)?提醒|温馨提醒|原理|说明|为什么|注意事项|跟进节奏|操作口诀|底层逻辑|三条.*铁律|请记住)(?:$|[：:，,、。\s])/.test(normalized)
     || /这些话术.{0,24}(?:不用背|感受|参考)/.test(normalized);
 }
 
@@ -677,7 +710,7 @@ function isLikelyCareerMentorDirectScript(text: string) {
   }
 
   const hasCustomerAddress = /姐|哥|兄弟|姐妹|宝|朋友|您好|你好|您|你|[A-Za-z\u4e00-\u9fa5]{1,8}总/.test(normalized);
-  const hasConversationAction = /我|我们|咱们|刚|想到|看到|听|可以|不用|别|要是|如果|方便|有空|随时|聊|告诉|帮|发|问|觉得|理解/.test(normalized);
+  const hasConversationAction = /我|我们|咱们|刚|想到|看到|听|可以|不用|别|要是|如果|方便|有空|随时|聊|告诉|帮|发|问|觉得|理解|有没有|是不是|对不|怎么样/.test(normalized);
 
   return hasCustomerAddress && hasConversationAction;
 }
@@ -735,6 +768,8 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
     title: string;
     variant: Exclude<CustomerScriptVariant, "default">;
   } | null = null;
+  let implicitCutInSectionDepth: number | null = null;
+  let implicitCutInScene: { title: string } | null = null;
   let activeTitle = "可复制话术";
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -777,19 +812,48 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
         title: heading?.text || normalizeScriptHeadingText(line) || "可复制话术",
         variant: sectionVariant
       };
+      implicitCutInSectionDepth = null;
+      implicitCutInScene = null;
       activeTitle = activeSection.title;
       continue;
     }
 
     if (heading) {
-      if (activeSection && heading.depth <= activeSection.depth) {
-        activeSection = null;
-        activeTitle = "可复制话术";
+      if (activeSection) {
+        if (heading.depth <= activeSection.depth) {
+          activeSection = null;
+          activeTitle = "可复制话术";
+          continue;
+        }
+
+        activeTitle = heading.text || activeSection.title;
         continue;
       }
 
-      if (activeSection) {
-        activeTitle = heading.text || activeSection.title;
+      if (
+        implicitCutInSectionDepth !== null
+        && heading.depth <= implicitCutInSectionDepth
+      ) {
+        implicitCutInSectionDepth = null;
+      }
+
+      implicitCutInScene = null;
+
+      if (isCareerMentorImplicitCutInSectionHeading(heading.text)) {
+        implicitCutInSectionDepth = heading.depth;
+        continue;
+      }
+
+      const implicitSceneTitle = parseCareerMentorImplicitCutInSceneTitle(
+        line,
+        heading,
+        implicitCutInSectionDepth
+      );
+
+      if (implicitSceneTitle) {
+        implicitCutInScene = {
+          title: implicitSceneTitle
+        };
       }
 
       continue;
@@ -823,7 +887,7 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
       continue;
     }
 
-    if (!activeSection || !/^ {0,3}>/.test(line)) {
+    if ((!activeSection && !implicitCutInScene) || !/^ {0,3}>/.test(line)) {
       if (
         activeSection
         && activeTitle !== activeSection.title
@@ -861,15 +925,24 @@ export function extractCareerMentorInlineCopyTargets(markdown: string): CareerMe
 
     const text = toCareerMentorInlineCopyText(quoteLines);
 
-    if (isUsableCustomerScriptText(text) && !isCareerMentorCopyMetaText(text)) {
+    const implicitCutInScript = !activeSection && implicitCutInScene;
+    const isAllowedCopyTarget = isUsableCustomerScriptText(text)
+      && !isCareerMentorCopyMetaText(text)
+      && (!implicitCutInScript || isLikelyCareerMentorDirectScript(text));
+
+    if (isAllowedCopyTarget) {
       targets.push({
         startLine: index + 1,
         endLine: endIndex,
-        title: activeTitle,
+        title: activeSection ? activeTitle : implicitCutInScene?.title ?? "可复制话术",
         text,
-        variant: activeSection.variant,
+        variant: activeSection?.variant ?? "careerKnowledge",
         nodeKind: "blockquote"
       });
+
+      if (implicitCutInScript) {
+        implicitCutInScene = null;
+      }
     }
 
     index = endIndex - 1;
