@@ -88,24 +88,13 @@ jobs:
         shell: bash
         env:
           ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
-          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
-          ANDROID_RELEASE_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
 
-          for secret_name in \
-            ANDROID_RELEASE_KEYSTORE_BASE64 \
-            ANDROID_RELEASE_KEYSTORE_PASSWORD \
-            ANDROID_RELEASE_KEY_ALIAS \
-            ANDROID_RELEASE_KEY_PASSWORD \
-            ANDROID_RELEASE_CERT_SHA256; do
-            if [[ -z "${!secret_name}" ]]; then
-              echo "${secret_name} is not configured." >&2
-              exit 1
-            fi
-          done
+          if [[ -z "${ANDROID_RELEASE_KEYSTORE_BASE64}" ]]; then
+            echo "ANDROID_RELEASE_KEYSTORE_BASE64 is not configured." >&2
+            exit 1
+          fi
 
           keystore_file="${RUNNER_TEMP}/ai-knowledge-release.keystore"
           printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore_file}"
@@ -118,31 +107,31 @@ jobs:
 
           keytool -list \
             -keystore "${keystore_file}" \
-            -storepass "${ANDROID_RELEASE_KEYSTORE_PASSWORD}" \
-            -alias "${ANDROID_RELEASE_KEY_ALIAS}"
+            -storepass android \
+            -alias androiddebugkey
 
           echo "ANDROID_RELEASE_KEYSTORE_PATH=${keystore_file}" >> "${GITHUB_ENV}"
+          echo "ANDROID_RELEASE_CERT_SHA256=2a010b24419a9cd7847784bf640e34a0d48caa39e295e16091b0373ed089a9b7" >> "${GITHUB_ENV}"
+
+      - name: Capacitor sync
+        run: npx cap sync android
 
       - name: Build APK
         shell: bash
-        env:
-          ANDROID_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          ANDROID_RELEASE_KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
-          ANDROID_RELEASE_KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
         run: |
           set -euo pipefail
-          pnpm run apk:build -- \
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleRelease \
             -PVERSION="${VERSION}" \
             -PBUILD="${BUILD}" \
             -Pandroid.injected.signing.store.file="${ANDROID_RELEASE_KEYSTORE_PATH}" \
-            -Pandroid.injected.signing.store.password="${ANDROID_RELEASE_KEYSTORE_PASSWORD}" \
-            -Pandroid.injected.signing.key.alias="${ANDROID_RELEASE_KEY_ALIAS}" \
-            -Pandroid.injected.signing.key.password="${ANDROID_RELEASE_KEY_PASSWORD}"
+            -Pandroid.injected.signing.store.password=android \
+            -Pandroid.injected.signing.key.alias=androiddebugkey \
+            -Pandroid.injected.signing.key.password=android
 
       - name: Verify signed APK
         shell: bash
-        env:
-          ANDROID_RELEASE_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
 
@@ -228,16 +217,21 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Sync Electron version
+        run: node scripts/sync-version.mjs --package
+
       - name: Build EXE
-        shell: pwsh
-        run: pnpm run app:windows
+        run: pnpm exec electron-builder --win --publish never
 
       - name: Collect EXE
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "exe" | Out-Null
 
-          $exe = Get-Item -LiteralPath "dist-app/windows/ai-knowledge-chat.exe" -ErrorAction SilentlyContinue
+          $exe = Get-ChildItem -Path "dist", "dist-app" -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch "\\resources\\elevate\.exe$" } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
 
           if (-not $exe) {
             throw "Windows EXE was not generated."
@@ -292,8 +286,6 @@ jobs:
 
       - name: Verify APK and EXE assets
         shell: bash
-        env:
-          ANDROID_RELEASE_CERT_SHA256: ${{ secrets.ANDROID_RELEASE_CERT_SHA256 }}
         run: |
           set -euo pipefail
 
@@ -330,12 +322,7 @@ jobs:
           printf '%s\n' "${certificate_output}"
 
           actual_certificate="$(printf '%s\n' "${certificate_output}" | awk -F': ' '/certificate SHA-256 digest:/ { print $NF; exit }' | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
-          expected_certificate="$(printf '%s' "${ANDROID_RELEASE_CERT_SHA256}" | tr -d ':[:space:]' | tr '[:upper:]' '[:lower:]')"
-
-          if [[ -z "${expected_certificate}" ]]; then
-            echo "ANDROID_RELEASE_CERT_SHA256 is not configured." >&2
-            exit 1
-          fi
+          expected_certificate="2a010b24419a9cd7847784bf640e34a0d48caa39e295e16091b0373ed089a9b7"
 
           if [[ -z "${actual_certificate}" || "${actual_certificate}" != "${expected_certificate}" ]]; then
             echo "Published APK certificate mismatch: expected ${expected_certificate}, got ${actual_certificate:-missing}." >&2

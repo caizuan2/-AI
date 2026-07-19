@@ -1942,33 +1942,25 @@ export async function handleAiChatAsk(
   });
 
   const finalizedDisplayAnswer = formatFinalizedAnswerForDisplay(finalizedAnswer);
-  const preserveUnscopedRagFallback =
-    !careerMentorEnabled &&
-    !hasExplicitAgentScope &&
-    providerStatus !== "ok";
   answer = careerIngestReplyPassthrough
     ? rawAnswerBeforeFinalizer
     : careerMentorEnabled && providerStatus !== "ok"
     ? rawAnswerBeforeFinalizer
-    : preserveUnscopedRagFallback
-      ? rawAnswerBeforeFinalizer
     : providerStatus === "ok" && rawAnswerBeforeFinalizer
       ? rawAnswerBeforeFinalizer
       : finalizedDisplayAnswer;
-  customerAnswer = preserveUnscopedRagFallback
-    ? rawCustomerAnswerBeforeFinalizer
-    : finalizedAnswer.customerReply;
+  customerAnswer = finalizedAnswer.customerReply;
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
   const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
-  const outputControlledAnswer = careerIngestReplyPassthrough || preserveUnscopedRagFallback
+  const outputControlledAnswer = careerIngestReplyPassthrough
     ? answer
     : processAIOutput(normalizeUserChatMarkdown(answer), {
         model: actualModel,
         source: "ai_chat_ask",
         mode
       }).output;
-  const cleanOutputControlledAnswer = careerIngestReplyPassthrough || preserveUnscopedRagFallback
+  const cleanOutputControlledAnswer = careerIngestReplyPassthrough
     ? outputControlledAnswer
     : careerMentorEnabled
       ? cleanCareerMentorUserAnswer(

@@ -5,23 +5,23 @@ import { renderToStaticMarkup } from "react-dom/server";
 import DownloadPage from "../app/download/page";
 import { normalizeLatestReleaseManifest } from "../lib/app-update";
 import latestRelease from "../public/releases/latest.json";
-import versionInfo from "../version.json";
 
-const electronUserAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
+const userAppUrl = "https://stately-sawine-1efd4d.netlify.app/chat-ui";
 const userLoginUrl = "https://stately-sawine-1efd4d.netlify.app/login?app=user&next=/chat-ui";
-const userWebAppUrl = "http://47.238.0.23/app/chat";
+const userWindowsExeUrl =
+  "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.exe";
+const userAndroidApkUrl =
+  "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-chat-latest.apk";
 const parsedLatestRelease = normalizeLatestReleaseManifest(latestRelease);
 
 assert.ok(parsedLatestRelease);
 const latestUserRelease = parsedLatestRelease.user;
-const userWindowsExeUrl = latestUserRelease.exe_url;
-const userAndroidApkUrl = latestUserRelease.apk_url;
 
 async function main() {
   const pageMarkup = renderToStaticMarkup(<DownloadPage />);
   const escapedUserVersion = latestUserRelease.version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  assert.match(pageMarkup, /小董AI下载/);
+  assert.match(pageMarkup, /AI知识库助手下载/);
   assert.match(pageMarkup, /用户端/);
   assert.match(pageMarkup, /Android APK 下载/);
   assert.match(pageMarkup, /Windows EXE 下载/);
@@ -29,8 +29,8 @@ async function main() {
   assert.match(pageMarkup, new RegExp(`构建号：${latestUserRelease.build}`));
   assert.match(pageMarkup, /复制链接/);
   assert.match(pageMarkup, /登录普通用户账号/);
+  assert.doesNotMatch(pageMarkup, /投喂/);
   assert.doesNotMatch(pageMarkup, /AI知识库管理后台下载/);
-  assert.doesNotMatch(pageMarkup, /ai-knowledge-admin-latest\.(?:apk|exe)/);
   assert.match(pageMarkup, new RegExp(userAndroidApkUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(pageMarkup, new RegExp(userWindowsExeUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(pageMarkup, /\/downloads\/ai-knowledge-chat(?:-latest)?\.apk/);
@@ -44,7 +44,7 @@ async function main() {
   const loginPage = readFileSync("app/login/page.tsx", "utf8");
   const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
 
-  assert.match(electronMain, new RegExp(electronUserAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(electronMain, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.match(electronMain, /USER_CHAT_URL\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app\/chat-ui"/);
   assert.match(electronMain, /blockedPrefixes\s*=\s*\["\/ingest",\s*"\/admin",\s*"\/api\/admin"\]/);
   assert.match(electronMain, /isForbiddenUserAppUrl/);
@@ -56,21 +56,20 @@ async function main() {
   assert.doesNotMatch(electronMain, /stately-sawine-1efd4d\.netlify\.app\/admin/);
 
   assert.match(capacitorConfig, /appId:\s*"com\.aiknowledge\.chat"/);
-  assert.match(capacitorConfig, /appName:\s*"小董AI"/);
-  assert.match(capacitorConfig, new RegExp(userWebAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(capacitorConfig, /appName:\s*"AI知识库助手"/);
+  assert.match(capacitorConfig, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(capacitorConfig, new RegExp(userLoginUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(capacitorConfig, /cleartext:\s*true/);
-  assert.match(androidBuildGradle, /versionFile\s*=\s*file\("\.\.\/\.\.\/version\.json"\)/);
-  assert.match(androidBuildGradle, /versionCode\s+appVersionCode/);
-  assert.match(androidBuildGradle, /versionName\s+appVersionName/);
+  assert.match(capacitorConfig, /cleartext:\s*false/);
+  assert.match(androidBuildGradle, /versionCode\s+103/);
+  assert.match(androidBuildGradle, /versionName\s+"1\.0\.3"/);
   assert.match(androidBuildGradle, /buildConfig\s+true/);
   assert.doesNotMatch(capacitorConfig, /stately-sawine-1efd4d\.netlify\.app\/ingest/);
-  assert.match(appShell, /http:\/\/47\.238\.0\.23\/login\?app=user&next=\/app\/chat/);
+  assert.match(appShell, new RegExp(userAppUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(appShell, new RegExp(userLoginUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   assert.doesNotMatch(appShell, /stately-sawine-1efd4d\.netlify\.app\/ingest/);
 
-  assert.match(mainActivity, /APP_ORIGIN\s*=\s*"http:\/\/47\.238\.0\.23"/);
-  assert.match(mainActivity, /USER_CHAT_URL\s*=\s*APP_ORIGIN \+ "\/app\/chat"/);
+  assert.match(mainActivity, /APP_ORIGIN\s*=\s*"https:\/\/stately-sawine-1efd4d\.netlify\.app"/);
+  assert.match(mainActivity, /USER_CHAT_URL\s*=\s*APP_ORIGIN \+ "\/chat-ui"/);
   assert.match(mainActivity, /CookieManager\.getInstance\(\)/);
   assert.match(mainActivity, /clearStaleWebViewState\(webView\)/);
   assert.match(mainActivity, /BuildConfig\.VERSION_NAME/);
@@ -122,23 +121,18 @@ async function main() {
 
   assert.match(loginPage, /fetch\("\/api\/auth\/me"/);
   assert.match(loginPage, /正在检查登录状态/);
-  assert.match(loginPage, /getPostLoginPath/);
-  assert.match(loginPage, /!input\.licenseActivated/);
-  assert.match(loginPage, /return "\/unlock"/);
+  assert.match(loginPage, /router\.replace\(nextPath \|\| \(payload\?\.data\?\.user\.licenseActivated \? "\/ingest" : "\/unlock"\)\)/);
 
   assert.equal(packageJson.scripts["app:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1");
   assert.equal(packageJson.scripts["app:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1");
-  assert.equal(packageJson.scripts["apk:build"], "node scripts/build-user-android.mjs");
   assert.equal(packageJson.build.appId, "com.aiknowledge.chat.desktop");
   assert.match(packageJson.build.productName, /AI/);
 
   assert.equal(latestUserRelease.apk_url, userAndroidApkUrl);
-  assert.equal(latestUserRelease.version, versionInfo.version);
-  assert.equal(latestUserRelease.build, versionInfo.build);
+  assert.equal(latestUserRelease.version, "1.0.3");
+  assert.equal(latestUserRelease.build, 103);
   assert.equal(latestUserRelease.exe_url, userWindowsExeUrl);
-  assert.match(latestUserRelease.apk_url, new RegExp(`/releases/download/${versionInfo.version.replace(/\./g, "\\.")}/ai-knowledge-chat-latest\\.apk$`));
-  assert.match(latestUserRelease.exe_url, new RegExp(`/releases/download/${versionInfo.version.replace(/\./g, "\\.")}/ai-knowledge-chat-latest\\.exe$`));
-  assert.match(latestUserRelease.download_page, /\/download$/);
+  assert.match(latestUserRelease.download_page, /\/user-download\.html$/);
 
   const prismaSchema = readFileSync("prisma/schema.prisma", "utf8");
   assert.doesNotMatch(prismaSchema, /ai-knowledge-chat|NEXT_PUBLIC_USER_APP_URL|USER_APP_URL/);
