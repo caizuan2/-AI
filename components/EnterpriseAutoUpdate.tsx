@@ -5,27 +5,28 @@ import { usePathname } from "next/navigation";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { ADMIN_APP_KIND, USER_APP_KIND, type AppKind } from "@/lib/app-version";
 
-const locallyManagedPaths = ["/chat-ui", "/app", "/ingest"];
+const locallyManagedPaths = ["/chat-ui", "/app"];
+const adminManagedPaths = [
+  "/admin-download",
+  "/admin-ingest",
+  "/admin",
+  "/ingest",
+  "/super-admin",
+  "/workspace"
+];
 
-function isLocallyManaged(pathname: string) {
+export function isLocallyManagedUpdatePath(pathname: string) {
   return locallyManagedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }
 
-function resolveAppKind(pathname: string): AppKind {
-  if (typeof window !== "undefined") {
-    const appParam = new URLSearchParams(window.location.search).get("app");
+export function resolveUpdateAppKind(pathname: string, search = ""): AppKind {
+  const appParam = new URLSearchParams(search).get("app");
 
-    if (appParam === ADMIN_APP_KIND) {
-      return ADMIN_APP_KIND;
-    }
+  if (appParam === ADMIN_APP_KIND || appParam === "ingest-admin") {
+    return ADMIN_APP_KIND;
   }
 
-  if (
-    pathname === "/admin-download" ||
-    pathname === "/admin" ||
-    pathname.startsWith("/admin/") ||
-    pathname.startsWith("/workspace")
-  ) {
+  if (adminManagedPaths.some((path) => pathname === path || pathname.startsWith(`${path}/`))) {
     return ADMIN_APP_KIND;
   }
 
@@ -37,12 +38,12 @@ export function EnterpriseAutoUpdate() {
   const [appKind, setAppKind] = React.useState<AppKind | null>(null);
 
   React.useEffect(() => {
-    if (isLocallyManaged(pathname)) {
+    if (isLocallyManagedUpdatePath(pathname)) {
       setAppKind(null);
       return;
     }
 
-    setAppKind(resolveAppKind(pathname));
+    setAppKind(resolveUpdateAppKind(pathname, window.location.search));
   }, [pathname]);
 
   if (!appKind) {

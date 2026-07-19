@@ -171,7 +171,7 @@ if (typeof versionInfo.version !== "string" || !Number.isInteger(versionInfo.bui
 }
 
 const existing = readExistingManifest();
-const updatedAt = isRelease || !hasCurrentVersion(existing)
+let updatedAt = isRelease || !hasCurrentVersion(existing)
   ? new Date().toISOString()
   : existing.updated_at || new Date().toISOString();
 
@@ -187,10 +187,19 @@ const webReleaseSha = pickValue(
 );
 const adminWebReleaseSha = pickValue(
   process.env.ADMIN_WEB_RELEASE_SHA,
+  webReleaseSha,
   getCurrentVersion(adminExisting).web_release_sha,
   existing.admin?.web_release_sha,
   existing.apps?.admin?.versions?.[0]?.web_release_sha
 );
+
+if (
+  webReleaseSha !== pickValue(existing.web_release_sha, getCurrentVersion(userExisting).web_release_sha)
+  || adminWebReleaseSha !== pickValue(existing.admin?.web_release_sha, getCurrentVersion(adminExisting).web_release_sha)
+) {
+  updatedAt = new Date().toISOString();
+}
+
 writeVersionReleaseSha(webReleaseSha);
 
 const userVersion = buildVersion("user", userExisting, {
@@ -215,7 +224,7 @@ const apps = {
     name: "AI知识库助手",
     existing: userExisting
   }, userVersion),
-  admin: adminExisting ?? buildApp("admin", {
+  admin: buildApp("admin", {
     id: "ai.chat.admin",
     name: "AI知识库管理后台",
     existing: adminExisting
@@ -247,7 +256,7 @@ const manifest = {
   // shell so Web-only releases do not open an installer. Build and download
   // metadata stay current for other legacy clients; current UI uses apps.user.
   user: legacyElectronSnapshot(apps.user),
-  admin: existing.admin ?? snapshot(apps.admin)
+  admin: snapshot(apps.admin)
 };
 
 fs.mkdirSync(path.dirname(outputPath), { recursive: true });

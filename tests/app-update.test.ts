@@ -18,8 +18,15 @@ import { normalizeAppStoreManifest } from "../lib/app-store";
 import { checkCurrentAppUpdate, getCurrentAppVersion } from "../lib/update-checker";
 import {
   AppUpdateNoticeDialog,
+  buildUpdateManifestUrl,
+  UPDATE_CHECK_INTERVAL_MS,
+  UPDATE_CHECK_TIMEOUT_MS,
   promoteUnappliedWebReleaseUpdate
 } from "../components/AppUpdateNotice";
+import {
+  isLocallyManagedUpdatePath,
+  resolveUpdateAppKind
+} from "../components/EnterpriseAutoUpdate";
 import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
 import releaseInfo from "../public/releases/latest.json";
 import versionInfo from "../version.json";
@@ -554,6 +561,21 @@ async function main() {
   snoozeUpdateNotice("user", manifest.user.build, storageAdapter, 1000, "remote-web-release-sha");
   assert.equal(shouldSkipUpdateNotice("user", manifest.user.build, storageAdapter, 1001, "remote-web-release-sha"), true);
 
+  assert.equal(UPDATE_CHECK_INTERVAL_MS, 15_000);
+  assert.equal(UPDATE_CHECK_TIMEOUT_MS, 10_000);
+  assert.equal(buildUpdateManifestUrl(12345), "/releases/latest.json?__update_check=12345");
+  assert.equal(isLocallyManagedUpdatePath("/app/chat"), true);
+  assert.equal(isLocallyManagedUpdatePath("/chat-ui"), true);
+  assert.equal(isLocallyManagedUpdatePath("/admin-ingest"), false);
+  assert.equal(isLocallyManagedUpdatePath("/ingest"), false);
+  assert.equal(resolveUpdateAppKind("/app/chat"), "user");
+  assert.equal(resolveUpdateAppKind("/admin-ingest"), "admin");
+  assert.equal(resolveUpdateAppKind("/ingest/login"), "admin");
+  assert.equal(resolveUpdateAppKind("/super-admin"), "admin");
+  assert.equal(resolveUpdateAppKind("/super-admin/users"), "admin");
+  assert.equal(resolveUpdateAppKind("/login", "?app=admin"), "admin");
+  assert.equal(resolveUpdateAppKind("/login", "?app=ingest-admin"), "admin");
+
   const appUpdateNotice = readFileSync("components/AppUpdateNotice.tsx", "utf8");
   assert.match(appUpdateNotice, /localStorage\.removeItem\("force_update"\)/);
   assert.match(appUpdateNotice, /sessionStorage\.removeItem\("force_update"\)/);
@@ -564,6 +586,15 @@ async function main() {
   assert.match(appUpdateNotice, /writeAppliedWebRelease/);
   assert.match(appUpdateNotice, /promoteUnappliedWebReleaseUpdate/);
   assert.match(appUpdateNotice, /window\.setTimeout\(\(\) => \{/);
+  assert.match(appUpdateNotice, /window\.setInterval\(checkWhenVisible, UPDATE_CHECK_INTERVAL_MS\)/);
+  assert.match(appUpdateNotice, /document\.addEventListener\("visibilitychange", checkWhenVisible\)/);
+  assert.match(appUpdateNotice, /window\.addEventListener\("focus", checkWhenVisible\)/);
+  assert.match(appUpdateNotice, /window\.addEventListener\("online", checkWhenVisible\)/);
+  assert.match(appUpdateNotice, /window\.addEventListener\("pageshow", checkWhenVisible\)/);
+  assert.match(appUpdateNotice, /manifestUrl: buildUpdateManifestUrl\(\)/);
+  assert.match(appUpdateNotice, /checkInFlight/);
+  assert.match(appUpdateNotice, /controller\.abort\(\), UPDATE_CHECK_TIMEOUT_MS/);
+  assert.match(appUpdateNotice, /activeController\?\.abort\(\)/);
   assert.doesNotMatch(appUpdateNotice, /triggerBrowserDownload|downloadWithBrowserFetch|createObjectURL/);
 
   const updateModal = readFileSync("components/UpdateModal.tsx", "utf8");
@@ -584,9 +615,19 @@ async function main() {
   assert.match(enterpriseAutoUpdate, /\/chat-ui/);
   assert.match(enterpriseAutoUpdate, /\/app/);
   assert.match(enterpriseAutoUpdate, /\/ingest/);
+  assert.match(enterpriseAutoUpdate, /\/admin-ingest/);
+  assert.match(enterpriseAutoUpdate, /\/super-admin/);
+  assert.doesNotMatch(enterpriseAutoUpdate, /locallyManagedPaths = \["\/chat-ui", "\/app", "\/ingest"\]/);
   assert.match(readFileSync("app/layout.tsx", "utf8"), /EnterpriseAutoUpdate/);
   assert.match(readFileSync("electron/preload.cjs", "utf8"), /appVersion/);
   assert.match(readFileSync("capacitor.config.ts", "utf8"), /shellBuild/);
+
+  const manifestGenerator = readFileSync("scripts/generate-latest-manifest.mjs", "utf8");
+  assert.match(manifestGenerator, /process\.env\.ADMIN_WEB_RELEASE_SHA,\s*webReleaseSha/);
+  assert.match(manifestGenerator, /admin: buildApp\("admin"/);
+  assert.doesNotMatch(manifestGenerator, /admin: adminExisting \?\? buildApp/);
+  assert.match(manifestGenerator, /admin: snapshot\(apps\.admin\)/);
+  assert.doesNotMatch(manifestGenerator, /admin: existing\.admin \?\? snapshot/);
 
   const releaseScriptPath = "scripts/release-all-installers.ps1";
   assert.ok(existsSync(releaseScriptPath), "release-all-installers.ps1 should exist.");
