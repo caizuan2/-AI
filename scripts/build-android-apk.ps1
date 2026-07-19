@@ -23,7 +23,7 @@ function Invoke-ProjectCommand {
   try {
     & $FilePath @Arguments
     if ($LASTEXITCODE -ne 0) {
-      throw "Command failed: $FilePath $($Arguments -join ' ')"
+      throw "Command failed: $FilePath (exit $LASTEXITCODE)"
     }
   } finally {
     Pop-Location
@@ -38,18 +38,11 @@ if (-not $SkipWebBuild) {
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "build")
 }
 
-if (Test-Path $OutputDir) {
-  Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
-    ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
-} else {
-  New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
-}
+New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 if (-not (Test-Path $AndroidDir)) {
   Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "add", "android")
 }
-
-Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "sync", "android")
 
 $GradleWrapper = Join-Path $AndroidDir "gradlew.bat"
 if (-not (Test-Path $GradleWrapper)) {
@@ -66,8 +59,18 @@ if ($Configuration -eq "Release" -and -not $hasReleaseSigning) {
   throw "Release build requires ANDROID_KEYSTORE_PATH, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, and ANDROID_KEY_PASSWORD."
 }
 
-$buildTask = if ($Configuration -eq "Release") { "assembleRelease" } else { "assembleDebug" }
-Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments @($buildTask) -WorkingDirectory $AndroidDir
+$AndroidBuildArguments = @("scripts/build-user-android.mjs")
+if ($Configuration -eq "Debug") {
+  $AndroidBuildArguments += "--debug"
+} else {
+  $AndroidBuildArguments += @(
+    "-Pandroid.injected.signing.store.file=$($env:ANDROID_KEYSTORE_PATH)",
+    "-Pandroid.injected.signing.store.password=$($env:ANDROID_KEYSTORE_PASSWORD)",
+    "-Pandroid.injected.signing.key.alias=$($env:ANDROID_KEY_ALIAS)",
+    "-Pandroid.injected.signing.key.password=$($env:ANDROID_KEY_PASSWORD)"
+  )
+}
+Invoke-ProjectCommand -FilePath "node" -Arguments $AndroidBuildArguments
 
 $candidateApks = @()
 if ($Configuration -eq "Release") {
