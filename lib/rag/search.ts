@@ -477,21 +477,27 @@ function hasDirectRuntimeScope(options: RetrieveRelevantChunksOptions) {
 }
 
 async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunksOptions, includeTermFilters = true) {
-  const accessScope = await resolveKnowledgeAccessScope({
-    actorUserId: options.userId,
-    tenantId: cleanScopeValue(options.knowledgeScope?.tenantId) || options.tenantId,
-    appType: options.appType,
-    agentId: cleanScopeValue(options.knowledgeScope?.agentId) || options.agentId,
-    knowledgeBaseId: cleanScopeValue(options.knowledgeScope?.knowledgeBaseId) || options.knowledgeBaseId,
-    namespace: cleanScopeValue(options.knowledgeScope?.namespace) || options.namespace,
-    includeShared: options.includeShared === true || Boolean(options.tenantId) || hasKnowledgeScope(options),
-    includePublished: options.includePublished === true || Boolean(options.tenantId) || hasKnowledgeScope(options)
-  });
-  console.info("RAG_SCOPE: agentId + knowledgeBaseId", {
-    agentId: accessScope.agentId,
-    knowledgeBaseId: accessScope.knowledgeBaseId,
-    namespace: accessScope.namespace
-  });
+  const requiresResolvedAccessScope = hasKnowledgeScope(options) || hasDirectRuntimeScope(options);
+  const accessScope = requiresResolvedAccessScope
+    ? await resolveKnowledgeAccessScope({
+        actorUserId: options.userId,
+        tenantId: cleanScopeValue(options.knowledgeScope?.tenantId) || options.tenantId,
+        appType: options.appType,
+        agentId: cleanScopeValue(options.knowledgeScope?.agentId) || options.agentId,
+        knowledgeBaseId: cleanScopeValue(options.knowledgeScope?.knowledgeBaseId) || options.knowledgeBaseId,
+        namespace: cleanScopeValue(options.knowledgeScope?.namespace) || options.namespace,
+        includeShared: options.includeShared === true || Boolean(options.tenantId) || hasKnowledgeScope(options),
+        includePublished: options.includePublished === true || Boolean(options.tenantId) || hasKnowledgeScope(options)
+      })
+    : null;
+
+  if (accessScope) {
+    console.info("RAG_SCOPE: agentId + knowledgeBaseId", {
+      agentId: accessScope.agentId,
+      knowledgeBaseId: accessScope.knowledgeBaseId,
+      namespace: accessScope.namespace
+    });
+  }
   const termFilters = terms.map((term) => ({
     OR: [
       { chunkText: { contains: term, mode: "insensitive" as const } },
@@ -516,7 +522,7 @@ async function buildPrismaWhere(terms: string[], options: RetrieveRelevantChunks
   const accessWhere = hasKnowledgeScope(options)
     ? buildSharedIngestKnowledgeWhere(options)
     : hasDirectRuntimeScope(options)
-      ? buildKnowledgeChunkAccessWhere(accessScope)
+      ? buildKnowledgeChunkAccessWhere(accessScope!)
       : {
         OR: [
           {

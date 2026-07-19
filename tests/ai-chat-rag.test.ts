@@ -1,17 +1,9 @@
 import assert from "node:assert/strict";
 import { NotFoundError, UnauthorizedError, ValidationError } from "../lib/errors";
-import {
-  NO_KNOWLEDGE_ANSWER,
-  RAG_CUSTOMER_DRAFT_ANSWER,
-  getAiChatHistory,
-  handleAiChatAsk,
-  type AiChatDb
-} from "../lib/ai-chat/ask";
-import {
-  getTopKForMode,
-  guardAgainstPromptInjection,
-  retrieveRelevantChunks
-} from "../lib/rag/search";
+import type { AiChatDb } from "../lib/ai-chat/ask";
+import { ensureReactServerTestRuntime } from "./react-server-test-bootstrap";
+
+ensureReactServerTestRuntime(import.meta.filename);
 
 type AnyRecord = Record<string, unknown>;
 
@@ -158,6 +150,21 @@ async function assertRejectsValidation(action: () => Promise<unknown>) {
 }
 
 async function main() {
+  const [askModule, searchModule] = await Promise.all([
+    import("../lib/ai-chat/ask"),
+    import("../lib/rag/search")
+  ]);
+  const {
+    NO_KNOWLEDGE_ANSWER,
+    RAG_CUSTOMER_DRAFT_ANSWER,
+    getAiChatHistory,
+    handleAiChatAsk
+  } = askModule;
+  const {
+    getTopKForMode,
+    guardAgainstPromptInjection,
+    retrieveRelevantChunks
+  } = searchModule;
   assert.equal(new UnauthorizedError().statusCode, 401);
   assert.ok(getTopKForMode("fast") < getTopKForMode("expert"));
 
@@ -183,6 +190,7 @@ async function main() {
   assert.equal(askResult.mode, "fast");
   assert.equal(askResult.provider_status, "provider_not_configured");
   assert.equal(askResult.answer, RAG_CUSTOMER_DRAFT_ANSWER);
+  assert.doesNotMatch(askResult.answer, /KKS|事业导师|大健康/);
   assert.match(askResult.customer_answer, /您好，关于/);
   assert.match(askResult.customer_answer, /核对订单号/);
   assert.equal(/chunk_refund_1|storage_path|系统提示词/i.test(askResult.customer_answer), false);

@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 const root = process.cwd();
+const forbiddenRuntimePackaging = /\b(?:build-ios|macos|dmg|ipa)\b|capacitor\.ios/i;
 
 function read(relativePath: string) {
   return readFileSync(path.join(root, relativePath), "utf8");
@@ -49,6 +50,7 @@ assert.match(adminMacConfig, /artifactName:\s*ai-knowledge-admin\.\$\{ext\}/);
 
 const packageJson = JSON.parse(read("package.json"));
 assert.equal(packageJson.scripts["app:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-android-apk.ps1");
+assert.equal(packageJson.scripts["apk:build"], "node scripts/build-user-android.mjs");
 assert.equal(packageJson.scripts["admin:android"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-android-apk.ps1");
 assert.equal(packageJson.scripts["app:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-windows-exe.ps1");
 assert.equal(packageJson.scripts["admin:windows"], "powershell -ExecutionPolicy Bypass -File scripts/build-admin-windows-exe.ps1");
@@ -131,13 +133,31 @@ assert.equal(
 const adminApiFiles = listFiles("app/api/admin");
 for (const file of adminApiFiles) {
   const source = read(file);
-  assert.doesNotMatch(source, /build-ios|macos|dmg|ipa|capacitor\.ios/i);
+  assert.doesNotMatch(source, forbiddenRuntimePackaging);
 }
 
 const authFiles = [...listFiles("app/api/auth"), ...listFiles("app/api/license")];
 for (const file of authFiles) {
   const source = read(file);
-  assert.doesNotMatch(source, /build-ios|macos|dmg|ipa|capacitor\.ios/i);
+  assert.doesNotMatch(source, forbiddenRuntimePackaging);
+}
+
+const androidBuildScript = read("scripts/build-user-android.mjs");
+const androidPowerShell = read("scripts/build-android-apk.ps1");
+const windowsPowerShell = read("scripts/build-windows-exe.ps1");
+
+assert.match(androidBuildScript, /\[capacitorCli, "sync", "android"\]/);
+assert.match(androidBuildScript, /capacitor-cordova-android-plugins/);
+assert.match(androidBuildScript, /cordova\.variables\.gradle/);
+assert.match(androidBuildScript, /app-release\.apk/);
+assert.match(windowsPowerShell, /dist-app\/windows/);
+assert.match(windowsPowerShell, /ai-knowledge-chat\.exe/);
+assert.match(windowsPowerShell, /"--win",\s*\r?\n\s*"portable"/);
+
+for (const source of [androidBuildScript, androidPowerShell, windowsPowerShell]) {
+  assert.doesNotMatch(source, /Remove-Item[^\r\n]*-Recurse/i);
+  assert.doesNotMatch(source, /\brm\s+-rf\b/i);
+  assert.doesNotMatch(source, /\bgit\s+clean\b/i);
 }
 
 console.log("mobile-desktop packaging tests passed");
