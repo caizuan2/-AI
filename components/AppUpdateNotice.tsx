@@ -72,6 +72,13 @@ const idleInstallState: UpdateInstallState = {
   message: ""
 };
 
+export const UPDATE_CHECK_INTERVAL_MS = 15_000;
+export const UPDATE_CHECK_TIMEOUT_MS = 10_000;
+
+export function buildUpdateManifestUrl(now = Date.now()) {
+  return `/releases/latest.json?__update_check=${encodeURIComponent(String(now))}`;
+}
+
 function getStorage(): UpdateNoticeStorage | undefined {
   try {
     return typeof window !== "undefined" ? window.localStorage : undefined;
@@ -327,43 +334,98 @@ export function AppUpdateNotice({
 
   React.useEffect(() => {
     let cancelled = false;
+    let checkInFlight = false;
+    let activeController: AbortController | null = null;
 
     async function checkUpdate() {
+      if (cancelled || checkInFlight) {
+        return;
+      }
+
+      checkInFlight = true;
       clearLegacyForceUpdateState();
+      const controller = typeof AbortController === "undefined" ? null : new AbortController();
+      const timeoutId = controller
+        ? window.setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS)
+        : null;
+      activeController = controller;
 
-      const checkedUpdate = await checkCurrentAppUpdate({
-        appKind,
-        currentVersion,
-        currentBuild,
-        currentWebReleaseSha
-      });
-      const storage = getStorage();
-      const result = promoteUnappliedWebReleaseUpdate(checkedUpdate, appKind, storage);
+      try {
+        const checkedUpdate = await checkCurrentAppUpdate({
+          appKind,
+          currentVersion,
+          currentBuild,
+          currentWebReleaseSha,
+          manifestUrl: buildUpdateManifestUrl(),
+          fetcher: (input, init) => fetch(input, {
+            ...init,
+            signal: controller?.signal ?? init?.signal
+          })
+        });
+        const storage = getStorage();
+        const result = promoteUnappliedWebReleaseUpdate(checkedUpdate, appKind, storage);
 
-      if (cancelled || !result.hasUpdate || !result.latest) {
-        return;
+        if (cancelled || !result.hasUpdate || !result.latest) {
+          return;
+        }
+
+        const snoozeWebReleaseSha = result.updateKind === "web" ? result.latest.web_release_sha ?? "" : "";
+
+        if (result.updateKind === "web" && hasAppliedWebRelease(appKind, result.latest, currentWebReleaseSha, storage)) {
+          return;
+        }
+
+        if (
+          !result.forceUpdate &&
+          shouldSkipUpdateNotice(appKind, result.latest.build, storage, Date.now(), snoozeWebReleaseSha)
+        ) {
+          return;
+        }
+
+        setUpdate((current) => {
+          const currentIdentity = getWebReleaseIdentity(current?.latest ?? null);
+          const nextIdentity = getWebReleaseIdentity(result.latest);
+
+          if (current?.updateKind === result.updateKind && currentIdentity && currentIdentity === nextIdentity) {
+            return current;
+          }
+
+          return result;
+        });
+      } finally {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+
+        if (activeController === controller) {
+          activeController = null;
+        }
+
+        checkInFlight = false;
       }
+    }
 
-      const snoozeWebReleaseSha = result.updateKind === "web" ? result.latest.web_release_sha ?? "" : "";
-
-      if (result.updateKind === "web" && hasAppliedWebRelease(appKind, result.latest, currentWebReleaseSha, storage)) {
-        return;
+    function checkWhenVisible() {
+      if (document.visibilityState !== "hidden") {
+        void checkUpdate();
       }
-
-      if (
-        !result.forceUpdate &&
-        shouldSkipUpdateNotice(appKind, result.latest.build, storage, Date.now(), snoozeWebReleaseSha)
-      ) {
-        return;
-      }
-
-      setUpdate(result);
     }
 
     void checkUpdate();
+    const intervalId = window.setInterval(checkWhenVisible, UPDATE_CHECK_INTERVAL_MS);
+    document.addEventListener("visibilitychange", checkWhenVisible);
+    window.addEventListener("focus", checkWhenVisible);
+    window.addEventListener("online", checkWhenVisible);
+    window.addEventListener("pageshow", checkWhenVisible);
 
     return () => {
       cancelled = true;
+      activeController?.abort();
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", checkWhenVisible);
+      window.removeEventListener("focus", checkWhenVisible);
+      window.removeEventListener("online", checkWhenVisible);
+      window.removeEventListener("pageshow", checkWhenVisible);
     };
   }, [appKind, currentBuild, currentVersion, currentWebReleaseSha]);
 
