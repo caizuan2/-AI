@@ -302,8 +302,8 @@ async function enterExistingUser(
     );
   }
 
-  await getRedeemableUserLicense(licenseKey);
-  await redeemLicenseKey(user.id, licenseKey, {
+  const redeemableLicense = await getRedeemableUserLicense(licenseKey);
+  await redeemLicenseKey(user.id, redeemableLicense.normalizedKey, {
     ...context,
     appType: USER_LICENSE_APP_TYPE
   });
@@ -337,7 +337,9 @@ async function createUserWithLicense(input: UserEntryInput): Promise<UserEntryRe
   }
 
   if (!name) {
-    throw new ValidationError("首次使用请填写网名。");
+    throw new ValidationError(
+      "这是新手机号，首次开户请填写网名；如需恢复已禁用卡密的原账号，请使用原手机号、原密码和一张新的未使用卡密。"
+    );
   }
 
   if (name.length > 50) {

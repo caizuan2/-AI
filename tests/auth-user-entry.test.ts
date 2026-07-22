@@ -43,17 +43,22 @@ assert.match(service, /prisma\.user\.findUnique/);
 assert.match(service, /verifyPassword\(password, user\.passwordHash\)/);
 assert.match(service, /user\.role !== "user"/);
 assert.match(service, /getUserLicenseState\(user\)/);
-assert.match(service, /getRedeemableUserLicense\(licenseKey\)/);
-assert.match(service, /redeemLicenseKey\(user\.id, licenseKey/);
+assert.match(service, /const redeemableLicense = await getRedeemableUserLicense\(licenseKey\)/);
+assert.match(service, /redeemLicenseKey\(user\.id, redeemableLicense\.normalizedKey/);
 assert.match(service, /prisma\.\$transaction/);
 assert.match(service, /tx\.user\.create/);
-assert.match(service, /throw new ValidationError\("首次使用请填写网名。"\)/);
+assert.match(service, /这是新手机号，首次开户请填写网名/);
+assert.match(service, /恢复已禁用卡密的原账号/);
 assert.match(service, /name,\s*isActive: true/);
 assert.match(service, /tx\.licenseKey\.updateMany/);
 assert.match(service, /status: LicenseKeyStatus\.UNUSED/);
 assert.match(service, /redeemedByUserId: null/);
 assert.match(service, /mode: "created"/);
 assert.match(service, /mode: "reactivated"/);
+assert.ok(
+  service.indexOf("if (existingUser)") < service.indexOf("return createUserWithLicense"),
+  "已有账号必须优先进入登录或换新卡恢复流程，不能被当成首次开户"
+);
 assert.doesNotMatch(service, /conversation\.(?:delete|deleteMany)|message\.(?:delete|deleteMany)/i);
 
 assert.match(forgotPasswordPage, /fetch\("\/api\/auth\/reset-password"/);
