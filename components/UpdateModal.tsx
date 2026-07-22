@@ -60,6 +60,8 @@ export function UpdateModal({
   const latest = update.latest;
   const isWebContentUpdate = update.updateKind === "web";
   const shouldSimplifyWebUpdate = appKind === "user" && isWebContentUpdate;
+  const shouldHideAdminWebUpdateContent = appKind === "admin" && isWebContentUpdate;
+  const shouldHideWebUpdateDetails = shouldSimplifyWebUpdate || shouldHideAdminWebUpdateContent;
   const activeInstallState = installState ?? idleInstallState;
   const busy = isInstallBusy(activeInstallState.phase);
   const hasInstallFeedback = activeInstallState.phase !== "idle";
@@ -95,8 +97,10 @@ export function UpdateModal({
             <h2 id={`${appKind}-app-update-title`} className="text-lg font-bold text-slate-950">
               {updateTitle}
             </h2>
-            <p className="mt-1 text-sm font-semibold text-blue-700">{displayAppName}</p>
-            {!shouldSimplifyWebUpdate ? (
+            {!shouldHideAdminWebUpdateContent ? (
+              <p className="mt-1 text-sm font-semibold text-blue-700">{displayAppName}</p>
+            ) : null}
+            {!shouldHideWebUpdateDetails ? (
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {isWebContentUpdate ? (
                   <>
@@ -132,7 +136,7 @@ export function UpdateModal({
           </div>
         ) : null}
 
-        {!shouldSimplifyWebUpdate ? (
+        {!shouldHideWebUpdateDetails ? (
           <>
             <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">更新内容：</p>
