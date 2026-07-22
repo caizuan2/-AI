@@ -12,10 +12,11 @@ const capacitorConfig = readFileSync("capacitor.config.ts", "utf8");
 
 assert.match(loginPage, /isAdminEntry \? "\/api\/auth\/login" : "\/api\/auth\/user-entry"/);
 assert.match(loginPage, /licenseKey/);
-assert.match(loginPage, /首次使用请输入用户名、手机号、密码和用户端卡密/);
+assert.match(loginPage, /首次使用请输入手机号、密码和用户端卡密，系统会自动判断是否为新账号；新账号还需填写网名/);
 assert.match(loginPage, /placeholder="填写网名"/);
-assert.match(loginPage, /首次开户时填写；原账号重新激活时可不填写，也不会修改原用户名/);
-assert.match(loginPage, /首次使用填写网名和卡密即可直接开户/);
+assert.match(loginPage, /网名（首次开户必填，原账号换卡恢复可不填）/);
+assert.match(loginPage, /新账号首次开户时填写；原账号使用新卡恢复时留空即可，不会修改原网名/);
+assert.match(loginPage, /首次开户填写网名和卡密；原账号换卡恢复时网名可留空，并保留聊天记录/);
 assert.match(loginPage, /!isAdminEntry && showLicenseEntry \? \{ name \} : \{\}/);
 assert.match(loginPage, /useState\(firstUse \|\| activationRequested\)/);
 assert.match(loginPage, /!isAdminEntry && !showLicenseEntry/);
