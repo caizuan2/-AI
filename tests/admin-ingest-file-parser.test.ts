@@ -1,51 +1,25 @@
 import assert from "node:assert/strict";
 
 import JSZip from "jszip";
+import sharp from "sharp";
 
 import { parseAdminIngestFile } from "../lib/enterprise/ingest-file-parser";
+import { terminateAdminIngestLocalOcrWorker } from "../lib/enterprise/ingest-local-ocr";
 
 const TEST_ENV_NAMES = [
-  "ADMIN_INGEST_VISION_ENABLED",
-  "ADMIN_INGEST_VISION_PROVIDER",
-  "ADMIN_INGEST_VISION_ALLOW_PROVIDER_FALLBACK",
-  "ADMIN_INGEST_VISION_QWEN_MODEL",
-  "ADMIN_INGEST_VISION_OPENAI_MODEL",
-  "ADMIN_INGEST_VISION_MODEL",
-  "ADMIN_INGEST_VISION_MAX_BYTES",
-  "ADMIN_INGEST_VISION_TIMEOUT_MS",
-  "ADMIN_INGEST_VISION_MAX_TOKENS",
-  "ADMIN_INGEST_PPTX_VISION_TIMEOUT_MS",
-  "QWEN_API_KEY",
-  "QWEN_BASE_URL",
-  "QWEN_VISION_MODEL",
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "OPENAI_VISION_MODEL"
+  "ADMIN_INGEST_LOCAL_OCR_ENABLED",
+  "ADMIN_INGEST_LOCAL_OCR_CACHE_DIR",
+  "ADMIN_INGEST_LOCAL_OCR_MAX_BYTES",
+  "ADMIN_INGEST_LOCAL_OCR_TIMEOUT_MS",
+  "ADMIN_INGEST_PDF_OCR_MAX_PAGES",
+  "ADMIN_INGEST_PPTX_OCR_TIMEOUT_MS",
+  "ADMIN_INGEST_PPTX_VISION_TIMEOUT_MS"
 ] as const;
 
 const originalFetch = globalThis.fetch;
 const originalEnv = Object.fromEntries(
   TEST_ENV_NAMES.map((name) => [name, process.env[name]])
 ) as Record<(typeof TEST_ENV_NAMES)[number], string | undefined>;
-
-const VALID_PNG = Buffer.from([
-  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-  0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52
-]);
-
-function clearVisionEnv() {
-  for (const name of TEST_ENV_NAMES) {
-    delete process.env[name];
-  }
-}
-
-function configureQwenVision() {
-  clearVisionEnv();
-  process.env.ADMIN_INGEST_VISION_PROVIDER = "qwen";
-  process.env.QWEN_API_KEY = "sk-test-admin-ingest-vision";
-  process.env.QWEN_BASE_URL = "https://vision.test.invalid/v1";
-  process.env.ADMIN_INGEST_VISION_QWEN_MODEL = "qwen-vl-test";
-}
 
 function restoreEnvironment() {
   for (const name of TEST_ENV_NAMES) {
@@ -59,71 +33,44 @@ function restoreEnvironment() {
   }
 }
 
-function mockVisionFetch(
-  text: string,
-  requests: Array<{ url: string; body: unknown }>,
-  finishReason = "stop"
-) {
-  globalThis.fetch = (async (input, init) => {
-    requests.push({
-      url: String(input),
-      body: JSON.parse(String(init?.body ?? "{}")) as unknown
-    });
+async function buildOcrImage(text: string, format: "png" | "jpeg" = "png") {
+  const svg = Buffer.from([
+    "<svg width=\"1400\" height=\"360\" xmlns=\"http://www.w3.org/2000/svg\">",
+    "<rect width=\"100%\" height=\"100%\" fill=\"white\"/>",
+    `<text x=\"70\" y=\"215\" font-family=\"Arial\" font-size=\"82\" font-weight=\"700\" fill=\"black\">${text}</text>`,
+    "</svg>"
+  ].join(""));
+  const image = sharp(svg);
 
-    return new Response(JSON.stringify({
-      choices: [{ finish_reason: finishReason, message: { content: text } }]
-    }), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    });
-  }) as typeof fetch;
+  return format === "jpeg"
+    ? image.jpeg({ quality: 95 }).toBuffer()
+    : image.png().toBuffer();
 }
 
-function readVisionRequest(request: { url: string; body: unknown }) {
-  const body = request.body as {
-    model?: string;
-    messages?: Array<{
-      content?: Array<{
-        type?: string;
-        text?: string;
-        image_url?: { url?: string };
-      }>;
-    }>;
-  };
-  const content = body.messages?.[0]?.content ?? [];
-
-  return {
-    model: body.model,
-    prompt: content.find((part) => part.type === "text")?.text ?? "",
-    imageUrl: content.find((part) => part.type === "image_url")?.image_url?.url ?? ""
-  };
-}
-
-async function buildPptxFixture() {
+async function buildPptxFixture(image: Buffer) {
   const zip = new JSZip();
 
+  zip.file("ppt/presentation.xml", [
+    "<p:presentation xmlns:p=\"p\" xmlns:r=\"r\"><p:sldIdLst>",
+    "<p:sldId id=\"256\" r:id=\"rIdSlide\"/>",
+    "</p:sldIdLst></p:presentation>"
+  ].join(""));
+  zip.file("ppt/_rels/presentation.xml.rels", [
+    "<Relationships>",
+    "<Relationship Id=\"rIdSlide\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide\" Target=\"slides/slide1.xml\"/>",
+    "</Relationships>"
+  ].join(""));
   zip.file("ppt/slides/slide1.xml", [
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-    "<p:sld xmlns:p=\"http://schemas.openxmlformats.org/presentationml/2006/main\"",
-    " xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\"",
-    " xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">",
-    "<p:cSld><a:t>第三步：讲事业</a:t>",
-    "<a:blip r:embed=\"rIdImage\"/>",
-    "<a:blip r:link=\"rIdExternal\"/>",
+    "<p:sld xmlns:p=\"p\" xmlns:a=\"a\" xmlns:r=\"r\"><p:cSld>",
+    "<a:t>第三步：讲事业</a:t><a:blip r:embed=\"rIdImage\"/>",
     "</p:cSld></p:sld>"
   ].join(""));
   zip.file("ppt/slides/_rels/slide1.xml.rels", [
-    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
-    "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
-    "<Relationship Id=\"rIdImage\"",
-    " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"",
-    " Target=\"../media/image1.png\"/>",
-    "<Relationship Id=\"rIdExternal\"",
-    " Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\"",
-    " Target=\"https://example.invalid/external.png\" TargetMode=\"External\"/>",
+    "<Relationships>",
+    "<Relationship Id=\"rIdImage\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image1.png\"/>",
     "</Relationships>"
   ].join(""));
-  zip.file("ppt/media/image1.png", VALID_PNG);
+  zip.file("ppt/media/image1.png", image);
 
   return zip.generateAsync({ type: "nodebuffer" });
 }
@@ -150,172 +97,68 @@ async function buildOrderedPptxFixture() {
   return zip.generateAsync({ type: "nodebuffer" });
 }
 
+function buildImageOnlyPdf(jpeg: Buffer, width: number, height: number) {
+  const chunks: Buffer[] = [];
+  const offsets: number[] = [0];
+  let length = 0;
+  const push = (value: string | Buffer) => {
+    const chunk = typeof value === "string" ? Buffer.from(value, "binary") : value;
+    chunks.push(chunk);
+    length += chunk.length;
+  };
+  const object = (id: number, body: string | Buffer) => {
+    offsets[id] = length;
+    push(`${id} 0 obj\n`);
+    push(body);
+    push("\nendobj\n");
+  };
+
+  push("%PDF-1.4\n");
+  object(1, "<< /Type /Catalog /Pages 2 0 R >>");
+  object(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+  object(3, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${width} ${height}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`);
+  object(4, Buffer.concat([
+    Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`, "binary"),
+    jpeg,
+    Buffer.from("\nendstream", "binary")
+  ]));
+  const content = `q\n${width} 0 0 ${height} 0 0 cm\n/Im0 Do\nQ`;
+  object(5, `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
+  const xrefOffset = length;
+
+  push("xref\n0 6\n0000000000 65535 f \n");
+  for (let id = 1; id <= 5; id += 1) {
+    push(`${String(offsets[id]).padStart(10, "0")} 00000 n \n`);
+  }
+  push(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF\n`);
+
+  return Buffer.concat(chunks);
+}
+
 async function main() {
   try {
-    configureQwenVision();
-    const imageRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("【可见文字】\n系统五大价值\n【结构与图表】\n从左到右", imageRequests);
+    process.env.ADMIN_INGEST_LOCAL_OCR_ENABLED = "true";
+    process.env.ADMIN_INGEST_LOCAL_OCR_TIMEOUT_MS = "60000";
+    let networkCallCount = 0;
+    globalThis.fetch = (async () => {
+      networkCallCount += 1;
+      throw new Error("Local attachment parsing must not call a cloud vision model.");
+    }) as typeof fetch;
 
+    const png = await buildOcrImage("SYSTEM VALUE 2026");
     const imageResult = await parseAdminIngestFile({
       fileName: "课程截图.png",
       mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
+      sizeBytes: png.byteLength,
+      buffer: png
     });
 
     assert.equal(imageResult.parseStatus, "parsed");
-    assert.match(imageResult.extractedText, /系统五大价值/);
-    assert.equal(imageRequests.length, 1);
-    assert.equal(imageRequests[0]?.url, "https://vision.test.invalid/v1/chat/completions");
+    assert.match(imageResult.extractedText, /SYSTEM\s+VALUE\s+2026/i);
+    assert.match(imageResult.limitationNote, /local-ocr\/tesseract\.js/);
+    assert.equal(networkCallCount, 0);
 
-    const imageRequest = readVisionRequest(imageRequests[0]);
-
-    assert.equal(imageRequest.model, "qwen-vl-test");
-    assert.match(imageRequest.prompt, /只识别当前这张图片/);
-    assert.match(imageRequest.prompt, /不得使用历史对话/);
-    assert.doesNotMatch(imageRequest.prompt, /课程截图\.png/);
-    assert.match(imageRequest.imageUrl, /^data:image\/png;base64,/);
-
-    const truncatedRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("识别文字".repeat(3_000), truncatedRequests);
-    const truncatedImageResult = await parseAdminIngestFile({
-      fileName: "超长识别结果.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(truncatedImageResult.parseStatus, "partial");
-    assert.ok(truncatedImageResult.extractedText.length <= 8_000);
-
-    const providerTruncatedRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("只返回了前半段识别文字", providerTruncatedRequests, "length");
-    const providerTruncatedResult = await parseAdminIngestFile({
-      fileName: "供应商截断.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(providerTruncatedResult.parseStatus, "partial");
-
-    const filteredRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("只返回了可安全显示的识别片段", filteredRequests, "content_filter");
-    const filteredResult = await parseAdminIngestFile({
-      fileName: "过滤截断.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(filteredResult.parseStatus, "partial");
-
-    const emptyTemplateRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("【可见文字】\n无\n【结构与图表】\n无\n【不确定内容】\n无", emptyTemplateRequests);
-    const emptyTemplateResult = await parseAdminIngestFile({
-      fileName: "空白图片.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(emptyTemplateResult.parseStatus, "metadata_only");
-    assert.equal(emptyTemplateResult.extractedText, "");
-
-    const sentinelRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("`NO_VISIBLE_CONTENT`", sentinelRequests);
-    const sentinelResult = await parseAdminIngestFile({
-      fileName: "哨兵图片.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(sentinelResult.parseStatus, "metadata_only");
-
-    const refusalRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("抱歉，我无法识别这张图片中的具体文字。", refusalRequests);
-    const refusalResult = await parseAdminIngestFile({
-      fileName: "拒识图片.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(refusalResult.parseStatus, "metadata_only");
-
-    configureQwenVision();
-    process.env.OPENAI_API_KEY = "sk-test-openai-vision";
-    process.env.OPENAI_BASE_URL = "https://openai-vision.test.invalid/v1";
-    const strictProviderUrls: string[] = [];
-    globalThis.fetch = (async (input) => {
-      strictProviderUrls.push(String(input));
-      return new Response("provider unavailable", { status: 503 });
-    }) as typeof fetch;
-    const strictProviderResult = await parseAdminIngestFile({
-      fileName: "私有课件.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(strictProviderResult.parseStatus, "metadata_only");
-    assert.deepEqual(strictProviderUrls, ["https://vision.test.invalid/v1/chat/completions"]);
-
-    clearVisionEnv();
-    let unavailableFetchCount = 0;
-    globalThis.fetch = (async () => {
-      unavailableFetchCount += 1;
-      throw new Error("Vision fetch must not run without a configured provider.");
-    }) as typeof fetch;
-
-    const unavailableResult = await parseAdminIngestFile({
-      fileName: "未配置识别.png",
-      mimeType: "image/png",
-      sizeBytes: VALID_PNG.byteLength,
-      buffer: VALID_PNG
-    });
-
-    assert.equal(unavailableResult.parseStatus, "metadata_only");
-    assert.equal(unavailableResult.extractedText, "");
-    assert.equal(unavailableFetchCount, 0);
-    assert.match(unavailableResult.limitationNote, /尚未配置/);
-
-    const partialPptxBuffer = await buildPptxFixture();
-    const partialPptxResult = await parseAdminIngestFile({
-      fileName: "视觉服务未配置.pptx",
-      mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-      sizeBytes: partialPptxBuffer.byteLength,
-      buffer: partialPptxBuffer
-    });
-
-    assert.equal(partialPptxResult.parseStatus, "partial");
-    assert.match(partialPptxResult.extractedText, /第三步：讲事业/);
-    assert.match(partialPptxResult.limitationNote, /部分附件证据/);
-
-    configureQwenVision();
-    let invalidMagicFetchCount = 0;
-    globalThis.fetch = (async () => {
-      invalidMagicFetchCount += 1;
-      throw new Error("Vision fetch must not run for an invalid image signature.");
-    }) as typeof fetch;
-
-    const invalidMagicResult = await parseAdminIngestFile({
-      fileName: "伪装图片.png",
-      mimeType: "image/png",
-      sizeBytes: 12,
-      buffer: Buffer.from("not-a-png!!!")
-    });
-
-    assert.equal(invalidMagicResult.parseStatus, "unsupported");
-    assert.equal(invalidMagicResult.extractedText, "");
-    assert.equal(invalidMagicFetchCount, 0);
-    assert.match(invalidMagicResult.limitationNote, /文件头/);
-
-    configureQwenVision();
-    const pptxRequests: Array<{ url: string; body: unknown }> = [];
-    mockVisionFetch("【可见文字】\n客户可见的创业机会\n【结构与图表】\n箭头指向成交", pptxRequests);
-    const pptxBuffer = await buildPptxFixture();
+    const pptxBuffer = await buildPptxFixture(png);
     const pptxResult = await parseAdminIngestFile({
       fileName: "讲事业第三步.pptx",
       mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -323,15 +166,26 @@ async function main() {
       buffer: pptxBuffer
     });
 
-    assert.equal(pptxResult.parseStatus, "partial");
-    assert.equal(pptxRequests.length, 1, "External image relationships must not trigger vision requests.");
+    assert.equal(pptxResult.parseStatus, "parsed");
     assert.match(pptxResult.extractedText, /第三步：讲事业/);
-    assert.match(pptxResult.extractedText, /客户可见的创业机会/);
-    assert.match(pptxResult.slideTexts[0]?.text ?? "", /幻灯片文字：第三步：讲事业/);
+    assert.match(pptxResult.extractedText, /SYSTEM\s+VALUE\s+2026/i);
     assert.match(pptxResult.slideTexts[0]?.text ?? "", /图片识别 1：/);
-    assert.match(readVisionRequest(pptxRequests[0]).imageUrl, /^data:image\/png;base64,/);
-    assert.match(pptxResult.limitationNote, /视觉识别成功 1 个/);
-    assert.match(pptxResult.limitationNote, /失败或跳过 1 个/);
+    assert.match(pptxResult.limitationNote, /本地 OCR 成功 1 个/);
+    assert.equal(networkCallCount, 0);
+
+    const jpeg = await buildOcrImage("SCANNED PDF 2026", "jpeg");
+    const scannedPdf = buildImageOnlyPdf(jpeg, 1400, 360);
+    const pdfResult = await parseAdminIngestFile({
+      fileName: "扫描课件.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: scannedPdf.byteLength,
+      buffer: scannedPdf
+    });
+
+    assert.equal(pdfResult.parseStatus, "parsed");
+    assert.match(pdfResult.extractedText, /SCANNED\s+PDF\s+2026/i);
+    assert.match(pdfResult.limitationNote, /本地 Tesseract OCR/);
+    assert.equal(networkCallCount, 0);
 
     const orderedPptxBuffer = await buildOrderedPptxFixture();
     const orderedPptxResult = await parseAdminIngestFile({
@@ -346,6 +200,29 @@ async function main() {
     assert.ok(orderedPptxResult.extractedText.indexOf("实际第一页") < orderedPptxResult.extractedText.indexOf("实际第二页"));
     assert.doesNotMatch(orderedPptxResult.extractedText, /孤立页面不得进入模型/);
 
+    process.env.ADMIN_INGEST_LOCAL_OCR_ENABLED = "false";
+    const disabledResult = await parseAdminIngestFile({
+      fileName: "本地OCR已停用.png",
+      mimeType: "image/png",
+      sizeBytes: png.byteLength,
+      buffer: png
+    });
+
+    assert.equal(disabledResult.parseStatus, "metadata_only");
+    assert.equal(disabledResult.extractedText, "");
+    assert.match(disabledResult.limitationNote, /本地 OCR 已停用/);
+
+    const invalidMagicResult = await parseAdminIngestFile({
+      fileName: "伪装图片.png",
+      mimeType: "image/png",
+      sizeBytes: 12,
+      buffer: Buffer.from("not-a-png!!!")
+    });
+
+    assert.equal(invalidMagicResult.parseStatus, "unsupported");
+    assert.equal(invalidMagicResult.extractedText, "");
+    assert.match(invalidMagicResult.limitationNote, /文件头/);
+
     const legacyPptResult = await parseAdminIngestFile({
       fileName: "旧版课件.ppt",
       mimeType: "application/vnd.ms-powerpoint",
@@ -357,8 +234,9 @@ async function main() {
     assert.equal(legacyPptResult.extractedText, "");
     assert.match(legacyPptResult.limitationNote, /另存为 \.pptx/);
 
-    console.log("Admin ingest file parser tests passed.");
+    console.log("Admin ingest local OCR and file parser tests passed.");
   } finally {
+    await terminateAdminIngestLocalOcrWorker();
     restoreEnvironment();
     globalThis.fetch = originalFetch;
   }

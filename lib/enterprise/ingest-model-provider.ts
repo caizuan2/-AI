@@ -43,6 +43,7 @@ import {
 
 export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput | DoubaoAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
+  strictModelAffinity?: boolean;
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
 };
@@ -53,6 +54,42 @@ export type AdminIngestModelResult = (OpenAIAdminIngestResult | DeepSeekAdminIng
   requestedProvider: ModelType;
   actualProvider: ModelType;
 };
+
+export class AdminIngestModelAffinityError extends Error {
+  readonly code = "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH";
+
+  constructor(readonly details: {
+    requestedProvider: ModelType;
+    expectedProvider: ReturnType<typeof modelTypeToProvider>;
+    actualProvider: string;
+    expectedModel: string;
+    actualModel: string;
+  }) {
+    super("投喂模型返回身份与当前选择不一致，系统已拒绝该结果且未切换其他模型。");
+    this.name = "AdminIngestModelAffinityError";
+  }
+}
+
+export function assertAdminIngestModelAffinity(input: {
+  requestedProvider: ModelType;
+  requestedModel: string;
+  actualProvider: string;
+  actualModel: string;
+}) {
+  const expectedProvider = modelTypeToProvider(input.requestedProvider);
+  const actualProvider = input.actualProvider.trim().toLowerCase();
+  const actualModel = input.actualModel.trim();
+
+  if (actualProvider !== expectedProvider || actualModel !== input.requestedModel) {
+    throw new AdminIngestModelAffinityError({
+      requestedProvider: input.requestedProvider,
+      expectedProvider,
+      actualProvider: actualProvider || "unknown",
+      expectedModel: input.requestedModel,
+      actualModel: actualModel || "unknown"
+    });
+  }
+}
 
 export function resolveAdminIngestModelProvider(input: {
   modelProvider?: string | null;
@@ -189,6 +226,7 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
   inputLength: number;
   attachmentCount: number;
   requestedModel: string;
+  strictModelAffinity: boolean;
 }): AdminIngestModelResult {
   const cost = evaluateModelCost({
     modelType: input.actualProvider,
@@ -222,6 +260,7 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
       `modelRouter:fallbackUsed:${input.fallbackUsed ? "true" : "false"}`,
       `modelRouter:fallbackCount:${fallbackCount}`,
       `modelRouter:fallbackChain:${input.fallbackChain.join(">")}`,
+      `modelRouter:strictModelAffinity:${input.strictModelAffinity ? "true" : "false"}`,
       `modelRouter:failedProviders:${input.failedProviders.map((item) => `${item.provider}:${item.code}`).join("|") || "none"}`,
       `modelRouter:latency:${input.latency}`,
       `modelRouter:provider:${modelTypeToProvider(input.actualProvider)}`,
@@ -248,7 +287,9 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
   });
   const primaryProvider = isModelProvider(option.provider) ? option.provider : "openai";
   const requestedModel = resolveIngestActualModel(primaryProvider);
-  const fallbackChain = buildEnterpriseFallbackChain(primaryProvider);
+  const fallbackChain = input.strictModelAffinity === true
+    ? [primaryProvider]
+    : buildEnterpriseFallbackChain(primaryProvider);
   const failedProviders: Array<{ provider: ModelType; code: string }> = [];
   const startedAt = Date.now();
   let lastError: unknown = null;
@@ -259,6 +300,16 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
         ...input,
         modelProvider: provider
       }, provider === primaryProvider);
+      const actualModel = result.actualModel || result.model || result.gptProof.actualModel || "";
+
+      if (input.strictModelAffinity === true) {
+        assertAdminIngestModelAffinity({
+          requestedProvider: primaryProvider,
+          requestedModel,
+          actualProvider: result.provider,
+          actualModel
+        });
+      }
 
       return annotateModelRouting(result, {
         primaryProvider,
@@ -271,7 +322,8 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
         costMode,
         inputLength: (input.input ?? "").length,
         attachmentCount: input.attachments?.length ?? 0,
-        requestedModel
+        requestedModel,
+        strictModelAffinity: input.strictModelAffinity === true
       });
     } catch (error) {
       if (provider === "doubao-pro" && readErrorCode(error) === "DOUBAO_SAFETY_REJECTED") {

@@ -62,6 +62,17 @@ export interface OpenAIAdminIngestAttachment {
   summary?: string;
   pageSummaries?: string[];
   slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
+  totalPages?: number;
+  processedPageStart?: number | null;
+  processedPageEnd?: number | null;
+  nextPage?: number | null;
+  complete?: boolean;
+  successfulPages?: number[];
+  failedPages?: number[];
+  lowConfidencePages?: number[];
+  coveragePercent?: number;
+  successRatePercent?: number;
+  deadlineReached?: boolean;
   limitationNote?: string;
 }
 

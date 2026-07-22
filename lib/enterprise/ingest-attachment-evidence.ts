@@ -142,7 +142,7 @@ export function buildAttachmentContentMissingMessage(report: AdminIngestAttachme
   const files = report.missingFiles.slice(0, 3).join("、");
   const suffix = report.missingFiles.length > 3 ? `等 ${report.missingFiles.length} 个附件` : files;
 
-  return `当前附件${suffix ? `（${suffix}）` : ""}尚未识别到可用于分析的正文。请确认图片清晰、视觉识别服务可用，或将旧版 .ppt 另存为 .pptx 后重新发送。系统已停止本轮分析，未生成知识草稿或训练记忆。`;
+  return `当前附件${suffix ? `（${suffix}）` : ""}尚未识别到可用于分析的文字证据。请确认图片清晰且包含可识别文字、补充图片内容说明，或将旧版 .ppt 另存为 .pptx 后重新发送。严格单模型模式不会调用其他视觉或备用模型，也不会根据文件名、历史对话猜测画面；系统已停止本轮分析，未生成知识草稿或训练记忆。`;
 }
 
 export function readAttachmentEvidenceErrorMessage(error: unknown) {

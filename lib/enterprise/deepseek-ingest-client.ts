@@ -2,6 +2,7 @@ import "server-only";
 
 import { logger } from "@/lib/logger";
 import {
+  extractRawGptReplyMarkdown,
   normalizeGptOutput,
   type GptStructuredKnowledge
 } from "@/lib/enterprise/gpt-output-normalizer";
@@ -71,6 +72,7 @@ export interface DeepSeekAdminIngestInput {
   recentTrainingRecords?: GptIngestMemoryRecord[];
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
+  strictModelAffinity?: boolean;
 }
 
 export interface DeepSeekAdminIngestResult {
@@ -330,7 +332,11 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
     fallbackModel
   });
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-  const text = normalized.text;
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
+  const message = firstChoice.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : {};
+  const rawChatText = typeof message.content === "string" ? message.content : "";
+  const text = rawChatText.trim() ? rawChatText : normalized.text;
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = normalized.model ?? fallbackModel;
   const createdAt = normalized.createdAt ?? normalizeCreatedAt(record.created);
@@ -380,6 +386,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
     const systemPrompt = buildGptIngestBrainSystemPrompt();
     const userPrompt = buildUserPrompt(input, gptOS);
+    const preserveRawReply = input.strictModelAffinity === true;
 
     let response = await callDeepSeekChatCompletions({
       chatCompletionsUrl: resolved.chatCompletionsUrl,
@@ -389,6 +396,12 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       userPrompt,
       signal: controller.signal
     });
+    let rawReplyMarkdown = preserveRawReply ? extractRawGptReplyMarkdown(response.text) : "";
+
+    if (preserveRawReply && !rawReplyMarkdown.trim()) {
+      throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 未返回可保存的 replyMarkdown。原始正文未经过替换或补写。");
+    }
+
     let normalized: ReturnType<typeof normalizeGptOutput> | null = null;
     let quality = buildMissingReplyQuality(response.text, input.input);
     let deepenAttempts = 0;
@@ -401,7 +414,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         fallbackCategory: input.category ?? "",
         strictReply: true
       });
-      quality = assessGptProResponseQuality(normalized.replyMarkdown, {
+      quality = assessGptProResponseQuality(preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown, {
         userInput: input.input
       });
     } catch (error) {
@@ -417,7 +430,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       });
     }
 
-    while ((!normalized || !quality.ok) && deepenAttempts < 2) {
+    while (!preserveRawReply && (!normalized || !quality.ok) && deepenAttempts < 2) {
       deepenAttempts += 1;
       logger.warn("enterprise_admin_ingest.deepseek_pro_quality_deepen", {
         requestId: input.requestId,
@@ -442,6 +455,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         }),
         signal: controller.signal
       });
+      rawReplyMarkdown = extractRawGptReplyMarkdown(response.text);
 
       try {
         normalized = normalizeGptOutput({
@@ -486,14 +500,14 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     }
 
     if (!quality.ok) {
-      qualitySoftAccepted = Boolean(normalized.replyMarkdown.trim());
+      qualitySoftAccepted = Boolean((preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown).trim());
       logger.warn("enterprise_admin_ingest.deepseek_quality_soft_accept", {
         requestId: input.requestId,
         model: response.model,
         responseId: response.responseId,
         chineseCharCount: quality.chineseCharCount,
         failedReasons: quality.failedReasons,
-        replyLength: normalized.replyMarkdown.length
+        replyLength: (preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown).length
       });
     }
 
@@ -543,7 +557,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       modelMode: resolved.modelMode,
       fallback: false,
       selectedModelLabel: resolved.selectedModelLabel,
-      replyMarkdown: normalized.replyMarkdown,
+      replyMarkdown: preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown,
       knowledgeDraft: normalized.knowledgeDraft,
       userClientCallPlan: normalized.userClientCallPlan,
       suggestedQuestions: Array.from(new Set([
@@ -565,6 +579,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         `apiResilience:retryCount:${response.retryCount}`,
         `apiResilience:fallbackUsed:false`,
         `apiResilience:qualitySoftAccepted:${qualitySoftAccepted ? "true" : "false"}`,
+        `deepseek:replyMarkdownPassthrough:${preserveRawReply ? "true" : "false"}`,
         `apiResilience:responseLatency:${response.responseLatency}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         `observability:traceId:${gptOS.observability.trace.traceId}`,

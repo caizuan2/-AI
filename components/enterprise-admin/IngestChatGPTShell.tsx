@@ -27,6 +27,7 @@ import {
   Search,
   SendHorizontal,
   Settings,
+  Square,
   Tags,
   UploadCloud,
   X
@@ -223,6 +224,7 @@ interface IngestChatGPTShellProps {
   onNoticeChange?: (message: string) => void;
   onErrorChange?: (message: string) => void;
   onSend?: (value?: string) => Promise<IngestActionResult | null>;
+  onCancel?: () => void;
   onSave?: () => Promise<IngestActionResult | null>;
   onReconnectGpt?: () => Promise<unknown>;
   onUpload?: (files: File[]) => void;
@@ -844,6 +846,7 @@ export function IngestChatGPTShell({
   onNoticeChange,
   onErrorChange,
   onSend,
+  onCancel,
   onSave,
   onUpload,
   onRemoveUpload,
@@ -2629,8 +2632,11 @@ export function IngestChatGPTShell({
                   <Mic className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
-                  type="submit"
-                  disabled={!canIngest || isParsing || (!input.trim() && uploadedFiles.length === 0)}
+                  type={isParsing ? "button" : "submit"}
+                  disabled={isParsing ? !onCancel : !canIngest || (!input.trim() && uploadedFiles.length === 0)}
+                  onClick={isParsing ? onCancel : undefined}
+                  title={isParsing ? "停止本轮识别与生成" : "发送"}
+                  aria-label={isParsing ? "停止本轮识别与生成" : "发送"}
                   className={[
                     "flex h-10 items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
                     isParsing ? "w-auto px-3 text-xs font-semibold" : "w-10"
@@ -2638,8 +2644,8 @@ export function IngestChatGPTShell({
                 >
                   {isParsing ? (
                     <>
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                      发送中
+                      <Square className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
+                      停止
                     </>
                   ) : (
                     <SendHorizontal className="h-4 w-4" aria-hidden="true" />

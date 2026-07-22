@@ -108,6 +108,17 @@ export interface IngestUploadState {
   parseStatus?: "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
   pageSummaries?: string[];
   slideTexts?: Array<{ slideIndex: number; text: string }>;
+  totalPages?: number;
+  processedPageStart?: number | null;
+  processedPageEnd?: number | null;
+  nextPage?: number | null;
+  complete?: boolean;
+  successfulPages?: number[];
+  failedPages?: number[];
+  lowConfidencePages?: number[];
+  coveragePercent?: number;
+  successRatePercent?: number;
+  deadlineReached?: boolean;
   limitationNote?: string;
   status: "selected" | "pending_parse" | "ready_to_send" | "parsing" | "attached" | "parsed" | "failed";
   source: "admin_ingest";
@@ -144,6 +155,8 @@ interface ApiEnvelope<T> {
   ok: boolean;
   data?: T;
   message?: string;
+  userMessage?: string;
+  errorCode?: string;
   error?: {
     message?: string;
     code?: string;
@@ -301,6 +314,10 @@ interface AdminSavedKnowledgeResponse extends SavedKnowledgeLike {
 }
 
 export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<unknown> | null) {
+  if (payload?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
+    return payload.userMessage || payload.message || "当前模型暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试。";
+  }
+
   const raw = [
     payload?.message,
     payload?.error?.message,
@@ -1187,10 +1204,13 @@ export async function sendCoreIngest(input: {
     const normalizedSuccess = normalizeIngestSuccessPayload(payload);
     const data = ingestResult.raw as unknown as GptIngestResponse;
     const actualProvider = String(normalizedSuccess?.provider ?? data.provider ?? "").trim().toLowerCase();
-    const preserveRawDoubaoOutput = actualProvider === "doubao" || actualProvider === "doubao-pro";
-    const rawDoubaoReply = typeof data.replyMarkdown === "string" ? data.replyMarkdown : "";
-    const replyContent = preserveRawDoubaoOutput
-      ? rawDoubaoReply || ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data)
+    const preserveRawSelectedModelOutput = actualProvider === "doubao"
+      || actualProvider === "doubao-pro"
+      || actualProvider === "deepseek"
+      || actualProvider === "deepseek-pro";
+    const rawSelectedModelReply = typeof data.replyMarkdown === "string" ? data.replyMarkdown : "";
+    const replyContent = preserveRawSelectedModelOutput
+      ? rawSelectedModelReply || ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data)
       : ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data);
     const visibleReply = replyContent
       || readString(data.structured?.summary)
@@ -1206,7 +1226,7 @@ export async function sendCoreIngest(input: {
       requestId
     });
 
-    const styledReply = preserveRawDoubaoOutput
+    const styledReply = preserveRawSelectedModelOutput
       ? visibleReply
       : applyExpressionLayer(visibleReply, selectedModelLabel, "admin_ingest_model_reply");
     const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
@@ -1222,7 +1242,7 @@ export async function sendCoreIngest(input: {
       retrieval: runtimeResult.retrieval,
       decision: runtimeResult.decision
     });
-    await streamStyledOutput(styledReply, input.streaming, preserveRawDoubaoOutput);
+    await streamStyledOutput(styledReply, input.streaming, preserveRawSelectedModelOutput);
     const streamEvent = normalizeJsonToIngestStreamEvent({
       requestId,
       conversationId: input.conversationId,
@@ -1239,7 +1259,7 @@ export async function sendCoreIngest(input: {
     };
     const draft = gptResponseToDraft(normalizedData, input.text, input.agent);
 
-    if (preserveRawDoubaoOutput) {
+    if (preserveRawSelectedModelOutput) {
       draft.replyMarkdown = styledReply;
     }
 
@@ -1292,7 +1312,7 @@ export async function sendCoreIngest(input: {
       autonomousResult: normalizedData.autonomousResult ?? normalizedData.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
       visibleReply: styledReply,
-      replyMarkdown: preserveRawDoubaoOutput ? styledReply : draft.replyMarkdown,
+      replyMarkdown: preserveRawSelectedModelOutput ? styledReply : draft.replyMarkdown,
       requestId,
       conversationId: input.conversationId,
       ok: true,
@@ -1515,11 +1535,119 @@ interface ParseFileResponse {
     extractedText: string;
     pageSummaries: string[];
     slideTexts: Array<{ slideIndex: number; text: string }>;
+    totalPages?: number;
+    processedPageStart?: number | null;
+    processedPageEnd?: number | null;
+    nextPage?: number | null;
+    complete?: boolean;
+    successfulPages?: number[];
+    failedPages?: number[];
+    lowConfidencePages?: number[];
+    coveragePercent?: number;
+    successRatePercent?: number;
+    deadlineReached?: boolean;
     limitationNote: string;
   };
   message?: string;
   error?: {
     message?: string;
+  };
+}
+
+export interface AdminIngestFileModelAffinity {
+  modelProvider: "deepseek-pro" | "doubao-pro";
+  preferredModel: string;
+  selectedModelLabel: string;
+  strictModelAffinity: true;
+}
+
+export interface AdminIngestFileParseProgress {
+  fileId: string;
+  fileName: string;
+  totalPages: number;
+  processedPageStart: number | null;
+  processedPageEnd: number | null;
+  successfulPages: number[];
+  failedPages: number[];
+  lowConfidencePages: number[];
+  coveragePercent: number;
+  complete: boolean;
+  deadlineReached: boolean;
+}
+
+export interface AdminIngestFileParseOptions {
+  signal?: AbortSignal;
+  pageBatchSize?: number;
+  requestTimeoutMs?: number;
+  onProgress?: (progress: AdminIngestFileParseProgress) => void;
+}
+
+export class AdminIngestFileParseCancelledError extends Error {
+  readonly code = "ADMIN_INGEST_FILE_PARSE_CANCELLED";
+
+  constructor(readonly files: IngestUploadState[]) {
+    super("附件解析已取消，已保留完成页面和续传位置。");
+    this.name = "AdminIngestFileParseCancelledError";
+  }
+}
+
+const DEFAULT_FILE_PARSE_BATCH_SIZE = 4;
+const MAX_FILE_PARSE_BATCH_SIZE = 6;
+const DEFAULT_FILE_PARSE_REQUEST_TIMEOUT_MS = 135_000;
+const MAX_FILE_PARSE_BATCHES = 2_500;
+
+function uniqueSortedPositiveIntegers(values: number[] = []) {
+  return Array.from(new Set(values.filter((value) => Number.isInteger(value) && value > 0)))
+    .sort((left, right) => left - right);
+}
+
+function mergeUniqueText(values: string[] = [], additions: string[] = []) {
+  return Array.from(new Set([...values, ...additions].map((value) => value.trim()).filter(Boolean)));
+}
+
+function mergeSlideTexts(
+  values: Array<{ slideIndex: number; text: string }> = [],
+  additions: Array<{ slideIndex: number; text: string }> = []
+) {
+  const bySlide = new Map<number, string>();
+
+  for (const slide of [...values, ...additions]) {
+    if (Number.isInteger(slide.slideIndex) && slide.slideIndex > 0 && slide.text.trim()) {
+      bySlide.set(slide.slideIndex, slide.text.trim());
+    }
+  }
+
+  return Array.from(bySlide, ([slideIndex, text]) => ({ slideIndex, text }))
+    .sort((left, right) => left.slideIndex - right.slideIndex);
+}
+
+function mergeExtractedText(values: string[] = []) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).join("\n\n");
+}
+
+function createParseRequestSignal(parentSignal: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new Error("ADMIN_INGEST_FILE_PARSE_TIMEOUT"));
+  }, timeoutMs);
+
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cleanup: () => {
+      clearTimeout(timeoutId);
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    }
   };
 }
 
@@ -1531,7 +1659,11 @@ export function stripUploadRuntimeFields(file: IngestUploadState): Omit<IngestUp
   return safeFile;
 }
 
-export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<IngestUploadState> {
+export async function parseUploadedFileForGpt(
+  file: IngestUploadState,
+  modelAffinity?: AdminIngestFileModelAffinity,
+  options: AdminIngestFileParseOptions = {}
+): Promise<IngestUploadState> {
   if (!file.rawFile) {
     return {
       ...file,
@@ -1540,56 +1672,310 @@ export async function parseUploadedFileForGpt(file: IngestUploadState): Promise<
     };
   }
 
-  const formData = new FormData();
-
-  formData.append("file", file.rawFile);
-  formData.append("fileName", file.fileName);
-  formData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
-
-  let response: Response;
-
-  try {
-    response = await fetch("/api/admin/kb/ingest/files/parse", {
-      method: "POST",
-      credentials: "include",
-      body: formData
-    });
-  } catch {
+  if (
+    file.complete === true
+    && (file.extractedText || file.pageSummaries?.length || file.slideTexts?.length)
+  ) {
     return {
       ...file,
-      status: "failed",
-      parseStatus: "metadata_only",
-      limitationNote: "附件解析服务暂时不可用，尚未读取到正文。"
+      status: "parsed",
+      parseStatus: file.parseStatus ?? "parsed"
     };
   }
 
-  const payload = await response.json().catch(() => null) as ParseFileResponse | null;
+  const pageBatchSize = Math.min(
+    MAX_FILE_PARSE_BATCH_SIZE,
+    Math.max(1, Math.floor(options.pageBatchSize ?? DEFAULT_FILE_PARSE_BATCH_SIZE))
+  );
+  const requestTimeoutMs = Math.min(
+    180_000,
+    Math.max(10_000, Math.floor(options.requestTimeoutMs ?? DEFAULT_FILE_PARSE_REQUEST_TIMEOUT_MS))
+  );
+  const resumePage = file.complete === false && Number.isInteger(file.nextPage) && (file.nextPage ?? 0) > 0
+    ? file.nextPage as number
+    : 1;
+  const extractedTextParts: string[] = file.extractedText ? [file.extractedText] : [];
+  let pageSummaries: string[] = [...(file.pageSummaries ?? [])];
+  let slideTexts: Array<{ slideIndex: number; text: string }> = [...(file.slideTexts ?? [])];
+  let successfulPages: number[] = uniqueSortedPositiveIntegers(file.successfulPages);
+  let failedPages: number[] = uniqueSortedPositiveIntegers(file.failedPages);
+  let lowConfidencePages: number[] = uniqueSortedPositiveIntegers(file.lowConfidencePages);
+  let limitationNotes: string[] = file.limitationNote ? [file.limitationNote] : [];
+  let totalPages = file.totalPages ?? 0;
+  let pageStart = resumePage;
+  let processedPageStart: number | null = file.processedPageStart ?? null;
+  let processedPageEnd: number | null = file.processedPageEnd ?? null;
+  let nextPage: number | null = resumePage;
+  let coveragePercent = file.coveragePercent ?? 0;
+  let successRatePercent = file.successRatePercent ?? 0;
+  let deadlineReached = file.deadlineReached === true;
+  let lastData: NonNullable<ParseFileResponse["data"]> | null = null;
 
-  if (!response.ok || !payload?.ok || !payload.data) {
+  const buildCurrentUploadState = (input: {
+    cancelled?: boolean;
+    resumePage?: number;
+  } = {}): IngestUploadState => {
+    const extractedText = mergeExtractedText(extractedTextParts);
+    const hasEvidence = Boolean(extractedText || pageSummaries.length > 0 || slideTexts.length > 0);
+    const effectiveNextPage = input.cancelled ? input.resumePage ?? pageStart : nextPage;
+    const complete = input.cancelled ? false : effectiveNextPage === null && lastData?.complete !== false;
+    const processedPageCount = uniqueSortedPositiveIntegers([...successfulPages, ...failedPages]).length;
+    const finalSuccessRatePercent = processedPageCount > 0
+      ? Math.round((successfulPages.length / processedPageCount) * 10_000) / 100
+      : successRatePercent;
+    const parseStatus = hasEvidence
+      ? complete && failedPages.length === 0 && lowConfidencePages.length === 0
+        ? "parsed" as const
+        : "partial" as const
+      : lastData?.parseStatus ?? "metadata_only" as const;
+    const cancellationNote = input.cancelled
+      ? `已停止解析；此前成功页面和第 ${effectiveNextPage ?? pageStart} 页续传位置已保留。`
+      : "";
+
     return {
       ...file,
-      status: "failed",
-      parseStatus: "metadata_only",
-      limitationNote: payload?.message ?? payload?.error?.message ?? "文件解析失败，只能把文件名和元数据传给 GPT。"
+      fileType: lastData?.mimeType || file.fileType,
+      fileSize: lastData?.sizeBytes || file.fileSize,
+      mimeType: lastData?.mimeType || file.mimeType,
+      extractedText: extractedText || undefined,
+      summary: extractedText ? extractedText.slice(0, 360) : file.summary,
+      pageSummaries,
+      slideTexts,
+      totalPages,
+      processedPageStart,
+      processedPageEnd,
+      nextPage: effectiveNextPage,
+      complete,
+      successfulPages,
+      failedPages,
+      lowConfidencePages,
+      coveragePercent: complete ? 100 : coveragePercent,
+      successRatePercent: finalSuccessRatePercent,
+      deadlineReached,
+      parseStatus,
+      limitationNote: mergeUniqueText(limitationNotes, [cancellationNote]).join(" "),
+      status: hasEvidence ? "parsed" : input.cancelled ? "ready_to_send" : "failed"
     };
-  }
-
-  return {
-    ...file,
-    fileType: payload.data.mimeType || file.fileType,
-    fileSize: payload.data.sizeBytes || file.fileSize,
-    mimeType: payload.data.mimeType,
-    extractedText: payload.data.extractedText || undefined,
-    summary: payload.data.extractedText ? payload.data.extractedText.slice(0, 360) : file.summary,
-    pageSummaries: payload.data.pageSummaries,
-    slideTexts: payload.data.slideTexts,
-    parseStatus: payload.data.parseStatus,
-    limitationNote: payload.data.limitationNote,
-    status: payload.data.parseStatus === "parsed" || payload.data.parseStatus === "partial" ? "parsed" : "failed"
   };
+
+  const throwCancelled = (nextResumePage = pageStart): never => {
+    throw new AdminIngestFileParseCancelledError([
+      buildCurrentUploadState({ cancelled: true, resumePage: nextResumePage })
+    ]);
+  };
+
+  for (let batchIndex = 0; batchIndex < MAX_FILE_PARSE_BATCHES && nextPage !== null; batchIndex += 1) {
+    if (options.signal?.aborted) {
+      throwCancelled(pageStart);
+    }
+
+    const formData = new FormData();
+
+    formData.append("file", file.rawFile);
+    formData.append("fileName", file.fileName);
+    formData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
+    formData.append("pageStart", String(pageStart));
+    formData.append("pageBatchSize", String(pageBatchSize));
+
+    if (modelAffinity) {
+      formData.append("modelProvider", modelAffinity.modelProvider);
+      formData.append("preferredModel", modelAffinity.preferredModel);
+      formData.append("selectedModelLabel", modelAffinity.selectedModelLabel);
+      formData.append("strictModelAffinity", String(modelAffinity.strictModelAffinity));
+    }
+
+    const requestSignal = createParseRequestSignal(options.signal, requestTimeoutMs);
+    let response: Response;
+
+    try {
+      response = await fetch("/api/admin/kb/ingest/files/parse", {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+        signal: requestSignal.signal
+      });
+    } catch {
+      if (options.signal?.aborted) {
+        throwCancelled(pageStart);
+      }
+
+      const timeoutMessage = requestSignal.timedOut()
+        ? `第 ${pageStart} 页起的解析批次超过 ${Math.round(requestTimeoutMs / 1000)} 秒，已保留此前成功页面，可稍后重试。`
+        : "附件解析服务暂时不可用，已保留此前成功页面。";
+      limitationNotes = mergeUniqueText(limitationNotes, [timeoutMessage]);
+
+      if (extractedTextParts.length === 0 && pageSummaries.length === 0 && slideTexts.length === 0) {
+        return {
+          ...file,
+          status: "failed",
+          parseStatus: "metadata_only",
+          limitationNote: timeoutMessage
+        };
+      }
+
+      deadlineReached ||= requestSignal.timedOut();
+      break;
+    } finally {
+      requestSignal.cleanup();
+    }
+
+    const payload = await response.json().catch(() => null) as ParseFileResponse | null;
+
+    if (!response.ok || !payload?.ok || !payload.data) {
+      const failureMessage = payload?.message ?? payload?.error?.message ?? "文件解析失败，已保留此前成功页面。";
+      limitationNotes = mergeUniqueText(limitationNotes, [failureMessage]);
+
+      if (extractedTextParts.length === 0 && pageSummaries.length === 0 && slideTexts.length === 0) {
+        return {
+          ...file,
+          status: "failed",
+          parseStatus: "metadata_only",
+          limitationNote: failureMessage
+        };
+      }
+
+      break;
+    }
+
+    const data = payload.data;
+    const previousPageStart = pageStart;
+    lastData = data;
+    totalPages = Math.max(totalPages, data.totalPages ?? 0);
+    processedPageStart = processedPageStart ?? data.processedPageStart ?? null;
+    processedPageEnd = Math.max(processedPageEnd ?? 0, data.processedPageEnd ?? 0) || null;
+    successfulPages = uniqueSortedPositiveIntegers([...successfulPages, ...(data.successfulPages ?? [])]);
+    failedPages = uniqueSortedPositiveIntegers([...failedPages, ...(data.failedPages ?? [])]);
+    lowConfidencePages = uniqueSortedPositiveIntegers([...lowConfidencePages, ...(data.lowConfidencePages ?? [])]);
+    pageSummaries = mergeUniqueText(pageSummaries, data.pageSummaries);
+    slideTexts = mergeSlideTexts(slideTexts, data.slideTexts);
+    limitationNotes = mergeUniqueText(limitationNotes, [data.limitationNote]);
+    coveragePercent = data.coveragePercent ?? (data.complete ? 100 : coveragePercent);
+    successRatePercent = data.successRatePercent ?? successRatePercent;
+    deadlineReached ||= data.deadlineReached === true;
+
+    if (data.extractedText?.trim()) {
+      extractedTextParts.push(data.extractedText);
+    }
+
+    nextPage = data.complete === true ? null : data.nextPage ?? null;
+    if (data.totalPages !== undefined || data.processedPageStart != null || data.processedPageEnd != null) {
+      options.onProgress?.({
+        fileId: file.id,
+        fileName: file.fileName,
+        totalPages,
+        processedPageStart: data.processedPageStart ?? processedPageStart,
+        processedPageEnd: data.processedPageEnd ?? processedPageEnd,
+        successfulPages,
+        failedPages,
+        lowConfidencePages,
+        coveragePercent,
+        complete: nextPage === null,
+        deadlineReached: data.deadlineReached === true
+      });
+    }
+
+    if (nextPage !== null && nextPage <= previousPageStart) {
+      limitationNotes = mergeUniqueText(limitationNotes, [
+        `第 ${previousPageStart} 页起的批次没有取得可续传进度，已停止自动重试并保留成功页面。`
+      ]);
+      break;
+    }
+
+    if (nextPage !== null) {
+      pageStart = nextPage;
+    }
+  }
+
+  const retryPages = [...failedPages];
+
+  for (const retryPage of retryPages) {
+    if (options.signal?.aborted) {
+      throwCancelled(retryPage);
+    }
+
+    const retryFormData = new FormData();
+
+    retryFormData.append("file", file.rawFile);
+    retryFormData.append("fileName", file.fileName);
+    retryFormData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
+    retryFormData.append("pageStart", String(retryPage));
+    retryFormData.append("pageBatchSize", "1");
+
+    if (modelAffinity) {
+      retryFormData.append("modelProvider", modelAffinity.modelProvider);
+      retryFormData.append("preferredModel", modelAffinity.preferredModel);
+      retryFormData.append("selectedModelLabel", modelAffinity.selectedModelLabel);
+      retryFormData.append("strictModelAffinity", String(modelAffinity.strictModelAffinity));
+    }
+
+    const retrySignal = createParseRequestSignal(options.signal, requestTimeoutMs);
+
+    try {
+      const retryResponse = await fetch("/api/admin/kb/ingest/files/parse", {
+        method: "POST",
+        credentials: "include",
+        body: retryFormData,
+        signal: retrySignal.signal
+      });
+      const retryPayload = await retryResponse.json().catch(() => null) as ParseFileResponse | null;
+      const retryData = retryResponse.ok && retryPayload?.ok ? retryPayload.data : null;
+
+      if (!retryData || !(retryData.successfulPages ?? []).includes(retryPage)) {
+        limitationNotes = mergeUniqueText(limitationNotes, [`第 ${retryPage} 页单页重试后仍未获得可靠文字证据。`]);
+        continue;
+      }
+
+      failedPages = failedPages.filter((page) => page !== retryPage);
+      successfulPages = uniqueSortedPositiveIntegers([...successfulPages, retryPage]);
+      lowConfidencePages = uniqueSortedPositiveIntegers([
+        ...lowConfidencePages.filter((page) => page !== retryPage),
+        ...(retryData.lowConfidencePages ?? [])
+      ]);
+      pageSummaries = mergeUniqueText(pageSummaries, retryData.pageSummaries);
+      slideTexts = mergeSlideTexts(slideTexts, retryData.slideTexts);
+      limitationNotes = mergeUniqueText(limitationNotes, [retryData.limitationNote, `第 ${retryPage} 页单页重试成功。`]);
+
+      if (retryData.extractedText?.trim()) {
+        extractedTextParts.push(retryData.extractedText);
+      }
+
+      options.onProgress?.({
+        fileId: file.id,
+        fileName: file.fileName,
+        totalPages,
+        processedPageStart,
+        processedPageEnd,
+        successfulPages,
+        failedPages,
+        lowConfidencePages,
+        coveragePercent,
+        complete: nextPage === null,
+        deadlineReached
+      });
+    } catch {
+      if (options.signal?.aborted) {
+        throwCancelled(retryPage);
+      }
+
+      limitationNotes = mergeUniqueText(limitationNotes, [
+        retrySignal.timedOut()
+          ? `第 ${retryPage} 页单页重试超时，已保留其他成功页面。`
+          : `第 ${retryPage} 页单页重试失败，已保留其他成功页面。`
+      ]);
+    } finally {
+      retrySignal.cleanup();
+    }
+  }
+
+  return buildCurrentUploadState();
 }
 
-export async function parseUploadedFilesForGpt(files: IngestUploadState[], concurrency = 2) {
+export async function parseUploadedFilesForGpt(
+  files: IngestUploadState[],
+  concurrency = 2,
+  modelAffinity?: AdminIngestFileModelAffinity,
+  options: AdminIngestFileParseOptions = {}
+) {
   const results = new Array<IngestUploadState>(files.length);
   let nextIndex = 0;
 
@@ -1597,10 +1983,22 @@ export async function parseUploadedFilesForGpt(files: IngestUploadState[], concu
     while (nextIndex < files.length) {
       const index = nextIndex;
       nextIndex += 1;
-      results[index] = await parseUploadedFileForGpt({
-        ...files[index],
-        status: "parsing"
-      });
+
+      try {
+        results[index] = await parseUploadedFileForGpt({
+          ...files[index],
+          status: "parsing"
+        }, modelAffinity, options);
+      } catch (error) {
+        if (error instanceof AdminIngestFileParseCancelledError) {
+          results[index] = error.files[0] ?? files[index];
+          throw new AdminIngestFileParseCancelledError(
+            files.map((original, fileIndex) => results[fileIndex] ?? original)
+          );
+        }
+
+        throw error;
+      }
     }
   }
 

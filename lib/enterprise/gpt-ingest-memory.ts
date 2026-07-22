@@ -16,6 +16,17 @@ export interface GptIngestMemoryAttachment {
   summary?: string;
   pageSummaries?: string[];
   slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
+  totalPages?: number;
+  processedPageStart?: number | null;
+  processedPageEnd?: number | null;
+  nextPage?: number | null;
+  complete?: boolean;
+  successfulPages?: number[];
+  failedPages?: number[];
+  lowConfidencePages?: number[];
+  coveragePercent?: number;
+  successRatePercent?: number;
+  deadlineReached?: boolean;
   limitationNote?: string;
 }
 
@@ -193,7 +204,7 @@ function formatAttachments(input: GptIngestMemoryInput) {
   return buildIngestFileContextPrompt(input.uploadedAttachments, {
     userPrompt: input.currentInput,
     maxFiles: 12,
-    maxTotalChars: 18_000
+    maxTotalChars: 80_000
   });
 }
 

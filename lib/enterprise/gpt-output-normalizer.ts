@@ -154,10 +154,28 @@ function extractJsonText(text: string) {
 
 function parseMaybeJson(text: string) {
   try {
-    return JSON.parse(extractJsonText(text)) as Record<string, unknown>;
+    return JSON.parse(text) as Record<string, unknown>;
   } catch {
-    return null;
+    try {
+      return JSON.parse(extractJsonText(text)) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
   }
+}
+
+export function extractRawGptReplyMarkdown(text: string) {
+  const parsed = parseMaybeJson(text);
+
+  if (parsed) {
+    const replyMarkdown = parsed.replyMarkdown;
+
+    return typeof replyMarkdown === "string" && replyMarkdown.trim()
+      ? replyMarkdown
+      : "";
+  }
+
+  return text.trim() ? text : "";
 }
 
 function collectStringValues(value: unknown, depth = 0): string[] {

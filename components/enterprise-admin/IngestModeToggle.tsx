@@ -23,6 +23,7 @@ import {
   checkGptHealthStatus,
   createUploadState,
   ingestSyncTarget,
+  AdminIngestFileParseCancelledError,
   parseUploadedFilesForGpt,
   saveKnowledgeDraft,
   sendCoreIngest,
@@ -1992,12 +1993,44 @@ export function IngestModeToggle() {
     setUploadedFiles([]);
 
     let successRendered = false;
+    let resumableUploads = composerUploads;
+    let outgoingAttachments: IngestUploadState[] = draftAttachments;
 
     try {
-      let outgoingAttachments: IngestUploadState[] = draftAttachments;
-
       if (composerUploads.length > 0) {
-        const preparedUploads = await parseUploadedFilesForGpt(composerUploads, 2);
+        const selectedFileModelProvider = selectedModelOption.provider;
+
+        if (selectedFileModelProvider !== "deepseek-pro" && selectedFileModelProvider !== "doubao-pro") {
+          throw new Error("Web 投喂端附件解析仅支持当前选定的 DeepSeek Pro 或 Doubao Pro 模型。");
+        }
+
+        const preparedUploads = await parseUploadedFilesForGpt(composerUploads, 1, {
+          modelProvider: selectedFileModelProvider,
+          preferredModel: selectedModelOption.defaultModel,
+          selectedModelLabel: selectedModelOption.label,
+          strictModelAffinity: true
+        }, {
+          signal: abortController.signal,
+          pageBatchSize: 4,
+          onProgress: (progress) => {
+            if (!isCurrentRequest()) {
+              return;
+            }
+
+            const currentPage = progress.processedPageEnd ?? progress.processedPageStart ?? 0;
+            const totalLabel = progress.totalPages > 0 ? String(progress.totalPages) : "未知";
+            const qualityHint = progress.failedPages.length > 0 || progress.lowConfidencePages.length > 0
+              ? `，失败 ${progress.failedPages.length} 页、低置信度 ${progress.lowConfidencePages.length} 页`
+              : "";
+
+            setNoticeMessage(
+              progress.complete
+                ? `「${progress.fileName}」已完成 ${currentPage}/${totalLabel} 页本地识别${qualityHint}，${selectedModelOption.label} 正在整理正文...`
+                : `正在本地识别「${progress.fileName}」：${currentPage}/${totalLabel} 页（${progress.coveragePercent.toFixed(1)}%）${qualityHint}`
+            );
+          }
+        });
+        resumableUploads = preparedUploads;
 
         outgoingAttachments = preparedUploads.map((file) => ({
           ...stripUploadRuntimeFields(file),
@@ -2286,6 +2319,22 @@ export function IngestModeToggle() {
         requestId,
         message: attachmentEvidenceMessage || rawErrorMessage
       });
+      setInput((current) => current || value);
+      const cancelledUploads = error instanceof AdminIngestFileParseCancelledError
+        ? error.files
+        : resumableUploads;
+      setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
+
+      if (abortController.signal.aborted) {
+        setGptFallbackToast(null);
+        setNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
+        setErrorMessage("");
+        showActionToast({
+          type: "info",
+          title: "本轮投喂已停止，内容已保留。"
+        });
+        return null;
+      }
 
       if (attachmentEvidenceMessage) {
         console.warn("[admin-ingest:attachment-evidence:warning]", {
@@ -2295,8 +2344,6 @@ export function IngestModeToggle() {
         setGptFallbackToast(null);
         setNoticeMessage(attachmentEvidenceMessage);
         setErrorMessage(attachmentEvidenceMessage);
-        setInput((current) => current || value);
-        setUploadedFiles((current) => current.length > 0 ? current : composerUploads);
         showActionToast({
           type: "warning",
           title: "附件证据不足，已停止本轮分析。"
@@ -2436,6 +2483,20 @@ export function IngestModeToggle() {
         }
       }
     }
+  }
+
+  function handleCancelIngest() {
+    const controllers = Object.values(abortControllerByConversationRef.current);
+
+    if (controllers.length === 0) {
+      setNoticeMessage("当前没有正在进行的附件识别或模型生成。");
+      return;
+    }
+
+    controllers.forEach((controller) => controller.abort(
+      new DOMException("用户已停止本轮附件识别与生成。", "AbortError")
+    ));
+    setNoticeMessage("正在停止本轮附件识别与生成...");
   }
 
   async function handleSave(): Promise<Awaited<ReturnType<typeof saveKnowledgeDraft>> | null> {
@@ -3192,6 +3253,7 @@ export function IngestModeToggle() {
     onNoticeChange: setNoticeMessage,
     onErrorChange: setErrorMessage,
     onSend: handleSend,
+    onCancel: handleCancelIngest,
     onSave: handleSave,
     onReconnectGpt: () => handleCheckGptStatus("reconnect"),
     onUpload: handleUpload,

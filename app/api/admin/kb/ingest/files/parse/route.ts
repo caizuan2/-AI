@@ -1,8 +1,18 @@
 import { apiError } from "@/lib/api-response";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
-import { parseAdminIngestFile } from "@/lib/enterprise/ingest-file-parser";
+import {
+  ADMIN_INGEST_DEFAULT_PAGE_BATCH_SIZE,
+  ADMIN_INGEST_MAX_PAGE_BATCH_SIZE,
+  ADMIN_INGEST_MAX_PAGE_START,
+  ADMIN_INGEST_MIN_PAGE_BATCH_SIZE,
+  parseAdminIngestFile
+} from "@/lib/enterprise/ingest-file-parser";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import {
+  getIngestModelOptionByProvider,
+  type IngestModelProvider
+} from "@/lib/enterprise/ingest-model-options";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -41,6 +51,81 @@ function readString(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function readPositiveInteger(input: {
+  value: FormDataEntryValue | null;
+  fallback: number;
+  min: number;
+  max: number;
+  label: string;
+}) {
+  const raw = readString(input.value);
+
+  if (!raw) {
+    return input.fallback;
+  }
+
+  if (!/^\d+$/.test(raw)) {
+    throw new ValidationError(`${input.label}必须是整数。`);
+  }
+
+  const value = Number(raw);
+
+  if (!Number.isSafeInteger(value) || value < input.min || value > input.max) {
+    throw new ValidationError(`${input.label}必须在 ${input.min}-${input.max} 之间。`);
+  }
+
+  return value;
+}
+
+const STRICT_WEB_INGEST_PROVIDERS = new Set<IngestModelProvider>([
+  "deepseek-pro",
+  "doubao-pro"
+]);
+
+interface AdminIngestParseModelAffinity {
+  modelProvider: "deepseek-pro" | "doubao-pro";
+  preferredModel: string;
+  selectedModelLabel: string;
+  strictModelAffinity: true;
+}
+
+function readAdminIngestParseModelAffinity(formData: FormData): AdminIngestParseModelAffinity | null {
+  const strictValue = readString(formData.get("strictModelAffinity")).toLowerCase();
+
+  if (!strictValue) {
+    return null;
+  }
+
+  if (strictValue !== "true" && strictValue !== "false") {
+    throw new ValidationError("附件解析模型身份标记无效。");
+  }
+
+  if (strictValue === "false") {
+    return null;
+  }
+
+  const modelProvider = readString(formData.get("modelProvider"));
+  const preferredModel = readString(formData.get("preferredModel"));
+  const selectedModelLabel = readString(formData.get("selectedModelLabel"));
+
+  if (!STRICT_WEB_INGEST_PROVIDERS.has(modelProvider as IngestModelProvider)) {
+    throw new ValidationError("Web 投喂端附件解析仅允许使用 DeepSeek Pro 或 Doubao Pro 严格模型身份。");
+  }
+
+  const selectedOption = getIngestModelOptionByProvider(modelProvider);
+
+  if (preferredModel !== selectedOption.defaultModel || selectedModelLabel !== selectedOption.label) {
+    throw new ValidationError("附件解析请求中的模型身份与当前 Agent 选择不一致。");
+  }
+
+  return {
+    modelProvider: modelProvider as AdminIngestParseModelAffinity["modelProvider"],
+    preferredModel,
+    selectedModelLabel,
+    strictModelAffinity: true
+  };
+}
+
 export async function POST(request: Request) {
   try {
     await requireAdminIngestActor(request, {
@@ -68,6 +153,30 @@ export async function POST(request: Request) {
     return apiError(new ValidationError("文件解析接口需要 multipart/form-data。"));
   }
 
+  let modelAffinity: AdminIngestParseModelAffinity | null;
+  let pageStart: number;
+  let pageBatchSize: number;
+
+  try {
+    modelAffinity = readAdminIngestParseModelAffinity(formData);
+    pageStart = readPositiveInteger({
+      value: formData.get("pageStart"),
+      fallback: 1,
+      min: 1,
+      max: ADMIN_INGEST_MAX_PAGE_START,
+      label: "附件起始页"
+    });
+    pageBatchSize = readPositiveInteger({
+      value: formData.get("pageBatchSize"),
+      fallback: ADMIN_INGEST_DEFAULT_PAGE_BATCH_SIZE,
+      min: ADMIN_INGEST_MIN_PAGE_BATCH_SIZE,
+      max: ADMIN_INGEST_MAX_PAGE_BATCH_SIZE,
+      label: "附件分页批次"
+    });
+  } catch (error) {
+    return apiError(error);
+  }
+
   const file = formData.get("file");
 
   if (!(file instanceof File)) {
@@ -86,11 +195,18 @@ export async function POST(request: Request) {
     fileName,
     mimeType,
     sizeBytes: file.size || buffer.byteLength,
-    buffer
+    buffer,
+    pageStart,
+    pageBatchSize,
+    signal: request.signal
   });
 
+  const responseData = modelAffinity
+    ? { ...parsed, modelAffinity }
+    : parsed;
+
   return jsonUtf8({
-    data: parsed,
-    ...parsed
+    data: responseData,
+    ...responseData
   });
 }

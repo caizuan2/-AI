@@ -2,6 +2,14 @@
 export default function nextConfig() {
   return {
     distDir: ".next",
+    experimental: {
+      serverComponentsExternalPackages: [
+        "@tesseract.js-data/chi_sim",
+        "@tesseract.js-data/eng",
+        "pdf-to-img",
+        "tesseract.js"
+      ]
+    },
     async redirects() {
       return [
         {
