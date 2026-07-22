@@ -5,6 +5,8 @@ const serviceSource = readFileSync("lib/super-admin/services/license-admin.servi
 
 assert.match(serviceSource, /LICENSE_SEARCH_IGNORABLE_CHARACTERS/);
 assert.match(serviceSource, /getAcceptedLicenseHashes\(normalizedLicenseKey\)/);
+assert.match(serviceSource, /LEGACY_DEFAULT_LICENSE_SECRET = "aikb-license-v1-default-secret"/);
+assert.match(serviceSource, /getLegacyDefaultLicenseHash\(normalizedLicenseKey\)/);
 assert.match(serviceSource, /findLicenseByEncryptedKey\(normalizedLicenseKey\)/);
 assert.match(serviceSource, /decryptLicenseKey\(license\.encryptedKey\)/);
 assert.match(serviceSource, /timingSafeEqual\(leftBuffer, rightBuffer\)/);

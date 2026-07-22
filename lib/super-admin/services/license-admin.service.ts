@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomBytes, timingSafeEqual } from "crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { LicenseKeyStatus, Prisma } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
 import { getAcceptedLicenseHashes, hashLicenseKey, normalizeLicenseKey } from "@/lib/auth/license";
@@ -47,6 +47,7 @@ const LICENSE_AUDIT_ACTIONS = [...LICENSE_METADATA_ACTIONS, "reveal_license_key"
 const PLAIN_LICENSE_KEY_PATTERN = /^XT-(?:(?:USER|INGEST|SUPER)(?:-[A-Z0-9]{4}){3}|TEAM(?:-[A-Z0-9]{4}){3,4})$/;
 const LICENSE_SEARCH_IGNORABLE_CHARACTERS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/g;
 const LICENSE_SEARCH_BATCH_SIZE = 250;
+const LEGACY_DEFAULT_LICENSE_SECRET = "aikb-license-v1-default-secret";
 
 type LicenseMetadata = {
   appType: SuperAdminLicenseAppType;
@@ -87,6 +88,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeLicenseSearchKey(value: string) {
   return normalizeLicenseKey(value.replace(LICENSE_SEARCH_IGNORABLE_CHARACTERS, ""));
+}
+
+function getLegacyDefaultLicenseHash(normalizedKey: string) {
+  return createHmac("sha256", LEGACY_DEFAULT_LICENSE_SECRET).update(normalizedKey).digest("hex");
 }
 
 function licenseKeysMatch(left: string, right: string) {
@@ -626,7 +631,12 @@ export async function searchSuperAdminLicenses(input: {
   const appType = normalizeGenerationAppType(input.appType);
   const normalizedLicenseKey = normalizeLicenseSearchKey(query);
   const keyHashes = PLAIN_LICENSE_KEY_PATTERN.test(normalizedLicenseKey)
-    ? getAcceptedLicenseHashes(normalizedLicenseKey)
+    ? Array.from(
+        new Set([
+          ...getAcceptedLicenseHashes(normalizedLicenseKey),
+          getLegacyDefaultLicenseHash(normalizedLicenseKey)
+        ])
+      )
     : [];
   let where: Prisma.LicenseKeyWhereInput;
 
