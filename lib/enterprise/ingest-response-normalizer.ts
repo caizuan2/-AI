@@ -4,9 +4,13 @@ export type NormalizedIngestSuccessPayload = {
   ok: true;
   replyText: string;
   provider?: string;
+  requestedProvider?: string;
+  actualProvider?: string;
   actualModel?: string;
   requestedModel?: string;
   fallback?: boolean;
+  fallbackUsed?: boolean;
+  modelDiagnostics?: unknown;
   records?: unknown[];
   jobId?: string;
   knowledgeItemId?: string;
@@ -19,6 +23,8 @@ export type NormalizedIngestErrorPayload = {
   errorCode?: string;
   message: string;
   provider?: string;
+  requestedProvider?: string;
+  actualProvider?: string;
   actualModel?: string;
   requestId?: string;
   raw?: unknown;
@@ -32,6 +38,8 @@ export type NormalizedIngestResult = {
   errorCode?: string;
   message: string;
   provider?: string;
+  requestedProvider?: string;
+  actualProvider?: string;
   actualModel?: string;
   requestedModel?: string;
   fallback?: boolean;
@@ -43,6 +51,8 @@ const responseFields = [
   "trainingRecord",
   "records",
   "provider",
+  "requestedProvider",
+  "actualProvider",
   "model",
   "requestedModel",
   "actualModel",
@@ -55,6 +65,7 @@ const responseFields = [
   "modelMode",
   "fallback",
   "fallbackUsed",
+  "modelDiagnostics",
   "selectedModelLabel",
   "content",
   "answer",
@@ -380,6 +391,8 @@ export function normalizeIngestResult(
       status,
       message: successPayload.replyText || "AI已完成知识整理。",
       provider: successPayload.provider,
+      requestedProvider: successPayload.requestedProvider,
+      actualProvider: successPayload.actualProvider,
       actualModel: successPayload.actualModel,
       requestedModel: successPayload.requestedModel,
       fallback: successPayload.fallback,
@@ -445,16 +458,25 @@ export function normalizeIngestSuccessPayload(data: unknown): NormalizedIngestSu
     return null;
   }
 
-  const replyText = extractIngestReplyText(data) || extractIngestReplyText(raw);
+  const provider = readString(raw.provider) || undefined;
+  const rawReplyMarkdown = typeof raw.replyMarkdown === "string" ? raw.replyMarkdown : "";
+  const replyText = (provider === "doubao" || provider === "doubao-pro") && rawReplyMarkdown
+    ? rawReplyMarkdown
+    : extractIngestReplyText(data) || extractIngestReplyText(raw);
   const fallback = readBoolean(raw.fallback) ?? readBoolean(raw.fallbackUsed);
+  const fallbackUsed = readBoolean(raw.fallbackUsed) ?? fallback;
 
   return {
     ok: true,
     replyText,
-    provider: readString(raw.provider) || undefined,
+    provider,
+    requestedProvider: readString(raw.requestedProvider) || undefined,
+    actualProvider: readString(raw.actualProvider) || provider,
     actualModel: readString(raw.actualModel) || readString(raw.model) || undefined,
     requestedModel: readString(raw.requestedModel) || undefined,
     fallback,
+    fallbackUsed,
+    modelDiagnostics: raw.modelDiagnostics,
     records: readArray(raw.records),
     jobId: readString(raw.jobId) || undefined,
     knowledgeItemId: readString(raw.knowledgeItemId) || undefined,

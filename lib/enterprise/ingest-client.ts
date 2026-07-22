@@ -91,7 +91,7 @@ export interface IngestGptHealthStatus {
   diagnostics: string[];
   checkedAt?: string;
   requestTested?: boolean;
-  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT";
+  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT";
 }
 
 export interface IngestUploadState {
@@ -156,6 +156,8 @@ interface GptIngestResponse {
   records?: AdminTrainingRecordResponse[];
   provider: IngestModelProvider;
   model: string;
+  requestedProvider?: string;
+  actualProvider?: string;
   requestedModel?: string;
   actualModel?: string;
   responseId?: string;
@@ -166,6 +168,8 @@ interface GptIngestResponse {
   modelDisplayName?: string;
   modelMode: "highest" | "fixed";
   fallback?: boolean;
+  fallbackUsed?: boolean;
+  modelDiagnostics?: Record<string, unknown>;
   selectedModelLabel?: string;
   content?: string;
   answer?: string;
@@ -219,7 +223,6 @@ interface GptIngestResponse {
     platform?: IngestPlatform;
     syncTarget?: IngestSyncTarget[];
   };
-  fallbackUsed?: boolean;
 }
 
 interface GptFailureResponse {
@@ -227,7 +230,7 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  errorCode: "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
   message: string;
   userMessage?: string;
   retryable?: boolean;
@@ -617,7 +620,7 @@ function waitForStream(ms: number, signal?: AbortSignal) {
   });
 }
 
-async function streamStyledOutput(output: string, options?: IngestStreamingOptions) {
+async function streamStyledOutput(output: string, options?: IngestStreamingOptions, preserveRawOutput = false) {
   if (!options?.onToken && !options?.onThinking) {
     return;
   }
@@ -627,7 +630,7 @@ async function streamStyledOutput(output: string, options?: IngestStreamingOptio
   const mergeWindow = Math.min(60, Math.max(20, options.mergeWindowMs ?? 30));
   const thinkingDelay = Math.max(0, options.thinkingDelayMs ?? 3000);
   const chunkSize = output.length > 3000 ? 14 : output.length > 1200 ? 7 : 2;
-  const chunks = createSmoothedStreamChunks(renderer.formatStream(output), chunkSize);
+  const chunks = createSmoothedStreamChunks(preserveRawOutput ? output : renderer.formatStream(output), chunkSize);
   let visibleText = "";
 
   options.onThinking?.({ thinking: true, message: "AI正在思考..." });
@@ -643,7 +646,7 @@ async function streamStyledOutput(output: string, options?: IngestStreamingOptio
       throw new Error("生成已停止");
     }
 
-    const formattedChunk = renderer.formatStream(chunk);
+    const formattedChunk = preserveRawOutput ? chunk : renderer.formatStream(chunk);
     visibleText = `${visibleText}${formattedChunk}`;
     options.onToken?.(formattedChunk, visibleText);
     await waitForStream(Math.max(interval, mergeWindow), options.signal);
@@ -952,7 +955,7 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
     generatedBy: data.provider,
     modelMode: data.modelMode,
     replyMarkdown: data.replyMarkdown,
-    fallbackUsed: false
+    fallbackUsed: data.fallbackUsed === true
   }, originalInput, agent, "待确认");
 }
 
@@ -1183,7 +1186,12 @@ export async function sendCoreIngest(input: {
 
     const normalizedSuccess = normalizeIngestSuccessPayload(payload);
     const data = ingestResult.raw as unknown as GptIngestResponse;
-    const replyContent = ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data);
+    const actualProvider = String(normalizedSuccess?.provider ?? data.provider ?? "").trim().toLowerCase();
+    const preserveRawDoubaoOutput = actualProvider === "doubao" || actualProvider === "doubao-pro";
+    const rawDoubaoReply = typeof data.replyMarkdown === "string" ? data.replyMarkdown : "";
+    const replyContent = preserveRawDoubaoOutput
+      ? rawDoubaoReply || ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data)
+      : ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data);
     const visibleReply = replyContent
       || readString(data.structured?.summary)
       || readString(data.structured?.answer)
@@ -1198,7 +1206,9 @@ export async function sendCoreIngest(input: {
       requestId
     });
 
-    const styledReply = applyExpressionLayer(visibleReply, selectedModelLabel, "admin_ingest_model_reply");
+    const styledReply = preserveRawDoubaoOutput
+      ? visibleReply
+      : applyExpressionLayer(visibleReply, selectedModelLabel, "admin_ingest_model_reply");
     const runtimeFinalOutput = runtimeOrchestrator.generateFinalOutput({
       query: input.text,
       baseResponse: styledReply,
@@ -1212,7 +1222,7 @@ export async function sendCoreIngest(input: {
       retrieval: runtimeResult.retrieval,
       decision: runtimeResult.decision
     });
-    await streamStyledOutput(styledReply, input.streaming);
+    await streamStyledOutput(styledReply, input.streaming, preserveRawDoubaoOutput);
     const streamEvent = normalizeJsonToIngestStreamEvent({
       requestId,
       conversationId: input.conversationId,
@@ -1228,6 +1238,11 @@ export async function sendCoreIngest(input: {
       }
     };
     const draft = gptResponseToDraft(normalizedData, input.text, input.agent);
+
+    if (preserveRawDoubaoOutput) {
+      draft.replyMarkdown = styledReply;
+    }
+
     const knowledgeLoopBundle = buildKnowledgeLoopBundle({
       text: input.text,
       replyMarkdown: styledReply,
@@ -1265,14 +1280,19 @@ export async function sendCoreIngest(input: {
       preview: false,
       provider: draft.providerUsed ?? modelProvider,
       model: normalizedData.modelDisplayName ?? selectedModelLabel,
+      requestedProvider: normalizedData.requestedProvider ?? modelProvider,
+      actualProvider: normalizedData.actualProvider ?? normalizedData.provider ?? draft.providerUsed ?? modelProvider,
+      requestedModel: normalizedData.requestedModel,
       actualModel: normalizedData.actualModel ?? normalizedData.model,
+      fallbackUsed: normalizedData.fallbackUsed === true,
+      modelDiagnostics: normalizedData.modelDiagnostics,
       responseId: normalizedData.responseId,
       usage: normalizedData.usage,
       gptProof: normalizedData.gptProof,
       autonomousResult: normalizedData.autonomousResult ?? normalizedData.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
       visibleReply: styledReply,
-      replyMarkdown: draft.replyMarkdown,
+      replyMarkdown: preserveRawDoubaoOutput ? styledReply : draft.replyMarkdown,
       requestId,
       conversationId: input.conversationId,
       ok: true,

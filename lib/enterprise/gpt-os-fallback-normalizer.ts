@@ -1,4 +1,4 @@
-export type GptOSFallbackProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi" | "mock";
+export type GptOSFallbackProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "doubao" | "doubao-pro" | "qwen" | "kimi" | "mock";
 export type GptOSFallbackErrorType =
   | "NETWORK_ERROR"
   | "OPENAI_TIMEOUT"

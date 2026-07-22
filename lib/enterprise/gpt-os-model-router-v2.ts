@@ -6,6 +6,7 @@ export type ModelType =
   | "kimi"
   | "deepseek-pro"
   | "deepseek-flash"
+  | "doubao-pro"
   | "qwen"
   | "openai";
 
@@ -113,6 +114,10 @@ export function unifiedRouter(ctx: ModelRoutingContext): ModelType {
     return "kimi";
   }
 
+  if (explicitHint.includes("doubao") || explicitHint.includes("豆包")) {
+    return "doubao-pro";
+  }
+
   if (explicitHint.includes("flash")) {
     return "deepseek-flash";
   }
@@ -159,6 +164,10 @@ export function routeModel(ctx: ModelRoutingContext): ModelType {
 export function buildEnterpriseFallbackChain(primary: ModelType): ModelType[] {
   const fallbackOrder: ModelType[] = ["deepseek-pro", "qwen", "kimi", "deepseek-flash"];
 
+  if (primary === "doubao-pro") {
+    return ["doubao-pro", ...fallbackOrder];
+  }
+
   if (primary === "kimi") {
     return ["kimi", "deepseek-pro", "qwen", "deepseek-flash"];
   }
@@ -180,9 +189,13 @@ export function buildEnterpriseFallbackChain(primary: ModelType): ModelType[] {
   return fallbackOrder.slice(startIndex);
 }
 
-export function modelTypeToProvider(modelType: ModelType): "openai" | "deepseek" | "qwen" | "kimi" {
+export function modelTypeToProvider(modelType: ModelType): "openai" | "deepseek" | "doubao" | "qwen" | "kimi" {
   if (modelType === "deepseek-pro" || modelType === "deepseek-flash") {
     return "deepseek";
+  }
+
+  if (modelType === "doubao-pro") {
+    return "doubao";
   }
 
   return modelType;
@@ -193,7 +206,7 @@ export function getModelTypeCostLevel(modelType: ModelType): "low" | "medium" | 
     return "high";
   }
 
-  if (modelType === "qwen" || modelType === "deepseek-pro") {
+  if (modelType === "qwen" || modelType === "deepseek-pro" || modelType === "doubao-pro") {
     return "medium";
   }
 

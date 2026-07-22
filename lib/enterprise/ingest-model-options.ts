@@ -1,4 +1,4 @@
-export type IngestModelProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi";
+export type IngestModelProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "doubao" | "doubao-pro" | "qwen" | "kimi";
 
 export interface IngestModelOption {
   provider: IngestModelProvider;
@@ -18,6 +18,7 @@ export interface IngestModelOption {
 export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model-deepseek-pro-primary-v1";
 export const DEEPSEEK_PRO_MODEL_ID = "deepseek-v4-pro";
 export const DEEPSEEK_FLASH_MODEL_ID = "deepseek-v4-flash";
+export const DOUBAO_PRO_MODEL_ID = "doubao-seed-2-0-pro-260215";
 
 const LEGACY_DEEPSEEK_MODEL_IDS = new Set([
   "deepseek-chat",
@@ -95,6 +96,20 @@ export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
     baseUrlEnv: "DEEPSEEK_BASE_URL"
   },
   {
+    provider: "doubao-pro",
+    label: "豆包 2.0 Pro",
+    shortLabel: "豆包 Pro",
+    displayName: "豆包 2.0 Pro",
+    modelEnvKey: "DOUBAO_PRO_MODEL",
+    defaultModel: DOUBAO_PRO_MODEL_ID,
+    description: "适合中文知识整理、沟通话术和完整 Markdown 正文生成。",
+    scenario: "中文知识 / 沟通话术 / 完整正文",
+    speedLabel: "均衡",
+    depthLabel: "Pro",
+    requiresApiKeyEnv: "ARK_API_KEY",
+    baseUrlEnv: "DOUBAO_BASE_URL"
+  },
+  {
     provider: "qwen",
     label: "Qwen Plus",
     shortLabel: "Qwen",
@@ -148,7 +163,10 @@ const DISPLAY_MODEL_LABELS = new Set([
   "Kimi 128K",
   "Kimi-K2.7-Code-HighSpeed",
   "Qwen Plus",
-  "千问"
+  "千问",
+  "豆包",
+  "豆包 Pro",
+  "豆包 2.0 Pro"
 ].map(normalizeLabel));
 
 function isOpenAIModelLike(value: string | null | undefined) {
@@ -182,6 +200,10 @@ export function normalizeIngestModelProvider(value: string | null | undefined): 
 
   if (normalized === "deepseek-flash") {
     return "deepseek-flash";
+  }
+
+  if (normalized === "doubao" || normalized === "doubao-pro" || normalized.includes("豆包")) {
+    return "doubao-pro";
   }
 
   if (normalized === "qwen") {
@@ -272,6 +294,10 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
     return configured && !LEGACY_DEEPSEEK_MODEL_IDS.has(configured.toLowerCase())
       ? configured
       : DEEPSEEK_FLASH_MODEL_ID;
+  }
+
+  if (normalized === "doubao-pro") {
+    return readRuntimeEnv("DOUBAO_PRO_MODEL") || readRuntimeEnv("DOUBAO_MODEL") || DOUBAO_PRO_MODEL_ID;
   }
 
   if (normalized === "kimi") {

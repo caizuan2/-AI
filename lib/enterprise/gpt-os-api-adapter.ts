@@ -4,7 +4,7 @@ import {
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
 
-export type GptOSApiProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "qwen" | "kimi" | "mock";
+export type GptOSApiProvider = "openai" | "deepseek" | "deepseek-pro" | "deepseek-flash" | "doubao" | "doubao-pro" | "qwen" | "kimi" | "mock";
 export type GptOSApiResponseType = "responses" | "chat_completions" | "string" | "unknown";
 export type LLMCallProvider = Exclude<GptOSApiProvider, "mock">;
 
@@ -128,6 +128,15 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
       apiKey: payload.apiKey || readEnv("QWEN_API_KEY"),
       model: requestedModel || resolveIngestActualModel("qwen"),
       url: buildChatCompletionsUrl(payload.baseUrl || readEnv("QWEN_BASE_URL") || "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+      mode: "chat" as const
+    };
+  }
+
+  if (provider === "doubao" || provider === "doubao-pro") {
+    return {
+      apiKey: payload.apiKey || readEnv("ARK_API_KEY") || readEnv("DOUBAO_API_KEY"),
+      model: requestedModel || resolveIngestActualModel("doubao-pro"),
+      url: buildChatCompletionsUrl(payload.baseUrl || readEnv("DOUBAO_BASE_URL") || "https://ark.cn-beijing.volces.com/api/v3"),
       mode: "chat" as const
     };
   }

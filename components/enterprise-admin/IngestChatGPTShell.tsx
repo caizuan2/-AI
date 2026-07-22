@@ -200,6 +200,7 @@ interface IngestChatGPTShellProps {
   regenerateInput?: string;
   modelOptions?: string[];
   onModelChange?: (model: string) => void;
+  unavailableModelProviders?: string[];
   connectionStatus?: IngestConnectionStatus;
   onCheckConnection?: () => Promise<IngestConnectionStatus>;
   input?: string;
@@ -813,6 +814,7 @@ export function IngestChatGPTShell({
   selectedModel = DEFAULT_INGEST_MODEL_OPTION.label,
   regenerateInput = "",
   onModelChange,
+  unavailableModelProviders = [],
   connectionStatus = {
     enterpriseSpace: "本地预览",
     knowledgeBase: "默认知识库",
@@ -2574,18 +2576,6 @@ export function IngestChatGPTShell({
             />
             <div className="flex items-end gap-2">
               <div className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#555]">
-                <div className="hidden">
-                  <IngestGPTModelPicker
-                    selectedModel={selectedModelLabel}
-                    disabled={isParsing}
-                    onModelChange={(selection) => onModelChange?.(selection.label)}
-                    onOpen={() => {
-                      setIsMoreOpen(false);
-                      setIsConnectionOpen(false);
-                      setIsOrganizeOpen(false);
-                    }}
-                  />
-                </div>
                 {SHOW_INTERNAL_OS_UI ? (
                   <button
                     type="button"
@@ -2660,6 +2650,19 @@ export function IngestChatGPTShell({
                 className="max-h-[160px] min-h-11 min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]"
               />
               <div className="flex shrink-0 items-center justify-end gap-1.5">
+                <IngestGPTModelPicker
+                  selectedModel={selectedModelLabel}
+                  disabled={isParsing}
+                  compact
+                  align="right"
+                  unavailableProviders={unavailableModelProviders}
+                  onModelChange={(selection) => onModelChange?.(selection.label)}
+                  onOpen={() => {
+                    setIsMoreOpen(false);
+                    setIsConnectionOpen(false);
+                    setIsOrganizeOpen(false);
+                  }}
+                />
                 <div ref={organizeMenuRef} className="relative">
                   <button
                     type="button"

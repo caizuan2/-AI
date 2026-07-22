@@ -32,6 +32,11 @@ const COST_PROFILE: Record<ModelType, {
     costLevel: "medium",
     label: "DeepSeek-Pro medium cost"
   },
+  "doubao-pro": {
+    baseUnits: 3,
+    costLevel: "medium",
+    label: "Doubao-Pro medium cost"
+  },
   "qwen": {
     baseUnits: 2,
     costLevel: "medium",

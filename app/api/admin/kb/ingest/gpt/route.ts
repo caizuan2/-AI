@@ -19,7 +19,10 @@ import type {
   AutonomousTaskRequest
 } from "@/lib/enterprise/gpt-os-autonomous-executor";
 import { normalizeGptOSFallback } from "@/lib/enterprise/gpt-os-fallback-normalizer";
-import { enhanceGPTStyle } from "@/lib/enterprise/gpt-os-style-layer";
+import {
+  enhanceGPTStyle,
+  type GptOSStyleLayerResult
+} from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 import { retrieveAdminIngestGrounding } from "@/lib/enterprise/admin-ingest-grounding";
@@ -145,6 +148,23 @@ function toGptFallbackErrorCode(error: unknown) {
     return "DEEPSEEK_API_KEY_MISSING" as const;
   }
 
+  if (code === "DOUBAO_API_KEY_MISSING" || code === "DOUBAO_API_KEY_INVALID" || message.includes("ark api key") || message.includes("doubao_api_key")) {
+    return code === "DOUBAO_API_KEY_INVALID" ? "DOUBAO_API_KEY_INVALID" as const : "DOUBAO_API_KEY_MISSING" as const;
+  }
+
+  if (
+    code === "DOUBAO_BASE_URL_INVALID"
+    || code === "DOUBAO_RATE_LIMITED"
+    || code === "DOUBAO_QUOTA_EXCEEDED"
+    || code === "DOUBAO_SAFETY_REJECTED"
+    || code === "DOUBAO_MODEL_UNAVAILABLE"
+    || code === "DOUBAO_REQUEST_FAILED"
+    || code === "DOUBAO_RESPONSE_PARSE_FAILED"
+    || code === "DOUBAO_TIMEOUT"
+  ) {
+    return code;
+  }
+
   if (code === "QWEN_API_KEY_MISSING" || message.includes("qwen api key") || message.includes("qwen_api_key")) {
     return "QWEN_API_KEY_MISSING" as const;
   }
@@ -254,7 +274,10 @@ function readDiagnosticValue(diagnostics: string[] | undefined, prefix: string) 
 
 function buildModelDiagnostics(input: {
   provider: string;
+  requestedProvider?: string;
+  actualProvider?: string;
   displayModelLabel: string;
+  requestedModel?: string;
   actualModel: string;
   routeDecision?: string;
   fallbackUsed: boolean;
@@ -263,7 +286,10 @@ function buildModelDiagnostics(input: {
 }) {
   return {
     provider: input.provider,
+    requestedProvider: input.requestedProvider ?? input.provider,
+    actualProvider: input.actualProvider ?? input.provider,
     displayModelLabel: input.displayModelLabel,
+    requestedModel: input.requestedModel ?? input.actualModel,
     actualModel: input.actualModel,
     routeDecision: input.routeDecision ?? input.provider,
     fallbackUsed: input.fallbackUsed,
@@ -687,17 +713,32 @@ export async function POST(request: Request) {
     }
 
     const rawReply = result.replyMarkdown || "";
-    const stylePassThrough = enhanceGPTStyle(rawReply, {
-      model: modelRuntime.actualModel,
-      source: "admin_ingest_gpt_route",
-      mode: "api_response"
-    });
+    const stylePassThrough: GptOSStyleLayerResult = result.provider === "doubao"
+      ? {
+          tone: "chatgpt_natural",
+          structure: "natural_markdown",
+          priority: "model_output_first",
+          output: rawReply,
+          changed: false,
+          diagnostics: ["gptStyle:provider_passthrough:doubao", "gptStyle:changed:false"],
+          summary: "",
+          steps: [],
+          sections: []
+        }
+      : enhanceGPTStyle(rawReply, {
+          model: modelRuntime.actualModel,
+          source: "admin_ingest_gpt_route",
+          mode: "api_response"
+        });
     const visibleReply = stylePassThrough.output;
     const fallbackChainText = readDiagnosticValue(result.diagnostics, "modelRouter:fallbackChain:");
     const routeDecision = readDiagnosticValue(result.diagnostics, "modelRouter:routeDecision:");
     const modelDiagnostics = buildModelDiagnostics({
       provider: result.provider,
+      requestedProvider: result.requestedProvider,
+      actualProvider: result.actualProvider,
       displayModelLabel: result.selectedModelLabel || modelRuntime.displayModelLabel,
+      requestedModel: result.requestedModel,
       actualModel: result.actualModel || modelRuntime.actualModel,
       routeDecision,
       fallbackUsed: result.fallbackUsed,
@@ -760,6 +801,8 @@ export async function POST(request: Request) {
       fallback: rawResult.fallback,
       fallbackUsed: rawResult.fallbackUsed,
       provider: rawResult.provider,
+      requestedProvider: rawResult.requestedProvider,
+      actualProvider: rawResult.actualProvider,
       requestedModel: rawResult.requestedModel,
       actualModel: rawResult.actualModel,
       normalizedFrom: modelRuntime.normalizedFrom,
@@ -803,9 +846,10 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
-    const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
-    const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
-    const status = isTimeout ? 504 : isMissingKey ? 401 : 503;
+    const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "DOUBAO_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
+    const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_INVALID" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
+    const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
+    const status = isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
       selectedModelLabel: input.selectedModelLabel,
@@ -822,7 +866,10 @@ export async function POST(request: Request) {
     });
     const modelDiagnostics = buildModelDiagnostics({
       provider: modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash" ? "deepseek" : modelOption.provider,
+      requestedProvider: modelOption.provider,
+      actualProvider: modelOption.provider,
       displayModelLabel: modelRuntime.displayModelLabel,
+      requestedModel: modelRuntime.actualModel,
       actualModel: modelRuntime.actualModel,
       routeDecision: modelOption.provider,
       fallbackUsed: true,
@@ -880,13 +927,14 @@ export async function POST(request: Request) {
       provider: modelOption.provider,
       diagnostics: [
         `apiResilience:errorCode:${errorCode}`,
-        `apiResilience:retryable:${isMissingKey ? "false" : "true"}`
+        `apiResilience:retryable:${isMissingKey || isSafetyRejection ? "false" : "true"}`
       ]
     });
 
     return jsonUtf8({
       ...fallback,
       ok: false,
+      retryable: isMissingKey || isSafetyRejection ? false : fallback.retryable,
       errorCode,
       provider: modelOption.provider,
       selectedModelLabel: modelRuntime.displayModelLabel,

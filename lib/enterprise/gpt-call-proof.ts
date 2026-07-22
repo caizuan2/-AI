@@ -6,7 +6,7 @@ export interface OpenAIGptUsage {
 }
 
 export interface GptCallProof {
-  provider: "openai" | "deepseek" | "qwen" | "kimi";
+  provider: "openai" | "deepseek" | "doubao" | "qwen" | "kimi";
   endpoint: "/responses" | "/chat/completions";
   requestedModel: string;
   actualModel: string;

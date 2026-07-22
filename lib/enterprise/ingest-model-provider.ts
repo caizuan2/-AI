@@ -21,6 +21,11 @@ import {
   type KimiAdminIngestResult
 } from "@/lib/enterprise/kimi-client";
 import {
+  runDoubaoAdminIngest,
+  type DoubaoAdminIngestInput,
+  type DoubaoAdminIngestResult
+} from "@/lib/enterprise/doubao-ingest-client";
+import {
   getIngestModelOptionByProvider,
   normalizeIngestModelSelection,
   resolveIngestActualModel,
@@ -36,15 +41,17 @@ import {
   evaluateModelCost
 } from "@/lib/enterprise/gpt-os-cost-engine";
 
-export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput) & {
+export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput | DoubaoAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
 };
 
-export type AdminIngestModelResult = (OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult) & {
+export type AdminIngestModelResult = (OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult | DoubaoAdminIngestResult) & {
   fallback: boolean;
   fallbackUsed: boolean;
+  requestedProvider: ModelType;
+  actualProvider: ModelType;
 };
 
 export function resolveAdminIngestModelProvider(input: {
@@ -72,7 +79,7 @@ export function resolveAdminIngestModelProvider(input: {
 }
 
 function isModelProvider(value: string): value is ModelType {
-  return value === "openai" || value === "deepseek-pro" || value === "deepseek-flash" || value === "qwen" || value === "kimi";
+  return value === "openai" || value === "deepseek-pro" || value === "deepseek-flash" || value === "doubao-pro" || value === "qwen" || value === "kimi";
 }
 
 function readErrorCode(error: unknown) {
@@ -153,6 +160,12 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     } as KimiAdminIngestInput);
   }
 
+  if (provider === "doubao-pro") {
+    return runDoubaoAdminIngest({
+      ...payload
+    } as DoubaoAdminIngestInput);
+  }
+
   if (provider === "qwen") {
     return runQwenAdminIngest({
       ...payload
@@ -164,7 +177,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   } as OpenAIAdminIngestInput);
 }
 
-function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult>(result: T, input: {
+function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult | DoubaoAdminIngestResult>(result: T, input: {
   primaryProvider: ModelType;
   actualProvider: ModelType;
   fallbackChain: ModelType[];
@@ -175,6 +188,7 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
   costMode: ReturnType<typeof deriveCostMode>;
   inputLength: number;
   attachmentCount: number;
+  requestedModel: string;
 }): AdminIngestModelResult {
   const cost = evaluateModelCost({
     modelType: input.actualProvider,
@@ -189,6 +203,10 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
 
   return {
     ...result,
+    requestedProvider: input.primaryProvider,
+    actualProvider: input.actualProvider,
+    requestedModel: input.requestedModel,
+    actualModel,
     fallback: input.fallbackUsed,
     fallbackUsed: input.fallbackUsed,
     gptProof: {
@@ -198,7 +216,9 @@ function annotateModelRouting<T extends OpenAIAdminIngestResult | DeepSeekAdminI
     diagnostics: [
       ...result.diagnostics,
       `modelRouter:primaryProvider:${input.primaryProvider}`,
+      `modelRouter:requestedProvider:${input.primaryProvider}`,
       `modelRouter:actualProvider:${input.actualProvider}`,
+      `modelRouter:requestedModel:${input.requestedModel}`,
       `modelRouter:fallbackUsed:${input.fallbackUsed ? "true" : "false"}`,
       `modelRouter:fallbackCount:${fallbackCount}`,
       `modelRouter:fallbackChain:${input.fallbackChain.join(">")}`,
@@ -227,6 +247,7 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
     priority: costMode === "high" ? "high_quality" : costMode === "low" ? "low_cost" : "balanced"
   });
   const primaryProvider = isModelProvider(option.provider) ? option.provider : "openai";
+  const requestedModel = resolveIngestActualModel(primaryProvider);
   const fallbackChain = buildEnterpriseFallbackChain(primaryProvider);
   const failedProviders: Array<{ provider: ModelType; code: string }> = [];
   const startedAt = Date.now();
@@ -249,9 +270,14 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
         taskType,
         costMode,
         inputLength: (input.input ?? "").length,
-        attachmentCount: input.attachments?.length ?? 0
+        attachmentCount: input.attachments?.length ?? 0,
+        requestedModel
       });
     } catch (error) {
+      if (provider === "doubao-pro" && readErrorCode(error) === "DOUBAO_SAFETY_REJECTED") {
+        throw error;
+      }
+
       lastError = error;
       failedProviders.push({
         provider,

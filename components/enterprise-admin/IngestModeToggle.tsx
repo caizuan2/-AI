@@ -62,9 +62,20 @@ import {
   ADMIN_INGEST_MODEL_STORAGE_KEY,
   DEFAULT_INGEST_MODEL_OPTION,
   getIngestModelOptionByLabel,
+  getIngestModelOptionByProvider,
   INGEST_MODEL_DISPLAY_NAMES,
+  normalizeIngestModelProvider,
   normalizeIngestModelSelection
 } from "@/lib/enterprise/ingest-model-options";
+import {
+  ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY,
+  migrateLegacyAdminIngestModelPreference,
+  parseAdminIngestModelPreferences,
+  resolveAdminIngestAgentModel,
+  setAdminIngestAgentModel,
+  type AdminIngestModelPreferencesByAgent
+} from "@/lib/enterprise/ingest-model-preferences";
+import { shouldDisableDoubaoForHealth } from "@/lib/enterprise/ingest-model-availability";
 import {
   ADMIN_INGEST_APP_NAME_STORAGE_KEY,
   DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
@@ -166,6 +177,7 @@ type MemoryV2Trace = {
   promptPreview: MemoryPromptPreview | null;
   warnings: string[];
 };
+
 type SpeechRecognitionLike = {
   continuous: boolean;
   interimResults: boolean;
@@ -671,6 +683,8 @@ function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent 
 export function IngestModeToggle() {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const restoredInitialConversationRef = useRef(false);
+  const doubaoHealthRequestVersionRef = useRef(0);
+  const activeAgentIdRef = useRef("");
   const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
   const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
@@ -687,9 +701,11 @@ export function IngestModeToggle() {
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedModel, setSelectedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
   const [resolvedModel, setResolvedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
+  const [modelPreferencesByAgent, setModelPreferencesByAgent] = useState<AdminIngestModelPreferencesByAgent>({});
   const [connectionStatus, setConnectionStatus] = useState<IngestConnectionStatus>(initialConnectionStatus);
   const [gptHealthStatus, setGptHealthStatus] = useState<IngestGptHealthStatus | null>(null);
   const [isCheckingGptHealth, setIsCheckingGptHealth] = useState(false);
+  const [unavailableModelProviders, setUnavailableModelProviders] = useState<string[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<IngestUploadState[]>([]);
   const [voiceState, setVoiceState] = useState<IngestVoiceState>(initialVoiceState);
   const [notifications, setNotifications] = useState<IngestNotification[]>([
@@ -768,6 +784,11 @@ export function IngestModeToggle() {
     () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents[0] ?? createEmptyAgent(platformContext),
     [activeAgentId, platformContext, visibleAgents]
   );
+
+  useEffect(() => {
+    activeAgentIdRef.current = activeAgent.id;
+    doubaoHealthRequestVersionRef.current += 1;
+  }, [activeAgent.id]);
   const displayProfile = useMemo(
     () => resolveAdminIngestDisplayProfile({
       currentAgent: hasActiveAgent ? activeAgent : null,
@@ -840,14 +861,85 @@ export function IngestModeToggle() {
     const storedModel = normalizeIngestModelSelection({
       selectedModelLabel: storedModelValue
     });
+    const storedModelPreferences = parseAdminIngestModelPreferences(
+      window.localStorage.getItem(ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY)
+    );
+    const preferenceAgentId = storedActiveAgentId || storedAgents[0]?.id || "";
+    const migratedModelPreferences = migrateLegacyAdminIngestModelPreference({
+      preferences: storedModelPreferences,
+      activeAgentId: preferenceAgentId,
+      legacyModelLabel: storedModel.label
+    });
+    const initialModelLabel = resolveAdminIngestAgentModel({
+      preferences: migratedModelPreferences,
+      agentId: preferenceAgentId
+    });
 
-    setSelectedModel(storedModel.label);
-    setResolvedModel(storedModel.label);
+    setModelPreferencesByAgent(migratedModelPreferences);
+    setSelectedModel(initialModelLabel);
+    setResolvedModel(initialModelLabel);
+    writeLocalJson(ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY, migratedModelPreferences);
     if (storedModelValue !== storedModel.label) {
       window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, storedModel.label);
     }
     setHistoryLoaded(true);
   }, []);
+
+  useEffect(() => {
+    if (!historyLoaded || !hasActiveAgent) {
+      return;
+    }
+
+    const agentModelLabel = resolveAdminIngestAgentModel({
+      preferences: modelPreferencesByAgent,
+      agentId: activeAgent.id
+    });
+
+    setSelectedModel(agentModelLabel);
+    setResolvedModel(agentModelLabel);
+    setGptHealthStatus(null);
+    setGptFallbackToast(null);
+  }, [activeAgent.id, hasActiveAgent, historyLoaded, modelPreferencesByAgent]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    writeLocalJson(ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY, modelPreferencesByAgent);
+  }, [historyLoaded, modelPreferencesByAgent]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    let cancelled = false;
+    const requestVersion = ++doubaoHealthRequestVersionRef.current;
+    const doubaoOption = getIngestModelOptionByProvider("doubao-pro");
+
+    void checkGptHealthStatus({
+      provider: doubaoOption.provider,
+      selectedModelLabel: doubaoOption.label,
+      preferredModel: doubaoOption.defaultModel
+    }).then((status) => {
+      if (cancelled || requestVersion !== doubaoHealthRequestVersionRef.current) {
+        return;
+      }
+
+      setUnavailableModelProviders((current) => shouldDisableDoubaoForHealth(status)
+        ? Array.from(new Set([...current, "doubao-pro"]))
+        : current.filter((provider) => provider !== "doubao-pro"));
+    }).catch(() => {
+      if (!cancelled && requestVersion === doubaoHealthRequestVersionRef.current) {
+        setUnavailableModelProviders((current) => current.filter((provider) => provider !== "doubao-pro"));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [historyLoaded]);
 
   useEffect(() => {
     if (!historyLoaded) {
@@ -2039,6 +2131,12 @@ export function IngestModeToggle() {
 
       const nextRecords = mergeTrainingRecords(result.records, records);
       const successAt = Date.now();
+      const fallbackActualModel = result.fallbackUsed
+        ? getIngestModelOptionByProvider(result.actualProvider ?? result.provider)
+        : null;
+      const fallbackDescription = fallbackActualModel
+        ? `${currentModelLabel} 暂时不可用，本次已由 ${fallbackActualModel.label} 生成。`
+        : "";
       const assistantContent = result.replyMarkdown || (result.preview
         ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
         : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`);
@@ -2048,6 +2146,11 @@ export function IngestModeToggle() {
         meta: {
           provider: result.provider,
           model: result.model ?? currentModelLabel,
+          requestedProvider: result.requestedProvider,
+          actualProvider: result.actualProvider ?? result.provider,
+          requestedModel: result.requestedModel,
+          actualModel: result.actualModel,
+          fallbackUsed: result.fallbackUsed,
           memoryV2: {
             usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
             recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
@@ -2063,6 +2166,11 @@ export function IngestModeToggle() {
         meta: {
           provider: result.provider,
           model: result.model ?? currentModelLabel,
+          requestedProvider: result.requestedProvider,
+          actualProvider: result.actualProvider ?? result.provider,
+          requestedModel: result.requestedModel,
+          actualModel: result.actualModel,
+          fallbackUsed: result.fallbackUsed,
           draftTitle: result.draft.title,
           memoryV2: {
             usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
@@ -2084,9 +2192,13 @@ export function IngestModeToggle() {
       setRecords(nextRecords);
       setResolvedModel(result.model ?? currentModelLabel);
       setLastInput(effectiveInput);
-      setGptFallbackToast(null);
+      setGptFallbackToast(fallbackDescription ? {
+        id: `model-fallback-${Date.now()}`,
+        title: "已切换备用模型完成本次生成",
+        description: fallbackDescription
+      } : null);
       setErrorMessage("");
-      setNoticeMessage(`${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
+      setNoticeMessage(fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
       setMessages((current) => [
         ...current.map(markMessageCompleted),
         {
@@ -2142,11 +2254,11 @@ export function IngestModeToggle() {
         requestId
       });
       pushNotification({
-        type: "success",
-        title: "最近投喂完成",
-        description: outgoingAttachments.length > 0
+        type: fallbackDescription ? "fallback" : "success",
+        title: fallbackDescription ? "备用模型已完成本次投喂" : "最近投喂完成",
+        description: fallbackDescription || (outgoingAttachments.length > 0
           ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
-          : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`
+          : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
       });
       void triggerMemoryExtraction({
         conversationId,
@@ -2463,20 +2575,63 @@ export function IngestModeToggle() {
     });
   }
 
-  function handleModelChange(model: string) {
+  async function handleModelChange(model: string) {
     if (isParsing) {
       setNoticeMessage("当前请求进行中，发送完成后再切换模型。");
       return;
     }
 
+    const requestVersion = ++doubaoHealthRequestVersionRef.current;
+    const targetAgentId = activeAgent.id;
     const nextModel = getIngestModelOptionByLabel(model);
 
+    if (nextModel.provider === "doubao-pro") {
+      setNoticeMessage("正在检查豆包模型连接状态...");
+      const health = await checkGptHealthStatus({
+        provider: nextModel.provider,
+        selectedModelLabel: nextModel.label,
+        preferredModel: nextModel.defaultModel
+      });
+
+      if (
+        requestVersion !== doubaoHealthRequestVersionRef.current
+        || activeAgentIdRef.current !== targetAgentId
+      ) {
+        return;
+      }
+
+      const normalizedHealthProvider = normalizeIngestModelProvider(health.provider);
+
+      setUnavailableModelProviders((current) => shouldDisableDoubaoForHealth(health)
+        ? Array.from(new Set([...current, normalizedHealthProvider]))
+        : current.filter((provider) => provider !== normalizedHealthProvider));
+      setGptHealthStatus(health);
+
+      if (!health.ok) {
+        const message = sanitizeGptOSUserMessage(health.message || "豆包模型暂未连接");
+
+        setNoticeMessage(message);
+        setErrorMessage("");
+        showActionToast({
+          type: "warning",
+          title: "豆包模型暂未连接",
+          description: message
+        });
+        return;
+      }
+    }
+
+    setModelPreferencesByAgent((current) => setAdminIngestAgentModel({
+      preferences: current,
+      agentId: targetAgentId,
+      modelLabel: nextModel.label
+    }));
     setSelectedModel(nextModel.label);
     setResolvedModel(nextModel.label);
     setErrorMessage("");
     setGptFallbackToast(null);
-    window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, nextModel.label);
-    setNoticeMessage(`当前模型已切换为 ${nextModel.label}，下一次投喂会携带 ${nextModel.provider} provider 和三端同步字段。`);
+    setGptHealthStatus(null);
+    setNoticeMessage(`当前 Agent 已切换为 ${nextModel.label}，下一次投喂开始生效；知识库、对话上下文和未提交内容保持不变。`);
   }
 
   async function handleCheckConnection() {
@@ -3009,6 +3164,7 @@ export function IngestModeToggle() {
     resolvedModel,
     modelOptions,
     onModelChange: handleModelChange,
+    unavailableModelProviders,
     connectionStatus,
     onCheckConnection: handleCheckConnection,
     input,
