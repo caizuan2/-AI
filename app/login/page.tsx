@@ -1,13 +1,14 @@
 "use client";
 
-import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, KeyRound, LockKeyhole, Phone, Sparkles, TriangleAlert } from "lucide-react";
+import { ArrowRight, KeyRound, LockKeyhole, Phone, Sparkles, TriangleAlert, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ApiClientError, unwrapApiResponse } from "@/lib/api/client";
+import { getUserEntryErrorFeedback, readUserEntryErrorMessage } from "@/app/login/user-entry-feedback";
 import {
   getEntryPathForRole,
   getEntryRoleFromRoles,
@@ -35,6 +36,17 @@ interface MeResponse {
     entryPath?: string;
   };
 }
+
+type LoginTechnicalError = {
+  code?: string;
+  requestId?: string;
+};
+
+const USER_LICENSE_RECOVERY_CODES: readonly string[] = [
+  "LICENSE_REQUIRED",
+  "LICENSE_DISABLED",
+  "LICENSE_EXPIRED"
+];
 
 function getPostLoginPath(input: {
   nextPath?: string;
@@ -97,6 +109,7 @@ function LoginForm() {
   const passwordReset = searchParams.get("reset") === "1";
   const firstUse = searchParams.get("first") === "1";
   const activationRequested = searchParams.get("activation") === "1";
+  const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [licenseKey, setLicenseKey] = useState("");
@@ -104,6 +117,11 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [technicalError, setTechnicalError] = useState<LoginTechnicalError | null>(null);
+  const nameFieldRef = useRef<HTMLDivElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const submittingRef = useRef(false);
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -187,14 +205,35 @@ function LoginForm() {
     };
   }, [getSafeNextPath, router]);
 
+  useEffect(() => {
+    if (!nameError || !showLicenseEntry) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      nameFieldRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      nameInputRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [nameError, showLicenseEntry]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (loading || submittingRef.current) {
+      return;
+    }
+
+    setNameError("");
+    setTechnicalError(null);
 
     if (!phone.trim() || !password) {
       setError("请输入手机号和密码。");
       return;
     }
 
+    submittingRef.current = true;
     setLoading(true);
     setError("");
 
@@ -205,6 +244,7 @@ function LoginForm() {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
+          ...(!isAdminEntry && showLicenseEntry ? { name } : {}),
           phone,
           password,
           ...(!isAdminEntry ? { licenseKey } : {})
@@ -223,16 +263,33 @@ function LoginForm() {
       }));
       router.refresh();
     } catch (caughtError) {
-      if (
-        !isAdminEntry &&
-        caughtError instanceof ApiClientError &&
-        ["LICENSE_REQUIRED", "LICENSE_DISABLED", "LICENSE_EXPIRED"].includes(caughtError.details.code)
-      ) {
-        setShowLicenseEntry(true);
-      }
+      if (!isAdminEntry && caughtError instanceof ApiClientError) {
+        const feedback = getUserEntryErrorFeedback({
+          code: caughtError.details.code,
+          status: caughtError.details.status,
+          message: readUserEntryErrorMessage(caughtError.details.body)
+        });
 
-      setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
+        if (
+          feedback.revealLicenseEntry ||
+          USER_LICENSE_RECOVERY_CODES.includes(caughtError.details.code)
+        ) {
+          setShowLicenseEntry(true);
+        }
+
+        setNameError(feedback.nameError ?? "");
+        setTechnicalError({
+          code: caughtError.details.code,
+          requestId: caughtError.details.requestId
+        });
+        setError(feedback.message);
+      } else if (!isAdminEntry) {
+        setError(getUserEntryErrorFeedback({ networkError: true }).message);
+      } else {
+        setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
+      }
     } finally {
+      submittingRef.current = false;
       setLoading(false);
     }
   }
@@ -278,13 +335,57 @@ function LoginForm() {
 
       {firstUse && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
-          首次使用请输入手机号、密码和用户端卡密，系统会自动创建并激活账号。
+          首次使用请输入手机号、密码和用户端卡密，系统会自动判断是否为新账号；新账号还需填写网名。
         </div>
       ) : null}
 
       {continuingActivation && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
           请输入原账号的手机号和密码，并填写新的有效用户端卡密重新激活。
+        </div>
+      ) : null}
+
+      {!isAdminEntry && showLicenseEntry ? (
+        <div ref={nameFieldRef} className="block">
+          <label htmlFor="login-name" className="text-sm font-medium text-ink">
+            网名（首次开户必填，原账号换卡恢复可不填）
+          </label>
+          <span
+            className={`mt-2 flex h-11 items-center gap-2 rounded-lg border bg-white px-3 ${
+              nameError ? "border-rose-300" : "border-line"
+            }`}
+          >
+            <UserRound className="h-4 w-4 text-muted" />
+            <Input
+              ref={nameInputRef}
+              id="login-name"
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+
+                if (nameError) {
+                  setNameError("");
+                  setError("");
+                  setTechnicalError(null);
+                }
+              }}
+              autoComplete="nickname"
+              maxLength={50}
+              aria-invalid={Boolean(nameError)}
+              aria-describedby={nameError ? "login-name-error" : "login-name-help"}
+              className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+              placeholder="填写网名"
+            />
+          </span>
+          {nameError ? (
+            <p id="login-name-error" className="mt-1.5 text-xs leading-5 text-rose-700">
+              {nameError}
+            </p>
+          ) : (
+            <p id="login-name-help" className="mt-1.5 text-xs leading-5 text-muted">
+              新账号首次开户时填写；原账号使用新卡恢复时留空即可，不会修改原网名。
+            </p>
+          )}
         </div>
       ) : null}
 
@@ -333,6 +434,8 @@ function LoginForm() {
           onClick={() => {
             setShowLicenseEntry(true);
             setError("");
+            setNameError("");
+            setTechnicalError(null);
           }}
           className="flex min-h-11 w-full items-center justify-center text-sm font-medium text-teal-700 hover:text-teal-800"
         >
@@ -351,6 +454,8 @@ function LoginForm() {
                   setShowLicenseEntry(false);
                   setLicenseKey("");
                   setError("");
+                  setNameError("");
+                  setTechnicalError(null);
                 }}
                 className="inline-flex min-h-11 items-center text-sm font-medium text-teal-700 hover:text-teal-800"
               >
@@ -372,20 +477,31 @@ function LoginForm() {
             />
           </span>
           <span className="mt-1.5 block text-xs leading-5 text-muted">
-            首次使用填写卡密即可直接开户；卡密失效时会重新激活原账号并保留聊天记录。
+            首次开户填写网名和卡密；原账号换卡恢复时网名可留空，并保留聊天记录。
           </span>
         </div>
       ) : null}
 
       {error ? (
-        <div className="flex items-center gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-          <TriangleAlert className="h-4 w-4" />
-          {error}
+        <div role="alert" className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p>{error}</p>
+            {technicalError?.code || technicalError?.requestId ? (
+              <details className="mt-2 text-xs text-rose-600">
+                <summary className="cursor-pointer select-none font-medium">查看技术信息</summary>
+                <div className="mt-1 space-y-1 break-all">
+                  {technicalError.code ? <p>错误码：{technicalError.code}</p> : null}
+                  {technicalError.requestId ? <p>请求 ID：{technicalError.requestId}</p> : null}
+                </div>
+              </details>
+            ) : null}
+          </div>
         </div>
       ) : null}
 
-      <Button type="submit" disabled={loading} className="h-11 w-full">
-        {loading ? "正在登录" : "登录"}
+      <Button type="submit" disabled={loading} aria-busy={loading} className="h-11 w-full">
+        {loading ? "正在登录..." : "登录"}
         <ArrowRight className="h-4 w-4" />
       </Button>
     </form>
