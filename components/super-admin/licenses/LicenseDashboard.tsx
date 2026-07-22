@@ -22,6 +22,7 @@ import {
 } from "@/lib/super-admin/license-admin-client";
 import type {
   SuperAdminGeneratedLicense,
+  SuperAdminLicenseActivationRecord,
   SuperAdminLicenseAppType,
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
@@ -57,12 +58,67 @@ const statusClasses = {
 };
 
 const LICENSES_PER_PAGE = 20;
+const ACTIVATIONS_PER_PAGE = 20;
+const ACTIVATION_GROUP_WINDOW_MS = 5 * 60 * 1000;
 
 const summaryKeyByStatus = {
   UNUSED: "unused",
   USED: "used",
   DISABLED: "disabled"
 } as const;
+
+export type SuperAdminLicenseActivationGroup = SuperAdminLicenseActivationRecord & {
+  repeatCount: number;
+  firstCreatedAt: string;
+  lastCreatedAt: string;
+};
+
+export function groupLicenseActivationRecords(
+  records: SuperAdminLicenseActivationRecord[],
+  windowMs = ACTIVATION_GROUP_WINDOW_MS
+): SuperAdminLicenseActivationGroup[] {
+  const groups: SuperAdminLicenseActivationGroup[] = [];
+  const latestGroupBySignature = new Map<string, number>();
+
+  for (const record of records) {
+    const signature = [
+      record.displayKey,
+      record.userId,
+      record.success ? "success" : "failure",
+      record.message,
+      record.appType ?? "unknown"
+    ].join("\u0000");
+    const existingIndex = latestGroupBySignature.get(signature);
+    const existing = existingIndex === undefined ? undefined : groups[existingIndex];
+    const recordTimestamp = Date.parse(record.createdAt);
+    const latestTimestamp = existing ? Date.parse(existing.lastCreatedAt) : Number.NaN;
+
+    if (
+      existingIndex !== undefined &&
+      existing &&
+      Number.isFinite(recordTimestamp) &&
+      Number.isFinite(latestTimestamp) &&
+      Math.abs(latestTimestamp - recordTimestamp) <= windowMs
+    ) {
+      groups[existingIndex] = {
+        ...existing,
+        repeatCount: existing.repeatCount + 1,
+        firstCreatedAt: record.createdAt
+      };
+      continue;
+    }
+
+    groups.push({
+      ...record,
+      repeatCount: 1,
+      firstCreatedAt: record.createdAt,
+      lastCreatedAt: record.createdAt
+    });
+    latestGroupBySignature.set(signature, groups.length - 1);
+  }
+
+  return groups;
+}
 
 export function replaceLicenseRecord(
   licenses: SuperAdminLicenseRecord[],
@@ -594,7 +650,9 @@ function LicenseTable({
             {filteredLicenses.length === 0 ? (
               <tr>
                 <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">
-                  没有找到匹配的卡密、激活用户或账号。
+                  {normalizedQuery.startsWith("xt-")
+                    ? "当前环境没有找到这张完整卡密，请确认卡密复制完整、产品类型正确，并且来自当前数据库。"
+                    : "没有找到匹配的卡密、激活用户或账号。"}
                 </td>
               </tr>
             ) : paginatedLicenses.map((license) => (
@@ -707,25 +765,115 @@ function ActivationPreview({
   data: SuperAdminLicenseDashboardData;
   appType?: UnifiedLicenseProduct;
 }) {
-  const records = appType
-    ? data.activations.filter((item) => item.appType === appType)
-    : data.activations;
+  const [resultFilter, setResultFilter] = useState<"all" | "success" | "failure">("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const records = useMemo(() => (
+    appType
+      ? data.activations.filter((item) => item.appType === appType)
+      : data.activations
+  ), [appType, data.activations]);
+  const groupedRecords = useMemo(() => groupLicenseActivationRecords(records), [records]);
+  const filteredRecords = useMemo(() => groupedRecords.filter((record) => (
+    resultFilter === "all" || (resultFilter === "success" ? record.success : !record.success)
+  )), [groupedRecords, resultFilter]);
+  const totalPages = Math.max(1, Math.ceil(filteredRecords.length / ACTIVATIONS_PER_PAGE));
+  const visiblePage = Math.min(currentPage, totalPages);
+  const pageStart = (visiblePage - 1) * ACTIVATIONS_PER_PAGE;
+  const pageEnd = Math.min(pageStart + ACTIVATIONS_PER_PAGE, filteredRecords.length);
+  const paginatedRecords = filteredRecords.slice(pageStart, pageEnd);
+
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
+  function selectResultFilter(filter: "all" | "success" | "failure") {
+    setResultFilter(filter);
+    setCurrentPage(1);
+  }
 
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-      <h2 className="text-lg font-semibold tracking-normal text-slate-950">激活记录</h2>
-      <p className="mt-1 text-sm text-slate-500">统一读取 ActivationLog，展示成功与失败结果，不显示卡密明文。</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold tracking-normal text-slate-950">激活记录</h2>
+          <p className="mt-1 text-sm text-slate-500">保留完整审计数据，短时间重复尝试合并展示，不显示卡密明文。</p>
+        </div>
+        <div className="inline-flex h-9 self-start rounded-lg border border-slate-200 bg-slate-50 p-1" aria-label="筛选激活结果">
+          {([
+            ["all", "全部"],
+            ["success", "成功"],
+            ["failure", "失败"]
+          ] as const).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => selectResultFilter(value)}
+              aria-pressed={resultFilter === value}
+              className={`inline-flex min-w-14 items-center justify-center rounded-md px-3 text-xs font-semibold ${
+                resultFilter === value
+                  ? "bg-white text-slate-950 shadow-sm"
+                  : "text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="mt-4 space-y-3">
-        {records.length === 0 ? <p className="text-sm text-slate-500">暂无激活记录。</p> : records.slice(0, 30).map((item) => (
+        {paginatedRecords.length === 0 ? <p className="text-sm text-slate-500">暂无符合条件的激活记录。</p> : paginatedRecords.map((item) => (
           <div key={item.id} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-4 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-slate-900">{item.displayKey} · {item.success ? "成功" : "失败"}</p>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-sm font-semibold text-slate-900">{item.displayKey} · {item.success ? "成功" : "失败"}</p>
+                {item.repeatCount > 1 ? (
+                  <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-700">
+                    重复 {item.repeatCount} 次
+                  </span>
+                ) : null}
+              </div>
               <p className="mt-1 text-xs text-slate-600">{item.message} · 用户 {item.userId}</p>
+              {item.ip || item.userAgent ? (
+                <details className="mt-2 text-xs text-slate-500">
+                  <summary className="cursor-pointer select-none font-medium text-slate-600">查看请求信息</summary>
+                  <p className="mt-1 break-all leading-5">IP：{item.ip ?? "-"} · User-Agent：{item.userAgent ?? "-"}</p>
+                </details>
+              ) : null}
             </div>
-            <p className="text-xs text-slate-500">{formatDate(item.createdAt)}</p>
+            <p className="shrink-0 text-xs text-slate-500">
+              {item.repeatCount > 1
+                ? `首次 ${formatDate(item.firstCreatedAt)} · 最近 ${formatDate(item.lastCreatedAt)}`
+                : formatDate(item.createdAt)}
+            </p>
           </div>
         ))}
       </div>
+      {filteredRecords.length > 0 ? (
+        <div className="mt-4 flex flex-col gap-3 border-t border-slate-200 pt-4 text-sm text-slate-600 sm:flex-row sm:items-center sm:justify-between">
+          <p>显示第 {pageStart + 1}-{pageEnd} 条，共 {filteredRecords.length} 组</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.max(1, visiblePage - 1))}
+              disabled={visiblePage === 1}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              上一页
+            </button>
+            <span className="min-w-20 text-center text-xs font-medium text-slate-600">第 {visiblePage} / {totalPages} 页</span>
+            <button
+              type="button"
+              onClick={() => setCurrentPage(Math.min(totalPages, visiblePage + 1))}
+              disabled={visiblePage === totalPages}
+              className="inline-flex h-9 items-center justify-center gap-1 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              下一页
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

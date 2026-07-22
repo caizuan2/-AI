@@ -1,6 +1,6 @@
 import "server-only";
 
-import { randomBytes } from "crypto";
+import { randomBytes, timingSafeEqual } from "crypto";
 import { LicenseKeyStatus, Prisma } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
 import { getAcceptedLicenseHashes, hashLicenseKey, normalizeLicenseKey } from "@/lib/auth/license";
@@ -45,6 +45,8 @@ const LICENSE_METADATA_ACTIONS = [
 ];
 const LICENSE_AUDIT_ACTIONS = [...LICENSE_METADATA_ACTIONS, "reveal_license_key"];
 const PLAIN_LICENSE_KEY_PATTERN = /^XT-(?:(?:USER|INGEST|SUPER)(?:-[A-Z0-9]{4}){3}|TEAM(?:-[A-Z0-9]{4}){3,4})$/;
+const LICENSE_SEARCH_IGNORABLE_CHARACTERS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/g;
+const LICENSE_SEARCH_BATCH_SIZE = 250;
 
 type LicenseMetadata = {
   appType: SuperAdminLicenseAppType;
@@ -81,6 +83,68 @@ type LicenseWithRedeemer = Prisma.LicenseKeyGetPayload<{
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeLicenseSearchKey(value: string) {
+  return normalizeLicenseKey(value.replace(LICENSE_SEARCH_IGNORABLE_CHARACTERS, ""));
+}
+
+function licenseKeysMatch(left: string, right: string) {
+  const leftBuffer = Buffer.from(left, "utf8");
+  const rightBuffer = Buffer.from(right, "utf8");
+
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+async function findLicenseByEncryptedKey(normalizedKey: string): Promise<LicenseWithRedeemer | null> {
+  let cursor: string | undefined;
+
+  while (true) {
+    const licenses = await prisma.licenseKey.findMany({
+      where: {
+        encryptedKey: {
+          not: null
+        }
+      },
+      orderBy: {
+        id: "asc"
+      },
+      take: LICENSE_SEARCH_BATCH_SIZE,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      include: {
+        redeemedByUser: {
+          select: {
+            phone: true,
+            email: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    for (const license of licenses) {
+      if (!license.encryptedKey) {
+        continue;
+      }
+
+      try {
+        const decryptedKey = normalizeLicenseSearchKey(decryptLicenseKey(license.encryptedKey));
+
+        if (licenseKeysMatch(decryptedKey, normalizedKey)) {
+          return license;
+        }
+      } catch {
+        // A record encrypted with an unavailable historical key must not block
+        // searches for other recoverable license records.
+      }
+    }
+
+    if (licenses.length < LICENSE_SEARCH_BATCH_SIZE) {
+      return null;
+    }
+
+    cursor = licenses.at(-1)?.id;
+  }
 }
 
 function randomGroup(length: number) {
@@ -560,7 +624,7 @@ export async function searchSuperAdminLicenses(input: {
   }
 
   const appType = normalizeGenerationAppType(input.appType);
-  const normalizedLicenseKey = normalizeLicenseKey(query);
+  const normalizedLicenseKey = normalizeLicenseSearchKey(query);
   const keyHashes = PLAIN_LICENSE_KEY_PATTERN.test(normalizedLicenseKey)
     ? getAcceptedLicenseHashes(normalizedLicenseKey)
     : [];
@@ -607,7 +671,7 @@ export async function searchSuperAdminLicenses(input: {
     where = { OR: filters };
   }
 
-  const licenses = await prisma.licenseKey.findMany({
+  let licenses = await prisma.licenseKey.findMany({
     where,
     orderBy: {
       createdAt: "desc"
@@ -623,11 +687,28 @@ export async function searchSuperAdminLicenses(input: {
       }
     }
   });
-  const metadataMap = await getLicenseMetadataMap(licenses.map((license) => license.id));
 
-  return licenses
-    .map((license) => enrichLicense(license, metadataMap.get(license.id)))
-    .filter((license) => license.appType === appType);
+  if (keyHashes.length > 0 && licenses.length === 0) {
+    const encryptedMatch = await findLicenseByEncryptedKey(normalizedLicenseKey);
+
+    if (encryptedMatch) {
+      licenses = [encryptedMatch];
+      console.warn("[super-admin:license-search] recovered encrypted license after hash lookup miss", {
+        licenseId: encryptedMatch.id,
+        requestedAppType: appType
+      });
+    }
+  }
+
+  const metadataMap = await getLicenseMetadataMap(licenses.map((license) => license.id));
+  const enrichedLicenses = licenses.map((license) => enrichLicense(license, metadataMap.get(license.id)));
+  const matchingLicenses = enrichedLicenses.filter((license) => license.appType === appType);
+
+  if (keyHashes.length > 0 && enrichedLicenses.length > 0 && matchingLicenses.length === 0) {
+    throw new ValidationError("已找到该卡密，但其应用归属与当前卡密列表不一致。");
+  }
+
+  return matchingLicenses;
 }
 
 export async function generateSuperAdminLicenses(
