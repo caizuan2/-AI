@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import {
   applyLicenseRecordUpdate,
+  groupLicenseActivationRecords,
   replaceLicenseRecord
 } from "../components/super-admin/licenses/LicenseDashboard";
 import type {
+  SuperAdminLicenseActivationRecord,
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseRecord
 } from "../types/super-admin-licenses";
@@ -70,5 +72,41 @@ assert.deepEqual(updatedData.summary.byAppType, data.summary.byAppType);
 const searchedLicenses = replaceLicenseRecord([originalLicense], disabledLicense);
 assert.equal(searchedLicenses.length, 1);
 assert.equal(searchedLicenses[0]?.status, "DISABLED");
+
+function activation(input: Partial<SuperAdminLicenseActivationRecord>): SuperAdminLicenseActivationRecord {
+  return {
+    id: input.id ?? "activation-1",
+    licenseId: input.licenseId ?? "license-1",
+    displayKey: input.displayKey ?? "HASH-TEST0001",
+    appType: input.appType ?? "user_app",
+    userId: input.userId ?? "user-1",
+    success: input.success ?? false,
+    message: input.message ?? "卡密已使用。",
+    ip: input.ip ?? null,
+    userAgent: input.userAgent ?? null,
+    createdAt: input.createdAt ?? "2026-07-19T13:13:00.000Z"
+  };
+}
+
+const groupedActivations = groupLicenseActivationRecords([
+  activation({ id: "activation-3", createdAt: "2026-07-19T13:14:30.000Z" }),
+  activation({ id: "activation-2", createdAt: "2026-07-19T13:13:30.000Z" }),
+  activation({ id: "activation-1", createdAt: "2026-07-19T13:13:00.000Z" }),
+  activation({
+    id: "activation-success",
+    success: true,
+    message: "激活成功。",
+    createdAt: "2026-07-19T13:12:30.000Z"
+  }),
+  activation({ id: "activation-old", createdAt: "2026-07-19T12:00:00.000Z" })
+]);
+
+assert.equal(groupedActivations.length, 3);
+assert.equal(groupedActivations[0]?.id, "activation-3");
+assert.equal(groupedActivations[0]?.repeatCount, 3);
+assert.equal(groupedActivations[0]?.firstCreatedAt, "2026-07-19T13:13:00.000Z");
+assert.equal(groupedActivations[0]?.lastCreatedAt, "2026-07-19T13:14:30.000Z");
+assert.equal(groupedActivations[1]?.success, true);
+assert.equal(groupedActivations[2]?.repeatCount, 1);
 
 console.log("super admin license dashboard state tests passed");
