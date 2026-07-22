@@ -4,7 +4,10 @@ import path from "node:path";
 
 import {
   DEFAULT_INGEST_MODEL_OPTION,
-  getIngestModelOptionByProvider
+  DOUBAO_PRO_MODEL_ID,
+  getIngestModelOptionByLabel,
+  getIngestModelOptionByProvider,
+  sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
 import {
   ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY,
@@ -19,6 +22,12 @@ import { shouldDisableDoubaoForHealth } from "@/lib/enterprise/ingest-model-avai
 
 function testAgentScopedModelPreferences() {
   const doubao = getIngestModelOptionByProvider("doubao-pro");
+  assert.equal(doubao.label, "Doubao-Seed-2.1-pro");
+  assert.equal(doubao.defaultModel, "doubao-seed-2-1-pro-260628");
+  assert.equal(DOUBAO_PRO_MODEL_ID, "doubao-seed-2-1-pro-260628");
+  assert.equal(getIngestModelOptionByLabel("豆包 2.0 Pro").provider, "doubao-pro");
+  assert.equal(getIngestModelOptionByLabel("doubao-seed-2-0-pro-260215").provider, "doubao-pro");
+  assert.equal(sanitizeIngestPreferredModel("doubao-seed-2-0-pro-260215"), "");
   let preferences = setAdminIngestAgentModel({
     preferences: {},
     agentId: "career-agent",
@@ -99,19 +108,25 @@ function testPickerPlacementAndProviderIdentity() {
     "app/api/admin/kb/ingest/models/health/route.ts"
   ), "utf8");
   const pickerPosition = shellSource.indexOf("<IngestGPTModelPicker", shellSource.indexOf("items-center justify-end"));
-  const scissorsPosition = shellSource.indexOf("<Scissors", pickerPosition);
+  const voicePosition = shellSource.indexOf("<Mic", pickerPosition);
 
   assert.ok(pickerPosition > -1, "the Web composer must render the model selector");
-  assert.ok(scissorsPosition > pickerPosition, "the model selector must appear immediately before the scissors tool");
+  assert.ok(voicePosition > pickerPosition, "the model selector must remain in the Web composer toolbar");
   assert.doesNotMatch(shellSource, /<div className="hidden">\s*<IngestGPTModelPicker/);
-  assert.match(shellSource.slice(pickerPosition, scissorsPosition), /compact/);
-  assert.match(shellSource.slice(pickerPosition, scissorsPosition), /align="right"/);
+  assert.match(shellSource.slice(pickerPosition, voicePosition), /compact/);
+  assert.match(shellSource.slice(pickerPosition, voicePosition), /align="right"/);
+  assert.doesNotMatch(shellSource, /<Scissors/);
+  assert.doesNotMatch(shellSource, /<Paperclip/);
+  assert.doesNotMatch(shellSource, /isOrganizeOpen/);
+  assert.doesNotMatch(shellSource, /handleUploadClick/);
   assert.match(pickerSource, /provider === "doubao-pro"/);
   assert.match(pickerSource, /badge: "豆"/);
-  assert.match(pickerSource, /name: "豆包"/);
-  assert.match(pickerSource, /name: "DeepSeek"/);
   assert.match(pickerSource, /暂未连接/);
   assert.match(pickerSource, /disabled=\{isUnavailable\}/);
+  assert.doesNotMatch(pickerSource, /投喂端只是 IDE/);
+  assert.doesNotMatch(pickerSource, /Provider：/);
+  assert.doesNotMatch(pickerSource, /option\.description/);
+  assert.doesNotMatch(pickerSource, /option\.scenario/);
   assert.match(pickerSource, /compact\s*\?\s*INGEST_MODEL_OPTIONS\.filter/);
   assert.match(pickerSource, /:\s*INGEST_MODEL_OPTIONS/);
   assert.match(pickerSource, /fixed inset-x-4 bottom-24/);
@@ -133,8 +148,8 @@ function testFallbackMetadataAndRawBodyBoundary() {
       provider: "doubao",
       requestedProvider: "doubao-pro",
       actualProvider: "doubao-pro",
-      requestedModel: "doubao-seed-2-0-pro-260215",
-      actualModel: "doubao-seed-2-0-pro-260215",
+      requestedModel: "doubao-seed-2-1-pro-260628",
+      actualModel: "doubao-seed-2-1-pro-260628",
       fallbackUsed: false,
       modelDiagnostics: {
         fallbackChain: []
@@ -156,7 +171,7 @@ function testFallbackMetadataAndRawBodyBoundary() {
       provider: "deepseek",
       requestedProvider: "doubao-pro",
       actualProvider: "deepseek-pro",
-      requestedModel: "doubao-seed-2-0-pro-260215",
+      requestedModel: "doubao-seed-2-1-pro-260628",
       actualModel: "deepseek-v4-pro",
       fallbackUsed: true,
       modelDiagnostics: {
@@ -169,7 +184,7 @@ function testFallbackMetadataAndRawBodyBoundary() {
   assert.equal(fallback.provider, "deepseek");
   assert.equal(fallback.requestedProvider, "doubao-pro");
   assert.equal(fallback.actualProvider, "deepseek-pro");
-  assert.equal(fallback.requestedModel, "doubao-seed-2-0-pro-260215");
+  assert.equal(fallback.requestedModel, "doubao-seed-2-1-pro-260628");
   assert.equal(fallback.actualModel, "deepseek-v4-pro");
   assert.equal(fallback.fallbackUsed, true);
   assert.deepEqual(fallback.modelDiagnostics, {
@@ -201,9 +216,9 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
         baseUrlConfigured: true,
         modelConfigured: true,
         apiKeyConfigured: true,
-        selectedModelLabel: "豆包 2.0 Pro",
-        model: "doubao-seed-2-0-pro-260215",
-        actualModel: "doubao-seed-2-0-pro-260215",
+        selectedModelLabel: "Doubao-Seed-2.1-pro",
+        model: "doubao-seed-2-1-pro-260628",
+        actualModel: "doubao-seed-2-1-pro-260628",
         mode: "highest",
         message: "豆包接口可用",
         diagnostics: [],
@@ -217,10 +232,10 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
         provider: "doubao",
         requestedProvider: "doubao-pro",
         actualProvider: "doubao-pro",
-        model: "doubao-seed-2-0-pro-260215",
-        modelDisplayName: "豆包 2.0 Pro",
-        requestedModel: "doubao-seed-2-0-pro-260215",
-        actualModel: "doubao-seed-2-0-pro-260215",
+        model: "doubao-seed-2-1-pro-260628",
+        modelDisplayName: "Doubao-Seed-2.1-pro",
+        requestedModel: "doubao-seed-2-1-pro-260628",
+        actualModel: "doubao-seed-2-1-pro-260628",
         modelMode: "highest",
         fallback: false,
         fallbackUsed: false,
@@ -241,9 +256,9 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
     const result = await sendCoreIngest({
       text: "验证豆包完成态原文",
       category: "测试",
-      model: "豆包 2.0 Pro",
+      model: "Doubao-Seed-2.1-pro",
       modelProvider: "doubao-pro",
-      selectedModelLabel: "豆包 2.0 Pro",
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
       agent: {
         id: "doubao-raw-agent",
         name: "原文测试 Agent",

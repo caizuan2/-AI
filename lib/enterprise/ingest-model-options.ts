@@ -18,7 +18,12 @@ export interface IngestModelOption {
 export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model-deepseek-pro-primary-v1";
 export const DEEPSEEK_PRO_MODEL_ID = "deepseek-v4-pro";
 export const DEEPSEEK_FLASH_MODEL_ID = "deepseek-v4-flash";
-export const DOUBAO_PRO_MODEL_ID = "doubao-seed-2-0-pro-260215";
+export const DOUBAO_PRO_MODEL_ID = "doubao-seed-2-1-pro-260628";
+
+const LEGACY_DOUBAO_MODEL_IDENTIFIERS = new Set([
+  "豆包 2.0 Pro",
+  "doubao-seed-2-0-pro-260215"
+].map((value) => value.toLowerCase()));
 
 const LEGACY_DEEPSEEK_MODEL_IDS = new Set([
   "deepseek-chat",
@@ -97,9 +102,9 @@ export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
   },
   {
     provider: "doubao-pro",
-    label: "豆包 2.0 Pro",
+    label: "Doubao-Seed-2.1-pro",
     shortLabel: "豆包 Pro",
-    displayName: "豆包 2.0 Pro",
+    displayName: "Doubao-Seed-2.1-pro",
     modelEnvKey: "DOUBAO_PRO_MODEL",
     defaultModel: DOUBAO_PRO_MODEL_ID,
     description: "适合中文知识整理、沟通话术和完整 Markdown 正文生成。",
@@ -166,7 +171,8 @@ const DISPLAY_MODEL_LABELS = new Set([
   "千问",
   "豆包",
   "豆包 Pro",
-  "豆包 2.0 Pro"
+  "豆包 2.0 Pro",
+  "doubao-seed-2-0-pro-260215"
 ].map(normalizeLabel));
 
 function isOpenAIModelLike(value: string | null | undefined) {
@@ -202,7 +208,7 @@ export function normalizeIngestModelProvider(value: string | null | undefined): 
     return "deepseek-flash";
   }
 
-  if (normalized === "doubao" || normalized === "doubao-pro" || normalized.includes("豆包")) {
+  if (normalized === "doubao" || normalized === "doubao-pro" || normalized.includes("doubao") || normalized.includes("豆包")) {
     return "doubao-pro";
   }
 
@@ -239,6 +245,11 @@ export function getIngestModelOptionByLabel(label: string | null | undefined) {
 
   if (exactMatch) {
     return exactMatch;
+  }
+
+  if (LEGACY_DOUBAO_MODEL_IDENTIFIERS.has(lower)) {
+    return INGEST_MODEL_OPTIONS.find((option) => option.provider === "doubao-pro")
+      ?? DEFAULT_INGEST_MODEL_OPTION;
   }
 
   return INGEST_MODEL_OPTIONS.find((option) =>

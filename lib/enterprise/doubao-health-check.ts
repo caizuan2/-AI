@@ -12,7 +12,7 @@ import {
 } from "@/lib/enterprise/doubao-ingest-client";
 
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
-const DEFAULT_MODEL_LABEL = "豆包 2.0 Pro";
+const DEFAULT_MODEL_LABEL = "Doubao-Seed-2.1-pro";
 const HEALTH_TIMEOUT_MS = 25_000;
 
 export interface DoubaoIngestHealthStatus {

@@ -21,11 +21,9 @@ import {
   Link2,
   Loader2,
   Mic,
-  Paperclip,
   Plug,
   Plus,
   Save,
-  Scissors,
   Search,
   SendHorizontal,
   Settings,
@@ -159,7 +157,6 @@ const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: 
   { label: "连接状态", icon: Plug }
 ];
 
-const organizeActions = ["提取重点", "改写为标准问答", "生成分类标签", "检查是否需要 AI 修正"];
 const EMPTY_AGENTS: IngestChatAgent[] = [];
 const GPT_CLIENT_TIMEOUT_MS = 300000;
 
@@ -873,7 +870,6 @@ export function IngestChatGPTShell({
   const suppressBottomAutoScrollRef = useRef(false);
   const isNearBottomRef = useRef(true);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [internalActiveAgentId, setInternalActiveAgentId] = useState("");
   const [internalMessages, setInternalMessages] = useState<IngestChatMessage[]>([]);
   const [internalDraft, setInternalDraft] = useState<IngestKnowledgeDraft>(ingestChatInitialDraft);
@@ -888,7 +884,6 @@ export function IngestChatGPTShell({
   const [drawerView, setDrawerView] = useState<"draft" | "records">("records");
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
-  const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
   const [fileAccept, setFileAccept] = useState(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
   const [internalAutonomousEnabled, setInternalAutonomousEnabled] = useState(false);
   const [autonomousTask, setAutonomousTask] = useState<AutonomousTaskStateSnapshot | null>(null);
@@ -1305,34 +1300,6 @@ export function IngestChatGPTShell({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [isMoreOpen, isConnectionOpen]);
-
-  useEffect(() => {
-    if (!isOrganizeOpen) {
-      return;
-    }
-
-    function handlePointerDown(event: PointerEvent) {
-      if (organizeMenuRef.current?.contains(event.target as Node)) {
-        return;
-      }
-
-      setIsOrganizeOpen(false);
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setIsOrganizeOpen(false);
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOrganizeOpen]);
 
   useEffect(() => {
     if (controlledRecords) {
@@ -1987,18 +1954,6 @@ export function IngestChatGPTShell({
     showToast("已进入编辑", message.attachments?.length ? "附件已在消息中，编辑仅修改文本。" : undefined, "info");
   }
 
-  function handleUploadClick() {
-    if (!canIngest) {
-      setNoticeMessage("请先到专家广场添加专家 Agent。");
-      setErrorMessage("");
-      onRailChange?.("experts");
-      return;
-    }
-
-    setFileAccept(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
-    fileInputRef.current?.click();
-  }
-
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
 
@@ -2598,7 +2553,6 @@ export function IngestChatGPTShell({
                     onClick={() => {
                       setIsMoreOpen((current) => !current);
                       setIsConnectionOpen(false);
-                      setIsOrganizeOpen(false);
                     }}
                     className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-transparent text-[#555] transition hover:bg-[#f3f3f1]"
                     aria-expanded={isMoreOpen}
@@ -2660,45 +2614,8 @@ export function IngestChatGPTShell({
                   onOpen={() => {
                     setIsMoreOpen(false);
                     setIsConnectionOpen(false);
-                    setIsOrganizeOpen(false);
                   }}
                 />
-                <div ref={organizeMenuRef} className="relative">
-                  <button
-                    type="button"
-                    title="AI 修正 / 整理工具"
-                    aria-label="AI 修正 / 整理工具"
-                    onClick={() => {
-                      setIsOrganizeOpen((current) => !current);
-                      setIsMoreOpen(false);
-                      setIsConnectionOpen(false);
-                    }}
-                    className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]"
-                    aria-expanded={isOrganizeOpen}
-                  >
-                    <Scissors className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                  {isOrganizeOpen ? (
-                    <div className="absolute bottom-11 right-0 z-30 w-56 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
-                      {organizeActions.map((action) => (
-                        <button
-                          key={action}
-                          type="button"
-                          onClick={() => {
-                            setIsOrganizeOpen(false);
-                            handleToolAction(action);
-                          }}
-                          className="flex h-9 w-full items-center rounded-xl px-3 text-left text-xs font-semibold text-[#444] transition hover:bg-[#f5f5f3]"
-                        >
-                          {action}
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-                <button type="button" title="附件" onClick={handleUploadClick} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
-                  <Paperclip className="h-4 w-4" aria-hidden="true" />
-                </button>
                 <button
                   type="button"
                   title={voiceState.isRecording ? "停止语音输入" : "语音"}

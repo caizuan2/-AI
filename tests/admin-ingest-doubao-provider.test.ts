@@ -50,8 +50,10 @@ const restoreEnv = () => {
 async function main() {
 try {
   assert.equal(normalizeIngestModelProvider("doubao"), "doubao-pro");
+  assert.equal(normalizeIngestModelProvider("Doubao-Seed-2.1-pro"), "doubao-pro");
   assert.equal(normalizeIngestModelProvider("豆包 2.0 Pro"), "doubao-pro");
   assert.equal(getIngestModelOptionByProvider("doubao-pro").requiresApiKeyEnv, "ARK_API_KEY");
+  assert.equal(DOUBAO_PRO_MODEL_ID, "doubao-seed-2-1-pro-260628");
 
   delete process.env.DOUBAO_PRO_MODEL;
   delete process.env.DOUBAO_MODEL;
@@ -68,7 +70,7 @@ try {
   );
 
   assert.equal(
-    unifiedRouter({ selectedModelLabel: "豆包 2.0 Pro", preferredModel: "doubao-pro" }),
+    unifiedRouter({ selectedModelLabel: "Doubao-Seed-2.1-pro", preferredModel: "doubao-pro" }),
     "doubao-pro"
   );
   assert.equal(
@@ -177,7 +179,7 @@ try {
     platform: "web",
     syncTarget: ["web"],
     preferredModel: "ep-doubao-provider-test",
-    selectedModelLabel: "豆包 2.0 Pro",
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
     recentMessages: [{ role: "user", content: "RECENT_MESSAGE_SENTINEL" }],
     contextSummary: "LONG_CONTEXT_SUMMARY_SENTINEL",
     memoryContextText: "PUBLISHED_MEMORY_TEXT_SENTINEL",
@@ -249,7 +251,7 @@ try {
 
   const health = await checkDoubaoIngestHealth({
     preferredModel: DOUBAO_PRO_MODEL_ID,
-    selectedModelLabel: "豆包 2.0 Pro"
+    selectedModelLabel: "Doubao-Seed-2.1-pro"
   });
   assert.equal(health.ok, true);
   assert.equal(health.provider, "doubao");

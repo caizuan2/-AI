@@ -25,7 +25,6 @@ function getProviderPresentation(provider: IngestModelOption["provider"]) {
   if (provider === "doubao-pro") {
     return {
       badge: "豆",
-      name: "豆包",
       badgeClassName: "bg-[#fff1e8] text-[#dc5b19]"
     };
   }
@@ -33,7 +32,6 @@ function getProviderPresentation(provider: IngestModelOption["provider"]) {
   if (provider === "openai") {
     return {
       badge: "AI",
-      name: "OpenAI",
       badgeClassName: "bg-[#edf2ff] text-[#315bf6]"
     };
   }
@@ -41,7 +39,6 @@ function getProviderPresentation(provider: IngestModelOption["provider"]) {
   if (provider === "qwen") {
     return {
       badge: "QW",
-      name: "Qwen",
       badgeClassName: "bg-[#f3efff] text-[#7047c8]"
     };
   }
@@ -49,14 +46,12 @@ function getProviderPresentation(provider: IngestModelOption["provider"]) {
   if (provider === "kimi") {
     return {
       badge: "KM",
-      name: "Kimi",
       badgeClassName: "bg-[#edf6ff] text-[#2468a9]"
     };
   }
 
   return {
     badge: "DS",
-    name: "DeepSeek",
     badgeClassName: "bg-[#ebfff4] text-[#128246]"
   };
 }
@@ -164,7 +159,6 @@ export function IngestGPTModelPicker({
         ].join(" ")}>
           <div className="mb-2 px-2 py-1">
             <p className="font-semibold text-[#202020]">选择当前投喂大模型</p>
-            <p className="mt-1 text-[11px] leading-4 text-[#8a8a85]">投喂端只是 IDE，回复由当前选择的真实模型生成。</p>
           </div>
           <div className="space-y-1">
             {visibleModelOptions.map((option) => {
@@ -179,12 +173,12 @@ export function IngestGPTModelPicker({
                   onClick={() => commitSelection(option)}
                   disabled={isUnavailable}
                   className={[
-                    "flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition hover:bg-[#f5f5f3] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
+                    "flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition hover:bg-[#f5f5f3] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent",
                     isSelected ? "bg-[#f7f7f5]" : ""
                   ].join(" ")}
                 >
                   <span className={[
-                    "mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
+                    "flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[11px] font-bold",
                     providerPresentation.badgeClassName
                   ].join(" ")}>
                     {providerPresentation.badge}
@@ -196,9 +190,6 @@ export function IngestGPTModelPicker({
                         ? <span className="shrink-0 text-[10px] font-semibold text-[#999]">暂未连接</span>
                         : isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-[#128246]" aria-hidden="true" /> : null}
                     </span>
-                    <span className="mt-1 block text-[11px] font-semibold text-[#666]">Provider：{providerPresentation.name} · {option.depthLabel} · {option.speedLabel}</span>
-                    <span className="mt-1 block leading-4 text-[#777]">{option.description}</span>
-                    <span className="mt-1 block text-[11px] text-[#999]">适合：{option.scenario}</span>
                   </span>
                 </button>
               );

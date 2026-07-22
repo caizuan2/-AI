@@ -134,7 +134,7 @@ export class DoubaoIngestError extends Error {
 }
 
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
-const DEFAULT_MODEL_LABEL = "豆包 2.0 Pro";
+const DEFAULT_MODEL_LABEL = "Doubao-Seed-2.1-pro";
 const REQUEST_TIMEOUT_MS = 150_000;
 
 function readEnv(name: string) {
