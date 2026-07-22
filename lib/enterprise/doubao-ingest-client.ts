@@ -369,13 +369,17 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
     fallbackModel
   });
   const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
+  const choices = Array.isArray(record.choices) ? record.choices : [];
+  const firstChoice = choices[0] && typeof choices[0] === "object" ? choices[0] as Record<string, unknown> : {};
+  const message = firstChoice.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : {};
+  const rawChatText = typeof message.content === "string" ? message.content : "";
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = normalized.model ?? fallbackModel;
   const generatedProofId = `doubao-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
   const responseId = rawResponseId || generatedProofId;
 
   return {
-    text: normalized.text,
+    text: rawChatText.trim() ? rawChatText : normalized.text,
     model: actualModel,
     responseId,
     proofId: responseId,

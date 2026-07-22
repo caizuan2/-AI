@@ -226,7 +226,9 @@ const evidenceErrorBranch = toggleSource.slice(clientErrorStart, regularFallback
 assert.match(evidenceErrorBranch, /if \(attachmentEvidenceMessage\)/);
 assert.match(evidenceErrorBranch, /setGptFallbackToast\(null\)/);
 assert.match(evidenceErrorBranch, /setInput\(\(current\) => current \|\| value\)/);
-assert.match(evidenceErrorBranch, /setUploadedFiles\(\(current\) => current\.length > 0 \? current : composerUploads\)/);
+assert.match(evidenceErrorBranch, /error instanceof AdminIngestFileParseCancelledError/);
+assert.match(evidenceErrorBranch, /\? error\.files\s+: resumableUploads/);
+assert.match(evidenceErrorBranch, /setUploadedFiles\(\(current\) => current\.length > 0 \? current : cancelledUploads\)/);
 assert.match(evidenceErrorBranch, /type: "warning"/);
 assert.match(evidenceErrorBranch, /return null;/);
 assert.doesNotMatch(evidenceErrorBranch, /type: "fallback"/);

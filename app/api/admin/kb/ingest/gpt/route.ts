@@ -7,6 +7,7 @@ import {
   type OpenAIAdminIngestAttachment
 } from "@/lib/enterprise/openai-ingest-client";
 import {
+  AdminIngestModelAffinityError,
   resolveAdminIngestModelProvider,
   runAdminIngestWithSelectedModel
 } from "@/lib/enterprise/ingest-model-provider";
@@ -73,13 +74,17 @@ function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function usesStrictSelectedModel(platform: AdminIngestPlatform, provider: string) {
+  return platform === "web" && (provider === "deepseek-pro" || provider === "doubao-pro");
+}
+
 function readStringArray(value: unknown, limit = 10) {
   return Array.isArray(value)
     ? value.map((item) => readString(item)).filter(Boolean).slice(0, limit)
     : [];
 }
 
-function readSlideTexts(value: unknown) {
+function readSlideTexts(value: unknown, limit = 500) {
   if (!Array.isArray(value)) {
     return [];
   }
@@ -99,7 +104,7 @@ function readSlideTexts(value: unknown) {
     const slideIndex = readPositiveNumber(item.slideIndex, item.pageIndex) ?? index + 1;
 
     return text ? { slideIndex, text } : null;
-  }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, 20);
+  }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, limit);
 }
 
 function readPositiveNumber(...values: unknown[]) {
@@ -112,6 +117,26 @@ function readPositiveNumber(...values: unknown[]) {
   }
 
   return undefined;
+}
+
+function readPositiveIntegerArray(value: unknown, limit = 500) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item > 0)))
+    .sort((left, right) => left - right)
+    .slice(0, limit);
+}
+
+function readBoundedPercent(value: unknown) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+
+  return Number.isFinite(numberValue)
+    ? Math.min(100, Math.max(0, numberValue))
+    : undefined;
 }
 
 function isLocalDevWithoutDatabase(request: Request) {
@@ -143,6 +168,10 @@ function toGptFallbackErrorCode(error: unknown) {
   const code = typeof record.code === "string" ? record.code : "";
   const message = typeof record.message === "string" ? record.message.toLowerCase() : "";
   const name = typeof record.name === "string" ? record.name : "";
+
+  if (code === "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH") {
+    return "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH" as const;
+  }
 
   if (code === "DEEPSEEK_API_KEY_MISSING" || message.includes("deepseek api key") || message.includes("deepseek_api_key")) {
     return "DEEPSEEK_API_KEY_MISSING" as const;
@@ -362,8 +391,19 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
       content: readString(item.content) || undefined,
       visibleText: readString(item.visibleText) || undefined,
       summary: readString(item.summary) || undefined,
-      pageSummaries: readStringArray(item.pageSummaries),
+      pageSummaries: readStringArray(item.pageSummaries, 500),
       slideTexts: readSlideTexts(item.slideTexts),
+      totalPages: readPositiveNumber(item.totalPages),
+      processedPageStart: readPositiveNumber(item.processedPageStart),
+      processedPageEnd: readPositiveNumber(item.processedPageEnd),
+      nextPage: readPositiveNumber(item.nextPage),
+      complete: typeof item.complete === "boolean" ? item.complete : undefined,
+      successfulPages: readPositiveIntegerArray(item.successfulPages),
+      failedPages: readPositiveIntegerArray(item.failedPages),
+      lowConfidencePages: readPositiveIntegerArray(item.lowConfidencePages),
+      coveragePercent: readBoundedPercent(item.coveragePercent),
+      successRatePercent: readBoundedPercent(item.successRatePercent),
+      deadlineReached: item.deadlineReached === true,
       limitationNote: readString(item.limitationNote) || undefined
     });
 
@@ -667,6 +707,7 @@ export async function POST(request: Request) {
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
+    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
     const result = await runAdminIngestWithSelectedModel({
       input: input.input,
       attachments: input.attachments,
@@ -682,6 +723,7 @@ export async function POST(request: Request) {
       platform: input.platform,
       syncTarget: input.syncTarget,
       modelProvider: modelOption.provider,
+      strictModelAffinity,
       preferredModel: modelRuntime.actualModel,
       gptTier: input.gptTier,
       gptTierLabel: input.gptTierLabel,
@@ -713,14 +755,15 @@ export async function POST(request: Request) {
     }
 
     const rawReply = result.replyMarkdown || "";
-    const stylePassThrough: GptOSStyleLayerResult = result.provider === "doubao"
+    const preserveRawSelectedModelOutput = result.provider === "doubao" || result.provider === "deepseek";
+    const stylePassThrough: GptOSStyleLayerResult = preserveRawSelectedModelOutput
       ? {
           tone: "chatgpt_natural",
           structure: "natural_markdown",
           priority: "model_output_first",
           output: rawReply,
           changed: false,
-          diagnostics: ["gptStyle:provider_passthrough:doubao", "gptStyle:changed:false"],
+          diagnostics: [`gptStyle:provider_passthrough:${result.provider}`, "gptStyle:changed:false"],
           summary: "",
           steps: [],
           sections: []
@@ -846,10 +889,11 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const errorCode = toGptFallbackErrorCode(error);
+    const affinityMismatch = error instanceof AdminIngestModelAffinityError ? error.details : null;
     const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "DOUBAO_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
     const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_INVALID" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
     const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
-    const status = isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
+    const status = affinityMismatch ? 502 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
       selectedModelLabel: input.selectedModelLabel,
@@ -864,15 +908,16 @@ export async function POST(request: Request) {
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
+    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
     const modelDiagnostics = buildModelDiagnostics({
       provider: modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash" ? "deepseek" : modelOption.provider,
       requestedProvider: modelOption.provider,
-      actualProvider: modelOption.provider,
+      actualProvider: affinityMismatch?.actualProvider ?? modelOption.provider,
       displayModelLabel: modelRuntime.displayModelLabel,
       requestedModel: modelRuntime.actualModel,
-      actualModel: modelRuntime.actualModel,
+      actualModel: affinityMismatch?.actualModel ?? modelRuntime.actualModel,
       routeDecision: modelOption.provider,
-      fallbackUsed: true,
+      fallbackUsed: !strictModelAffinity,
       fallbackChain: [],
       normalizedFrom: modelRuntime.normalizedFrom
     });
@@ -886,11 +931,48 @@ export async function POST(request: Request) {
       routeDecision: modelOption.provider,
       hasMessage: Boolean(input.input),
       attachmentCount: input.attachments.length,
-      fallbackUsed: true,
+      fallbackUsed: !strictModelAffinity,
       ok: false,
       contentLength: 0,
       errorCode
     });
+
+    if (strictModelAffinity) {
+      const strictMessage = affinityMismatch
+        ? `${modelRuntime.displayModelLabel} 返回的模型身份与当前选择不一致，系统已拒绝该结果且未切换其他模型。您的输入和附件已保留。`
+        : `${modelRuntime.displayModelLabel} 暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试或手动切换模型。`;
+
+      return jsonUtf8({
+        ok: false,
+        success: false,
+        fallback: false,
+        fallbackUsed: false,
+        retryable: !affinityMismatch && !isMissingKey && !isSafetyRejection,
+        errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+        causeCode: errorCode,
+        userMessage: strictMessage,
+        message: strictMessage,
+        provider: modelOption.provider,
+        requestedProvider: modelOption.provider,
+        actualProvider: affinityMismatch?.actualProvider ?? null,
+        selectedModelLabel: modelRuntime.displayModelLabel,
+        requestedModel: modelRuntime.actualModel,
+        actualModel: affinityMismatch?.actualModel ?? null,
+        normalizedFrom: modelRuntime.normalizedFrom,
+        modelDiagnostics,
+        diagnostics: [
+          "modelRouter:strictModelAffinity:true",
+          "modelRouter:fallbackUsed:false",
+          ...(affinityMismatch ? [
+            `modelRouter:expectedProvider:${affinityMismatch.expectedProvider}`,
+            `modelRouter:actualProvider:${affinityMismatch.actualProvider}`,
+            `modelRouter:expectedModel:${affinityMismatch.expectedModel}`,
+            `modelRouter:actualModel:${affinityMismatch.actualModel}`
+          ] : []),
+          `modelRouter:failureCode:${errorCode}`
+        ]
+      }, status);
+    }
 
     if (errorCode === "OPENAI_FULL_REQUEST_FAILED") {
       const diagnostics = error && typeof error === "object" && "details" in error

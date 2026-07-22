@@ -7,6 +7,7 @@ import {
   extractDoubaoReplyMarkdown,
   runDoubaoAdminIngest
 } from "../lib/enterprise/doubao-ingest-client";
+import { runDeepSeekAdminIngest } from "../lib/enterprise/deepseek-ingest-client";
 import { checkDoubaoIngestHealth } from "../lib/enterprise/doubao-health-check";
 import {
   DOUBAO_PRO_MODEL_ID,
@@ -21,6 +22,7 @@ import {
   unifiedRouter
 } from "../lib/enterprise/gpt-os-model-router-v2";
 import {
+  assertAdminIngestModelAffinity,
   resolveAdminIngestModelProvider,
   runAdminIngestWithSelectedModel
 } from "../lib/enterprise/ingest-model-provider";
@@ -59,14 +61,18 @@ try {
   delete process.env.DOUBAO_MODEL;
   assert.equal(resolveIngestActualModel("doubao-pro"), DOUBAO_PRO_MODEL_ID);
   process.env.DOUBAO_PRO_MODEL = "ep-doubao-provider-test";
-  assert.equal(resolveIngestActualModel("doubao-pro"), "ep-doubao-provider-test");
+  assert.equal(
+    resolveIngestActualModel("doubao-pro"),
+    DOUBAO_PRO_MODEL_ID,
+    "The admin-ingest Doubao selection must stay pinned to Doubao-Seed-2.1-pro."
+  );
   assert.equal(
     resolveIngestModelRuntime({
       provider: "doubao-pro",
       preferredModel: DOUBAO_PRO_MODEL_ID
     }).actualModel,
-    "ep-doubao-provider-test",
-    "The UI default model ID is a display/default value and must not override the configured Ark endpoint."
+    DOUBAO_PRO_MODEL_ID,
+    "The admin-ingest runtime must not drift from Doubao-Seed-2.1-pro when another Ark model is configured."
   );
 
   assert.equal(
@@ -245,9 +251,128 @@ try {
   assert.equal(routedResult.provider, "doubao", "A successful Doubao request must report the actual provider.");
   assert.equal(routedResult.requestedProvider, "doubao-pro");
   assert.equal(routedResult.actualProvider, "doubao-pro");
-  assert.equal(routedResult.requestedModel, "ep-doubao-provider-test");
+  assert.equal(routedResult.requestedModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(capturedRequestBody.model, DOUBAO_PRO_MODEL_ID);
   assert.equal(routedResult.fallbackUsed, false);
   assert.ok(routedResult.diagnostics.includes("modelRouter:actualProvider:doubao-pro"));
+
+  assert.doesNotThrow(() => assertAdminIngestModelAffinity({
+    requestedProvider: "doubao-pro",
+    requestedModel: "ep-doubao-provider-test",
+    actualProvider: "doubao",
+    actualModel: "ep-doubao-provider-test"
+  }));
+  assert.throws(() => assertAdminIngestModelAffinity({
+    requestedProvider: "doubao-pro",
+    requestedModel: "ep-doubao-provider-test",
+    actualProvider: "deepseek",
+    actualModel: "ep-doubao-provider-test"
+  }), (error: unknown) => Boolean(
+    error
+    && typeof error === "object"
+    && (error as { code?: unknown }).code === "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH"
+  ));
+  assert.throws(() => assertAdminIngestModelAffinity({
+    requestedProvider: "doubao-pro",
+    requestedModel: "ep-doubao-provider-test",
+    actualProvider: "doubao",
+    actualModel: "unexpected-doubao-model"
+  }), (error: unknown) => Boolean(
+    error
+    && typeof error === "object"
+    && (error as { code?: unknown }).code === "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH"
+  ));
+
+  const successfulDoubaoFetch = globalThis.fetch;
+  const exactDeepSeekReplyMarkdown = "\n# DeepSeek 原始标题\n\n解析失败只是正文示例，不得被替换。  \n\n```text\nDEEPSEEK_RAW_MARKDOWN_SENTINEL\n```\n";
+  const deepSeekProviderContent = JSON.stringify({
+    replyMarkdown: exactDeepSeekReplyMarkdown,
+    knowledgeDraft: {
+      title: "DeepSeek 原文测试",
+      summary: "验证严格单模型完成态原文透传。",
+      category: "测试",
+      tags: ["DeepSeek", "原文"],
+      importance: "high",
+      standardQuestion: "DeepSeek 是否保留原始 Markdown？",
+      standardAnswer: "保留。",
+      keyPoints: ["不清洗", "不改写"],
+      actionItems: ["保留原文"],
+      missingFields: []
+    },
+    suggestedQuestions: ["是否原样透传？"],
+    diagnostics: ["deepseek-provider-contract-test"]
+  });
+  process.env.DEEPSEEK_API_KEY = "deepseek-test-secret";
+  process.env.DEEPSEEK_BASE_URL = "https://deepseek.example.test";
+  process.env.DEEPSEEK_PRO_MODEL = "deepseek-v4-pro";
+  let strictDeepSeekCalls = 0;
+  globalThis.fetch = async (url, init) => {
+    strictDeepSeekCalls += 1;
+    assert.equal(String(url), "https://deepseek.example.test/chat/completions");
+    const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    assert.equal(requestBody.model, "deepseek-v4-pro");
+
+    return new Response(JSON.stringify({
+      id: "deepseek-raw-passthrough-test",
+      model: "deepseek-v4-pro",
+      created: 1_786_000_001,
+      choices: [{ message: { role: "assistant", content: deepSeekProviderContent } }],
+      usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  const strictDeepSeekResult = await runDeepSeekAdminIngest({
+    ...doubaoInput,
+    preferredModel: "deepseek-v4-pro",
+    selectedModelLabel: "DeepSeek-V4-Pro",
+    strictModelAffinity: true
+  });
+  assert.equal(
+    strictDeepSeekResult.replyMarkdown,
+    exactDeepSeekReplyMarkdown,
+    "Strict DeepSeek replyMarkdown must pass through byte-for-byte as a JS string."
+  );
+  assert.equal(strictDeepSeekResult.gptProof.deepenAttempts, 0, "Strict DeepSeek must not rewrite the body through a quality-deepening retry.");
+  assert.equal(strictDeepSeekCalls, 1, "Strict DeepSeek must use one provider completion without a rewrite pass.");
+  assert.ok(strictDeepSeekResult.diagnostics.includes("deepseek:replyMarkdownPassthrough:true"));
+  globalThis.fetch = successfulDoubaoFetch;
+
+  let crossProviderCallAfterAffinityMismatch = false;
+  globalThis.fetch = async (url, init) => {
+    if (!String(url).includes("ark.example.test")) {
+      crossProviderCallAfterAffinityMismatch = true;
+      return new Response("{}", { status: 500 });
+    }
+
+    const requestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+
+    return new Response(JSON.stringify({
+      id: "doubao-affinity-mismatch-test",
+      model: "unexpected-doubao-model",
+      choices: [{ message: { role: "assistant", content: providerContent } }],
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      requested_model: requestBody.model
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  await assert.rejects(
+    () => runAdminIngestWithSelectedModel({
+      ...doubaoInput,
+      modelProvider: "doubao-pro",
+      strictModelAffinity: true
+    }),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH"
+    )
+  );
+  assert.equal(crossProviderCallAfterAffinityMismatch, false, "A strict Web model mismatch must fail without calling another provider.");
+  globalThis.fetch = successfulDoubaoFetch;
 
   const health = await checkDoubaoIngestHealth({
     preferredModel: DOUBAO_PRO_MODEL_ID,
@@ -271,6 +396,7 @@ try {
     }
   });
 
+  let deepSeekCalls = 0;
   globalThis.fetch = async (url) => {
     if (String(url).includes("ark.example.test")) {
       return new Response(JSON.stringify({ error: { message: "temporary unavailable" } }), {
@@ -279,6 +405,7 @@ try {
       });
     }
 
+    deepSeekCalls += 1;
     return new Response(JSON.stringify({
       id: "deepseek-fallback-response",
       model: "deepseek-v4-pro",
@@ -291,6 +418,20 @@ try {
     });
   };
 
+  await assert.rejects(
+    () => runAdminIngestWithSelectedModel({
+      ...doubaoInput,
+      modelProvider: "doubao-pro",
+      strictModelAffinity: true
+    }),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_REQUEST_FAILED"
+    )
+  );
+  assert.equal(deepSeekCalls, 0, "Strict Web Doubao failure must not call DeepSeek or any other provider.");
+
   const fallbackResult = await runAdminIngestWithSelectedModel({
     ...doubaoInput,
     modelProvider: "doubao-pro"
@@ -299,9 +440,10 @@ try {
   assert.equal(fallbackResult.provider, "deepseek", "A Doubao failure must report the actual fallback provider.");
   assert.equal(fallbackResult.requestedProvider, "doubao-pro");
   assert.equal(fallbackResult.actualProvider, "deepseek-pro");
-  assert.equal(fallbackResult.requestedModel, "ep-doubao-provider-test");
+  assert.equal(fallbackResult.requestedModel, DOUBAO_PRO_MODEL_ID);
   assert.equal(fallbackResult.actualModel, "deepseek-v4-pro");
   assert.equal(fallbackResult.fallbackUsed, true);
+  assert.equal(deepSeekCalls, 1, "Non-Web compatibility mode must keep the existing provider fallback.");
   assert.ok(fallbackDiagnostics.includes("modelRouter:actualProvider:deepseek-pro"));
   assert.ok(fallbackDiagnostics.some((item) => item.includes("doubao-pro:DOUBAO_REQUEST_FAILED")));
 
@@ -329,8 +471,11 @@ try {
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   assert.match(routeSource, /result\.provider === "doubao"/);
+  assert.match(routeSource, /result\.provider === "deepseek"/);
   assert.match(routeSource, /output: rawReply/);
-  assert.match(routeSource, /gptStyle:provider_passthrough:doubao/);
+  assert.match(routeSource, /gptStyle:provider_passthrough:\$\{result\.provider\}/);
+  assert.match(routeSource, /ADMIN_INGEST_MODEL_AFFINITY_MISMATCH/);
+  assert.match(routeSource, /系统已拒绝该结果且未切换其他模型/);
 
   console.log("Admin ingest Doubao provider contract tests passed.");
 } finally {

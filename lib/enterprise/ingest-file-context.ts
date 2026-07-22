@@ -13,6 +13,17 @@ export interface IngestFileContextSource {
   summary?: string;
   pageSummaries?: string[];
   slideTexts?: Array<{ slideIndex?: number; text?: string } | string>;
+  totalPages?: number;
+  processedPageStart?: number | null;
+  processedPageEnd?: number | null;
+  nextPage?: number | null;
+  complete?: boolean;
+  successfulPages?: number[];
+  failedPages?: number[];
+  lowConfidencePages?: number[];
+  coveragePercent?: number;
+  successRatePercent?: number;
+  deadlineReached?: boolean;
   limitationNote?: string;
   userPrompt?: string;
 }
@@ -25,14 +36,28 @@ export interface IngestFileContext {
   extractedText?: string;
   pageSummaries: string[];
   slideTexts: Array<{ slideIndex: number; text: string }>;
+  totalPages?: number;
+  processedPageStart?: number;
+  processedPageEnd?: number;
+  nextPage?: number;
+  complete?: boolean;
+  successfulPages: number[];
+  failedPages: number[];
+  lowConfidencePages: number[];
+  coveragePercent?: number;
+  successRatePercent?: number;
+  deadlineReached: boolean;
   visibleText?: string;
   userPrompt?: string;
   parseStatus: "metadata_only" | "summary_only" | "parsed" | "partial" | "unsupported" | "ocr_pending";
   limitationNote: string;
 }
 
-const DEFAULT_FILE_CONTEXT_LIMIT = 20_000;
-const PER_FILE_CONTEXT_LIMIT = 8_000;
+const DEFAULT_FILE_CONTEXT_LIMIT = 80_000;
+const PER_FILE_CONTEXT_LIMIT = 52_000;
+const MAX_PAGE_EVIDENCE_COUNT = 500;
+const MAX_PAGE_SUMMARY_CHARS = 420;
+const MAX_SLIDE_TEXT_CHARS = 900;
 
 function cleanText(value: unknown) {
   return typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
@@ -50,9 +75,13 @@ function cleanStructuredText(value: unknown) {
     : "";
 }
 
-function cleanTextArray(value: unknown, limit = 8) {
+function cleanTextArray(value: unknown, limit = 8, itemLimit?: number) {
   return Array.isArray(value)
-    ? value.map((item) => cleanText(item)).filter(Boolean).slice(0, limit)
+    ? value
+      .map((item) => cleanText(item))
+      .filter(Boolean)
+      .slice(0, limit)
+      .map((item) => itemLimit ? smartLimit(item, itemLimit) : item)
     : [];
 }
 
@@ -74,10 +103,25 @@ function cleanSlideTexts(value: unknown, limit = 40) {
 
     const record = item as { slideIndex?: unknown; pageIndex?: unknown; text?: unknown; content?: unknown };
     const slideIndex = readNumber(record.slideIndex, record.pageIndex) ?? index + 1;
-    const text = cleanStructuredText(record.text) || cleanStructuredText(record.content);
+    const text = smartLimit(
+      cleanStructuredText(record.text) || cleanStructuredText(record.content),
+      MAX_SLIDE_TEXT_CHARS,
+      true
+    );
 
     return text ? { slideIndex, text } : null;
   }).filter((item): item is { slideIndex: number; text: string } => item !== null).slice(0, limit);
+}
+
+function cleanPageNumbers(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return Array.from(new Set(value
+    .map((item) => Number(item))
+    .filter((item) => Number.isInteger(item) && item > 0)))
+    .sort((left, right) => left - right);
 }
 
 function readNumber(...values: unknown[]) {
@@ -152,15 +196,31 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
 
   const mimeType = cleanText(source.mimeType || source.fileType);
   const fileType = inferFileType(fileName, cleanText(source.fileType), mimeType);
+  const rawExtractedText = cleanStructuredText(source.extractedText)
+    || cleanStructuredText(source.text)
+    || cleanStructuredText(source.content);
   const extractedText = smartLimit(
-    cleanStructuredText(source.extractedText) || cleanStructuredText(source.text) || cleanStructuredText(source.content),
+    rawExtractedText,
     PER_FILE_CONTEXT_LIMIT,
     true
   );
   const visibleText = smartLimit(cleanText(source.visibleText), Math.floor(PER_FILE_CONTEXT_LIMIT / 2));
   const summary = smartLimit(cleanText(source.summary), 1_400);
-  const pageSummaries = cleanTextArray(source.pageSummaries, 10);
-  const slideTexts = cleanSlideTexts(source.slideTexts, 40);
+  const pageSummaries = cleanTextArray(source.pageSummaries, MAX_PAGE_EVIDENCE_COUNT, MAX_PAGE_SUMMARY_CHARS);
+  const slideTexts = cleanSlideTexts(source.slideTexts, MAX_PAGE_EVIDENCE_COUNT);
+  const totalPages = readNumber(source.totalPages);
+  const processedPageStart = readNumber(source.processedPageStart);
+  const processedPageEnd = readNumber(source.processedPageEnd);
+  const nextPage = readNumber(source.nextPage);
+  const successfulPages = cleanPageNumbers(source.successfulPages);
+  const failedPages = cleanPageNumbers(source.failedPages);
+  const lowConfidencePages = cleanPageNumbers(source.lowConfidencePages);
+  const coveragePercent = typeof source.coveragePercent === "number" && Number.isFinite(source.coveragePercent)
+    ? Math.min(100, Math.max(0, source.coveragePercent))
+    : undefined;
+  const successRatePercent = typeof source.successRatePercent === "number" && Number.isFinite(source.successRatePercent)
+    ? Math.min(100, Math.max(0, source.successRatePercent))
+    : undefined;
   const explicitParseStatus = cleanText(source.parseStatus);
   const parseStatus = explicitParseStatus === "unsupported" || explicitParseStatus === "ocr_pending" || explicitParseStatus === "partial"
     ? explicitParseStatus
@@ -169,11 +229,14 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
     : summary
       ? "summary_only"
       : "metadata_only";
-  const limitationNote = cleanText(source.limitationNote) || (parseStatus === "metadata_only"
+  const baseLimitationNote = cleanText(source.limitationNote) || (parseStatus === "metadata_only"
     ? "当前系统只拿到文件名、类型和大小，尚未解析到完整正文。请基于现有元信息做初步判断，并明确需要补充完整正文后才能深度总结。"
     : parseStatus === "summary_only"
       ? "当前系统只拿到摘要，尚未解析到完整正文。请基于摘要做初步分析，并说明正式入库前需要补充原文。"
       : "当前系统已拿到可用于分析的正文片段或摘要，请优先结合正文内容回答。");
+  const limitationNote = rawExtractedText.length > PER_FILE_CONTEXT_LIMIT
+    ? `${baseLimitationNote} 合并正文超过单文件上下文预算；系统已同时保留各页/各幻灯片证据与覆盖率，回答不得把未进入上下文的细节视为已核实。`
+    : baseLimitationNote;
 
   return {
     fileName,
@@ -183,6 +246,17 @@ function normalizeOneFile(source: IngestFileContextSource, userPrompt?: string):
     extractedText: extractedText || undefined,
     pageSummaries,
     slideTexts,
+    totalPages,
+    processedPageStart,
+    processedPageEnd,
+    nextPage,
+    complete: typeof source.complete === "boolean" ? source.complete : undefined,
+    successfulPages,
+    failedPages,
+    lowConfidencePages,
+    coveragePercent,
+    successRatePercent,
+    deadlineReached: source.deadlineReached === true,
     visibleText: visibleText || summary || undefined,
     userPrompt: cleanText(source.userPrompt) || cleanText(userPrompt) || undefined,
     parseStatus,
@@ -234,11 +308,25 @@ export function buildIngestFileContextPrompt(
   }
 
   const sections = contexts.map((file, index) => {
+    const useStructuredSlideEvidence = file.slideTexts.length > 0;
     const bodyParts = [
-      file.extractedText ? `extractedText:\n${file.extractedText}` : "",
+      file.extractedText && !useStructuredSlideEvidence ? `extractedText:\n${file.extractedText}` : "",
       file.visibleText ? `visibleTextOrSummary:\n${file.visibleText}` : "",
       file.slideTexts.length > 0 ? `slideTexts:\n${file.slideTexts.map((slide) => `Slide ${slide.slideIndex}: ${slide.text}`).join("\n")}` : "",
       file.pageSummaries.length > 0 ? `pageSummaries:\n${file.pageSummaries.map((summary, pageIndex) => `${pageIndex + 1}. ${summary}`).join("\n")}` : ""
+    ].filter(Boolean);
+    const coverage = [
+      file.totalPages ? `totalPages: ${file.totalPages}` : "",
+      file.processedPageStart ? `processedPageStart: ${file.processedPageStart}` : "",
+      file.processedPageEnd ? `processedPageEnd: ${file.processedPageEnd}` : "",
+      typeof file.complete === "boolean" ? `complete: ${file.complete}` : "",
+      typeof file.coveragePercent === "number" ? `coveragePercent: ${file.coveragePercent}` : "",
+      typeof file.successRatePercent === "number" ? `successRatePercent: ${file.successRatePercent}` : "",
+      file.successfulPages.length > 0 ? `successfulPages: ${file.successfulPages.join(",")}` : "",
+      file.failedPages.length > 0 ? `failedPages: ${file.failedPages.join(",")}` : "",
+      file.lowConfidencePages.length > 0 ? `lowConfidencePages: ${file.lowConfidencePages.join(",")}` : "",
+      file.nextPage ? `nextPage: ${file.nextPage}` : "",
+      file.deadlineReached ? "deadlineReached: true" : ""
     ].filter(Boolean);
 
     return [
@@ -247,6 +335,7 @@ export function buildIngestFileContextPrompt(
       `mimeType: ${file.mimeType || "unknown"}`,
       `fileSize: ${formatFileSize(file.fileSize)}`,
       `parseStatus: ${file.parseStatus}`,
+      coverage.length > 0 ? `coverage:\n${coverage.join("\n")}` : "",
       file.userPrompt ? `userPrompt: ${file.userPrompt}` : "",
       `limitationNote: ${file.limitationNote}`,
       bodyParts.length > 0 ? bodyParts.join("\n\n") : "content: 未获得正文。"
@@ -255,10 +344,11 @@ export function buildIngestFileContextPrompt(
 
   const evidenceRules = [
     "【附件证据规则】",
-    "1. 只有下方 extractedText、visibleTextOrSummary、slideTexts、pageSummaries 才是本轮当前附件的证据。",
+    "1. 只有下方 extractedText、visibleTextOrSummary、slideTexts、pageSummaries 才是本轮当前附件的证据；coverage 只说明识别范围与可靠性，不等于正文。",
     "2. 文件名、limitationNote 和历史对话不能替代当前附件正文；如引用历史内容，必须明确标注为历史上下文。",
     "3. parseStatus 为 partial、metadata_only、unsupported 或 ocr_pending 时，不得声称已完整阅读、精准识别或完全理解附件。",
-    "4. 看不清或缺失的内容必须如实说明，不得依据课程常识补写。"
+    "4. failedPages、lowConfidencePages、nextPage 或 complete=false 代表仍有未核实内容；必须如实说明，不得依据课程常识补写。",
+    "5. 最终正文由当前 Agent 选中的同一个模型生成；不得要求或假设其他视觉/备用模型补写。"
   ].join("\n");
 
   return smartLimit(

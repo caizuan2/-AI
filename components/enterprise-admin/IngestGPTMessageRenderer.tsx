@@ -14,7 +14,28 @@ type MessageRenderState = {
   isGenerating?: boolean;
   typing?: boolean;
   status?: string | null;
+  provider?: string | null;
 };
+
+export function prepareIngestMessageMarkdown(content: string, provider?: string | null) {
+  const normalizedProvider = provider?.trim().toLowerCase();
+
+  if (
+    normalizedProvider === "deepseek"
+    || normalizedProvider === "deepseek-pro"
+    || normalizedProvider === "doubao"
+    || normalizedProvider === "doubao-pro"
+  ) {
+    return content;
+  }
+
+  const safeContent = sanitizeGptOSUserMessage(content);
+
+  return processAIOutput(safeContent, {
+    source: "admin_ingest_renderer",
+    mode: "chatgpt_bubble"
+  }).output;
+}
 
 type MarkdownSegment =
   | { type: "line"; content: string; key: string }
@@ -306,11 +327,10 @@ export function IngestGPTMessageRenderer({
   message?: MessageRenderState;
   enableTyping?: boolean;
 }) {
-  const safeContent = useMemo(() => sanitizeGptOSUserMessage(content), [content]);
-  const fullMarkdown = useMemo(() => processAIOutput(safeContent, {
-    source: "admin_ingest_renderer",
-    mode: "chatgpt_bubble"
-  }).output, [safeContent]);
+  const fullMarkdown = useMemo(
+    () => prepareIngestMessageMarkdown(content, message?.provider),
+    [content, message?.provider]
+  );
   const shouldAnimate = Boolean(enableTyping ?? (
     (message?.isStreaming === true || message?.isGenerating === true || message?.typing === true || message?.status === "streaming")
     && message?.isHistorical !== true

@@ -13,7 +13,10 @@ import {
   buildEnterpriseFallbackChain,
   unifiedRouter
 } from "../lib/enterprise/gpt-os-model-router-v2";
-import { resolveAdminIngestModelProvider } from "../lib/enterprise/ingest-model-provider";
+import {
+  assertAdminIngestModelAffinity,
+  resolveAdminIngestModelProvider
+} from "../lib/enterprise/ingest-model-provider";
 
 const presentationAttachment = [{
   fileName: "training-course.pptx",
@@ -57,6 +60,13 @@ try {
     "The retired deepseek-chat alias must not make the Pro label call Flash."
   );
   assert.equal(resolveIngestActualModel("deepseek-flash"), "deepseek-v4-flash");
+
+  process.env.DEEPSEEK_PRO_MODEL = "unexpected-deepseek-model";
+  assert.equal(
+    resolveIngestActualModel("deepseek-pro"),
+    "deepseek-v4-pro",
+    "The admin-ingest DeepSeek Pro selection must never drift to another configured model."
+  );
   assert.equal(sanitizeIngestPreferredModel("deepseek-chat"), "");
   assert.equal(sanitizeIngestPreferredModel("deepseek-reasoner"), "");
 } finally {
@@ -104,6 +114,22 @@ assert.equal(
   "deepseek-pro",
   "The real provider resolver must preserve the Pro main model for attachment requests."
 );
+assert.doesNotThrow(() => assertAdminIngestModelAffinity({
+  requestedProvider: "deepseek-pro",
+  requestedModel: "deepseek-v4-pro",
+  actualProvider: "deepseek",
+  actualModel: "deepseek-v4-pro"
+}));
+assert.throws(() => assertAdminIngestModelAffinity({
+  requestedProvider: "deepseek-pro",
+  requestedModel: "deepseek-v4-pro",
+  actualProvider: "deepseek",
+  actualModel: "deepseek-chat"
+}), (error: unknown) => Boolean(
+  error
+  && typeof error === "object"
+  && (error as { code?: unknown }).code === "ADMIN_INGEST_MODEL_AFFINITY_MISMATCH"
+));
 
 assert.equal(
   unifiedRouter({

@@ -19,6 +19,7 @@ import {
 import { normalizeIngestSuccessPayload } from "@/lib/enterprise/ingest-response-normalizer";
 import { sendCoreIngest } from "@/lib/enterprise/ingest-client";
 import { shouldDisableDoubaoForHealth } from "@/lib/enterprise/ingest-model-availability";
+import { prepareIngestMessageMarkdown } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
 
 function testAgentScopedModelPreferences() {
   const doubao = getIngestModelOptionByProvider("doubao-pro");
@@ -117,6 +118,9 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(shellSource.slice(pickerPosition, voicePosition), /align="right"/);
   assert.doesNotMatch(shellSource, /<Scissors/);
   assert.doesNotMatch(shellSource, /<Paperclip/);
+  assert.match(shellSource, /type=\{isParsing \? "button" : "submit"\}/);
+  assert.match(shellSource, /onClick=\{isParsing \? onCancel : undefined\}/);
+  assert.match(shellSource, /停止本轮识别与生成/);
   assert.doesNotMatch(shellSource, /isOrganizeOpen/);
   assert.doesNotMatch(shellSource, /handleUploadClick/);
   assert.match(pickerSource, /provider === "doubao-pro"/);
@@ -135,6 +139,9 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(modeToggleSource, /const requestVersion = \+\+doubaoHealthRequestVersionRef\.current;\s+const targetAgentId = activeAgent\.id;\s+const nextModel/);
   assert.match(modeToggleSource, /activeAgentIdRef\.current !== targetAgentId/);
   assert.match(modeToggleSource, /doubaoHealthRequestVersionRef\.current \+= 1;\s+\}, \[activeAgent\.id\]\)/);
+  assert.match(modeToggleSource, /function handleCancelIngest\(\)/);
+  assert.match(modeToggleSource, /输入内容和附件已保留/);
+  assert.match(modeToggleSource, /onCancel:\s*handleCancelIngest/);
   assert.match(healthRouteSource, /await requireAdminIngestActor\(request/);
   assert.match(healthRouteSource, /targetType:\s*"admin_kb_ingest_model_health"/);
   assert.match(healthRouteSource, /return apiError\(error\)/);
@@ -194,33 +201,57 @@ function testFallbackMetadataAndRawBodyBoundary() {
   const clientSource = readFileSync(path.join(process.cwd(), "lib/enterprise/ingest-client.ts"), "utf8");
   const routeSource = readFileSync(path.join(process.cwd(), "app/api/admin/kb/ingest/gpt/route.ts"), "utf8");
 
-  assert.match(clientSource, /preserveRawDoubaoOutput\s*\?\s*visibleReply\s*:\s*applyExpressionLayer/);
+  assert.match(clientSource, /preserveRawSelectedModelOutput\s*\?\s*visibleReply\s*:\s*applyExpressionLayer/);
   assert.match(clientSource, /preserveRawOutput\s*\?\s*chunk\s*:\s*renderer\.formatStream\(chunk\)/);
   assert.match(clientSource, /draft\.replyMarkdown\s*=\s*styledReply/);
   assert.match(routeSource, /result\.provider === "doubao"/);
+  assert.match(routeSource, /result\.provider === "deepseek"/);
   assert.match(routeSource, /output:\s*rawReply/);
   assert.match(routeSource, /changed:\s*false/);
+  assert.match(routeSource, /platform === "web"/);
+  assert.match(routeSource, /strictModelAffinity/);
+  assert.match(routeSource, /ADMIN_INGEST_MODEL_AFFINITY_MISMATCH/);
+  assert.match(routeSource, /系统已拒绝该结果且未切换其他模型/);
   assert.match(routeSource, /retryable:\s*isMissingKey \|\| isSafetyRejection \? false : fallback\.retryable/);
+
+  const rendererRawMarkdown = "\n# 模型原文\n\n解析失败只是正文内容，不得被通用错误清洗替换。  \n\n```text\nRENDERER_RAW_SENTINEL\n```\n";
+  assert.equal(
+    prepareIngestMessageMarkdown(rendererRawMarkdown, "deepseek"),
+    rendererRawMarkdown,
+    "The final renderer must keep strict DeepSeek Markdown byte-for-byte."
+  );
+  assert.equal(
+    prepareIngestMessageMarkdown(rendererRawMarkdown, "doubao"),
+    rendererRawMarkdown,
+    "The final renderer must keep strict Doubao Markdown byte-for-byte."
+  );
+  assert.equal(prepareIngestMessageMarkdown(rendererRawMarkdown, "deepseek-pro"), rendererRawMarkdown);
+  assert.equal(prepareIngestMessageMarkdown(rendererRawMarkdown, "doubao-pro"), rendererRawMarkdown);
 }
 
-async function testFinalDoubaoCompletionKeepsRawMarkdown() {
+async function testFinalSelectedModelCompletionKeepsRawMarkdown(input: {
+  provider: "deepseek" | "doubao";
+  modelProvider: "deepseek-pro" | "doubao-pro";
+  model: "deepseek-v4-pro" | "doubao-seed-2-1-pro-260628";
+  label: "DeepSeek-V4-Pro" | "Doubao-Seed-2.1-pro";
+}) {
   const originalFetch = globalThis.fetch;
-  const rawMarkdown = "\n# 完成态豆包原文\n\n尾随两个空格必须保留。  \n\n```text\nRAW_COMPLETION_SENTINEL\n```\n";
+  const rawMarkdown = `\n# 完成态${input.label}原文\n\n尾随两个空格必须保留。  \n\n\`\`\`text\n${input.modelProvider.toUpperCase()}_RAW_COMPLETION_SENTINEL\n\`\`\`\n`;
 
-  globalThis.fetch = async (input) => {
-    if (String(input).includes("/api/admin/kb/ingest/models/health")) {
+  globalThis.fetch = async (request) => {
+    if (String(request).includes("/api/admin/kb/ingest/models/health")) {
       return new Response(JSON.stringify({
         ok: true,
         configured: true,
-        provider: "doubao-pro",
+        provider: input.modelProvider,
         baseUrlConfigured: true,
         modelConfigured: true,
         apiKeyConfigured: true,
-        selectedModelLabel: "Doubao-Seed-2.1-pro",
-        model: "doubao-seed-2-1-pro-260628",
-        actualModel: "doubao-seed-2-1-pro-260628",
+        selectedModelLabel: input.label,
+        model: input.model,
+        actualModel: input.model,
         mode: "highest",
-        message: "豆包接口可用",
+        message: `${input.label} 接口可用`,
         diagnostics: [],
         requestTested: true
       }), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -229,13 +260,13 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
     return new Response(JSON.stringify({
       ok: true,
       data: {
-        provider: "doubao",
-        requestedProvider: "doubao-pro",
-        actualProvider: "doubao-pro",
-        model: "doubao-seed-2-1-pro-260628",
-        modelDisplayName: "Doubao-Seed-2.1-pro",
-        requestedModel: "doubao-seed-2-1-pro-260628",
-        actualModel: "doubao-seed-2-1-pro-260628",
+        provider: input.provider,
+        requestedProvider: input.modelProvider,
+        actualProvider: input.modelProvider,
+        model: input.model,
+        modelDisplayName: input.label,
+        requestedModel: input.model,
+        actualModel: input.model,
         modelMode: "highest",
         fallback: false,
         fallbackUsed: false,
@@ -254,13 +285,13 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
 
   try {
     const result = await sendCoreIngest({
-      text: "验证豆包完成态原文",
+      text: `验证${input.label}完成态原文`,
       category: "测试",
-      model: "Doubao-Seed-2.1-pro",
-      modelProvider: "doubao-pro",
-      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      model: input.label,
+      modelProvider: input.modelProvider,
+      selectedModelLabel: input.label,
       agent: {
-        id: "doubao-raw-agent",
+        id: `${input.modelProvider}-raw-agent`,
         name: "原文测试 Agent",
         role: "测试专家",
         description: "仅用于模型选择专项测试",
@@ -273,8 +304,8 @@ async function testFinalDoubaoCompletionKeepsRawMarkdown() {
     assert.equal(result.visibleReply, rawMarkdown);
     assert.equal(result.replyMarkdown, rawMarkdown);
     assert.equal(result.draft.replyMarkdown, rawMarkdown);
-    assert.equal(result.requestedProvider, "doubao-pro");
-    assert.equal(result.actualProvider, "doubao-pro");
+    assert.equal(result.requestedProvider, input.modelProvider);
+    assert.equal(result.actualProvider, input.modelProvider);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -285,7 +316,18 @@ async function main() {
   testDoubaoHealthAvailabilityBoundary();
   testPickerPlacementAndProviderIdentity();
   testFallbackMetadataAndRawBodyBoundary();
-  await testFinalDoubaoCompletionKeepsRawMarkdown();
+  await testFinalSelectedModelCompletionKeepsRawMarkdown({
+    provider: "deepseek",
+    modelProvider: "deepseek-pro",
+    model: "deepseek-v4-pro",
+    label: "DeepSeek-V4-Pro"
+  });
+  await testFinalSelectedModelCompletionKeepsRawMarkdown({
+    provider: "doubao",
+    modelProvider: "doubao-pro",
+    model: "doubao-seed-2-1-pro-260628",
+    label: "Doubao-Seed-2.1-pro"
+  });
 
   console.log("admin ingest per-Agent DeepSeek/Doubao selector tests passed");
 }

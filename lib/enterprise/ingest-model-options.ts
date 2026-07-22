@@ -292,11 +292,7 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
   const normalized = normalizeIngestModelProvider(provider);
 
   if (normalized === "deepseek-pro") {
-    const configured = readRuntimeEnv("DEEPSEEK_PRO_MODEL") || readRuntimeEnv("DEEPSEEK_MODEL");
-
-    return configured && !LEGACY_DEEPSEEK_MODEL_IDS.has(configured.toLowerCase())
-      ? configured
-      : DEEPSEEK_PRO_MODEL_ID;
+    return DEEPSEEK_PRO_MODEL_ID;
   }
 
   if (normalized === "deepseek-flash") {
@@ -308,7 +304,7 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
   }
 
   if (normalized === "doubao-pro") {
-    return readRuntimeEnv("DOUBAO_PRO_MODEL") || readRuntimeEnv("DOUBAO_MODEL") || DOUBAO_PRO_MODEL_ID;
+    return DOUBAO_PRO_MODEL_ID;
   }
 
   if (normalized === "kimi") {
