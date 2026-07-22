@@ -389,6 +389,7 @@ async function main() {
   );
 
   assert.match(webDialogMarkup, /发现内容更新/);
+  assert.match(webDialogMarkup, /小董AI/);
   assert.match(webDialogMarkup, /立即更新/);
   assert.match(webDialogMarkup, /稍后提醒/);
   assert.doesNotMatch(webDialogMarkup, /当前内容：/);
@@ -422,13 +423,16 @@ async function main() {
     })
   );
 
-  const adminLatestWebReleaseSha = manifest.admin.web_release_sha?.slice(0, 8) || "最新线上版本";
-  assert.match(adminWebDialogMarkup, /当前内容：admin-lo/);
-  assert.match(adminWebDialogMarkup, new RegExp(`最新内容：${adminLatestWebReleaseSha}`));
-  assert.match(adminWebDialogMarkup, /更新内容：/);
-  assert.match(adminWebDialogMarkup, /不需要重新安装 APK\/EXE/);
+  assert.match(adminWebDialogMarkup, /发现内容更新/);
+  assert.match(adminWebDialogMarkup, /立即更新/);
+  assert.match(adminWebDialogMarkup, /稍后提醒/);
+  assert.doesNotMatch(adminWebDialogMarkup, new RegExp(`>${manifest.admin.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}<`));
+  assert.doesNotMatch(adminWebDialogMarkup, /当前内容：/);
+  assert.doesNotMatch(adminWebDialogMarkup, /最新内容：/);
+  assert.doesNotMatch(adminWebDialogMarkup, /更新内容：/);
+  assert.doesNotMatch(adminWebDialogMarkup, /不需要重新安装 APK\/EXE/);
   for (const item of manifest.admin.changelog) {
-    assert.match(adminWebDialogMarkup, new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    assert.doesNotMatch(adminWebDialogMarkup, new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
 
   const androidBridgeCalls: string[] = [];
