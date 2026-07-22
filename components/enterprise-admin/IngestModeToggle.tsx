@@ -134,10 +134,26 @@ import {
 } from "@/lib/enterprise/ingest-request-queue";
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
+import {
+  isStrictSelectedModelFailure,
+  readAdminIngestRequestError
+} from "@/lib/enterprise/admin-ingest-request-error";
+import {
+  excludeFailedIngestMessages,
+  replaceIngestRetryOutcome,
+  resolveIngestSendAttachments
+} from "@/lib/enterprise/ingest-retry-state";
 
 type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
 type IngestActionResult = Awaited<ReturnType<typeof sendCoreIngest>>;
+type IngestSendOptions = {
+  reuseUserMessageId?: string;
+  failedMessageId?: string;
+  retryAttachments?: IngestUploadState[];
+  modelLabel?: string;
+  preserveComposer?: boolean;
+};
 type OpenPanel = "notifications" | "settings" | null;
 type GptFallbackToast = {
   id: string;
@@ -482,7 +498,7 @@ function toConversationStateMessages(
     .filter((message) => {
       const content = message.content.trim();
 
-      return Boolean(content) && content !== "暂无历史内容";
+      return message.status !== "failed" && Boolean(content) && content !== "暂无历史内容";
     })
     .map((message, index) => {
       const createdAt = Date.now() - ((messages.length - index) * 1000);
@@ -1263,6 +1279,8 @@ export function IngestModeToggle() {
     requestId?: string;
     status?: number;
     errorCode?: string;
+    causeCode?: string;
+    retryable?: boolean;
   }) {
     const hasCurrentSuccess = ingestSuccessLockRef.current
       || Boolean(lastSuccessfulIngestRequestIdRef.current && lastSuccessfulIngestRequestIdRef.current === guard?.requestId);
@@ -1276,7 +1294,9 @@ export function IngestModeToggle() {
       lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
       suppressUntil: suppressFallbackToastUntilRef.current,
       status: guard?.status,
-      errorCode: guard?.errorCode
+      errorCode: guard?.errorCode,
+      causeCode: guard?.causeCode,
+      retryable: guard?.retryable
     })) {
       return;
     }
@@ -1285,6 +1305,7 @@ export function IngestModeToggle() {
       reason: guard?.reason,
       status: guard?.status,
       errorCode: guard?.errorCode,
+      causeCode: guard?.causeCode,
       requestId: guard?.requestId,
       hasCurrentSuccess,
       stateDomain: guard?.stateDomain
@@ -1862,9 +1883,10 @@ export function IngestModeToggle() {
     }
   }
 
-  async function handleSend(textOverride?: string): Promise<IngestActionResult | null> {
+  async function handleSend(textOverride?: string, options?: IngestSendOptions): Promise<IngestActionResult | null> {
     const value = (textOverride ?? input).trim();
-    const currentModelLabel = selectedModelLabel;
+    const currentModelLabel = options?.modelLabel ?? selectedModelLabel;
+    const requestModelOption = getIngestModelOptionByLabel(currentModelLabel) ?? selectedModelOption;
 
     if (!hasActiveAgent) {
       const message = "请先到专家广场添加专家 Agent。";
@@ -1879,7 +1901,7 @@ export function IngestModeToggle() {
       return null;
     }
 
-    const composerUploads = uploadedFiles;
+    const composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
     const draftAttachments = composerUploads.map((file) => ({
       ...stripUploadRuntimeFields(file),
       status: "attached" as const,
@@ -1916,14 +1938,18 @@ export function IngestModeToggle() {
         prompt: effectiveInput,
         createdAt: sendAttemptAt
       });
-      setInput(effectiveInput);
+      if (!options?.preserveComposer) {
+        setInput(effectiveInput);
+      }
       setNoticeMessage("上一条还在生成，请稍候。已保留最后一条输入，生成完成后可继续发送。");
       setErrorMessage("");
       return null;
     }
 
     requestQueueRef.current = recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt);
-    const contextSourceMessages = messages.length > 0 ? messages : conversationMessagesById[conversationId] ?? [];
+    const contextSourceMessages = excludeFailedIngestMessages(
+      messages.length > 0 ? messages : conversationMessagesById[conversationId] ?? []
+    );
     const requestId = createIngestRequestId();
     const abortController = new AbortController();
     let conversationState = ensureConversationState(conversationStateByIdRef.current[conversationId], {
@@ -1933,23 +1959,33 @@ export function IngestModeToggle() {
       messages: toConversationStateMessages(contextSourceMessages, conversationId, activeAgent)
     });
 
-    conversationState = appendUserMessage(conversationState, {
-      id: `user-${Date.now()}`,
-      content: effectiveInput,
-      requestId,
-      meta: {
-        model: currentModelLabel,
-        provider: "admin_ingest"
-      }
-    });
-    const userMessageId = conversationState.messages
-      .filter((message) => message.role === "user" && message.requestId === requestId)
-      .slice(-1)[0]?.id ?? `user-${Date.now()}`;
+    conversationState = {
+      ...conversationState,
+      messages: excludeFailedIngestMessages(conversationState.messages)
+    };
+
+    if (!options?.reuseUserMessageId) {
+      conversationState = appendUserMessage(conversationState, {
+        id: `user-${Date.now()}`,
+        content: effectiveInput,
+        requestId,
+        meta: {
+          model: currentModelLabel,
+          provider: "admin_ingest"
+        }
+      });
+    }
+
+    const userMessageId = options?.reuseUserMessageId
+      ?? conversationState.messages
+        .filter((message) => message.role === "user" && message.requestId === requestId)
+        .slice(-1)[0]?.id
+      ?? `user-${Date.now()}`;
     conversationState = appendAssistantPlaceholder(conversationState, {
       requestId,
       meta: {
         model: currentModelLabel,
-        provider: selectedModelOption.provider
+        provider: requestModelOption.provider
       }
     });
     conversationState = markRequestActive(conversationState, requestId);
@@ -1963,34 +1999,39 @@ export function IngestModeToggle() {
     ingestSuccessLockRef.current = false;
     markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
-    setNoticeMessage(`${selectedModelOption.label} 正在深度分析资料...`);
+    setNoticeMessage(`${requestModelOption.label} 正在深度分析资料...`);
     setErrorMessage("");
     setGptFallbackToast(null);
     setActionToast(null);
-    setMessages((current) => [
-      ...current.map(markMessageCompleted),
-      {
-        id: userMessageId,
-        role: "user",
-        content: value || "附件投喂",
-        time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-        attachments: draftAttachments,
-        source: "admin_ingest",
-        platform: platformContext.platform,
-        syncTarget: [...platformContext.syncTarget],
-        tenantId,
-        userId,
-        agentId: activeAgent.id,
-        expertId: activeAgent.expertId ?? null,
-        conversationId,
-        agentName: activeAgent.name,
-        expertName: activeAgent.expertId ? activeAgent.name : null,
-        model: currentModelLabel,
-        provider: "admin_ingest"
-      }
-    ]);
-    setInput("");
-    setUploadedFiles([]);
+    if (!options?.reuseUserMessageId) {
+      setMessages((current) => [
+        ...current.map(markMessageCompleted),
+        {
+          id: userMessageId,
+          role: "user",
+          content: value || "附件投喂",
+          time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          attachments: draftAttachments,
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
+          model: currentModelLabel,
+          provider: "admin_ingest"
+        }
+      ]);
+    }
+
+    if (!options?.preserveComposer) {
+      setInput("");
+      setUploadedFiles([]);
+    }
 
     let successRendered = false;
     let resumableUploads = composerUploads;
@@ -1998,7 +2039,7 @@ export function IngestModeToggle() {
 
     try {
       if (composerUploads.length > 0) {
-        const selectedFileModelProvider = selectedModelOption.provider;
+        const selectedFileModelProvider = requestModelOption.provider;
 
         if (selectedFileModelProvider !== "deepseek-pro" && selectedFileModelProvider !== "doubao-pro") {
           throw new Error("Web 投喂端附件解析仅支持当前选定的 DeepSeek Pro 或 Doubao Pro 模型。");
@@ -2006,8 +2047,8 @@ export function IngestModeToggle() {
 
         const preparedUploads = await parseUploadedFilesForGpt(composerUploads, 1, {
           modelProvider: selectedFileModelProvider,
-          preferredModel: selectedModelOption.defaultModel,
-          selectedModelLabel: selectedModelOption.label,
+          preferredModel: requestModelOption.defaultModel,
+          selectedModelLabel: requestModelOption.label,
           strictModelAffinity: true
         }, {
           signal: abortController.signal,
@@ -2025,7 +2066,7 @@ export function IngestModeToggle() {
 
             setNoticeMessage(
               progress.complete
-                ? `「${progress.fileName}」已完成 ${currentPage}/${totalLabel} 页本地识别${qualityHint}，${selectedModelOption.label} 正在整理正文...`
+                ? `「${progress.fileName}」已完成 ${currentPage}/${totalLabel} 页本地识别${qualityHint}，${requestModelOption.label} 正在整理正文...`
                 : `正在本地识别「${progress.fileName}」：${currentPage}/${totalLabel} 页（${progress.coveragePercent.toFixed(1)}%）${qualityHint}`
             );
           }
@@ -2093,12 +2134,12 @@ export function IngestModeToggle() {
             text: effectiveInput,
             agent: activeAgent,
             category: activeAgent.role,
-            model: selectedModelOption.label,
-            modelProvider: selectedModelOption.provider,
-            gptTier: selectedModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
-            gptTierLabel: selectedModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
-            gptVersion: selectedModelOption.provider === "openai" ? selectedGptModel.version : undefined,
-            selectedModelLabel: selectedModelOption.label,
+            model: requestModelOption.label,
+            modelProvider: requestModelOption.provider,
+            gptTier: requestModelOption.provider === "openai" ? selectedGptModel.tier : undefined,
+            gptTierLabel: requestModelOption.provider === "openai" ? selectedGptModel.tierLabel : undefined,
+            gptVersion: requestModelOption.provider === "openai" ? selectedGptModel.version : undefined,
+            selectedModelLabel: requestModelOption.label,
             tenantId,
             userId,
             attachments: outgoingAttachments,
@@ -2135,6 +2176,7 @@ export function IngestModeToggle() {
           const canRetry = attempt < 1
             && !abortController.signal.aborted
             && isCurrentRequest()
+            && !isStrictSelectedModelFailure(retryError)
             && isRetryableIngestError(retryError);
 
           if (!canRetry) {
@@ -2232,8 +2274,9 @@ export function IngestModeToggle() {
       } : null);
       setErrorMessage("");
       setNoticeMessage(fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
-      setMessages((current) => [
-        ...current.map(markMessageCompleted),
+      setMessages((current) => replaceIngestRetryOutcome(
+        current.map(markMessageCompleted),
+        options?.failedMessageId,
         {
           id: `assistant-result-${Date.now()}`,
           role: "assistant",
@@ -2278,7 +2321,7 @@ export function IngestModeToggle() {
           typing: false,
           status: "completed"
         }
-      ]);
+      ));
       successRendered = true;
       console.info("[admin-ingest:gpt:success]", {
         provider: result.provider,
@@ -2311,19 +2354,25 @@ export function IngestModeToggle() {
         return null;
       }
 
+      const requestError = readAdminIngestRequestError(error);
       const stateDomain = getStateDomain(error);
-      const errorCode = error instanceof Error ? error.name : undefined;
+      const errorCode = requestError?.errorCode ?? (error instanceof Error ? error.name : undefined);
+      const causeCode = requestError?.causeCode;
+      const responseStatus = requestError?.status;
       const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
       const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(error);
       conversationStateByIdRef.current[conversationId] = failAssistantMessage(conversationStateByIdRef.current[conversationId], {
         requestId,
         message: attachmentEvidenceMessage || rawErrorMessage
       });
-      setInput((current) => current || value);
       const cancelledUploads = error instanceof AdminIngestFileParseCancelledError
         ? error.files
         : resumableUploads;
-      setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
+
+      if (!options?.preserveComposer) {
+        setInput((current) => current || value);
+        setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
+      }
 
       if (abortController.signal.aborted) {
         setGptFallbackToast(null);
@@ -2359,15 +2408,18 @@ export function IngestModeToggle() {
         hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
         lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
         suppressUntil: suppressFallbackToastUntilRef.current,
-        status: undefined,
-        errorCode
+        status: responseStatus,
+        errorCode,
+        causeCode,
+        retryable: requestError?.retryable
       });
 
       if (successRendered || shouldSuppress) {
         console.warn("[admin-ingest:gpt:toast-suppressed]", {
           reason: rawErrorMessage,
-          status: undefined,
+          status: responseStatus,
           errorCode,
+          causeCode,
           requestId,
           hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
           stateDomain
@@ -2414,15 +2466,20 @@ export function IngestModeToggle() {
       }
 
       const friendlyError = toUserFriendlyMessage(error);
-      const message = friendlyError?.message ?? sanitizeGptOSUserMessage(error instanceof Error ? error.message : "AI服务暂时不稳定，请稍后再试。");
+      const isDoubaoTimeout = requestModelOption.provider === "doubao-pro" && causeCode === "DOUBAO_TIMEOUT";
+      const message = isDoubaoTimeout
+        ? "Doubao-Seed-2.1-pro 本轮响应超时，系统未切换其他模型。您的输入和附件已保留，可以重新尝试。"
+        : friendlyError?.message ?? sanitizeGptOSUserMessage(error instanceof Error ? error.message : "AI服务暂时不稳定，请稍后再试。");
 
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
-        status: undefined,
+        status: responseStatus,
         errorCode,
+        causeCode,
         message,
-        provider: selectedModelOption.provider,
+        provider: requestModelOption.provider,
         model: currentModelLabel,
+        fallbackUsed: requestError?.fallbackUsed,
         requestId
       });
       const realIngestFailure = isRealIngestFailure({
@@ -2433,15 +2490,18 @@ export function IngestModeToggle() {
         hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
         lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
         suppressUntil: suppressFallbackToastUntilRef.current,
-        status: undefined,
-        errorCode
+        status: responseStatus,
+        errorCode,
+        causeCode,
+        retryable: requestError?.retryable
       });
 
       if (!realIngestFailure) {
         console.warn("[admin-ingest:gpt:error:ignored]", {
           reason: "not_real_ingest_failure",
-          status: undefined,
+          status: responseStatus,
           errorCode,
+          causeCode,
           requestId,
           stateDomain
         });
@@ -2455,10 +2515,40 @@ export function IngestModeToggle() {
         reason: "ingest_failure",
         stateDomain,
         requestId,
-        status: undefined,
-        errorCode
+        status: responseStatus,
+        errorCode,
+        causeCode,
+        retryable: requestError?.retryable
       });
-      setNoticeMessage("AI服务暂时不稳定，请稍后再试。");
+      setMessages((current) => replaceIngestRetryOutcome(
+        current,
+        options?.failedMessageId,
+        {
+          id: `assistant-failed-${requestId}`,
+          role: "assistant",
+          content: message,
+          time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
+          model: currentModelLabel,
+          provider: requestModelOption.provider,
+          isRestored: false,
+          isHistorical: false,
+          isStreaming: false,
+          isGenerating: false,
+          typing: false,
+          status: "failed"
+        }
+      ));
+      setNoticeMessage(message);
       setErrorMessage(message);
       return null;
     } finally {
@@ -2483,6 +2573,36 @@ export function IngestModeToggle() {
         }
       }
     }
+  }
+
+  async function handleRetryFailedMessage(failedMessageId: string, prompt: string) {
+    if (isParsing) {
+      setNoticeMessage("上一条还在生成，请稍候再重试。");
+      return null;
+    }
+
+    const failedMessageIndex = messages.findIndex((message) => message.id === failedMessageId);
+    const failedMessage = failedMessageIndex >= 0 ? messages[failedMessageIndex] : null;
+    const previousUserMessage = failedMessageIndex > 0
+      ? messages.slice(0, failedMessageIndex).reverse().find((message) => message.role === "user")
+      : null;
+
+    if (!failedMessage || !previousUserMessage || !prompt.trim()) {
+      setNoticeMessage("未找到可重试的原始问题，请重新发送一次。");
+      return null;
+    }
+
+    const retryAttachments: IngestUploadState[] = (previousUserMessage.attachments ?? []).map((file) => ({
+      ...file
+    }));
+
+    return handleSend(prompt, {
+      reuseUserMessageId: previousUserMessage.id,
+      failedMessageId,
+      retryAttachments,
+      modelLabel: failedMessage.model ?? selectedModelLabel,
+      preserveComposer: true
+    });
   }
 
   function handleCancelIngest() {
@@ -3253,6 +3373,7 @@ export function IngestModeToggle() {
     onNoticeChange: setNoticeMessage,
     onErrorChange: setErrorMessage,
     onSend: handleSend,
+    onRetryFailedMessage: handleRetryFailedMessage,
     onCancel: handleCancelIngest,
     onSave: handleSave,
     onReconnectGpt: () => handleCheckGptStatus("reconnect"),

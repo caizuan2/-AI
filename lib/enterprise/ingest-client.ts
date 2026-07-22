@@ -59,6 +59,7 @@ import {
 import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orchestrator";
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import { buildAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
+import { AdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -243,12 +244,19 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE" | "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  causeCode?: string;
   message: string;
   userMessage?: string;
   retryable?: boolean;
   selectedModelLabel?: string;
   model?: string;
+  requestedProvider?: string;
+  actualProvider?: string | null;
+  requestedModel?: string;
+  actualModel?: string | null;
+  fallbackUsed?: boolean;
+  requestId?: string;
   raw?: null;
   diagnostics?: unknown;
 }
@@ -1184,7 +1192,20 @@ export async function sendCoreIngest(input: {
         requestId
       });
 
-      throw new Error(userMessage);
+      throw new AdminIngestRequestError(userMessage, {
+        status: response.status,
+        errorCode: payload.errorCode,
+        causeCode: payload.causeCode,
+        retryable: payload.retryable,
+        provider: payload.provider,
+        requestedProvider: payload.requestedProvider,
+        actualProvider: payload.actualProvider,
+        selectedModelLabel: payload.selectedModelLabel,
+        requestedModel: payload.requestedModel,
+        actualModel: payload.actualModel,
+        fallbackUsed: payload.fallbackUsed,
+        requestId: payload.requestId || requestId
+      });
     }
 
     if (ingestResult.type !== "success" || !ingestResult.raw) {
@@ -1198,7 +1219,13 @@ export async function sendCoreIngest(input: {
         actualModel: normalizedError.actualModel,
         requestId
       });
-      throw new Error(getFriendlyIngestError(response, payload));
+      throw new AdminIngestRequestError(getFriendlyIngestError(response, payload), {
+        status: normalizedError.status,
+        errorCode: normalizedError.errorCode,
+        provider: normalizedError.provider,
+        actualModel: normalizedError.actualModel,
+        requestId
+      });
     }
 
     const normalizedSuccess = normalizeIngestSuccessPayload(payload);
@@ -1333,6 +1360,10 @@ export async function sendCoreIngest(input: {
       message: `${selectedModelLabel} 已生成结构化知识：${draft.title}`
     };
   } catch (error) {
+    if (error instanceof AdminIngestRequestError) {
+      throw error;
+    }
+
     throw new Error(sanitizeGptOSUserMessage(error instanceof Error
       ? error.message
       : "AI服务暂时不稳定，请稍后再试。"));

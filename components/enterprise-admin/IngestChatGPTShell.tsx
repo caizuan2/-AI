@@ -224,6 +224,7 @@ interface IngestChatGPTShellProps {
   onNoticeChange?: (message: string) => void;
   onErrorChange?: (message: string) => void;
   onSend?: (value?: string) => Promise<IngestActionResult | null>;
+  onRetryFailedMessage?: (messageId: string, prompt: string) => Promise<unknown> | void;
   onCancel?: () => void;
   onSave?: () => Promise<IngestActionResult | null>;
   onReconnectGpt?: () => Promise<unknown>;
@@ -846,6 +847,7 @@ export function IngestChatGPTShell({
   onNoticeChange,
   onErrorChange,
   onSend,
+  onRetryFailedMessage,
   onCancel,
   onSave,
   onUpload,
@@ -2362,6 +2364,40 @@ export function IngestChatGPTShell({
                           />
 
                           <p className="pr-1 text-[11px] text-[#999]">{message.time}</p>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  if (message.status === "failed") {
+                    return (
+                      <div
+                        key={message.id}
+                        ref={(node) => registerMessageNode(message.id, node)}
+                        className={["flex w-full justify-start transition", highlightClass].join(" ")}
+                      >
+                        <div
+                          role="alert"
+                          className="w-full rounded-2xl border border-[#f1c8c5] bg-[#fff8f7] px-4 py-3 text-sm text-[#6f2924] shadow-sm"
+                        >
+                          <p className="font-semibold">本轮未生成结果</p>
+                          <p className="mt-1 whitespace-pre-wrap leading-6">{message.content}</p>
+                          <div className="mt-3 flex flex-wrap items-center gap-3">
+                            {onRetryFailedMessage && messageQuestion ? (
+                              <button
+                                type="button"
+                                disabled={isParsing}
+                                onClick={() => void onRetryFailedMessage(message.id, messageQuestion)}
+                                className="rounded-full bg-[#202020] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                同模型重试
+                              </button>
+                            ) : null}
+                            <span className="text-[11px] text-[#9b5b56]">
+                              {message.model ?? selectedModelLabel} · 未切换其他模型
+                            </span>
+                          </div>
+                          <p className="mt-2 text-[11px] text-[#b27873]">{message.time}</p>
                         </div>
                       </div>
                     );

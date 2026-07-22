@@ -1,3 +1,5 @@
+import { readAdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
+
 export type IngestStateDomain = "auth" | "model_health" | "ingest" | "no_access" | "ui_transient" | "unknown";
 
 export type IngestToastGuardInput = {
@@ -10,6 +12,8 @@ export type IngestToastGuardInput = {
   suppressUntil?: number;
   status?: number;
   errorCode?: string;
+  causeCode?: string;
+  retryable?: boolean;
 };
 
 function normalizeSignal(value: unknown) {
@@ -21,8 +25,9 @@ function includesAny(value: string, signals: string[]) {
 }
 
 export function getStateDomain(errorOrResult: unknown): IngestStateDomain {
+  const details = readAdminIngestRequestError(errorOrResult);
   const raw = errorOrResult instanceof Error
-    ? `${errorOrResult.name} ${errorOrResult.message}`
+    ? `${errorOrResult.name} ${errorOrResult.message} ${details?.errorCode ?? ""} ${details?.causeCode ?? ""} ${details?.status ?? ""}`
     : typeof errorOrResult === "string"
       ? errorOrResult
       : JSON.stringify(errorOrResult ?? {});
@@ -73,6 +78,8 @@ export function getStateDomain(errorOrResult: unknown): IngestStateDomain {
   if (includesAny(text, [
     "ingest",
     "provider",
+    "admin_ingest_selected_model_unavailable",
+    "doubao_timeout",
     "network",
     "timeout",
     "abort",
@@ -93,16 +100,25 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
   const reason = normalizeSignal(input.reason);
   const errorCode = normalizeSignal(input.errorCode);
   const stateDomain = input.stateDomain ?? "unknown";
+  const isCurrentActiveRequest = Boolean(
+    input.requestId
+    && input.activeRequestId
+    && input.requestId === input.activeRequestId
+  );
 
   if (input.hasCurrentSuccess === true) {
     return true;
   }
 
-  if (typeof input.suppressUntil === "number" && now < input.suppressUntil) {
+  if (input.requestId && input.activeRequestId && input.requestId !== input.activeRequestId) {
     return true;
   }
 
-  if (input.requestId && input.activeRequestId && input.requestId !== input.activeRequestId) {
+  if (
+    !isCurrentActiveRequest
+    && typeof input.suppressUntil === "number"
+    && now < input.suppressUntil
+  ) {
     return true;
   }
 
@@ -148,7 +164,7 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
 
 export function isRealIngestFailure(input: IngestToastGuardInput) {
   const reason = normalizeSignal(input.reason);
-  const errorCode = normalizeSignal(input.errorCode);
+  const errorCode = normalizeSignal(`${input.errorCode ?? ""} ${input.causeCode ?? ""}`);
   const stateDomain = input.stateDomain ?? "unknown";
 
   if (shouldSuppressFallbackToast(input)) {
@@ -165,6 +181,8 @@ export function isRealIngestFailure(input: IngestToastGuardInput) {
 
   if (includesAny(errorCode, [
     "ingest_failure",
+    "admin_ingest_selected_model_unavailable",
+    "doubao_timeout",
     "provider_error",
     "provider_crash",
     "network_error",

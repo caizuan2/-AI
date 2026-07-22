@@ -34,10 +34,63 @@ const originalEnv = {
   DOUBAO_BASE_URL: process.env.DOUBAO_BASE_URL,
   DOUBAO_PRO_MODEL: process.env.DOUBAO_PRO_MODEL,
   DOUBAO_MODEL: process.env.DOUBAO_MODEL,
+  DOUBAO_CONNECT_TIMEOUT_MS: process.env.DOUBAO_CONNECT_TIMEOUT_MS,
+  DOUBAO_FIRST_EVENT_TIMEOUT_MS: process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS,
+  DOUBAO_STREAM_IDLE_TIMEOUT_MS: process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS,
+  DOUBAO_HARD_TIMEOUT_MS: process.env.DOUBAO_HARD_TIMEOUT_MS,
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
   DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL,
   DEEPSEEK_PRO_MODEL: process.env.DEEPSEEK_PRO_MODEL
 };
+
+function createChunkedSseResponse(input: {
+  model: string;
+  content: string;
+  responseId?: string;
+}) {
+  const splitAt = Math.floor(input.content.length / 2);
+  const sse = [
+    `data: ${JSON.stringify({
+      id: input.responseId ?? "doubao-stream-contract-test",
+      model: input.model,
+      created: 1_786_000_000,
+      choices: [{ delta: { role: "assistant", content: input.content.slice(0, splitAt) } }]
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      id: input.responseId ?? "doubao-stream-contract-test",
+      model: input.model,
+      choices: [{ delta: { content: input.content.slice(splitAt) }, finish_reason: "stop" }]
+    })}\n\n`,
+    `data: ${JSON.stringify({
+      id: input.responseId ?? "doubao-stream-contract-test",
+      model: input.model,
+      choices: [],
+      usage: { prompt_tokens: 120, completion_tokens: 240, total_tokens: 360 }
+    })}\n\n`,
+    "data: [DONE]\n\n"
+  ].join("");
+  const bytes = new TextEncoder().encode(sse);
+  const chunkSizes = [1, 2, 5, 3, 8, 13, 4, 7];
+
+  return new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      let offset = 0;
+      let chunkIndex = 0;
+
+      while (offset < bytes.length) {
+        const size = chunkSizes[chunkIndex % chunkSizes.length];
+        controller.enqueue(bytes.slice(offset, Math.min(bytes.length, offset + size)));
+        offset += size;
+        chunkIndex += 1;
+      }
+
+      controller.close();
+    }
+  }), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream; charset=utf-8" }
+  });
+}
 
 const restoreEnv = () => {
   for (const [name, value] of Object.entries(originalEnv)) {
@@ -135,6 +188,11 @@ try {
     extractDoubaoReplyMarkdown(`\`\`\`json\n${providerContent}\n\`\`\``),
     exactReplyMarkdown
   );
+  assert.equal(
+    extractDoubaoReplyMarkdown(exactReplyMarkdown),
+    exactReplyMarkdown,
+    "Plain Doubao Markdown must pass through without trimming or wrapping."
+  );
 
   process.env.ARK_API_KEY = "ark-test-secret";
   delete process.env.DOUBAO_API_KEY;
@@ -150,6 +208,14 @@ try {
     const headers = new Headers(init?.headers);
     capturedAuthorization = headers.get("authorization") ?? "";
     capturedRequestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+
+    if (capturedRequestBody.stream === true) {
+      return createChunkedSseResponse({
+        model: "ep-doubao-provider-test",
+        content: providerContent,
+        responseId: "doubao-response-contract-test"
+      });
+    }
 
     return new Response(JSON.stringify({
       id: "doubao-response-contract-test",
@@ -215,7 +281,8 @@ try {
   assert.equal(capturedUrl, "https://ark.example.test/api/v3/chat/completions");
   assert.equal(capturedAuthorization, "Bearer ark-test-secret");
   assert.equal(capturedRequestBody.model, "ep-doubao-provider-test");
-  assert.equal(capturedRequestBody.stream, false);
+  assert.equal(capturedRequestBody.stream, true);
+  assert.deepEqual(capturedRequestBody.stream_options, { include_usage: true });
 
   const messages = capturedRequestBody.messages as Array<{ role: string; content: string }>;
   assert.equal(messages.length, 2);
@@ -468,6 +535,342 @@ try {
     )
   );
   assert.equal(deepSeekCalledAfterSafetyRejection, false, "Safety rejection must not be bypassed through another provider.");
+
+  let partialStreamCalls = 0;
+  globalThis.fetch = async () => {
+    partialStreamCalls += 1;
+    const bytes = new TextEncoder().encode(`data: ${JSON.stringify({
+      id: "doubao-partial-stream-test",
+      model: "ep-doubao-provider-test",
+      choices: [{ delta: { content: "PARTIAL_CONTENT_SENTINEL" } }]
+    })}\n\n`);
+    let step = 0;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (step === 0) {
+          step += 1;
+          controller.enqueue(bytes);
+          return;
+        }
+
+        controller.error(new Error("simulated stream disconnect"));
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_REQUEST_FAILED"
+      && (error as { details?: { receivedContent?: unknown } }).details?.receivedContent === true
+    )
+  );
+  assert.equal(partialStreamCalls, 1, "A stream that already emitted content must never restart the model request.");
+
+  let malformedReaderCancelled = false;
+  globalThis.fetch = async () => new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("data: {not-json}\n\n"));
+    },
+    cancel() {
+      malformedReaderCancelled = true;
+    }
+  }), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" }
+  });
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
+    )
+  );
+  assert.equal(malformedReaderCancelled, true, "A failed SSE reader must be cancelled and released.");
+
+  let incompleteEofCalls = 0;
+  globalThis.fetch = async () => {
+    incompleteEofCalls += 1;
+    const bytes = new TextEncoder().encode(`data: ${JSON.stringify({
+      id: "doubao-incomplete-eof-test",
+      model: "ep-doubao-provider-test",
+      choices: [{ delta: { content: "INCOMPLETE_EOF_SENTINEL" } }]
+    })}\n\n`);
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
+      && (error as { details?: { receivedContent?: unknown } }).details?.receivedContent === true
+    ),
+    "A stream EOF without [DONE] or finish_reason=stop must never persist partial Markdown."
+  );
+  assert.equal(incompleteEofCalls, 1);
+
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        id: "doubao-length-finish-test",
+        model: "ep-doubao-provider-test",
+        choices: [{ delta: { content: "TRUNCATED_BY_LENGTH_SENTINEL" }, finish_reason: "length" }]
+      })}\n\n`,
+      "data: [DONE]\n\n"
+    ].join("");
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
+    ),
+    "finish_reason=length must not be treated as a complete answer even when [DONE] follows."
+  );
+
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        id: "doubao-missing-model-test",
+        choices: [{ delta: { content: providerContent }, finish_reason: "stop" }]
+      })}\n\n`,
+      "data: [DONE]\n\n"
+    ].join("");
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
+    ),
+    "The actual model identity must come from the provider response."
+  );
+
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        id: "doubao-conflicting-model-test",
+        model: "ep-doubao-provider-test",
+        choices: [{ delta: { content: "MODEL_CONFLICT_SENTINEL" } }]
+      })}\n\n`,
+      `data: ${JSON.stringify({
+        id: "doubao-conflicting-model-test",
+        model: "unexpected-doubao-model",
+        choices: [{ delta: { content: providerContent }, finish_reason: "stop" }]
+      })}\n\n`,
+      "data: [DONE]\n\n"
+    ].join("");
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
+    ),
+    "Conflicting provider model identities must be rejected."
+  );
+
+  let completedReaderCancelled = false;
+  globalThis.fetch = async () => {
+    const sse = [
+      `data: ${JSON.stringify({
+        id: "doubao-reader-cleanup-test",
+        model: "ep-doubao-provider-test",
+        choices: [{ delta: { content: providerContent }, finish_reason: "stop" }]
+      })}\n\n`,
+      "data: [DONE]\n\n"
+    ].join("");
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+      },
+      cancel() {
+        completedReaderCancelled = true;
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  const cleanupResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(cleanupResult.replyMarkdown, exactReplyMarkdown);
+  assert.equal(completedReaderCancelled, true, "A completed SSE reader must be cancelled and released.");
+
+  let zeroContentRetryCalls = 0;
+  const retryModels: string[] = [];
+  globalThis.fetch = async (_url, init) => {
+    zeroContentRetryCalls += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
+    retryModels.push(body.model ?? "");
+
+    if (zeroContentRetryCalls === 1) {
+      return new Response(JSON.stringify({ error: { message: "temporary unavailable" } }), {
+        status: 503,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return createChunkedSseResponse({
+      model: "ep-doubao-provider-test",
+      content: providerContent,
+      responseId: "doubao-retry-success"
+    });
+  };
+  const retryResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(zeroContentRetryCalls, 2, "A retryable zero-content failure may retry the same provider once.");
+  assert.deepEqual(retryModels, ["ep-doubao-provider-test", "ep-doubao-provider-test"]);
+  assert.equal(retryResult.provider, "doubao");
+  assert.equal(retryResult.replyMarkdown, exactReplyMarkdown);
+
+  process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS = "15";
+  process.env.DOUBAO_HARD_TIMEOUT_MS = "1000";
+  let firstEventTimeoutCalls = 0;
+  globalThis.fetch = async () => {
+    firstEventTimeoutCalls += 1;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start() {
+        // Intentionally leave the stream open without an SSE event.
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_TIMEOUT"
+      && (error as { details?: { timeoutStage?: unknown } }).details?.timeoutStage === "first_event"
+    )
+  );
+  assert.equal(firstEventTimeoutCalls, 2, "A first-event timeout may retry Doubao once, without another provider.");
+
+  let firstEventKeepaliveCalls = 0;
+  let firstEventKeepaliveCancels = 0;
+  globalThis.fetch = async () => {
+    firstEventKeepaliveCalls += 1;
+    let interval: ReturnType<typeof setInterval> | undefined;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        interval = setInterval(() => {
+          controller.enqueue(new TextEncoder().encode(": keepalive\n\n"));
+        }, 5);
+      },
+      cancel() {
+        firstEventKeepaliveCancels += 1;
+        if (interval) {
+          clearInterval(interval);
+        }
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_TIMEOUT"
+      && (error as { details?: { timeoutStage?: unknown } }).details?.timeoutStage === "first_event"
+    )
+  );
+  assert.equal(
+    firstEventKeepaliveCalls,
+    2,
+    "Raw keepalive bytes must not reset the first valid SSE event deadline."
+  );
+  assert.equal(firstEventKeepaliveCancels, 2, "Timed-out SSE readers must be cancelled and released.");
+  delete process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS;
+  delete process.env.DOUBAO_HARD_TIMEOUT_MS;
+
+  process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS = "15";
+  process.env.DOUBAO_HARD_TIMEOUT_MS = "1000";
+  let roleOnlyIdleCalls = 0;
+  globalThis.fetch = async () => {
+    roleOnlyIdleCalls += 1;
+    const roleOnlyEvent = `data: ${JSON.stringify({
+      id: `doubao-role-only-${roleOnlyIdleCalls}`,
+      model: "ep-doubao-provider-test",
+      choices: [{ delta: { role: "assistant" } }]
+    })}\n\n`;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(roleOnlyEvent));
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_TIMEOUT"
+      && (error as { details?: { timeoutStage?: unknown } }).details?.timeoutStage === "idle"
+    )
+  );
+  assert.equal(roleOnlyIdleCalls, 2, "A zero-content idle timeout may retry the same Doubao model once.");
+  delete process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS;
+  delete process.env.DOUBAO_HARD_TIMEOUT_MS;
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   assert.match(routeSource, /result\.provider === "doubao"/);

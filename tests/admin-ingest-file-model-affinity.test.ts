@@ -112,8 +112,8 @@ function testComposerUsesStrictSelectedModelForAttachmentParsing() {
 
   assert.match(source, /parseUploadedFilesForGpt\(composerUploads, 1, \{/);
   assert.match(source, /modelProvider:\s*selectedFileModelProvider/);
-  assert.match(source, /preferredModel:\s*selectedModelOption\.defaultModel/);
-  assert.match(source, /selectedModelLabel:\s*selectedModelOption\.label/);
+  assert.match(source, /preferredModel:\s*requestModelOption\.defaultModel/);
+  assert.match(source, /selectedModelLabel:\s*requestModelOption\.label/);
   assert.match(source, /strictModelAffinity:\s*true/);
   assert.match(source, /signal:\s*abortController\.signal/);
   assert.match(source, /pageBatchSize:\s*4/);

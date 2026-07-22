@@ -1,6 +1,7 @@
 "use client";
 
 import type { IngestConversationState } from "@/lib/enterprise/ingest-conversation-state";
+import { readAdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
 
 export function createIngestRequestId() {
   try {
@@ -35,8 +36,12 @@ export function shouldResetLoading(state: IngestConversationState | null | undef
 }
 
 export function isRetryableIngestError(error: unknown) {
+  const details = readAdminIngestRequestError(error);
   const message = error instanceof Error ? error.message : String(error ?? "");
-  const normalized = message.toLowerCase();
+  const normalized = [message, details?.errorCode, details?.causeCode, details?.status]
+    .filter((value) => value !== undefined && value !== null)
+    .join(" ")
+    .toLowerCase();
 
   if (
     normalized.includes("401")
@@ -49,6 +54,10 @@ export function isRetryableIngestError(error: unknown) {
     || normalized.includes("请先登录")
   ) {
     return false;
+  }
+
+  if (typeof details?.retryable === "boolean") {
+    return details.retryable;
   }
 
   return normalized.includes("network")
