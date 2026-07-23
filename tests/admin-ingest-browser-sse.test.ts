@@ -38,15 +38,46 @@ function buildSuccessPayload() {
       importance: "medium",
       saveStatus: "待确认"
     },
-    records: []
+    records: [],
+    diagnostics: ["doubao:metadataCompleted:true"]
   };
 }
 
-function createBrowserSseResponse(eventName: "final" | "error", status: number, payload: unknown) {
+function createBrowserSseResponse(input: {
+  requestId: string;
+  eventName: "final" | "error";
+  status: number;
+  payload: unknown;
+  includeVisibleReply?: boolean;
+  statusEvents?: Array<Record<string, unknown>>;
+}) {
+  const [statusBeforeVisible, ...statusAfterVisible] = input.statusEvents ?? [];
   const body = [
-    `event: accepted\ndata: ${JSON.stringify({ type: "accepted", requestId: "browser-sse-contract" })}\n\n`,
-    `event: heartbeat\ndata: ${JSON.stringify({ type: "heartbeat", requestId: "browser-sse-contract", elapsedMs: 12_000 })}\n\n`,
-    `event: ${eventName}\ndata: ${JSON.stringify({ type: eventName, requestId: "browser-sse-contract", status, payload })}\n\n`
+    `event: accepted\ndata: ${JSON.stringify({ type: "accepted", requestId: input.requestId })}\n\n`,
+    `event: heartbeat\ndata: ${JSON.stringify({ type: "heartbeat", requestId: input.requestId, elapsedMs: 12_000 })}\n\n`,
+    ...(statusBeforeVisible ? [
+      `event: status\ndata: ${JSON.stringify({ requestId: input.requestId, ...statusBeforeVisible })}\n\n`
+    ] : []),
+    ...(input.includeVisibleReply ? [
+      `event: visible\ndata: ${JSON.stringify({
+        type: "visible",
+        requestId: input.requestId,
+        provider: "doubao-pro",
+        actualModel: "doubao-seed-2-1-pro-260628",
+        responseId: "doubao-browser-sse-success",
+        replyMarkdown: rawMarkdown,
+        metadataPending: true
+      })}\n\n`
+    ] : []),
+    ...statusAfterVisible.map((event) => (
+      `event: status\ndata: ${JSON.stringify({ requestId: input.requestId, ...event })}\n\n`
+    )),
+    `event: ${input.eventName}\ndata: ${JSON.stringify({
+      type: input.eventName,
+      requestId: input.requestId,
+      status: input.status,
+      payload: input.payload
+    })}\n\n`
   ].join("");
   const bytes = new TextEncoder().encode(body);
 
@@ -83,7 +114,7 @@ async function main() {
     "A closed replyMarkdown JSON string must survive a malformed metadata tail without body rewriting."
   );
 
-  let mode: "sse_success" | "sse_error" | "sse_disconnect" | "legacy_json" = "sse_success";
+  let mode: "sse_success" | "sse_error" | "sse_rate_limited" | "sse_disconnect" | "legacy_json" = "sse_success";
   let gptRequestCount = 0;
 
   globalThis.fetch = async (request, init) => {
@@ -103,6 +134,10 @@ async function main() {
     }
 
     gptRequestCount += 1;
+    const requestBody = JSON.parse(String(init?.body ?? "{}")) as {
+      runtimeContext?: { requestId?: string };
+    };
+    const requestId = requestBody.runtimeContext?.requestId ?? "browser-sse-contract";
     assert.match(
       new Headers(init?.headers).get("accept") ?? "",
       /text\/event-stream/,
@@ -117,35 +152,85 @@ async function main() {
     }
 
     if (mode === "sse_error") {
-      return createBrowserSseResponse("error", 503, {
-        ok: false,
-        success: false,
-        errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-        causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
-        message: "Doubao-Seed-2.1-pro 返回未完整解析，系统未切换其他模型。",
-        userMessage: "Doubao-Seed-2.1-pro 返回未完整解析，系统未切换其他模型。",
-        retryable: true,
-        provider: "doubao-pro",
-        requestedProvider: "doubao-pro",
-        actualProvider: null,
-        selectedModelLabel: "Doubao-Seed-2.1-pro",
-        requestedModel: "doubao-seed-2-1-pro-260628",
-        actualModel: null,
-        fallbackUsed: false,
-        requestId: "browser-sse-contract",
-        failureDetails: {
-          parseStage: "finish_reason",
-          finishReason: "length",
-          eventCount: 34,
-          receivedChars: 8192,
-          receivedContent: true
+      return createBrowserSseResponse({
+        requestId,
+        eventName: "error",
+        status: 503,
+        payload: {
+          ok: false,
+          success: false,
+          errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+          causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+          message: "Doubao-Seed-2.1-pro 返回未完整解析，系统未切换其他模型。",
+          userMessage: "Doubao-Seed-2.1-pro 返回未完整解析，系统未切换其他模型。",
+          retryable: true,
+          provider: "doubao-pro",
+          requestedProvider: "doubao-pro",
+          actualProvider: null,
+          selectedModelLabel: "Doubao-Seed-2.1-pro",
+          requestedModel: "doubao-seed-2-1-pro-260628",
+          actualModel: null,
+          fallbackUsed: false,
+          requestId,
+          failureDetails: {
+            parseStage: "finish_reason",
+            finishReason: "length",
+            eventCount: 34,
+            receivedChars: 8192,
+            receivedContent: true
+          }
         }
       });
     }
 
+    if (mode === "sse_rate_limited") {
+      return createBrowserSseResponse({
+        requestId,
+        eventName: "error",
+        status: 429,
+        payload: {
+          ok: false,
+          success: false,
+          errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+          causeCode: "DOUBAO_RATE_LIMITED",
+          message: "Doubao-Seed-2.1-pro 请求繁忙，系统未切换其他模型。",
+          userMessage: "Doubao-Seed-2.1-pro 请求繁忙，系统未切换其他模型。",
+          retryable: true,
+          provider: "doubao-pro",
+          requestedProvider: "doubao-pro",
+          actualProvider: null,
+          selectedModelLabel: "Doubao-Seed-2.1-pro",
+          requestedModel: "doubao-seed-2-1-pro-260628",
+          actualModel: null,
+          fallbackUsed: false,
+          requestId,
+          failureDetails: {
+            parseStage: "http_status",
+            retryAfterMs: 5_000
+          }
+        },
+        statusEvents: [{
+          type: "rate_limit_wait",
+          phase: "visible",
+          retryAfterMs: 5_000,
+          attempt: 1
+        }]
+      });
+    }
+
     if (mode === "sse_disconnect") {
-      const accepted = new TextEncoder().encode(
-        `event: accepted\ndata: ${JSON.stringify({ type: "accepted", requestId: "browser-sse-disconnect" })}\n\n`
+      const acceptedAndVisible = new TextEncoder().encode(
+        [
+          `event: accepted\ndata: ${JSON.stringify({ type: "accepted", requestId })}\n\n`,
+          `event: visible\ndata: ${JSON.stringify({
+            type: "visible",
+            requestId,
+            actualModel: "doubao-seed-2-1-pro-260628",
+            responseId: "doubao-browser-sse-disconnect-visible",
+            replyMarkdown: rawMarkdown,
+            metadataPending: true
+          })}\n\n`
+        ].join("")
       );
       let acceptedSent = false;
 
@@ -153,7 +238,7 @@ async function main() {
         pull(controller) {
           if (!acceptedSent) {
             acceptedSent = true;
-            controller.enqueue(accepted);
+            controller.enqueue(acceptedAndVisible);
             return;
           }
 
@@ -165,10 +250,23 @@ async function main() {
       });
     }
 
-    return createBrowserSseResponse("final", 200, buildSuccessPayload());
+    return createBrowserSseResponse({
+      requestId,
+      eventName: "final",
+      status: 200,
+      payload: buildSuccessPayload(),
+      includeVisibleReply: true,
+      statusEvents: [
+        { type: "queue_wait", phase: "visible", queueDepth: 1 },
+        { type: "metadata_status", phase: "metadata", state: "pending" },
+        { type: "metadata_status", phase: "metadata", state: "completed" }
+      ]
+    });
   };
 
   try {
+    const successEventOrder: string[] = [];
+    let visibleReply = "";
     const success = await sendCoreIngest({
       text: "豆包浏览器 SSE 成功测试",
       category: "测试",
@@ -176,8 +274,28 @@ async function main() {
       modelProvider: "doubao-pro",
       selectedModelLabel: "Doubao-Seed-2.1-pro",
       requestId: "browser-sse-success",
-      agent
+      agent,
+      streaming: {
+        onVisibleReply(event) {
+          successEventOrder.push("visible");
+          visibleReply = event.replyMarkdown;
+          assert.equal(event.requestId, "browser-sse-success");
+          assert.equal(event.metadataPending, true);
+        },
+        onStatus(event) {
+          successEventOrder.push(`${event.type}:${event.state ?? event.phase ?? ""}`);
+        }
+      }
     });
+    successEventOrder.push("final");
+    assert.equal(visibleReply, rawMarkdown, "The early visible event must preserve the exact Doubao Markdown.");
+    assert.deepEqual(successEventOrder, [
+      "queue_wait:visible",
+      "visible",
+      "metadata_status:pending",
+      "metadata_status:completed",
+      "final"
+    ]);
     assert.equal(success.replyMarkdown, rawMarkdown, "Doubao Markdown must remain byte-for-byte unchanged after SSE JSON decoding.");
     assert.equal(success.fallbackUsed, false);
 
@@ -217,7 +335,40 @@ async function main() {
       }
     );
 
+    mode = "sse_rate_limited";
+    let rateLimitWaitMs = 0;
+    await assert.rejects(
+      () => sendCoreIngest({
+        text: "豆包浏览器 SSE 限流测试",
+        category: "测试",
+        model: "Doubao-Seed-2.1-pro",
+        modelProvider: "doubao-pro",
+        selectedModelLabel: "Doubao-Seed-2.1-pro",
+        requestId: "browser-sse-rate-limited",
+        agent,
+        streaming: {
+          onStatus(event) {
+            if (event.type === "rate_limit_wait") {
+              rateLimitWaitMs = event.retryAfterMs ?? 0;
+            }
+          }
+        }
+      }),
+      (error: unknown) => {
+        const details = readAdminIngestRequestError(error);
+
+        return error instanceof AdminIngestRequestError
+          && details?.status === 429
+          && details.causeCode === "DOUBAO_RATE_LIMITED"
+          && details.failureDetails?.retryAfterMs === 5_000
+          && details.retryable === true
+          && details.fallbackUsed === false;
+      }
+    );
+    assert.equal(rateLimitWaitMs, 5_000, "Retry-After must survive the browser SSE status channel.");
+
     mode = "sse_disconnect";
+    let disconnectedVisibleReply = "";
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包浏览器 SSE 断流测试",
@@ -226,7 +377,12 @@ async function main() {
         modelProvider: "doubao-pro",
         selectedModelLabel: "Doubao-Seed-2.1-pro",
         requestId: "browser-sse-disconnect",
-        agent
+        agent,
+        streaming: {
+          onVisibleReply(event) {
+            disconnectedVisibleReply = event.replyMarkdown;
+          }
+        }
       }),
       (error: unknown) => {
         const details = readAdminIngestRequestError(error);
@@ -239,20 +395,27 @@ async function main() {
           && details.fallbackUsed === false;
       }
     );
+    assert.equal(
+      disconnectedVisibleReply,
+      rawMarkdown,
+      "A transport failure after the visible event must not erase the already delivered Doubao body."
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(gptRequestCount, 4);
+  assert.equal(gptRequestCount, 5);
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   const providerSource = readFileSync("lib/enterprise/ingest-model-provider.ts", "utf8");
   assert.match(routeSource, /ADMIN_INGEST_SSE_HEARTBEAT_MS = 12_000/);
   assert.match(routeSource, /enqueue\("accepted"/);
   assert.match(routeSource, /enqueue\("heartbeat"/);
+  assert.match(routeSource, /enqueue\("visible"/);
+  assert.match(routeSource, /enqueue\("status"/);
   assert.match(routeSource, /response\.ok \? "final" : "error"/);
   assert.match(routeSource, /producer: executeRequest/);
-  assert.match(routeSource, /signal\r?\n\s*\}\);/);
+  assert.match(routeSource, /onProgressEvent: onDoubaoProgressEvent/);
   assert.match(providerSource, /signal: providerSignal/);
 
   console.log("Admin ingest browser SSE transport tests passed.");

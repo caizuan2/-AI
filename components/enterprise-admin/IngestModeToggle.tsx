@@ -935,7 +935,8 @@ export function IngestModeToggle() {
     void checkGptHealthStatus({
       provider: doubaoOption.provider,
       selectedModelLabel: doubaoOption.label,
-      preferredModel: doubaoOption.defaultModel
+      preferredModel: doubaoOption.defaultModel,
+      testRequest: false
     }).then((status) => {
       if (cancelled || requestVersion !== doubaoHealthRequestVersionRef.current) {
         return;
@@ -1904,6 +1905,7 @@ export function IngestModeToggle() {
       messages.length > 0 ? messages : conversationMessagesById[conversationId] ?? []
     );
     const requestId = createIngestRequestId();
+    const assistantMessageId = `assistant-result-${requestId}`;
     const abortController = new AbortController();
     let conversationState = ensureConversationState(conversationStateByIdRef.current[conversationId], {
       conversationId,
@@ -1935,6 +1937,7 @@ export function IngestModeToggle() {
         .slice(-1)[0]?.id
       ?? `user-${Date.now()}`;
     conversationState = appendAssistantPlaceholder(conversationState, {
+      id: assistantMessageId,
       requestId,
       meta: {
         model: currentModelLabel,
@@ -1987,6 +1990,8 @@ export function IngestModeToggle() {
     }
 
     let successRendered = false;
+    let visibleReplyRendered = false;
+    let visibleReplySnapshot = "";
     let resumableUploads = composerUploads;
     let outgoingAttachments: IngestUploadState[] = draftAttachments;
 
@@ -2114,7 +2119,85 @@ export function IngestModeToggle() {
             },
             platform: platformContext.platform,
             streaming: {
-              signal: abortController.signal
+              signal: abortController.signal,
+              onVisibleReply: (event) => {
+                if (
+                  event.requestId !== requestId
+                  || !isCurrentRequest()
+                  || shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId)
+                ) {
+                  return;
+                }
+
+                visibleReplySnapshot = event.replyMarkdown;
+                visibleReplyRendered = true;
+                conversationStateByIdRef.current[conversationId] = updateAssistantMessage(
+                  conversationStateByIdRef.current[conversationId],
+                  {
+                    requestId,
+                    messageId: assistantMessageId,
+                    content: event.replyMarkdown,
+                    meta: {
+                      provider: "doubao-pro",
+                      model: event.actualModel ?? currentModelLabel,
+                      metadataState: "pending"
+                    }
+                  }
+                );
+                setMessages((current) => replaceIngestRetryOutcome(
+                  current.map(markMessageCompleted),
+                  options?.failedMessageId,
+                  {
+                    id: assistantMessageId,
+                    role: "assistant",
+                    content: event.replyMarkdown,
+                    time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+                    source: "admin_ingest",
+                    platform: platformContext.platform,
+                    syncTarget: [...platformContext.syncTarget],
+                    tenantId,
+                    userId,
+                    agentId: activeAgent.id,
+                    expertId: activeAgent.expertId ?? null,
+                    conversationId,
+                    agentName: activeAgent.name,
+                    expertName: activeAgent.expertId ? activeAgent.name : null,
+                    model: event.actualModel ?? currentModelLabel,
+                    provider: "doubao-pro",
+                    metadataState: "pending",
+                    isRestored: false,
+                    isHistorical: false,
+                    isStreaming: true,
+                    isGenerating: true,
+                    typing: false,
+                    status: "streaming"
+                  }
+                ));
+                setNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
+                setErrorMessage("");
+              },
+              onStatus: (event) => {
+                if (!isCurrentRequest()) {
+                  return;
+                }
+
+                if (event.type === "rate_limit_wait") {
+                  const waitSeconds = Math.max(1, Math.ceil((event.retryAfterMs ?? 0) / 1000));
+                  setNoticeMessage(`豆包限流排队中，预计 ${waitSeconds} 秒后使用同模型重试...`);
+                  return;
+                }
+
+                if (event.type === "queue_wait") {
+                  setNoticeMessage(`豆包请求正在排队（前方 ${event.queueDepth ?? 0} 个任务）...`);
+                  return;
+                }
+
+                if (event.state === "pending" && visibleReplyRendered) {
+                  setNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
+                } else if (event.state === "deferred" && visibleReplyRendered) {
+                  setNoticeMessage("正文已生成，后台知识草稿暂缓入库。");
+                }
+              }
             },
             requestId,
             conversationId: contextPayload.conversationId,
@@ -2168,8 +2251,18 @@ export function IngestModeToggle() {
       const assistantContent = result.replyMarkdown || (result.preview
         ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
         : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`);
+      const isDoubaoResult = result.provider === "doubao" || result.provider === "doubao-pro";
+      const metadataState: IngestChatMessage["metadataState"] = isDoubaoResult
+        ? result.diagnostics.includes("doubao:metadataCompleted:true") ? "ready" : "unavailable"
+        : undefined;
+
+      if (visibleReplyRendered && assistantContent !== visibleReplySnapshot) {
+        throw new Error("DOUBAO_RESPONSE_PARSE_FAILED: 豆包可见正文与最终正文不一致，已保留先前原文。");
+      }
+
       let nextConversationState = updateAssistantMessage(conversationStateByIdRef.current[conversationId], {
         requestId,
+        messageId: assistantMessageId,
         content: assistantContent,
         meta: {
           provider: result.provider,
@@ -2179,6 +2272,7 @@ export function IngestModeToggle() {
           requestedModel: result.requestedModel,
           actualModel: result.actualModel,
           fallbackUsed: result.fallbackUsed,
+          metadataState,
           memoryV2: {
             usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
             recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
@@ -2190,6 +2284,7 @@ export function IngestModeToggle() {
       });
       nextConversationState = completeAssistantMessage(nextConversationState, {
         requestId,
+        messageId: assistantMessageId,
         content: assistantContent,
         meta: {
           provider: result.provider,
@@ -2200,6 +2295,7 @@ export function IngestModeToggle() {
           actualModel: result.actualModel,
           fallbackUsed: result.fallbackUsed,
           draftTitle: result.draft.title,
+          metadataState,
           memoryV2: {
             usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
             recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
@@ -2231,7 +2327,7 @@ export function IngestModeToggle() {
         current.map(markMessageCompleted),
         options?.failedMessageId,
         {
-          id: `assistant-result-${Date.now()}`,
+          id: assistantMessageId,
           role: "assistant",
           content: assistantContent,
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
@@ -2247,6 +2343,7 @@ export function IngestModeToggle() {
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: result.model ?? currentModelLabel,
           provider: result.provider,
+          metadataState,
           saveSuggestion: result.saveSuggestion,
           gptProof: result.gptProof,
           gptOS: result.draft.gptOS,
@@ -2289,14 +2386,16 @@ export function IngestModeToggle() {
           ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
           : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
       });
-      void triggerMemoryExtraction({
-        conversationId,
-        agentId: activeAgent.id,
-        knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-        messages: nextConversationState.messages,
-        latestAssistantReply: assistantContent,
-        userInstruction: effectiveInput
-      });
+      if (metadataState !== "unavailable") {
+        void triggerMemoryExtraction({
+          conversationId,
+          agentId: activeAgent.id,
+          knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+          messages: nextConversationState.messages,
+          latestAssistantReply: assistantContent,
+          userInstruction: effectiveInput
+        });
+      }
 
       return {
         ...result,
@@ -2325,6 +2424,58 @@ export function IngestModeToggle() {
       if (!options?.preserveComposer) {
         setInput((current) => current || value);
         setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
+      }
+
+      if (visibleReplyRendered && visibleReplySnapshot) {
+        conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
+          conversationStateByIdRef.current[conversationId],
+          {
+            requestId,
+            messageId: assistantMessageId,
+            content: visibleReplySnapshot,
+            meta: {
+              provider: "doubao-pro",
+              model: currentModelLabel,
+              metadataState: "unavailable",
+              warning: rawErrorMessage
+            }
+          }
+        );
+        setMessages((current) => replaceIngestRetryOutcome(
+          current,
+          options?.failedMessageId,
+          {
+            id: assistantMessageId,
+            role: "assistant",
+            content: visibleReplySnapshot,
+            time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+            source: "admin_ingest",
+            platform: platformContext.platform,
+            syncTarget: [...platformContext.syncTarget],
+            tenantId,
+            userId,
+            agentId: activeAgent.id,
+            expertId: activeAgent.expertId ?? null,
+            conversationId,
+            agentName: activeAgent.name,
+            expertName: activeAgent.expertId ? activeAgent.name : null,
+            model: currentModelLabel,
+            provider: "doubao-pro",
+            metadataState: "unavailable",
+            saveSuggestion: false,
+            isRestored: false,
+            isHistorical: false,
+            isStreaming: false,
+            isGenerating: false,
+            typing: false,
+            status: "completed"
+          }
+        ));
+        successRendered = true;
+        setGptFallbackToast(null);
+        setNoticeMessage("豆包正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。");
+        setErrorMessage("");
+        return null;
       }
 
       if (abortController.signal.aborted) {
@@ -2490,7 +2641,11 @@ export function IngestModeToggle() {
             retryable: failurePresentation.retryable,
             requestedModel: requestError?.requestedModel,
             actualModel: requestError?.actualModel,
-            fallbackUsed: requestError?.fallbackUsed
+            fallbackUsed: requestError?.fallbackUsed,
+            retryAfterMs: failurePresentation.retryAfterMs,
+            retryAt: typeof failurePresentation.retryAfterMs === "number"
+              ? Date.now() + failurePresentation.retryAfterMs
+              : undefined
           },
           isRestored: false,
           isHistorical: false,
@@ -2546,6 +2701,15 @@ export function IngestModeToggle() {
 
     if (failedMessage.failureMeta?.retryable !== true) {
       setNoticeMessage("本轮错误不支持直接重试，请先检查模型连接配置或调整输入。");
+      return null;
+    }
+
+    if (
+      typeof failedMessage.failureMeta.retryAt === "number"
+      && failedMessage.failureMeta.retryAt > Date.now()
+    ) {
+      const waitSeconds = Math.max(1, Math.ceil((failedMessage.failureMeta.retryAt - Date.now()) / 1000));
+      setNoticeMessage(`豆包限流等待中，请在 ${waitSeconds} 秒后使用同模型重试。`);
       return null;
     }
 
@@ -2728,7 +2892,8 @@ export function IngestModeToggle() {
       const health = await checkGptHealthStatus({
         provider: nextModel.provider,
         selectedModelLabel: nextModel.label,
-        preferredModel: nextModel.defaultModel
+        preferredModel: nextModel.defaultModel,
+        testRequest: false
       });
 
       if (
@@ -2796,7 +2961,8 @@ export function IngestModeToggle() {
       const nextStatus = await checkGptHealthStatus({
         provider: selectedModelOption.provider,
         selectedModelLabel: selectedModelOption.label,
-        preferredModel: selectedModelOption.provider === "openai" ? selectedGptModel.apiModel : selectedModelOption.defaultModel
+        preferredModel: selectedModelOption.provider === "openai" ? selectedGptModel.apiModel : selectedModelOption.defaultModel,
+        testRequest: selectedModelOption.provider === "doubao-pro" ? true : undefined
       });
 
       setGptHealthStatus(nextStatus);

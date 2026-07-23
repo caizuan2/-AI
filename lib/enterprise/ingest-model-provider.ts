@@ -168,6 +168,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     preferredModel: input.preferredModel
   });
   const providerSignal = input.signal;
+  const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
   const baseInput = { ...input };
   const actualModel = resolveIngestActualModel(provider);
   const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
@@ -180,6 +181,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
 
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
   delete (baseInput as { signal?: unknown }).signal;
+  delete (baseInput as { onProgressEvent?: unknown }).onProgressEvent;
 
   const payload = {
     ...baseInput,
@@ -203,7 +205,8 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   if (provider === "doubao-pro") {
     return runDoubaoAdminIngest({
       ...payload,
-      signal: providerSignal
+      signal: providerSignal,
+      onProgressEvent: doubaoProgressEvent
     } as DoubaoAdminIngestInput);
   }
 

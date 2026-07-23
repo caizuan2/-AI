@@ -19,6 +19,7 @@ export type AdminIngestRequestErrorDetails = {
     receivedContent?: boolean;
     timeoutStage?: string;
     abortSource?: string;
+    retryAfterMs?: number;
   };
 };
 
@@ -76,6 +77,10 @@ export function readAdminIngestRequestError(error: unknown): AdminIngestRequestE
   const status = typeof record.status === "number" ? record.status : undefined;
   const readString = (value: unknown) => typeof value === "string" && value ? value : undefined;
   const readNullableString = (value: unknown) => value === null ? null : readString(value);
+  const failureDetailsRecord = record.failureDetails && typeof record.failureDetails === "object" && !Array.isArray(record.failureDetails)
+    ? record.failureDetails as Record<string, unknown>
+    : null;
+  const retryAfterMs = Number(failureDetailsRecord?.retryAfterMs);
 
   if (
     !status
@@ -99,8 +104,25 @@ export function readAdminIngestRequestError(error: unknown): AdminIngestRequestE
     actualModel: readNullableString(record.actualModel),
     fallbackUsed: typeof record.fallbackUsed === "boolean" ? record.fallbackUsed : undefined,
     requestId: readString(record.requestId),
-    failureDetails: record.failureDetails && typeof record.failureDetails === "object" && !Array.isArray(record.failureDetails)
-      ? record.failureDetails as AdminIngestRequestErrorDetails["failureDetails"]
+    failureDetails: failureDetailsRecord
+      ? {
+          parseStage: readString(failureDetailsRecord.parseStage),
+          finishReason: readString(failureDetailsRecord.finishReason),
+          eventCount: Number.isSafeInteger(Number(failureDetailsRecord.eventCount)) && Number(failureDetailsRecord.eventCount) >= 0
+            ? Number(failureDetailsRecord.eventCount)
+            : undefined,
+          receivedChars: Number.isSafeInteger(Number(failureDetailsRecord.receivedChars)) && Number(failureDetailsRecord.receivedChars) >= 0
+            ? Number(failureDetailsRecord.receivedChars)
+            : undefined,
+          receivedContent: typeof failureDetailsRecord.receivedContent === "boolean"
+            ? failureDetailsRecord.receivedContent
+            : undefined,
+          timeoutStage: readString(failureDetailsRecord.timeoutStage),
+          abortSource: readString(failureDetailsRecord.abortSource),
+          retryAfterMs: Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0
+            ? retryAfterMs
+            : undefined
+        }
       : undefined
   };
 }

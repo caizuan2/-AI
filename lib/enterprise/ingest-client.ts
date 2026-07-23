@@ -265,6 +265,7 @@ interface GptFailureResponse {
     receivedContent?: boolean;
     timeoutStage?: string;
     abortSource?: string;
+    retryAfterMs?: number;
   };
   raw?: null;
   diagnostics?: unknown;
@@ -278,6 +279,22 @@ export interface IngestStreamingState {
 export interface IngestStreamingOptions {
   onToken?: (chunk: string, fullText: string) => void;
   onThinking?: (state: IngestStreamingState) => void;
+  onVisibleReply?: (event: {
+    requestId: string;
+    replyMarkdown: string;
+    actualModel?: string;
+    responseId?: string;
+    metadataPending: true;
+  }) => void;
+  onStatus?: (event: {
+    type: "queue_wait" | "rate_limit_wait" | "metadata_status";
+    phase?: "visible" | "continuation" | "metadata" | "health";
+    queueDepth?: number;
+    retryAfterMs?: number;
+    attempt?: number;
+    state?: "pending" | "completed" | "deferred";
+    failureCode?: string;
+  }) => void;
   signal?: AbortSignal;
   chunkIntervalMs?: number;
   thinkingDelayMs?: number;
@@ -522,7 +539,16 @@ type AdminIngestBrowserSseTerminal = {
   payload: ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
 };
 
-function parseAdminIngestSseBlock(block: string): AdminIngestBrowserSseTerminal | null {
+type AdminIngestBrowserSseCallbacks = {
+  expectedRequestId: string;
+  onVisibleReply?: IngestStreamingOptions["onVisibleReply"];
+  onStatus?: IngestStreamingOptions["onStatus"];
+};
+
+function parseAdminIngestSseBlock(
+  block: string,
+  callbacks: AdminIngestBrowserSseCallbacks
+): AdminIngestBrowserSseTerminal | null {
   let eventName = "message";
   const dataLines: string[] = [];
 
@@ -537,7 +563,7 @@ function parseAdminIngestSseBlock(block: string): AdminIngestBrowserSseTerminal 
     }
   }
 
-  if ((eventName !== "final" && eventName !== "error") || dataLines.length === 0) {
+  if (dataLines.length === 0 || eventName === "accepted" || eventName === "heartbeat") {
     return null;
   }
 
@@ -559,6 +585,75 @@ function parseAdminIngestSseBlock(block: string): AdminIngestBrowserSseTerminal 
   }
 
   if (!isPlainRecord(envelope)) {
+    return null;
+  }
+
+  const eventRequestId = readString(envelope.requestId);
+
+  if (eventRequestId && eventRequestId !== callbacks.expectedRequestId) {
+    return null;
+  }
+
+  if (eventName === "visible") {
+    const replyMarkdown = typeof envelope.replyMarkdown === "string"
+      ? envelope.replyMarkdown
+      : "";
+
+    if (!eventRequestId || !replyMarkdown) {
+      throw new AdminIngestRequestError("豆包可见正文事件不完整，系统未切换其他模型。", {
+        status: 503,
+        errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+        causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+        retryable: true,
+        provider: "doubao-pro",
+        requestedProvider: "doubao-pro",
+        requestId: callbacks.expectedRequestId,
+        fallbackUsed: false,
+        failureDetails: { parseStage: "browser_sse_event" }
+      });
+    }
+
+    callbacks.onVisibleReply?.({
+      requestId: eventRequestId,
+      replyMarkdown,
+      actualModel: readString(envelope.actualModel),
+      responseId: readString(envelope.responseId),
+      metadataPending: true
+    });
+    return null;
+  }
+
+  if (eventName === "status") {
+    const type = readString(envelope.type);
+
+    if (type === "queue_wait" || type === "rate_limit_wait" || type === "metadata_status") {
+      const phase = readString(envelope.phase);
+      const state = readString(envelope.state);
+      callbacks.onStatus?.({
+        type,
+        phase: phase === "visible" || phase === "continuation" || phase === "metadata" || phase === "health"
+          ? phase
+          : undefined,
+        queueDepth: Number.isSafeInteger(Number(envelope.queueDepth)) && Number(envelope.queueDepth) >= 0
+          ? Number(envelope.queueDepth)
+          : undefined,
+        retryAfterMs: Number.isSafeInteger(Number(envelope.retryAfterMs)) && Number(envelope.retryAfterMs) >= 0
+          ? Number(envelope.retryAfterMs)
+          : undefined,
+        attempt: Number.isSafeInteger(Number(envelope.attempt)) && Number(envelope.attempt) >= 0
+          ? Number(envelope.attempt)
+          : undefined,
+        state: state === "pending" || state === "completed" || state === "deferred"
+          ? state
+          : undefined,
+        failureCode: readString(envelope.failureCode)
+      });
+    }
+
+    return null;
+  }
+
+  if (eventName !== "final" && eventName !== "error") {
     return null;
   }
 
@@ -588,7 +683,8 @@ function parseAdminIngestSseBlock(block: string): AdminIngestBrowserSseTerminal 
 
 async function readAdminIngestResponse(
   response: Response,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  callbacks: AdminIngestBrowserSseCallbacks
 ): Promise<AdminIngestBrowserSseTerminal> {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
 
@@ -642,7 +738,7 @@ async function readAdminIngestResponse(
           streamAcknowledged = true;
         }
 
-        const terminal = parseAdminIngestSseBlock(block);
+        const terminal = parseAdminIngestSseBlock(block, callbacks);
 
         if (terminal) {
           return terminal;
@@ -651,7 +747,7 @@ async function readAdminIngestResponse(
     }
 
     if (buffer.trim()) {
-      const terminal = parseAdminIngestSseBlock(buffer);
+      const terminal = parseAdminIngestSseBlock(buffer, callbacks);
 
       if (terminal) {
         return terminal;
@@ -1279,40 +1375,42 @@ export async function sendCoreIngest(input: {
   const requestId = input.requestId ?? runtimeResult.requestId;
   const useDoubaoBrowserSse = platform === "web" && modelProvider === "doubao-pro";
 
-  try {
-    const health = await checkGptHealthStatus({
-      provider: modelProvider,
-      selectedModelLabel,
-      preferredModel
-    });
-    const healthState = normalizeIngestResult(health.ok ? 200 : 503, health);
+  if (modelProvider !== "doubao-pro") {
+    try {
+      const health = await checkGptHealthStatus({
+        provider: modelProvider,
+        selectedModelLabel,
+        preferredModel
+      });
+      const healthState = normalizeIngestResult(health.ok ? 200 : 503, health);
 
-    if (healthState.type === "auth_failure") {
-      console.warn("[admin-ingest:auth-access:health-warning]", {
-        status: healthState.status,
-        errorCode: healthState.errorCode,
-        provider: health.provider,
-        actualModel: health.actualModel ?? health.model,
+      if (healthState.type === "auth_failure") {
+        console.warn("[admin-ingest:auth-access:health-warning]", {
+          status: healthState.status,
+          errorCode: healthState.errorCode,
+          provider: health.provider,
+          actualModel: health.actualModel ?? health.model,
+          requestId,
+          message: healthState.message
+        });
+      }
+
+      if (healthState.type === "model_health_failure") {
+        console.warn("[admin-ingest:model-health:warning]", {
+          status: healthState.status,
+          errorCode: healthState.errorCode,
+          provider: health.provider,
+          actualModel: health.actualModel ?? health.model,
+          requestId,
+          message: healthState.message
+        });
+      }
+    } catch (error) {
+      console.warn("[admin-ingest:model-health:non-blocking]", {
         requestId,
-        message: healthState.message
+        message: error instanceof Error ? error.message : String(error ?? "")
       });
     }
-
-    if (healthState.type === "model_health_failure") {
-      console.warn("[admin-ingest:model-health:warning]", {
-        status: healthState.status,
-        errorCode: healthState.errorCode,
-        provider: health.provider,
-        actualModel: health.actualModel ?? health.model,
-        requestId,
-        message: healthState.message
-      });
-    }
-  } catch (error) {
-    console.warn("[admin-ingest:model-health:non-blocking]", {
-      requestId,
-      message: error instanceof Error ? error.message : String(error ?? "")
-    });
   }
 
   try {
@@ -1371,7 +1469,11 @@ export async function sendCoreIngest(input: {
         autoSave: false
       })
     });
-    const transportResult = await readAdminIngestResponse(response, input.streaming?.signal);
+    const transportResult = await readAdminIngestResponse(response, input.streaming?.signal, {
+      expectedRequestId: requestId,
+      onVisibleReply: input.streaming?.onVisibleReply,
+      onStatus: input.streaming?.onStatus
+    });
     const payload = transportResult.payload;
     const responseStatus = transportResult.status;
     const responseMeta = {
@@ -1561,6 +1663,7 @@ export async function sendCoreIngest(input: {
       responseId: normalizedData.responseId,
       usage: normalizedData.usage,
       gptProof: normalizedData.gptProof,
+      diagnostics: normalizedData.diagnostics ?? [],
       autonomousResult: normalizedData.autonomousResult ?? normalizedData.gptOS?.autonomousResult,
       modelMode: draft.modelMode,
       visibleReply: styledReply,
@@ -2411,6 +2514,7 @@ export async function checkGptHealthStatus(input: {
   provider?: IngestModelProvider;
   selectedModelLabel?: string;
   preferredModel?: string;
+  testRequest?: boolean;
 } = {}): Promise<IngestGptHealthStatus> {
   const params = new URLSearchParams();
   const provider = input.provider ?? getIngestModelOptionByLabel(input.selectedModelLabel).provider;
@@ -2426,6 +2530,10 @@ export async function checkGptHealthStatus(input: {
 
   if (input.preferredModel) {
     params.set("preferredModel", input.preferredModel);
+  }
+
+  if (provider === "doubao-pro") {
+    params.set("testRequest", input.testRequest === true ? "true" : "false");
   }
 
   const suffix = params.toString() ? `?${params.toString()}` : "";

@@ -41,6 +41,33 @@ import {
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
 
+export type DoubaoRequestPhase = "visible" | "continuation" | "metadata" | "health";
+
+export type DoubaoAdminIngestProgressEvent =
+  | {
+      type: "queue_wait";
+      phase: DoubaoRequestPhase;
+      queueDepth: number;
+    }
+  | {
+      type: "rate_limit_wait";
+      phase: DoubaoRequestPhase;
+      retryAfterMs: number;
+      attempt: number;
+    }
+  | {
+      type: "visible_reply";
+      replyMarkdown: string;
+      model: string;
+      responseId: string;
+      metadataPending: true;
+    }
+  | {
+      type: "metadata_status";
+      state: "pending" | "completed" | "deferred";
+      failureCode?: string;
+    };
+
 export interface DoubaoAdminIngestInput {
   input: string;
   attachments?: OpenAIAdminIngestAttachment[];
@@ -69,6 +96,7 @@ export interface DoubaoAdminIngestInput {
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
   signal?: AbortSignal;
+  onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
 }
 
 export interface DoubaoAdminIngestResult {
@@ -145,6 +173,7 @@ export class DoubaoIngestError extends Error {
       finishReason?: string;
       eventCount?: number;
       receivedChars?: number;
+      retryAfterMs?: number;
     } = {}
   ) {
     super(message);
@@ -158,6 +187,141 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 90_000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_HARD_TIMEOUT_MS = 270_000;
+const DEFAULT_DOUBAO_CONCURRENCY = 1;
+const MAX_CONTINUATION_PREFIX_CHARS = 8_000;
+
+type DoubaoQueueEntry = {
+  id: number;
+  priority: number;
+  phase: DoubaoRequestPhase;
+  signal: AbortSignal;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
+  onAbort: () => void;
+};
+
+let doubaoQueueSequence = 0;
+let activeDoubaoRequests = 0;
+const pendingDoubaoRequests: DoubaoQueueEntry[] = [];
+
+function requestPhasePriority(phase: DoubaoRequestPhase) {
+  if (phase === "visible") {
+    return 0;
+  }
+
+  if (phase === "continuation") {
+    return 1;
+  }
+
+  if (phase === "metadata") {
+    return 2;
+  }
+
+  return 3;
+}
+
+function resolveDoubaoConcurrency() {
+  const parsed = Number(readEnv("DOUBAO_MAX_CONCURRENCY"));
+
+  return Number.isSafeInteger(parsed) && parsed > 0
+    ? Math.min(parsed, 2)
+    : DEFAULT_DOUBAO_CONCURRENCY;
+}
+
+function pumpDoubaoQueue() {
+  const concurrency = resolveDoubaoConcurrency();
+
+  while (activeDoubaoRequests < concurrency && pendingDoubaoRequests.length > 0) {
+    pendingDoubaoRequests.sort((left, right) => left.priority - right.priority || left.id - right.id);
+    const next = pendingDoubaoRequests.shift();
+
+    if (!next) {
+      return;
+    }
+
+    next.signal.removeEventListener("abort", next.onAbort);
+
+    if (next.signal.aborted) {
+      next.reject(new DOMException("The operation was aborted.", "AbortError"));
+      continue;
+    }
+
+    activeDoubaoRequests += 1;
+    next.resolve();
+  }
+}
+
+async function acquireDoubaoRequestSlot(input: {
+  phase: DoubaoRequestPhase;
+  signal: AbortSignal;
+  onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
+}) {
+  if (input.signal.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+
+  if (activeDoubaoRequests < resolveDoubaoConcurrency() && pendingDoubaoRequests.length === 0) {
+    activeDoubaoRequests += 1;
+    return;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const entry: DoubaoQueueEntry = {
+      id: ++doubaoQueueSequence,
+      priority: requestPhasePriority(input.phase),
+      phase: input.phase,
+      signal: input.signal,
+      resolve,
+      reject,
+      onProgressEvent: input.onProgressEvent,
+      onAbort: () => {
+        const index = pendingDoubaoRequests.findIndex((candidate) => candidate.id === entry.id);
+
+        if (index >= 0) {
+          pendingDoubaoRequests.splice(index, 1);
+        }
+
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      }
+    };
+
+    pendingDoubaoRequests.push(entry);
+    input.signal.addEventListener("abort", entry.onAbort, { once: true });
+    input.onProgressEvent?.({
+      type: "queue_wait",
+      phase: input.phase,
+      queueDepth: pendingDoubaoRequests.length
+    });
+    pumpDoubaoQueue();
+  });
+}
+
+function releaseDoubaoRequestSlot() {
+  activeDoubaoRequests = Math.max(0, activeDoubaoRequests - 1);
+  pumpDoubaoQueue();
+}
+
+export async function runWithDoubaoRequestSlot<T>(input: {
+  phase: DoubaoRequestPhase;
+  signal: AbortSignal;
+  onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
+  task: () => Promise<T>;
+}) {
+  await acquireDoubaoRequestSlot(input);
+
+  try {
+    if (input.signal.aborted) {
+      throw input.signal.reason instanceof Error
+        ? input.signal.reason
+        : new DOMException("The operation was aborted.", "AbortError");
+    }
+
+    return await input.task();
+  } finally {
+    releaseDoubaoRequestSlot();
+  }
+}
 
 function readEnv(name: string) {
   return process.env[name]?.trim() ?? "";
@@ -320,9 +484,9 @@ function buildDoubaoMetadataSystemPrompt() {
     "你是小董AI投喂端的后台知识元数据整理器。",
     "本阶段不生成、重写、缩写或评价用户可见正文，只基于给定正文和原始任务提取后台结构。",
     "只返回一个合法 JSON 对象，不要使用 Markdown 代码围栏，不要包含 replyMarkdown 字段。",
-    "字段为 knowledgeDraft、userClientCallPlan、suggestedQuestions、saveRecommendation、diagnostics。",
-    "knowledgeDraft 尽量包含 title、summary、category、categories、tags、standardQuestion、standardAnswer、standardQuestions、standardAnswers、scenarios、sourceMaterials、complianceNotes、saveRecommendation、missingFields、trainingScore。",
-    "userClientCallPlan 包含 retrievalStrategy、userAnswerStyle、safetyRules、recommendedAgents、exampleUserQuestions、answerTemplates。",
+    "只输出 knowledgeDraft 和 saveRecommendation 两个顶层字段。",
+    "knowledgeDraft 只包含 title、summary、category、tags、standardQuestion、saveRecommendation、missingFields、trainingScore。",
+    "不要输出 standardAnswer；服务端会把已完成的用户可见正文原样绑定为标准答案。",
     "不得编造正文、固定知识库或附件中不存在的事实。"
   ].join("\n");
 }
@@ -342,7 +506,44 @@ function buildDoubaoMetadataUserPrompt(input: DoubaoAdminIngestInput, replyMarkd
   ].join("\n");
 }
 
-export function classifyDoubaoResponseError(status: number, bodyText = "") {
+export function readDoubaoRetryAfterMs(headers: Headers, now = Date.now()) {
+  const rawValue = headers.get("retry-after")?.trim() ?? "";
+
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const seconds = Number(rawValue);
+
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1000);
+  }
+
+  const retryAt = Date.parse(rawValue);
+
+  return Number.isFinite(retryAt)
+    ? Math.max(0, retryAt - now)
+    : undefined;
+}
+
+export function resolveDoubaoRetryDelayMs(input: {
+  retryAfterMs?: number;
+  retryAttempt: number;
+  random?: () => number;
+}) {
+  const random = input.random ?? Math.random;
+  const jitterMs = Math.floor(Math.max(0, Math.min(1, random())) * 250);
+
+  if (typeof input.retryAfterMs === "number" && Number.isFinite(input.retryAfterMs) && input.retryAfterMs >= 0) {
+    return Math.ceil(input.retryAfterMs) + jitterMs;
+  }
+
+  return Math.min(10_000, 2_000 * (2 ** Math.max(0, input.retryAttempt - 1))) + jitterMs;
+}
+
+export function classifyDoubaoResponseError(status: number, bodyText = "", options: {
+  retryAfterMs?: number;
+} = {}) {
   const body = bodyText.toLowerCase();
 
   if (status === 401 || status === 403) {
@@ -358,7 +559,11 @@ export function classifyDoubaoResponseError(status: number, bodyText = "") {
   }
 
   if (status === 429) {
-    return new DoubaoIngestError("DOUBAO_RATE_LIMITED", "豆包请求过于频繁（HTTP 429），请稍后重试。");
+    return new DoubaoIngestError(
+      "DOUBAO_RATE_LIMITED",
+      "豆包请求过于频繁（HTTP 429），请稍后重试。",
+      { retryAfterMs: options.retryAfterMs }
+    );
   }
 
   if ((status === 400 || status === 422) && /(safety|content.?policy|sensitive|moderation|违规|敏感|安全策略)/i.test(body)) {
@@ -738,7 +943,12 @@ async function collectDoubaoSseCompletion(input: {
     );
   } finally {
     try {
-      await reader.cancel();
+      // Abort is the authoritative transport cancellation. Some mocked or
+      // interrupted streams never settle their cancel promise; waiting here
+      // would keep the Doubao scheduler slot occupied forever.
+      void reader.cancel().catch(() => {
+        // The stream can already be closed after an abort or a natural EOF.
+      });
     } catch {
       // The stream can already be closed after an abort or a natural EOF.
     }
@@ -810,10 +1020,14 @@ async function callDoubaoStreaming(payload: {
 
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
-      const classified = classifyDoubaoResponseError(response.status, bodyText);
+      const retryAfterMs = readDoubaoRetryAfterMs(response.headers);
+      const classified = classifyDoubaoResponseError(response.status, bodyText, {
+        retryAfterMs
+      });
       logger.warn("enterprise_admin_ingest.doubao_request_failed", {
         status: response.status,
-        errorCode: classified.code
+        errorCode: classified.code,
+        retryAfterMs
       });
       throw classified;
     }
@@ -873,6 +1087,27 @@ function canRetryDoubaoCall(error: unknown, signal: AbortSignal) {
     || error.code === "DOUBAO_REQUEST_FAILED";
 }
 
+function waitForDoubaoRetry(delayMs: number, signal: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+
+    function onAbort() {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    }
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function callDoubaoChatCompletions(input: {
   chatCompletionsUrl: string;
   apiKey: string;
@@ -880,10 +1115,13 @@ async function callDoubaoChatCompletions(input: {
   systemPrompt: string;
   userPrompt: string;
   signal: AbortSignal;
+  phase: DoubaoRequestPhase;
   maxTokens?: number;
   temperature?: number;
   assistantPrefix?: string;
   continuationInstruction?: string;
+  retryRateLimited?: boolean;
+  onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
 }) {
   const startedAt = Date.now();
   const messages = [
@@ -905,23 +1143,50 @@ async function callDoubaoChatCompletions(input: {
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      value = await callDoubaoStreaming({
-        apiKey: input.apiKey,
-        baseUrl: input.chatCompletionsUrl,
-        model: input.model,
-        messages,
-        temperature: input.temperature ?? 0.7,
-        maxTokens: input.maxTokens ?? 6000,
-        signal: input.signal
+      value = await runWithDoubaoRequestSlot({
+        phase: input.phase,
+        signal: input.signal,
+        onProgressEvent: input.onProgressEvent,
+        task: () => callDoubaoStreaming({
+          apiKey: input.apiKey,
+          baseUrl: input.chatCompletionsUrl,
+          model: input.model,
+          messages,
+          temperature: input.temperature ?? 0.7,
+          maxTokens: input.maxTokens ?? 6000,
+          signal: input.signal
+        })
       });
       break;
     } catch (error) {
-      if (attempt > 0 || !canRetryDoubaoCall(error, input.signal)) {
+      const rateLimited = error instanceof DoubaoIngestError && error.code === "DOUBAO_RATE_LIMITED";
+
+      if (
+        attempt > 0
+        || (rateLimited && input.retryRateLimited === false)
+        || !canRetryDoubaoCall(error, input.signal)
+      ) {
         throw error;
       }
 
       retryCount += 1;
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      const retryDelayMs = rateLimited
+        ? resolveDoubaoRetryDelayMs({
+            retryAfterMs: error.details.retryAfterMs,
+            retryAttempt: retryCount
+          })
+        : 500;
+
+      if (rateLimited) {
+        input.onProgressEvent?.({
+          type: "rate_limit_wait",
+          phase: input.phase,
+          retryAfterMs: retryDelayMs,
+          attempt: retryCount
+        });
+      }
+
+      await waitForDoubaoRetry(retryDelayMs, input.signal);
     }
   }
 
@@ -1013,13 +1278,11 @@ function hasValidDoubaoMetadataPayload(payload: Record<string, unknown>) {
   const hasTextArray = (value: unknown) => Array.isArray(value)
     && value.some((item) => hasText(item));
   const hasQuestion = hasText(record.standardQuestion) || hasTextArray(record.standardQuestions);
-  const hasAnswer = hasText(record.standardAnswer) || hasTextArray(record.standardAnswers);
 
   return hasText(record.title)
     && hasText(record.summary)
     && hasText(record.category)
-    && hasQuestion
-    && hasAnswer;
+    && hasQuestion;
 }
 
 function extractClosedJsonStringField(text: string, fieldName: string) {
@@ -1158,6 +1421,24 @@ function withDoubaoMetadataFallback(
   };
 }
 
+function bindDoubaoVisibleReplyToMetadata(
+  normalized: ReturnType<typeof normalizeGptOutput>,
+  replyMarkdown: string
+) {
+  return {
+    ...normalized,
+    knowledgeDraft: {
+      ...normalized.knowledgeDraft,
+      standardAnswer: replyMarkdown,
+      standardAnswers: [replyMarkdown]
+    },
+    structured: {
+      ...normalized.structured,
+      answer: replyMarkdown
+    }
+  };
+}
+
 async function runDoubaoVisiblePhase(input: {
   config: ReturnType<typeof resolveDoubaoConfig>;
   ingestInput: DoubaoAdminIngestInput;
@@ -1175,6 +1456,8 @@ async function runDoubaoVisiblePhase(input: {
     systemPrompt,
     userPrompt,
     signal: input.signal,
+    phase: "visible",
+    onProgressEvent: input.ingestInput.onProgressEvent,
     maxTokens: 6000
   });
   responses.push(response);
@@ -1191,9 +1474,15 @@ async function runDoubaoVisiblePhase(input: {
       model: input.config.model,
       systemPrompt,
       userPrompt,
-      assistantPrefix: replyMarkdown,
-      continuationInstruction: "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
+      assistantPrefix: replyMarkdown.length > 12_000
+        ? replyMarkdown.slice(-MAX_CONTINUATION_PREFIX_CHARS)
+        : replyMarkdown,
+      continuationInstruction: replyMarkdown.length > 12_000
+        ? "你收到的是已生成正文的最后一段衔接内容。上一段 Markdown 因输出长度结束，请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。"
+        : "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
       signal: input.signal,
+      phase: "continuation",
+      onProgressEvent: input.ingestInput.onProgressEvent,
       maxTokens: 4000
     });
 
@@ -1283,6 +1572,18 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       strictReply: true
     });
 
+    input.onProgressEvent?.({
+      type: "visible_reply",
+      replyMarkdown,
+      model: response.model,
+      responseId: response.responseId,
+      metadataPending: true
+    });
+    input.onProgressEvent?.({
+      type: "metadata_status",
+      state: "pending"
+    });
+
     try {
       metadataResponse = await callDoubaoChatCompletions({
         chatCompletionsUrl: resolved.chatCompletionsUrl,
@@ -1291,8 +1592,11 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         systemPrompt: buildDoubaoMetadataSystemPrompt(),
         userPrompt: buildDoubaoMetadataUserPrompt(input, replyMarkdown),
         signal: controller.signal,
+        phase: "metadata",
+        onProgressEvent: input.onProgressEvent,
+        retryRateLimited: false,
         temperature: 0.2,
-        maxTokens: 3000
+        maxTokens: 1500
       });
       if (metadataResponse.model !== response.model) {
         throw new DoubaoIngestError(
@@ -1329,10 +1633,28 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         fallbackCategory: input.category ?? "",
         strictReply: true
       });
+      normalized = bindDoubaoVisibleReplyToMetadata(normalized, replyMarkdown);
       metadataCompleted = true;
+      input.onProgressEvent?.({
+        type: "metadata_status",
+        state: "completed"
+      });
     } catch (error) {
+      if (
+        error
+        && typeof error === "object"
+        && (error as { name?: string }).name === "AbortError"
+      ) {
+        throw error;
+      }
+
       metadataFailureCode = error instanceof DoubaoIngestError ? error.code : "DOUBAO_METADATA_FAILED";
       normalized = withDoubaoMetadataFallback(normalized, replyMarkdown);
+      input.onProgressEvent?.({
+        type: "metadata_status",
+        state: "deferred",
+        failureCode: metadataFailureCode
+      });
       logger.warn("enterprise_admin_ingest.doubao_metadata_failed", {
         requestId: input.requestId,
         model: response.model,

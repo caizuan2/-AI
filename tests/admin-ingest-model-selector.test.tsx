@@ -108,6 +108,14 @@ function testPickerPlacementAndProviderIdentity() {
     process.cwd(),
     "app/api/admin/kb/ingest/models/health/route.ts"
   ), "utf8");
+  const ingestClientSource = readFileSync(path.join(
+    process.cwd(),
+    "lib/enterprise/ingest-client.ts"
+  ), "utf8");
+  const doubaoHealthSource = readFileSync(path.join(
+    process.cwd(),
+    "lib/enterprise/doubao-health-check.ts"
+  ), "utf8");
   const pickerPosition = shellSource.indexOf("<IngestGPTModelPicker", shellSource.indexOf("items-center justify-end"));
   const voicePosition = shellSource.indexOf("<Mic", pickerPosition);
 
@@ -139,10 +147,35 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(modeToggleSource, /const requestVersion = \+\+doubaoHealthRequestVersionRef\.current;\s+const targetAgentId = activeAgent\.id;\s+const nextModel/);
   assert.match(modeToggleSource, /activeAgentIdRef\.current !== targetAgentId/);
   assert.match(modeToggleSource, /doubaoHealthRequestVersionRef\.current \+= 1;\s+\}, \[activeAgent\.id\]\)/);
+  assert.match(
+    modeToggleSource,
+    /provider: doubaoOption\.provider,[\s\S]*?testRequest: false/,
+    "Startup availability checks must not consume a real Doubao completion."
+  );
+  assert.match(
+    modeToggleSource,
+    /if \(nextModel\.provider === "doubao-pro"\)[\s\S]*?testRequest: false/,
+    "Selecting Doubao must use a passive configuration check."
+  );
+  assert.match(
+    modeToggleSource,
+    /testRequest: selectedModelOption\.provider === "doubao-pro" \? true : undefined/,
+    "Only an explicit user connection check may make a real Doubao health request."
+  );
+  assert.match(
+    ingestClientSource,
+    /if \(modelProvider !== "doubao-pro"\) \{[\s\S]*?checkGptHealthStatus\(/,
+    "The existing DeepSeek and legacy-provider preflight must remain intact."
+  );
+  assert.match(ingestClientSource, /params\.set\("testRequest", input\.testRequest === true \? "true" : "false"\)/);
+  assert.match(doubaoHealthSource, /if \(input\.testRequest !== true\)/);
+  assert.match(doubaoHealthSource, /testedHealthRequests/);
+  assert.match(doubaoHealthSource, /runWithDoubaoRequestSlot/);
   assert.match(modeToggleSource, /function handleCancelIngest\(\)/);
   assert.match(modeToggleSource, /输入内容和附件已保留/);
   assert.match(modeToggleSource, /onCancel:\s*handleCancelIngest/);
   assert.match(healthRouteSource, /await requireAdminIngestActor\(request/);
+  assert.match(healthRouteSource, /testRequest: url\.searchParams\.get\("testRequest"\) === "true"/);
   assert.match(healthRouteSource, /targetType:\s*"admin_kb_ingest_model_health"/);
   assert.match(healthRouteSource, /return apiError\(error\)/);
 }
