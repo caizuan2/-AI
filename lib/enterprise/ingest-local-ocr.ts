@@ -5,8 +5,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import chiSimLanguage from "@tesseract.js-data/chi_sim";
 import engLanguage from "@tesseract.js-data/eng";
-import sharp from "sharp";
+import sharp, { type Metadata } from "sharp";
 import Tesseract from "tesseract.js";
+import {
+  buildAdminIngestWechatReplyEvidence,
+  buildAdminIngestWechatTranscript,
+  calculateAdminIngestWechatSegments,
+  type AdminIngestWechatOcrLine
+} from "@/lib/enterprise/ingest-wechat-transcript";
 
 export type AdminIngestLocalOcrStatus =
   | "ok"
@@ -35,6 +41,15 @@ export interface AdminIngestLocalOcrResult {
   lowConfidence?: boolean;
   attempts?: 0 | 1 | 2;
   truncated?: boolean;
+}
+
+export interface AdminIngestWechatOcrResult extends AdminIngestLocalOcrResult {
+  strategy?: "vertical_segments_role_aware_v1";
+  segmentCount?: number;
+  recognizedSegmentCount?: number;
+  transcript?: string;
+  latestCustomerMessage?: string;
+  uncertainLineCount?: number;
 }
 
 interface TesseractLanguagePackage {
@@ -116,12 +131,16 @@ function localOcrResult(input: Omit<AdminIngestLocalOcrResult, "provider" | "mod
   };
 }
 
-function createLocalOcrBudget(signal?: AbortSignal): LocalOcrBudget {
+function createLocalOcrBudget(signal?: AbortSignal, timeoutOptions?: {
+  envName: string;
+  fallback: number;
+  max: number;
+}): LocalOcrBudget {
   const timeoutMs = readBoundedNumberEnv(
-    "ADMIN_INGEST_LOCAL_OCR_TIMEOUT_MS",
-    DEFAULT_TIMEOUT_MS,
+    timeoutOptions?.envName ?? "ADMIN_INGEST_LOCAL_OCR_TIMEOUT_MS",
+    timeoutOptions?.fallback ?? DEFAULT_TIMEOUT_MS,
     1,
-    120_000
+    timeoutOptions?.max ?? 120_000
   );
 
   return {
@@ -318,6 +337,7 @@ async function recognizeImage(input: {
   bytes: Uint8Array;
   budget: LocalOcrBudget;
   pageSegmentationMode: Tesseract.PSM;
+  includeBlocks?: boolean;
 }) {
   throwIfLocalOcrInterrupted(input.budget);
   const pendingWorker = getLocalOcrWorker();
@@ -337,11 +357,81 @@ async function recognizeImage(input: {
   );
   const result = await runWithinLocalOcrBudget(
     input.budget,
-    () => worker.recognize(Buffer.from(input.bytes), { rotateAuto: true }),
+    () => worker.recognize(
+      Buffer.from(input.bytes),
+      { rotateAuto: true },
+      input.includeBlocks ? { text: true, blocks: true } : undefined
+    ),
     () => invalidateLocalOcrWorker(pendingWorker, worker)
   );
 
   return result.data;
+}
+
+function orientedDimensions(metadata: Metadata) {
+  const width = metadata.width ?? 0;
+  const height = metadata.height ?? 0;
+  const swapsAxes = metadata.orientation !== undefined
+    && metadata.orientation >= 5
+    && metadata.orientation <= 8;
+
+  return swapsAxes
+    ? { width: height, height: width }
+    : { width, height };
+}
+
+async function prepareWechatOcrSegment(input: {
+  bytes: Uint8Array;
+  width: number;
+  top: number;
+  height: number;
+}) {
+  return sharp(Buffer.from(input.bytes), { limitInputPixels: 60_000_000 })
+    .rotate()
+    .extract({
+      left: 0,
+      top: input.top,
+      width: input.width,
+      height: input.height
+    })
+    .flatten({ background: "#ffffff" })
+    .grayscale()
+    .normalize()
+    .sharpen()
+    .png()
+    .toBuffer();
+}
+
+function readWechatOcrLines(input: {
+  data: Tesseract.Page;
+  imageWidth: number;
+  segmentTop: number;
+}) {
+  const lines: AdminIngestWechatOcrLine[] = [];
+
+  for (const block of input.data.blocks ?? []) {
+    for (const paragraph of block.paragraphs ?? []) {
+      for (const line of paragraph.lines ?? []) {
+        const text = cleanOcrText(line.text || "");
+
+        if (!text) {
+          continue;
+        }
+
+        lines.push({
+          text,
+          confidence: normalizeOcrConfidence(line.confidence),
+          x0: line.bbox.x0,
+          x1: line.bbox.x1,
+          y0: input.segmentTop + line.bbox.y0,
+          y1: input.segmentTop + line.bbox.y1,
+          imageWidth: input.imageWidth
+        });
+      }
+    }
+  }
+
+  return lines;
 }
 
 function normalizeOcrConfidence(value: unknown) {
@@ -523,5 +613,185 @@ export async function extractAdminIngestLocalOcrText(input: {
       text: "",
       attempts: attemptedCount
     });
+  }
+}
+
+export async function extractAdminIngestWechatConversationText(input: {
+  bytes: Uint8Array;
+  mimeType: string;
+  signal?: AbortSignal;
+}): Promise<AdminIngestWechatOcrResult> {
+  if (!isLocalOcrEnabled()) {
+    return {
+      ...localOcrResult({
+        status: "unavailable",
+        code: "LOCAL_OCR_DISABLED",
+        text: "",
+        attempts: 0
+      }),
+      strategy: "vertical_segments_role_aware_v1"
+    };
+  }
+
+  const mimeType = input.mimeType.trim().toLowerCase();
+
+  if (!SUPPORTED_IMAGE_MIME_TYPES.has(mimeType)) {
+    return {
+      ...localOcrResult({
+        status: "unsupported",
+        code: "LOCAL_OCR_UNSUPPORTED_MEDIA",
+        text: "",
+        attempts: 0
+      }),
+      strategy: "vertical_segments_role_aware_v1"
+    };
+  }
+
+  const maxBytes = readBoundedNumberEnv(
+    "ADMIN_INGEST_LOCAL_OCR_MAX_BYTES",
+    DEFAULT_MAX_IMAGE_BYTES,
+    512 * 1024,
+    20 * 1024 * 1024
+  );
+
+  if (input.bytes.byteLength > maxBytes) {
+    return {
+      ...localOcrResult({
+        status: "skipped_large",
+        code: "LOCAL_OCR_IMAGE_TOO_LARGE",
+        text: "",
+        attempts: 0
+      }),
+      strategy: "vertical_segments_role_aware_v1"
+    };
+  }
+
+  const budget = createLocalOcrBudget(input.signal, {
+    envName: "ADMIN_INGEST_WECHAT_OCR_TIMEOUT_MS",
+    fallback: 115_000,
+    max: 170_000
+  });
+  let segmentCount = 0;
+  let recognizedSegmentCount = 0;
+
+  try {
+    const metadata = await runWithinLocalOcrBudget(
+      budget,
+      () => sharp(Buffer.from(input.bytes), { limitInputPixels: 60_000_000 }).metadata()
+    );
+    const { width, height } = orientedDimensions(metadata);
+
+    if (width <= 0 || height <= 0 || width * height > 60_000_000) {
+      throw new Error("微信截图尺寸无效或超过像素安全上限。");
+    }
+
+    const segments = calculateAdminIngestWechatSegments(height);
+    const allLines: AdminIngestWechatOcrLine[] = [];
+    segmentCount = segments.length;
+
+    const queuedResult = enqueueLocalOcr(async () => {
+      for (let index = 0; index < segments.length; index += 1) {
+        throwIfLocalOcrInterrupted(budget);
+        const segment = segments[index];
+        const processed = await runWithinLocalOcrBudget(
+          budget,
+          () => prepareWechatOcrSegment({
+            bytes: input.bytes,
+            width,
+            top: segment.top,
+            height: segment.height
+          })
+        );
+        const data = await recognizeImage({
+          bytes: processed,
+          budget,
+          pageSegmentationMode: Tesseract.PSM.SPARSE_TEXT,
+          includeBlocks: true
+        });
+        const lines = readWechatOcrLines({
+          data,
+          imageWidth: width,
+          segmentTop: segment.top
+        });
+
+        if (lines.length > 0) {
+          recognizedSegmentCount += 1;
+          allLines.push(...lines);
+        }
+
+        if (index === segments.length - 1 && lines.length === 0) {
+          throw new Error("微信长截图最后一段未能识别，无法可靠确定客户最后一条消息。");
+        }
+      }
+
+      return allLines;
+    });
+    const lines = await runWithinLocalOcrBudget(budget, () => queuedResult);
+    const transcript = buildAdminIngestWechatTranscript(lines);
+
+    if (!transcript.transcript || !transcript.latestCustomerMessage) {
+      return {
+        ...localOcrResult({
+          status: "failed",
+          code: "LOCAL_OCR_EMPTY",
+          text: "",
+          confidence: 0,
+          lowConfidence: true,
+          attempts: 1
+        }),
+        strategy: "vertical_segments_role_aware_v1",
+        segmentCount,
+        recognizedSegmentCount,
+        transcript: transcript.transcript,
+        latestCustomerMessage: transcript.latestCustomerMessage,
+        uncertainLineCount: transcript.uncertainCount
+      };
+    }
+
+    const averageConfidence = lines.length > 0
+      ? lines.reduce((sum, line) => sum + line.confidence, 0) / lines.length
+      : 0;
+    const partial = recognizedSegmentCount < segmentCount;
+    const evidence = buildAdminIngestWechatReplyEvidence({
+      transcript: transcript.transcript,
+      latestCustomerMessage: transcript.latestCustomerMessage,
+      partial
+    });
+
+    return {
+      ...localOcrResult({
+        status: "ok",
+        code: "LOCAL_OCR_OK",
+        text: evidence.slice(0, MAX_OCR_TEXT_CHARS),
+        confidence: normalizeOcrConfidence(averageConfidence),
+        lowConfidence: partial || averageConfidence < DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+        attempts: 1,
+        truncated: evidence.length > MAX_OCR_TEXT_CHARS
+      }),
+      strategy: "vertical_segments_role_aware_v1",
+      segmentCount,
+      recognizedSegmentCount,
+      transcript: transcript.transcript,
+      latestCustomerMessage: transcript.latestCustomerMessage,
+      uncertainLineCount: transcript.uncertainCount
+    };
+  } catch (error) {
+    const controlCode = error instanceof LocalOcrControlError ? error.code : null;
+
+    return {
+      ...localOcrResult({
+        status: "failed",
+        code: controlCode === "LOCAL_OCR_ABORTED"
+          ? "LOCAL_OCR_CANCELLED"
+          : controlCode === "LOCAL_OCR_TIMEOUT"
+            ? "LOCAL_OCR_TIMEOUT"
+            : "LOCAL_OCR_FAILED",
+        text: "",
+        attempts: segmentCount > 0 ? 1 : 0
+      }),
+      strategy: "vertical_segments_role_aware_v1",
+      segmentCount,
+      recognizedSegmentCount
+    };
   }
 }

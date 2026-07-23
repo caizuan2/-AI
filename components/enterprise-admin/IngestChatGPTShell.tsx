@@ -21,14 +21,12 @@ import {
   Link2,
   Loader2,
   Mic,
-  Plug,
   Plus,
   Save,
   Search,
   SendHorizontal,
   Settings,
   Square,
-  Tags,
   UploadCloud,
   X
 } from "lucide-react";
@@ -152,10 +150,8 @@ type LatestTurnSpacerMode = "active" | "settled";
 
 const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: string }> }> = [
   { label: "文件上传", icon: UploadCloud },
-  { label: "图片 OCR", icon: ImagePlus },
-  { label: "网址投喂", icon: Link2 },
-  { label: "分类标签", icon: Tags },
-  { label: "连接状态", icon: Plug }
+  { label: "图片识别·支持微信长截图", icon: ImagePlus },
+  { label: "网址投喂", icon: Link2 }
 ];
 
 const EMPTY_AGENTS: IngestChatAgent[] = [];
@@ -187,7 +183,11 @@ interface IngestChatGPTShellProps {
   onAgentConversationToggleExpanded?: (agentId: string) => void;
   onAgentConversationSelect?: (agentId: string, conversationId: string) => void;
   onAgentConversationCreate?: (agentId: string) => void;
+  onAgentConversationShare?: (agentId: string, conversationId: string) => void;
+  onAgentConversationStartGroupChat?: (agentId: string, conversationId: string) => void;
   onAgentConversationRename?: (agentId: string, conversationId: string, title: string) => void;
+  onAgentConversationTogglePinned?: (agentId: string, conversationId: string) => void;
+  onAgentConversationToggleArchived?: (agentId: string, conversationId: string) => void;
   onAgentConversationDelete?: (agentId: string, conversationId: string) => void;
   onAgentTogglePinned?: (agentId: string) => void;
   activeRailKey?: IngestRailKey;
@@ -230,7 +230,7 @@ interface IngestChatGPTShellProps {
   onCancel?: () => void;
   onSave?: () => Promise<IngestActionResult | null>;
   onReconnectGpt?: (modelLabel?: string) => Promise<unknown>;
-  onUpload?: (files: File[]) => void;
+  onUpload?: (files: File[], recognitionMode?: "wechat_conversation") => void;
   onRemoveUpload?: (fileId: string) => void;
   onVoiceToggle?: () => void;
   onToolAction?: (label: string) => void;
@@ -241,7 +241,7 @@ interface IngestChatGPTShellProps {
 
 const uploadAcceptByTool: Record<string, string> = {
   "文件上传": ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md",
-  "图片 OCR": "image/*"
+  "图片识别·支持微信长截图": "image/*"
 };
 
 interface ApiEnvelope<T> {
@@ -806,7 +806,11 @@ export function IngestChatGPTShell({
   onAgentConversationToggleExpanded,
   onAgentConversationSelect,
   onAgentConversationCreate,
+  onAgentConversationShare,
+  onAgentConversationStartGroupChat,
   onAgentConversationRename,
+  onAgentConversationTogglePinned,
+  onAgentConversationToggleArchived,
   onAgentConversationDelete,
   onAgentTogglePinned,
   activeRailKey: controlledActiveRailKey,
@@ -864,6 +868,7 @@ export function IngestChatGPTShell({
   onAutonomousEnabledChange
 }: IngestChatGPTShellProps = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pendingUploadRecognitionModeRef = useRef<"wechat_conversation" | undefined>(undefined);
   const inputTextareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
@@ -1992,9 +1997,11 @@ export function IngestChatGPTShell({
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    const recognitionMode = pendingUploadRecognitionModeRef.current;
+    pendingUploadRecognitionModeRef.current = undefined;
 
     if (files.length > 0) {
-      onUpload?.(files);
+      onUpload?.(files, recognitionMode);
       setNoticeMessage(`已选择 ${files.length} 个文件，附件卡片已进入输入框。`);
       setErrorMessage("");
     }
@@ -2011,6 +2018,9 @@ export function IngestChatGPTShell({
     }
 
     setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
+    pendingUploadRecognitionModeRef.current = label === "图片识别·支持微信长截图"
+      ? "wechat_conversation"
+      : undefined;
     onToolAction?.(label);
     setTimeout(() => fileInputRef.current?.click(), 0);
   }
@@ -2235,7 +2245,11 @@ export function IngestChatGPTShell({
                       expandedAll={expandedConversationAgentIds.includes(agent.id)}
                       onSelectConversation={(agentId, conversationId) => onAgentConversationSelect?.(agentId, conversationId)}
                       onToggleExpandedAll={(agentId) => onAgentConversationToggleExpanded?.(agentId)}
+                      onShareConversation={(agentId, conversationId) => onAgentConversationShare?.(agentId, conversationId)}
+                      onStartGroupChat={(agentId, conversationId) => onAgentConversationStartGroupChat?.(agentId, conversationId)}
                       onRenameConversation={(agentId, conversationId, title) => onAgentConversationRename?.(agentId, conversationId, title)}
+                      onTogglePinConversation={(agentId, conversationId) => onAgentConversationTogglePinned?.(agentId, conversationId)}
+                      onToggleArchiveConversation={(agentId, conversationId) => onAgentConversationToggleArchived?.(agentId, conversationId)}
                       onDeleteConversation={(agentId, conversationId) => onAgentConversationDelete?.(agentId, conversationId)}
                     />
                   ) : null}

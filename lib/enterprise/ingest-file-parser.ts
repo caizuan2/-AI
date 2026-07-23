@@ -4,8 +4,14 @@ import { posix as posixPath } from "node:path";
 import type { JSZipObject } from "jszip";
 import {
   extractAdminIngestLocalOcrText,
+  extractAdminIngestWechatConversationText,
   type AdminIngestLocalOcrResult
 } from "@/lib/enterprise/ingest-local-ocr";
+import { extractChatImageText } from "@/lib/ai-chat/image-ocr";
+import {
+  buildAdminIngestWechatReplyEvidence,
+  parseAdminIngestWechatRoleTranscript
+} from "@/lib/enterprise/ingest-wechat-transcript";
 
 export type IngestParsedFileStatus = "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
 
@@ -1078,6 +1084,136 @@ async function parseImage(input: { buffer: Buffer; signal?: AbortSignal }) {
   };
 }
 
+async function parseWechatConversationImage(input: { buffer: Buffer; signal?: AbortSignal }) {
+  const detectedMimeType = detectImageMimeType(input.buffer);
+
+  if (!detectedMimeType) {
+    return {
+      extractedText: "",
+      pageSummaries: [],
+      slideTexts: [],
+      limitationNote: "微信截图文件头与支持格式不匹配，已停止识别。",
+      parseStatus: "unsupported" as const,
+      ...buildParseCoverage({
+        totalPages: 1,
+        pageStart: 1,
+        processedPages: [1],
+        successfulPages: [],
+        failedPages: [1],
+        lowConfidencePages: [],
+        deadlineReached: false
+      })
+    };
+  }
+
+  const result = await extractAdminIngestWechatConversationText({
+    bytes: input.buffer,
+    mimeType: detectedMimeType,
+    signal: input.signal
+  });
+  const totalSegments = Math.max(1, result.segmentCount ?? 1);
+  const recognizedSegments = Math.max(0, result.recognizedSegmentCount ?? 0);
+  const successfulPages = Array.from({ length: recognizedSegments }, (_, index) => index + 1);
+  const failedPages = Array.from(
+    { length: Math.max(0, totalSegments - recognizedSegments) },
+    (_, index) => recognizedSegments + index + 1
+  );
+
+  const localRoleReliable = result.status === "ok"
+    && Boolean(result.text)
+    && Boolean(result.latestCustomerMessage)
+    && result.lowConfidence !== true
+    && (result.confidence ?? 0) >= 60;
+
+  if (localRoleReliable) {
+    const partial = result.truncated === true || recognizedSegments < totalSegments;
+
+    return {
+      extractedText: result.text,
+      pageSummaries: [`最近客户消息：${result.latestCustomerMessage}`],
+      slideTexts: [],
+      limitationNote: partial
+        ? `已通过 ${result.provider}/${result.model} 对微信长截图进行分段和左右角色识别；存在未识别片段，回答只能基于已识别对话正文。`
+        : `已通过 ${result.provider}/${result.model} 对微信长截图进行分段和左右角色识别；左侧白色气泡为客户，右侧绿色气泡为用户本人。`,
+      parseStatus: partial ? "partial" as const : "parsed" as const,
+      ...buildParseCoverage({
+        totalPages: totalSegments,
+        pageStart: 1,
+        processedPages: [...successfulPages, ...failedPages],
+        successfulPages,
+        failedPages,
+        lowConfidencePages: partial ? successfulPages : [],
+        deadlineReached: false
+      })
+    };
+  }
+
+  const visionResult = await extractChatImageText({
+    arrayBuffer: input.buffer.buffer.slice(
+      input.buffer.byteOffset,
+      input.buffer.byteOffset + input.buffer.byteLength
+    ) as ArrayBuffer,
+    filename: "wechat-conversation-image",
+    mimeType: detectedMimeType
+  });
+  const visionTranscript = visionResult.status === "ok" && visionResult.text
+    ? parseAdminIngestWechatRoleTranscript(visionResult.text)
+    : null;
+
+  if (visionTranscript?.transcript && visionTranscript.latestCustomerMessage) {
+    const visionSegmentCount = Math.max(1, visionResult.segmentCount ?? 1);
+    const visionRecognizedCount = Math.max(1, visionResult.recognizedSegmentCount ?? visionSegmentCount);
+    const visionSuccessfulPages = Array.from({ length: visionRecognizedCount }, (_, index) => index + 1);
+    const visionFailedPages = Array.from(
+      { length: Math.max(0, visionSegmentCount - visionRecognizedCount) },
+      (_, index) => visionRecognizedCount + index + 1
+    );
+    const partial = visionRecognizedCount < visionSegmentCount;
+
+    return {
+      extractedText: buildAdminIngestWechatReplyEvidence({
+        transcript: visionTranscript.transcript,
+        latestCustomerMessage: visionTranscript.latestCustomerMessage,
+        partial
+      }),
+      pageSummaries: [`最近客户消息：${visionTranscript.latestCustomerMessage}`],
+      slideTexts: [],
+      limitationNote: partial
+        ? `已通过 ${visionResult.provider}/${visionResult.model} 对低置信度微信长截图进行分段复核；存在未识别片段，回答只能基于已识别对话正文。`
+        : `已通过 ${visionResult.provider}/${visionResult.model} 对低置信度微信长截图进行分段复核；左侧白色气泡为客户，右侧绿色气泡为用户本人。`,
+      parseStatus: partial ? "partial" as const : "parsed" as const,
+      ...buildParseCoverage({
+        totalPages: visionSegmentCount,
+        pageStart: 1,
+        processedPages: [...visionSuccessfulPages, ...visionFailedPages],
+        successfulPages: visionSuccessfulPages,
+        failedPages: visionFailedPages,
+        lowConfidencePages: partial ? visionSuccessfulPages : [],
+        deadlineReached: false
+      })
+    };
+  }
+
+  return {
+    extractedText: "",
+    pageSummaries: [],
+    slideTexts: [],
+    limitationNote: result.code === "LOCAL_OCR_TIMEOUT"
+      ? "微信长截图识别超时，未能可靠确认客户最后一条消息；本轮不会猜测或调用回答模型。"
+      : "微信长截图未能可靠区分左右角色或确认客户最后一条消息；本轮已停止，不会把低置信度 OCR 结果交给 DeepSeek 或豆包。请上传更清晰的原始截图或分段截图。",
+    parseStatus: "metadata_only" as const,
+    ...buildParseCoverage({
+      totalPages: totalSegments,
+      pageStart: 1,
+      processedPages: [...successfulPages, ...failedPages],
+      successfulPages,
+      failedPages,
+      lowConfidencePages: [],
+      deadlineReached: result.code === "LOCAL_OCR_TIMEOUT"
+    })
+  };
+}
+
 async function extractPdfPageText(pageData: {
   getTextContent: (options?: { normalizeWhitespace?: boolean; disableCombineTextItems?: boolean }) => Promise<{
     items?: Array<{ str?: unknown; transform?: unknown }>;
@@ -1405,6 +1541,7 @@ export async function parseAdminIngestFile(input: {
   buffer: Buffer;
   pageStart?: number;
   pageBatchSize?: number;
+  recognitionMode?: "wechat_conversation";
   signal?: AbortSignal;
 }): Promise<IngestParsedFileResult> {
   const fileType = inferFileType(input.fileName, input.mimeType);
@@ -1442,7 +1579,12 @@ export async function parseAdminIngestFile(input: {
   }
 
   if (fileType === "image") {
-    return { ...base, ...(await parseImage({ buffer: input.buffer, signal: batch.signal })) };
+    return {
+      ...base,
+      ...(input.recognitionMode === "wechat_conversation"
+        ? await parseWechatConversationImage({ buffer: input.buffer, signal: batch.signal })
+        : await parseImage({ buffer: input.buffer, signal: batch.signal }))
+    };
   }
 
   if (fileType === "text") {

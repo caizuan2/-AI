@@ -9,6 +9,10 @@ import {
   type IngestCreateAgentPayload
 } from "@/components/enterprise-admin/IngestCreateAgentDialog";
 import { IngestChatGPTShell } from "@/components/enterprise-admin/IngestChatGPTShell";
+import {
+  IngestConversationLinkDialog,
+  type IngestConversationLinkDialogState
+} from "@/components/enterprise-admin/IngestConversationLinkDialog";
 import { IngestEXEShell } from "@/components/enterprise-admin/IngestEXEShell";
 import { IngestNotificationPanel } from "@/components/enterprise-admin/IngestNotificationPanel";
 import {
@@ -767,6 +771,8 @@ export function IngestModeToggle() {
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
+  const [conversationLinkDialog, setConversationLinkDialog] = useState<IngestConversationLinkDialogState | null>(null);
+  const [isConversationLinkBusy, setIsConversationLinkBusy] = useState(false);
   const conversationStateByIdRef = useRef<Record<string, IngestConversationState>>({});
   const draftRef = useRef<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const messagesRef = useRef<IngestChatMessage[]>([]);
@@ -1262,6 +1268,15 @@ export function IngestModeToggle() {
     }
 
     const activeConversation = agentConversations.find((conversation) => conversation.id === activeConversationId);
+    if (activeConversation?.status === "archived") {
+      const fallback = agentConversations.find((conversation) => (
+        conversation.agentId === activeConversation.agentId
+        && conversation.status !== "archived"
+      ));
+
+      setActiveConversationId(fallback?.id ?? "");
+      return;
+    }
     const conversationAgent = activeConversation
       ? visibleAgents.find((agent) => agent.id === activeConversation.agentId)
       : null;
@@ -1459,8 +1474,14 @@ export function IngestModeToggle() {
       return;
     }
 
-    const nextConversation = agentConversations.find((conversation) => conversation.agentId === nextAgent.id && conversation.id === activeConversationId)
-      ?? agentConversations.find((conversation) => conversation.agentId === nextAgent.id);
+    const nextConversation = agentConversations.find((conversation) => (
+      conversation.agentId === nextAgent.id
+      && conversation.id === activeConversationId
+      && conversation.status !== "archived"
+    )) ?? agentConversations.find((conversation) => (
+      conversation.agentId === nextAgent.id
+      && conversation.status !== "archived"
+    ));
 
     setCurrentAgent(nextAgent);
     setActiveRailKey("chat");
@@ -1651,7 +1672,11 @@ export function IngestModeToggle() {
 
   function handleSelectAgentConversation(agentId: string, conversationId: string) {
     const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
-    const targetConversation = agentConversations.find((conversation) => conversation.id === conversationId && conversation.agentId === agentId);
+    const targetConversation = agentConversations.find((conversation) => (
+      conversation.id === conversationId
+      && conversation.agentId === agentId
+      && conversation.status !== "archived"
+    ));
 
     if (!targetAgent || !targetConversation) {
       return;
@@ -1717,6 +1742,260 @@ export function IngestModeToggle() {
     });
   }
 
+  function handleToggleAgentConversationPinned(agentId: string, conversationId: string) {
+    const target = agentConversations.find((conversation) => (
+      conversation.agentId === agentId
+      && conversation.id === conversationId
+      && conversation.status !== "archived"
+    ));
+
+    if (!target) {
+      return;
+    }
+
+    const nextPinned = target.pinned !== true;
+
+    setAgentConversations((current) => current.map((conversation) => (
+      conversation.agentId === agentId && conversation.id === conversationId
+        ? {
+          ...conversation,
+          pinned: nextPinned,
+          updatedAt: new Date().toISOString(),
+          updatedLabel: "刚刚"
+        }
+        : conversation
+    )));
+    setNoticeMessage(nextPinned ? `已置顶对话：${target.title}` : `已取消置顶：${target.title}`);
+    showActionToast({
+      type: "success",
+      title: nextPinned ? "对话已置顶" : "已取消置顶",
+      description: target.title
+    });
+  }
+
+  function handleToggleAgentConversationArchived(agentId: string, conversationId: string) {
+    const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
+    const target = agentConversations.find((conversation) => (
+      conversation.agentId === agentId
+      && conversation.id === conversationId
+    ));
+
+    if (!targetAgent || !target) {
+      return;
+    }
+
+    const nextArchived = target.status !== "archived";
+    const nextStatus = nextArchived ? "archived" as const : "active" as const;
+    const nextActiveConversation = agentConversations.find((conversation) => (
+      conversation.agentId === agentId
+      && conversation.id !== conversationId
+      && conversation.status !== "archived"
+    ));
+
+    setAgentConversations((current) => current.map((conversation) => (
+      conversation.agentId === agentId && conversation.id === conversationId
+        ? {
+          ...conversation,
+          status: nextStatus,
+          pinned: nextArchived ? false : conversation.pinned,
+          updatedAt: new Date().toISOString(),
+          updatedLabel: "刚刚"
+        }
+        : conversation
+    )));
+
+    if (nextArchived && activeConversationId === conversationId) {
+      setCurrentAgent(targetAgent);
+      setActiveConversationId(nextActiveConversation?.id ?? "");
+      if (nextActiveConversation) {
+        restoreConversationState(nextActiveConversation, targetAgent);
+      } else {
+        clearConversationState();
+      }
+    }
+
+    setNoticeMessage(nextArchived ? `已归档对话：${target.title}` : `已恢复对话：${target.title}`);
+    showActionToast({
+      type: "success",
+      title: nextArchived ? "对话已归档" : "对话已恢复",
+      description: target.title
+    });
+  }
+
+  function getVisibleConversationMessages(conversationId: string) {
+    const source = activeConversationId === conversationId
+      ? messages
+      : conversationMessagesById[conversationId] ?? [];
+
+    return source
+      .filter((message) => (
+        (message.role === "user" || message.role === "assistant")
+        && typeof message.content === "string"
+        && message.content.trim()
+        && message.isGenerating !== true
+      ))
+      .map((message) => ({
+        id: message.id,
+        role: message.role,
+        content: message.content
+      }));
+  }
+
+  async function handleCreateAgentConversationPublicLink(
+    agentId: string,
+    conversationId: string,
+    kind: "share" | "group"
+  ) {
+    const target = agentConversations.find((conversation) => (
+      conversation.agentId === agentId
+      && conversation.id === conversationId
+    ));
+
+    if (!target || isConversationLinkBusy) {
+      return;
+    }
+
+    const visibleMessages = getVisibleConversationMessages(conversationId);
+
+    if (visibleMessages.length === 0) {
+      showActionToast({
+        type: "warning",
+        title: kind === "share" ? "当前对话暂无可分享正文" : "当前对话暂无可用于群聊的正文"
+      });
+      return;
+    }
+
+    const accessKey = kind === "share" ? "share" : "groupChat";
+    const existingAccess = target.publicAccess?.[accessKey];
+
+    setIsConversationLinkBusy(true);
+    setNoticeMessage(kind === "share" ? "正在创建安全分享链接..." : "正在创建群聊邀请链接...");
+
+    try {
+      const response = await fetch(
+        `/api/admin/ingest-conversations/${encodeURIComponent(conversationId)}/public-link`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind,
+            title: target.title,
+            token: existingAccess?.token,
+            messages: visibleMessages
+          })
+        }
+      );
+      const payload = await response.json() as {
+        data?: {
+          token: string;
+          url: string;
+          status: "active" | "revoked";
+          updatedAt: string;
+        };
+        message?: string;
+      };
+
+      if (!response.ok || !payload.data?.url) {
+        throw new Error(payload.message || "公开链接创建失败。");
+      }
+
+      const nextAccess = {
+        token: payload.data.token,
+        url: payload.data.url,
+        status: payload.data.status,
+        updatedAt: payload.data.updatedAt
+      };
+
+      setAgentConversations((current) => current.map((conversation) => (
+        conversation.id === conversationId && conversation.agentId === agentId
+          ? {
+            ...conversation,
+            publicAccess: {
+              ...conversation.publicAccess,
+              [accessKey]: nextAccess
+            }
+          }
+          : conversation
+      )));
+      setConversationLinkDialog({
+        conversationId,
+        kind,
+        title: target.title,
+        url: payload.data.url
+      });
+      setNoticeMessage(kind === "share" ? "安全分享链接已创建。" : "群聊邀请链接已创建。");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "公开链接创建失败。";
+
+      setNoticeMessage(message);
+      showActionToast({
+        type: "warning",
+        title: message
+      });
+    } finally {
+      setIsConversationLinkBusy(false);
+    }
+  }
+
+  async function handleRevokeAgentConversationPublicLink(state: IngestConversationLinkDialogState) {
+    const target = agentConversations.find((conversation) => conversation.id === state.conversationId);
+    const accessKey = state.kind === "share" ? "share" : "groupChat";
+    const access = target?.publicAccess?.[accessKey];
+
+    if (!target || !access?.token || isConversationLinkBusy) {
+      return;
+    }
+
+    setIsConversationLinkBusy(true);
+
+    try {
+      const response = await fetch(
+        `/api/admin/ingest-conversations/${encodeURIComponent(state.conversationId)}/public-link`,
+        {
+          method: "DELETE",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: access.token })
+        }
+      );
+      const payload = await response.json() as { message?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.message || "关闭公开链接失败。");
+      }
+
+      setAgentConversations((current) => current.map((conversation) => (
+        conversation.id === state.conversationId
+          ? {
+            ...conversation,
+            publicAccess: {
+              ...conversation.publicAccess,
+              [accessKey]: {
+                ...access,
+                status: "revoked" as const,
+                updatedAt: new Date().toISOString()
+              }
+            }
+          }
+          : conversation
+      )));
+      setConversationLinkDialog(null);
+      setNoticeMessage(state.kind === "share" ? "分享链接已关闭。" : "群聊已关闭。");
+      showActionToast({
+        type: "success",
+        title: state.kind === "share" ? "已停止分享" : "群聊已关闭"
+      });
+    } catch (error) {
+      showActionToast({
+        type: "warning",
+        title: error instanceof Error ? error.message : "关闭公开链接失败。"
+      });
+    } finally {
+      setIsConversationLinkBusy(false);
+    }
+  }
+
   function handleDeleteAgentConversation(agentId: string, conversationId: string) {
     const targetAgent = visibleAgents.find((agent) => agent.id === agentId);
     const targetConversation = agentConversations.find((conversation) => conversation.agentId === agentId && conversation.id === conversationId);
@@ -1725,7 +2004,22 @@ export function IngestModeToggle() {
       return;
     }
 
-    const remainingConversations = agentConversations.filter((conversation) => conversation.agentId === agentId && conversation.id !== conversationId);
+    const hasActivePublicLink = targetConversation.publicAccess?.share?.status === "active"
+      || targetConversation.publicAccess?.groupChat?.status === "active";
+
+    if (hasActivePublicLink) {
+      showActionToast({
+        type: "warning",
+        title: "请先停止分享或关闭群聊，再删除当前对话。"
+      });
+      return;
+    }
+
+    const remainingConversations = agentConversations.filter((conversation) => (
+      conversation.agentId === agentId
+      && conversation.id !== conversationId
+      && conversation.status !== "archived"
+    ));
     const nextConversation = remainingConversations[0];
 
     setAgentConversations((current) => current.filter((conversation) => conversation.id !== conversationId));
@@ -1763,7 +2057,11 @@ export function IngestModeToggle() {
   }
 
   function ensureConversationForSend(agent: IngestChatAgent) {
-    const existing = agentConversations.find((conversation) => conversation.id === activeConversationId && conversation.agentId === agent.id);
+    const existing = agentConversations.find((conversation) => (
+      conversation.id === activeConversationId
+      && conversation.agentId === agent.id
+      && conversation.status !== "archived"
+    ));
 
     if (existing) {
       return existing.id;
@@ -1946,9 +2244,18 @@ export function IngestModeToggle() {
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget]
     }));
-    const effectiveInput = value || (draftAttachments.length > 0
+    const isWechatConversationReply = draftAttachments.some((file) => file.recognitionMode === "wechat_conversation");
+    const baseInput = value || (draftAttachments.length > 0
       ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
+    const effectiveInput = isWechatConversationReply
+      ? [
+        value || "请根据这张微信对话截图回复客户。",
+        "固定规则：左侧头像或白色气泡是客户，右侧头像或绿色气泡是用户本人。",
+        "右侧消息只作上下文；回答客户最后一个问题、顾虑或需要回应的话。",
+        "只输出可直接发送给客户的答案正文，不要输出识别结果、分析、回复思路、标题、前言、角色标签或模型信息。"
+      ].join("\n")
+      : baseInput;
 
     if (!effectiveInput) {
       setNoticeMessage("请输入投喂任务或先选择附件后再发送。");
@@ -2046,7 +2353,7 @@ export function IngestModeToggle() {
         {
           id: userMessageId,
           role: "user",
-          content: value || "附件投喂",
+          content: value || (isWechatConversationReply ? "微信截图识别并回复客户" : "附件投喂"),
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
           attachments: draftAttachments,
           source: "admin_ingest",
@@ -2489,7 +2796,7 @@ export function IngestModeToggle() {
             ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
             : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
       });
-      if (metadataState !== "unavailable") {
+      if (metadataState !== "unavailable" && !isWechatConversationReply) {
         void triggerMemoryExtraction({
           conversationId,
           agentId: activeAgent.id,
@@ -3097,7 +3404,7 @@ export function IngestModeToggle() {
     }
   }
 
-  function handleUpload(files: File[]) {
+  function handleUpload(files: File[], recognitionMode?: "wechat_conversation") {
     if (!hasActiveAgent) {
       const message = "请先到专家广场添加专家 Agent。";
 
@@ -3115,7 +3422,8 @@ export function IngestModeToggle() {
       tenantId,
       userId,
       agentId: activeAgent.id,
-      platform: platformContext.platform
+      platform: platformContext.platform,
+      recognitionMode
     }));
 
     if (states.length === 0) {
@@ -3720,8 +4028,8 @@ export function IngestModeToggle() {
       return;
     }
 
-    if (label === "图片 OCR") {
-      setNoticeMessage("图片 OCR 入口已响应：请选择图片文件，下一阶段接入真实 OCR 解析。");
+    if (label === "图片识别·支持微信长截图") {
+      setNoticeMessage("请选择图片；微信长截图会按左右气泡识别，并针对客户最后一条消息生成回复正文。");
       return;
     }
 
@@ -3770,7 +4078,15 @@ export function IngestModeToggle() {
     onAgentConversationToggleExpanded: handleToggleAgentConversationExpanded,
     onAgentConversationSelect: handleSelectAgentConversation,
     onAgentConversationCreate: handleCreateAgentConversation,
+    onAgentConversationShare: (agentId: string, conversationId: string) => {
+      void handleCreateAgentConversationPublicLink(agentId, conversationId, "share");
+    },
+    onAgentConversationStartGroupChat: (agentId: string, conversationId: string) => {
+      void handleCreateAgentConversationPublicLink(agentId, conversationId, "group");
+    },
     onAgentConversationRename: handleRenameAgentConversation,
+    onAgentConversationTogglePinned: handleToggleAgentConversationPinned,
+    onAgentConversationToggleArchived: handleToggleAgentConversationArchived,
     onAgentConversationDelete: handleDeleteAgentConversation,
     onAgentTogglePinned: handleToggleAgentPinned,
     activeRailKey,
@@ -3963,6 +4279,12 @@ export function IngestModeToggle() {
           }
         }}
         onSubmit={() => void handleUrlIngestSubmit()}
+      />
+      <IngestConversationLinkDialog
+        state={conversationLinkDialog}
+        busy={isConversationLinkBusy}
+        onClose={() => setConversationLinkDialog(null)}
+        onRevoke={(state) => void handleRevokeAgentConversationPublicLink(state)}
       />
       <ActionToastView toast={actionToast} onClose={() => setActionToast(null)} />
       <GptFallbackToastView

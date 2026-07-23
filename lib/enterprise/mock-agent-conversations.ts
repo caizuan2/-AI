@@ -18,6 +18,20 @@ export interface IngestAgentConversation {
   messageCount: number;
   pinned?: boolean;
   status: "active" | "archived";
+  publicAccess?: {
+    share?: {
+      token: string;
+      url: string;
+      status: "active" | "revoked";
+      updatedAt: string;
+    };
+    groupChat?: {
+      token: string;
+      url: string;
+      status: "active" | "revoked";
+      updatedAt: string;
+    };
+  };
   source: "admin_ingest";
   platform: AdminIngestPlatform;
   syncTarget: AdminIngestSyncTarget[];
