@@ -11,7 +11,12 @@ import {
   resolveAdminIngestModelProvider,
   runAdminIngestWithSelectedModel
 } from "@/lib/enterprise/ingest-model-provider";
-import type { DoubaoAdminIngestProgressEvent } from "@/lib/enterprise/doubao-ingest-client";
+import {
+  runDoubaoMetadataRecovery,
+  type DoubaoAdminIngestProgressEvent,
+  type DoubaoMetadataRecoveryResult
+} from "@/lib/enterprise/doubao-ingest-client";
+import type { EnterpriseStructuredKnowledge } from "@/lib/enterprise/ai-ingest-service";
 import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
@@ -37,7 +42,10 @@ import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-inge
 import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
 import {
+  claimEnterpriseDoubaoMetadataRecovery,
+  completeEnterpriseDoubaoMetadataRecovery,
   createEnterpriseIngestLog,
+  failEnterpriseDoubaoMetadataRecovery,
   listEnterpriseTrainingRecords,
   normalizeEnterpriseStructuredKnowledge,
   type EnterpriseIngestActor
@@ -416,6 +424,10 @@ function strictDoubaoGroundingError(input: {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readRawString(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function usesStrictSelectedModel(platform: AdminIngestPlatform, provider: string) {
@@ -923,6 +935,81 @@ function buildStructuredKnowledgeForTrainingLog(input: {
   });
 }
 
+function buildCompletedDoubaoMetadataResult(input: {
+  structured: EnterpriseStructuredKnowledge;
+  replyMarkdown: string;
+  sourceResponseId: string;
+  metadataResponseId: string | null | undefined;
+  requestedModel: string;
+  actualModel: string;
+  selectedModelLabel: string;
+  saveRecommendation: string | null | undefined;
+  jobId: string;
+}): DoubaoMetadataRecoveryResult {
+  const firstPair = input.structured.qa_pairs[0];
+  const saveRecommendation = input.saveRecommendation === "可以入库"
+    || input.saveRecommendation === "暂缓入库"
+    || input.saveRecommendation === "需要补充资料"
+    ? input.saveRecommendation
+    : input.structured.should_save
+      ? "可以入库"
+      : "暂缓入库";
+  const structured = {
+    title: input.structured.title,
+    category: input.structured.category,
+    summary: input.structured.summary,
+    tags: input.structured.tags,
+    question: firstPair.q,
+    answer: input.replyMarkdown,
+    confidence: input.structured.confidence,
+    saveSuggestion: saveRecommendation === "可以入库",
+    followUpQuestions: []
+  };
+
+  return {
+    provider: "doubao",
+    model: input.actualModel,
+    requestedModel: input.requestedModel,
+    actualModel: input.actualModel,
+    selectedModelLabel: input.selectedModelLabel,
+    modelMode: "highest",
+    metadataResponseId: input.metadataResponseId || `metadata-recovered-${input.jobId}`,
+    sourceResponseId: input.sourceResponseId,
+    createdAt: new Date().toISOString(),
+    usage: {},
+    replyMarkdown: input.replyMarkdown,
+    knowledgeDraft: {
+      title: input.structured.title,
+      summary: input.structured.summary,
+      category: input.structured.category,
+      categories: [input.structured.category],
+      tags: input.structured.tags,
+      standardQuestion: firstPair.q,
+      standardAnswer: input.replyMarkdown,
+      standardQuestions: [firstPair.q],
+      standardAnswers: [input.replyMarkdown],
+      scenarios: [],
+      sourceMaterials: [],
+      complianceNotes: [],
+      saveRecommendation,
+      missingFields: [],
+      trainingScore: input.structured.confidence
+    },
+    structured,
+    structuredResult: structured,
+    saveRecommendation,
+    diagnostics: [
+      "doubao:metadataRecovery:true",
+      "doubao:metadataRecoveryIdempotent:true",
+      "doubao:metadataCompleted:true",
+      "doubao:replyMarkdownPassthrough:true",
+      "apiResilience:fallbackUsed:false"
+    ],
+    fallback: false,
+    fallbackUsed: false
+  };
+}
+
 function toEnterpriseActor(actor: RbacUser | null): EnterpriseIngestActor | null {
   if (!actor) {
     return null;
@@ -954,7 +1041,15 @@ function readRequest(body: unknown) {
   const contextFields = readAdminIngestContextRequestFields(body);
 
   return {
+    operation: readString(body.operation) === "retry_doubao_metadata"
+      ? "retry_doubao_metadata" as const
+      : "generate" as const,
     input,
+    replyMarkdown: readRawString(body.replyMarkdown),
+    sourceResponseId: readString(body.sourceResponseId) || null,
+    jobId: readString(body.jobId) || null,
+    messageId: readString(body.messageId) || null,
+    attemptId: readString(body.attemptId) || null,
     attachments: readAttachments(body.attachments),
     agentId: readString(body.agentId) || null,
     knowledgeBaseId: readString(body.knowledgeBaseId) || null,
@@ -1011,6 +1106,223 @@ export async function POST(request: Request) {
 
   if (input.modelMode !== "highest") {
     return apiError(new ValidationError("管理员 GPT 投喂接口仅支持 modelMode=highest。"));
+  }
+
+  if (input.operation === "retry_doubao_metadata") {
+    const enterpriseActor = toEnterpriseActor(actor);
+    const attemptId = input.attemptId;
+
+    if (
+      !enterpriseActor
+      || !hasDatabaseUrl()
+      || !input.jobId
+      || !input.messageId
+      || !attemptId
+      || !input.sourceResponseId
+      || !input.replyMarkdown.trim()
+    ) {
+      return apiError(new ValidationError("缺少豆包待确认任务、正文校验或恢复标识，无法重新整理知识草稿。"));
+    }
+
+    let claimedJob: Awaited<ReturnType<typeof claimEnterpriseDoubaoMetadataRecovery>> | null = null;
+
+    try {
+      claimedJob = await claimEnterpriseDoubaoMetadataRecovery(enterpriseActor, {
+        jobId: input.jobId,
+        attemptId,
+        replyMarkdown: input.replyMarkdown,
+        sourceResponseId: input.sourceResponseId
+      });
+
+      const canonicalAgentScope = hasCanonicalAdminIngestGroundingScope({
+        tenantId: enterpriseActor.tenantId,
+        agentId: claimedJob.agentId,
+        knowledgeBaseId: claimedJob.knowledgeBaseId,
+        namespace: claimedJob.namespace
+      });
+
+      if (!canonicalAgentScope) {
+        throw new ValidationError("训练记录中的 Agent、固定知识库与 namespace 作用域不一致，已拒绝恢复。");
+      }
+
+      const modelRuntime = resolveIngestModelRuntime({
+        provider: "doubao-pro",
+        selectedModelLabel: "Doubao-Seed-2.1-pro",
+        modelDisplayName: "Doubao-Seed-2.1-pro",
+        preferredModel: claimedJob.actualModel
+      });
+      let metadataResult: DoubaoMetadataRecoveryResult;
+      let completedTrainingRecord: Awaited<ReturnType<typeof completeEnterpriseDoubaoMetadataRecovery>> | null = null;
+
+      if (claimedJob.recoveryState === "completed") {
+        if (!claimedJob.structured) {
+          throw new ValidationError("已完成的豆包知识草稿缺少结构化结果。");
+        }
+
+        metadataResult = buildCompletedDoubaoMetadataResult({
+          structured: claimedJob.structured,
+          replyMarkdown: claimedJob.replyMarkdown,
+          sourceResponseId: claimedJob.visibleResponseId ?? input.sourceResponseId,
+          metadataResponseId: claimedJob.metadataResponseId,
+          requestedModel: claimedJob.requestedModel,
+          actualModel: claimedJob.actualModel,
+          selectedModelLabel: modelRuntime.displayModelLabel,
+          saveRecommendation: claimedJob.saveRecommendation,
+          jobId: claimedJob.jobId
+        });
+      } else {
+        metadataResult = await runDoubaoMetadataRecovery({
+          input: claimedJob.input,
+          attachments: [],
+          agentId: claimedJob.agentId,
+          expertId: claimedJob.agentId,
+          agentName: claimedJob.agentName,
+          category: claimedJob.category,
+          source: "admin_ingest",
+          platform: input.platform,
+          syncTarget: input.syncTarget,
+          tenantId: enterpriseActor.tenantId,
+          userId: enterpriseActor.id,
+          preferredModel: claimedJob.actualModel,
+          selectedModelLabel: modelRuntime.displayModelLabel,
+          modelDisplayName: modelRuntime.displayModelLabel,
+          replyMarkdown: claimedJob.replyMarkdown,
+          sourceResponseId: claimedJob.visibleResponseId ?? input.sourceResponseId,
+          requestId,
+          signal: request.signal
+        });
+
+        if (
+          metadataResult.replyMarkdown !== claimedJob.replyMarkdown
+          || metadataResult.actualModel !== claimedJob.actualModel
+        ) {
+          throw new ValidationError("豆包知识草稿与原正文或原模型绑定校验失败，已拒绝恢复。");
+        }
+
+        const structuredForTrainingLog = buildStructuredKnowledgeForTrainingLog({
+          rawResult: metadataResult as unknown as Record<string, unknown>,
+          userInput: claimedJob.input,
+          visibleReply: claimedJob.replyMarkdown
+        });
+
+        if (!structuredForTrainingLog) {
+          throw new ValidationError("豆包知识草稿缺少可入库的结构化字段。");
+        }
+
+        completedTrainingRecord = await completeEnterpriseDoubaoMetadataRecovery(enterpriseActor, {
+          jobId: claimedJob.jobId,
+          attemptId,
+          structured: structuredForTrainingLog,
+          metadataResponseId: metadataResult.metadataResponseId,
+          saveRecommendation: metadataResult.saveRecommendation
+        });
+      }
+
+      const trainingRecords = await listEnterpriseTrainingRecords(enterpriseActor);
+      const trainingRecord = completedTrainingRecord
+        ?? trainingRecords.find((record) => record.jobId === claimedJob?.jobId)
+        ?? null;
+
+      return jsonUtf8({
+        ok: true,
+        data: {
+          ...metadataResult,
+          jobId: claimedJob.jobId,
+          messageId: input.messageId,
+          attemptId,
+          metadataState: "ready",
+          modelDisplayName: metadataResult.selectedModelLabel,
+          trainingRecord,
+          records: trainingRecords
+        },
+        fallback: false,
+        fallbackUsed: false,
+        provider: metadataResult.provider,
+        requestedProvider: "doubao-pro",
+        actualProvider: "doubao-pro",
+        requestedModel: metadataResult.requestedModel,
+        actualModel: metadataResult.actualModel,
+        selectedModelLabel: metadataResult.selectedModelLabel,
+        model: metadataResult.model,
+        sourceResponseId: claimedJob.visibleResponseId ?? input.sourceResponseId,
+        metadataResponseId: metadataResult.metadataResponseId,
+        jobId: claimedJob.jobId,
+        messageId: input.messageId,
+        attemptId,
+        metadataState: "ready",
+        replyMarkdown: metadataResult.replyMarkdown,
+        knowledgeDraft: metadataResult.knowledgeDraft,
+        structured: metadataResult.structured,
+        saveRecommendation: metadataResult.saveRecommendation,
+        diagnostics: metadataResult.diagnostics,
+        trainingRecord,
+        records: trainingRecords,
+        requestId
+      });
+    } catch (error) {
+      const causeCode = toGptFallbackErrorCode(error);
+      const isTimeout = causeCode === "DOUBAO_TIMEOUT";
+      const isRateLimited = causeCode === "DOUBAO_RATE_LIMITED";
+      const isInferenceLimitPaused = causeCode === "DOUBAO_INFERENCE_LIMIT_PAUSED";
+      const isClientCancelled = causeCode === "DOUBAO_REQUEST_CANCELLED";
+      const isMissingKey = causeCode === "DOUBAO_API_KEY_MISSING" || causeCode === "DOUBAO_API_KEY_INVALID";
+      const isSafetyRejection = causeCode === "DOUBAO_SAFETY_REJECTED";
+      const status = isClientCancelled
+        ? 499
+        : isRateLimited || isInferenceLimitPaused
+          ? 429
+          : isTimeout
+            ? 504
+            : isMissingKey
+              ? 401
+              : isSafetyRejection
+                ? 422
+                : 502;
+      const retryable = isRetryableDoubaoStrictModelFailure(causeCode);
+      const userMessage = isInferenceLimitPaused
+        ? "豆包推理限额已达到，知识草稿暂时无法整理。正文仍已完整保留，系统未切换其他模型。"
+        : isRateLimited
+          ? "豆包当前请求较多，知识草稿暂时未整理完成。正文仍已完整保留，请稍后重新整理。"
+          : isTimeout
+            ? "豆包知识草稿整理超时。正文仍已完整保留，可以稍后重新整理。"
+            : causeCode === "DOUBAO_RESPONSE_PARSE_FAILED"
+              ? "豆包返回的知识草稿结构仍不完整。正文仍已完整保留，本轮未开放正式入库。"
+              : "豆包知识草稿暂时未整理完成。正文仍已完整保留，系统未切换其他模型。";
+      const failureDetails = readSafeDoubaoFailureDetails(error);
+
+      if (claimedJob) {
+        await failEnterpriseDoubaoMetadataRecovery(enterpriseActor, {
+          jobId: claimedJob.jobId,
+          attemptId,
+          failureCode: causeCode,
+          failureDetails
+        }).catch(() => undefined);
+      }
+
+      return jsonUtf8({
+        ok: false,
+        success: false,
+        fallback: false,
+        fallbackUsed: false,
+        retryable,
+        errorCode: "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED",
+        causeCode,
+        userMessage,
+        message: userMessage,
+        jobId: input.jobId,
+        messageId: input.messageId,
+        attemptId,
+        metadataState: "unavailable",
+        provider: "doubao-pro",
+        requestedProvider: "doubao-pro",
+        actualProvider: "doubao-pro",
+        selectedModelLabel: "Doubao-Seed-2.1-pro",
+        requestedModel: claimedJob?.requestedModel ?? null,
+        actualModel: claimedJob?.actualModel ?? null,
+        requestId,
+        failureDetails
+      }, status);
+    }
   }
 
   const attachmentEvidence = assessAdminIngestAttachmentEvidence(input.attachments);
@@ -1229,6 +1541,12 @@ export async function POST(request: Request) {
       userInput: input.input,
       visibleReply
     });
+    const isDoubaoTrainingResult = readString(rawResult.provider) === "doubao";
+    const doubaoMetadataCompleted = isDoubaoTrainingResult
+      && rawResult.diagnostics.some((diagnostic) => diagnostic === "doubao:metadataCompleted:true");
+    const doubaoMetadataFailureCode = isDoubaoTrainingResult
+      ? readDiagnosticValue(rawResult.diagnostics, "doubao:metadataFailureCode:")
+      : null;
     const trainingLog = enterpriseActor && hasDatabaseUrl() && structuredForTrainingLog
       ? await createEnterpriseIngestLog(enterpriseActor, {
         input: input.input,
@@ -1238,7 +1556,17 @@ export async function POST(request: Request) {
         namespace: input.namespace,
         knowledgeVersion: input.knowledgeVersion,
         agentName: input.agentName,
-        structured: structuredForTrainingLog
+        structured: structuredForTrainingLog,
+        doubaoMetadataRecovery: isDoubaoTrainingResult
+          ? {
+              state: doubaoMetadataCompleted ? "completed" : "deferred",
+              failureCode: doubaoMetadataFailureCode,
+              replyMarkdown: visibleReply,
+              visibleResponseId: rawResult.responseId,
+              requestedModel: rawResult.requestedModel || modelRuntime.actualModel,
+              actualModel: rawResult.actualModel || rawResult.model
+            }
+          : null
       })
       : null;
     const trainingRecords = enterpriseActor && hasDatabaseUrl()

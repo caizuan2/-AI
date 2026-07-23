@@ -25,6 +25,7 @@ import {
   ingestSyncTarget,
   AdminIngestFileParseCancelledError,
   parseUploadedFilesForGpt,
+  retryDoubaoKnowledgeDraftMetadata,
   saveKnowledgeDraft,
   sendCoreIngest,
   sendUrlIngestPreview,
@@ -708,6 +709,7 @@ export function IngestModeToggle() {
   const restoredInitialConversationRef = useRef(false);
   const doubaoHealthRequestVersionRef = useRef(0);
   const activeAgentIdRef = useRef("");
+  const activeConversationIdRef = useRef("");
   const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
   const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
@@ -761,10 +763,13 @@ export function IngestModeToggle() {
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [recoveringMetadataMessageId, setRecoveringMetadataMessageId] = useState<string | null>(null);
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
   const [gptFallbackToast, setGptFallbackToast] = useState<GptFallbackToast | null>(null);
   const [actionToast, setActionToast] = useState<IngestActionToast | null>(null);
   const conversationStateByIdRef = useRef<Record<string, IngestConversationState>>({});
+  const draftRef = useRef<IngestKnowledgeDraft>(ingestChatInitialDraft);
+  const messagesRef = useRef<IngestChatMessage[]>([]);
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
   const abortControllerByConversationRef = useRef<Record<string, AbortController>>({});
   const activeIngestRequestIdRef = useRef("");
@@ -813,6 +818,18 @@ export function IngestModeToggle() {
     activeAgentIdRef.current = activeAgent.id;
     doubaoHealthRequestVersionRef.current += 1;
   }, [activeAgent.id]);
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId;
+  }, [activeConversationId]);
+
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const displayProfile = useMemo(
     () => resolveAdminIngestDisplayProfile({
       currentAgent: hasActiveAgent ? activeAgent : null,
@@ -2818,6 +2835,169 @@ export function IngestModeToggle() {
     });
   }
 
+  async function handleRetryDoubaoMetadata(
+    messageId: string,
+    prompt: string,
+    replyMarkdown: string
+  ) {
+    if (isParsing || recoveringMetadataMessageId) {
+      setNoticeMessage("当前已有模型任务进行中，请稍候再重新整理知识草稿。");
+      return null;
+    }
+
+    const currentMessages = messagesRef.current;
+    const targetMessage = currentMessages.find((message) => message.id === messageId);
+    const latestAssistantResult = [...currentMessages].reverse().find((message) =>
+      message.role === "assistant" && message.id.startsWith("assistant-result")
+    );
+    const currentDraft = draftRef.current;
+    const sourceResponseId = targetMessage?.gptProof?.responseId?.trim() ?? "";
+    const provider = targetMessage?.provider?.trim().toLowerCase();
+    const conversationId = activeConversationIdRef.current;
+
+    if (
+      !targetMessage
+      || latestAssistantResult?.id !== messageId
+      || targetMessage.role !== "assistant"
+      || !targetMessage.id.startsWith("assistant-result")
+      || targetMessage.metadataState !== "unavailable"
+      || (provider !== "doubao" && provider !== "doubao-pro")
+      || !currentDraft.jobId
+      || !currentDraft.responseId
+      || sourceResponseId !== currentDraft.responseId
+      || currentDraft.replyMarkdown !== targetMessage.content
+      || targetMessage.content !== replyMarkdown
+      || targetMessage.agentId !== activeAgent.id
+      || (targetMessage.conversationId && targetMessage.conversationId !== conversationId)
+      || !prompt.trim()
+    ) {
+      setNoticeMessage("当前正文与待确认任务无法安全匹配，请刷新当前对话后再试。");
+      return null;
+    }
+
+    const expectedAgentId = activeAgent.id;
+    const expectedConversationId = conversationId;
+    const expectedJobId = currentDraft.jobId;
+    const expectedReply = targetMessage.content;
+    const expectedResponseId = currentDraft.responseId;
+    const controller = new AbortController();
+
+    setRecoveringMetadataMessageId(messageId);
+    setErrorMessage("");
+    setNoticeMessage("豆包正文保持不变，正在用同一个模型重新整理知识草稿...");
+
+    try {
+      const result = await retryDoubaoKnowledgeDraftMetadata({
+        originalInput: prompt,
+        replyMarkdown: expectedReply,
+        sourceResponseId: expectedResponseId,
+        messageId,
+        draft: currentDraft,
+        agent: activeAgent,
+        tenantId,
+        userId,
+        platform: platformContext.platform,
+        signal: controller.signal
+      });
+
+      if (
+        activeAgentIdRef.current !== expectedAgentId
+        || activeConversationIdRef.current !== expectedConversationId
+        || draftRef.current.jobId !== expectedJobId
+        || draftRef.current.responseId !== expectedResponseId
+        || result.jobId !== expectedJobId
+        || result.sourceResponseId !== expectedResponseId
+        || result.replyMarkdown !== expectedReply
+      ) {
+        setNoticeMessage("知识草稿已在后台恢复，但当前页面已切换，请返回原对话查看。");
+        return null;
+      }
+
+      const latestTarget = messagesRef.current.find((message) => message.id === messageId);
+
+      if (
+        !latestTarget
+        || latestTarget.content !== expectedReply
+        || latestTarget.metadataState !== "unavailable"
+      ) {
+        setNoticeMessage("当前消息状态已变化，未覆盖页面中的知识草稿。");
+        return null;
+      }
+
+      const nextMessages = messagesRef.current.map((message) => message.id === messageId
+        ? {
+            ...message,
+            metadataState: "ready" as const,
+            saveSuggestion: result.draft.recommendation === "建议入库"
+          }
+        : message);
+      messagesRef.current = nextMessages;
+      setMessages(nextMessages);
+      setDraft(result.draft);
+      draftRef.current = result.draft;
+      setRecords((current) => mergeTrainingRecords(result.records, current));
+
+      const conversationState = conversationStateByIdRef.current[expectedConversationId];
+
+      if (conversationState) {
+        conversationStateByIdRef.current[expectedConversationId] = {
+          ...conversationState,
+          messages: conversationState.messages.map((message) => message.id === messageId
+            ? {
+                ...message,
+                content: expectedReply,
+                meta: {
+                  ...message.meta,
+                  metadataState: "ready",
+                  saveSuggestion: result.draft.recommendation === "建议入库"
+                },
+                updatedAt: Date.now()
+              }
+            : message),
+          updatedAt: Date.now()
+        };
+      }
+
+      doubaoHealthRequestVersionRef.current += 1;
+      setDoubaoInferencePaused(false);
+      writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, false);
+      setUnavailableModelProviders((current) => current.filter((item) => item !== "doubao-pro"));
+      setNoticeMessage("知识草稿已恢复，豆包正文保持不变；现在可以查看草稿并确认入库。");
+      showActionToast({
+        type: "success",
+        title: "知识草稿已重新整理",
+        description: "豆包正文未改动，确认无误后即可入库。"
+      });
+
+      return result;
+    } catch (error) {
+      const requestError = readAdminIngestRequestError(error);
+      const message = sanitizeGptOSUserMessage(
+        error instanceof Error
+          ? error.message
+          : "知识草稿仍未完成，豆包正文已完整保留，可稍后重试。"
+      );
+
+      if (requestError?.causeCode?.trim().toUpperCase() === "DOUBAO_INFERENCE_LIMIT_PAUSED") {
+        doubaoHealthRequestVersionRef.current += 1;
+        setDoubaoInferencePaused(true);
+        writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true);
+        setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
+      }
+
+      setErrorMessage(message);
+      setNoticeMessage("知识草稿仍未完成，豆包正文已完整保留，可稍后重新整理。");
+      showActionToast({
+        type: "warning",
+        title: "知识草稿暂未恢复",
+        description: message
+      });
+      return null;
+    } finally {
+      setRecoveringMetadataMessageId((current) => current === messageId ? null : current);
+    }
+  }
+
   function handleCancelIngest() {
     const controllers = Object.values(abortControllerByConversationRef.current);
 
@@ -3631,6 +3811,8 @@ export function IngestModeToggle() {
     onErrorChange: setErrorMessage,
     onSend: handleSend,
     onRetryFailedMessage: handleRetryFailedMessage,
+    onRetryDoubaoMetadata: handleRetryDoubaoMetadata,
+    recoveringMetadataMessageId,
     onCancel: handleCancelIngest,
     onSave: handleSave,
     onReconnectGpt: (modelLabel?: string) => handleCheckGptStatus("reconnect", modelLabel),
