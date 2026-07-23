@@ -68,6 +68,7 @@ export interface DoubaoAdminIngestInput {
   recentTrainingRecords?: GptIngestMemoryRecord[];
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
+  signal?: AbortSignal;
 }
 
 export interface DoubaoAdminIngestResult {
@@ -120,7 +121,17 @@ export type DoubaoIngestErrorCode =
   | "DOUBAO_MODEL_UNAVAILABLE"
   | "DOUBAO_REQUEST_FAILED"
   | "DOUBAO_RESPONSE_PARSE_FAILED"
-  | "DOUBAO_TIMEOUT";
+  | "DOUBAO_TIMEOUT"
+  | "DOUBAO_REQUEST_CANCELLED";
+
+export type DoubaoParseStage =
+  | "provider_payload"
+  | "sse_event"
+  | "provider_error"
+  | "model_identity"
+  | "finish_reason"
+  | "stream_eof"
+  | "reply_json";
 
 export class DoubaoIngestError extends Error {
   constructor(
@@ -129,6 +140,11 @@ export class DoubaoIngestError extends Error {
     public readonly details: {
       receivedContent?: boolean;
       timeoutStage?: "connect" | "first_event" | "idle" | "hard";
+      abortSource?: "client" | "hard_timeout";
+      parseStage?: DoubaoParseStage;
+      finishReason?: string;
+      eventCount?: number;
+      receivedChars?: number;
     } = {}
   ) {
     super(message);
@@ -350,7 +366,11 @@ export async function callDoubao(payload: {
   try {
     return bodyText ? JSON.parse(bodyText) as unknown : null;
   } catch {
-    throw new DoubaoIngestError("DOUBAO_RESPONSE_PARSE_FAILED", "豆包返回解析失败。");
+    throw new DoubaoIngestError(
+      "DOUBAO_RESPONSE_PARSE_FAILED",
+      "豆包返回解析失败。",
+      { parseStage: "provider_payload", receivedContent: Boolean(bodyText), receivedChars: bodyText.length }
+    );
   }
 }
 
@@ -417,7 +437,12 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
     throw new DoubaoIngestError(
       "DOUBAO_RESPONSE_PARSE_FAILED",
       "豆包流式返回解析失败。",
-      { receivedContent: accumulator.content.length > 0 }
+      {
+        receivedContent: accumulator.content.length > 0,
+        parseStage: "sse_event",
+        eventCount: accumulator.eventCount,
+        receivedChars: accumulator.content.length
+      }
     );
   }
 
@@ -425,7 +450,12 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
     throw new DoubaoIngestError(
       "DOUBAO_REQUEST_FAILED",
       "豆包流式请求返回错误。",
-      { receivedContent: accumulator.content.length > 0 }
+      {
+        receivedContent: accumulator.content.length > 0,
+        parseStage: "provider_error",
+        eventCount: accumulator.eventCount,
+        receivedChars: accumulator.content.length
+      }
     );
   }
 
@@ -439,7 +469,12 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
       throw new DoubaoIngestError(
         "DOUBAO_RESPONSE_PARSE_FAILED",
         "豆包流式返回的模型标识不一致。",
-        { receivedContent: accumulator.content.length > 0 }
+        {
+          receivedContent: accumulator.content.length > 0,
+          parseStage: "model_identity",
+          eventCount: accumulator.eventCount,
+          receivedChars: accumulator.content.length
+        }
       );
     }
 
@@ -515,7 +550,11 @@ async function collectDoubaoSseCompletion(input: {
   const reader = input.response.body?.getReader();
 
   if (!reader) {
-    throw new DoubaoIngestError("DOUBAO_RESPONSE_PARSE_FAILED", "豆包流式返回缺少响应正文。");
+    throw new DoubaoIngestError(
+      "DOUBAO_RESPONSE_PARSE_FAILED",
+      "豆包流式返回缺少响应正文。",
+      { parseStage: "provider_payload", receivedContent: false, eventCount: 0, receivedChars: 0 }
+    );
   }
 
   const accumulator: DoubaoStreamAccumulator = {
@@ -585,7 +624,13 @@ async function collectDoubaoSseCompletion(input: {
       throw new DoubaoIngestError(
         "DOUBAO_RESPONSE_PARSE_FAILED",
         `豆包流式返回未完整结束（finish_reason=${accumulator.finishReason}）。`,
-        { receivedContent: accumulator.content.length > 0 }
+        {
+          receivedContent: accumulator.content.length > 0,
+          parseStage: "finish_reason",
+          finishReason: accumulator.finishReason,
+          eventCount: accumulator.eventCount,
+          receivedChars: accumulator.content.length
+        }
       );
     }
 
@@ -593,7 +638,13 @@ async function collectDoubaoSseCompletion(input: {
       throw new DoubaoIngestError(
         "DOUBAO_RESPONSE_PARSE_FAILED",
         "豆包流式返回提前结束，未保存不完整正文。",
-        { receivedContent: accumulator.content.length > 0 }
+        {
+          receivedContent: accumulator.content.length > 0,
+          parseStage: "stream_eof",
+          finishReason: accumulator.finishReason,
+          eventCount: accumulator.eventCount,
+          receivedChars: accumulator.content.length
+        }
       );
     }
 
@@ -601,7 +652,13 @@ async function collectDoubaoSseCompletion(input: {
       throw new DoubaoIngestError(
         "DOUBAO_RESPONSE_PARSE_FAILED",
         "豆包返回缺少实际模型标识。",
-        { receivedContent: accumulator.content.length > 0 }
+        {
+          receivedContent: accumulator.content.length > 0,
+          parseStage: "model_identity",
+          finishReason: accumulator.finishReason,
+          eventCount: accumulator.eventCount,
+          receivedChars: accumulator.content.length
+        }
       );
     }
   } catch (error) {
@@ -615,7 +672,13 @@ async function collectDoubaoSseCompletion(input: {
     throw new DoubaoIngestError(
       "DOUBAO_REQUEST_FAILED",
       "豆包流式连接中断，请重新尝试。",
-      { receivedContent: accumulator.content.length > 0 }
+      {
+        receivedContent: accumulator.content.length > 0,
+        parseStage: "stream_eof",
+        finishReason: accumulator.finishReason,
+        eventCount: accumulator.eventCount,
+        receivedChars: accumulator.content.length
+      }
     );
   } finally {
     try {
@@ -710,7 +773,11 @@ async function callDoubaoStreaming(payload: {
         throw new DoubaoIngestError(
           "DOUBAO_RESPONSE_PARSE_FAILED",
           "豆包返回解析失败。",
-          { receivedContent: Boolean(bodyText) }
+          {
+            receivedContent: Boolean(bodyText),
+            parseStage: "provider_payload",
+            receivedChars: bodyText.length
+          }
         );
       }
     }
@@ -817,7 +884,11 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
     throw new DoubaoIngestError(
       "DOUBAO_RESPONSE_PARSE_FAILED",
       "豆包返回缺少实际模型标识。",
-      { receivedContent: Boolean(rawChatText) }
+      {
+        receivedContent: Boolean(rawChatText),
+        parseStage: "model_identity",
+        receivedChars: rawChatText.length
+      }
     );
   }
   const generatedProofId = `doubao-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
@@ -858,12 +929,61 @@ function extractJsonObject(text: string) {
   }
 }
 
-export function extractDoubaoReplyMarkdown(text: string) {
+function extractClosedJsonStringField(text: string, fieldName: string) {
+  const fieldPattern = new RegExp(`"${fieldName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"\\s*:\\s*"`, "g");
+  const match = fieldPattern.exec(text);
+
+  if (!match) {
+    return null;
+  }
+
+  const openingQuoteIndex = fieldPattern.lastIndex - 1;
+
+  for (let index = openingQuoteIndex + 1; index < text.length; index += 1) {
+    if (text[index] !== '"') {
+      continue;
+    }
+
+    let backslashCount = 0;
+
+    for (let cursor = index - 1; cursor > openingQuoteIndex && text[cursor] === "\\"; cursor -= 1) {
+      backslashCount += 1;
+    }
+
+    if (backslashCount % 2 === 1) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(text.slice(openingQuoteIndex, index + 1)) as unknown;
+
+      return typeof parsed === "string" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
+}
+
+function extractDoubaoReply(text: string) {
   const parsed = extractJsonObject(text);
   const replyMarkdown = parsed?.replyMarkdown;
 
   if (typeof replyMarkdown === "string" && replyMarkdown.trim()) {
-    return replyMarkdown;
+    return {
+      replyMarkdown,
+      recoveredFromPartialJson: false
+    };
+  }
+
+  const recoveredReplyMarkdown = extractClosedJsonStringField(text, "replyMarkdown");
+
+  if (typeof recoveredReplyMarkdown === "string" && recoveredReplyMarkdown.trim()) {
+    return {
+      replyMarkdown: recoveredReplyMarkdown,
+      recoveredFromPartialJson: true
+    };
   }
 
   const trimmed = text.trim();
@@ -871,16 +991,43 @@ export function extractDoubaoReplyMarkdown(text: string) {
     || /^```(?:json)?\s*\{/i.test(trimmed);
 
   if (trimmed && !parsed && !looksLikeBrokenJson) {
-    return text;
+    return {
+      replyMarkdown: text,
+      recoveredFromPartialJson: false
+    };
   }
 
-  throw new DoubaoIngestError("DOUBAO_RESPONSE_PARSE_FAILED", "豆包未返回可保存的 replyMarkdown。");
+  throw new DoubaoIngestError(
+    "DOUBAO_RESPONSE_PARSE_FAILED",
+    "豆包未返回可保存的 replyMarkdown。",
+    {
+      receivedContent: Boolean(text),
+      parseStage: "reply_json",
+      receivedChars: text.length
+    }
+  );
+}
+
+export function extractDoubaoReplyMarkdown(text: string) {
+  return extractDoubaoReply(text).replyMarkdown;
 }
 
 export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promise<DoubaoAdminIngestResult> {
   const { hardMs } = resolveDoubaoStreamTimeouts();
   const controller = new AbortController();
   let hardTimeoutReached = false;
+  let clientAbortReached = input.signal?.aborted === true;
+  const forwardClientAbort = () => {
+    clientAbortReached = true;
+    controller.abort(input.signal?.reason);
+  };
+
+  if (clientAbortReached) {
+    controller.abort(input.signal?.reason);
+  } else {
+    input.signal?.addEventListener("abort", forwardClientAbort, { once: true });
+  }
+
   const timeout = setTimeout(() => {
     hardTimeoutReached = true;
     controller.abort();
@@ -898,7 +1045,8 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       userPrompt: buildUserPrompt(input, gptOS),
       signal: controller.signal
     });
-    const replyMarkdown = extractDoubaoReplyMarkdown(response.text);
+    const extractedReply = extractDoubaoReply(response.text);
+    const replyMarkdown = extractedReply.replyMarkdown;
     const structuredPayload = extractJsonObject(response.text) ?? {};
     const normalized = normalizeGptOutput({
       rawText: JSON.stringify({
@@ -909,6 +1057,32 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       fallbackCategory: input.category ?? "",
       strictReply: true
     });
+    const partialStructuredPayloadNote = "豆包正文已完整返回，但结构化元数据未完整结束，请重新生成或人工复核后再入库。";
+    const knowledgeDraft = extractedReply.recoveredFromPartialJson
+      ? {
+          ...normalized.knowledgeDraft,
+          standardAnswer: replyMarkdown,
+          standardAnswers: [replyMarkdown],
+          complianceNotes: Array.from(new Set([
+            ...(normalized.knowledgeDraft.complianceNotes ?? []),
+            partialStructuredPayloadNote
+          ])),
+          missingFields: Array.from(new Set([
+            ...normalized.knowledgeDraft.missingFields,
+            partialStructuredPayloadNote
+          ])),
+          trainingScore: Math.min(normalized.knowledgeDraft.trainingScore, 60),
+          saveRecommendation: "暂缓入库" as const
+        }
+      : normalized.knowledgeDraft;
+    const structured = extractedReply.recoveredFromPartialJson
+      ? {
+          ...normalized.structured,
+          answer: replyMarkdown,
+          confidence: Math.min(normalized.structured.confidence, 60),
+          saveSuggestion: false
+        }
+      : normalized.structured;
     const quality = assessGptProResponseQuality(replyMarkdown, {
       userInput: input.input
     });
@@ -956,7 +1130,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       fallback: false,
       selectedModelLabel: resolved.selectedModelLabel,
       replyMarkdown,
-      knowledgeDraft: normalized.knowledgeDraft,
+      knowledgeDraft,
       userClientCallPlan: normalized.userClientCallPlan,
       suggestedQuestions: Array.from(new Set([
         ...normalized.suggestedQuestions,
@@ -968,7 +1142,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         parseStatus: attachment.parseStatus,
         limitationNote: attachment.limitationNote
       })),
-      saveRecommendation: normalized.saveRecommendation,
+      saveRecommendation: knowledgeDraft.saveRecommendation,
       diagnostics: [
         "apiResilience:provider:doubao",
         `apiResilience:normalized:${response.normalized ? "true" : "false"}`,
@@ -979,6 +1153,8 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:responseLatency:${response.responseLatency}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
+        `doubao:partialStructuredPayloadRecovered:${extractedReply.recoveredFromPartialJson ? "true" : "false"}`,
+        `doubao:saveRequiresReview:${extractedReply.recoveredFromPartialJson ? "true" : "false"}`,
         `observability:traceId:${gptOS.observability.trace.traceId}`,
         `observability:requestId:${gptOS.observability.trace.requestId}`,
         `observability:modelUsed:${response.model}`,
@@ -993,8 +1169,8 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       ],
       gptOS,
       autonomousResult: gptOS.autonomousResult,
-      structured: normalized.structured,
-      structuredResult: normalized.structured,
+      structured,
+      structuredResult: structured,
       sync: {
         platform: input.platform,
         syncTarget: input.syncTarget
@@ -1004,11 +1180,25 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
     };
   } catch (error) {
     if (error && typeof error === "object" && (error as { name?: string }).name === "AbortError") {
-      throw makeDoubaoTimeoutError(hardTimeoutReached ? "hard" : "idle", false);
+      if (clientAbortReached && !hardTimeoutReached) {
+        throw new DoubaoIngestError(
+          "DOUBAO_REQUEST_CANCELLED",
+          "豆包请求已由当前浏览器连接取消。",
+          { receivedContent: false, abortSource: "client" }
+        );
+      }
+
+      const timeoutError = makeDoubaoTimeoutError(hardTimeoutReached ? "hard" : "idle", false);
+
+      throw new DoubaoIngestError(timeoutError.code, timeoutError.message, {
+        ...timeoutError.details,
+        abortSource: "hard_timeout"
+      });
     }
 
     throw error;
   } finally {
     clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", forwardClientAbort);
   }
 }

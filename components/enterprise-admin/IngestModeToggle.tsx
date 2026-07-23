@@ -82,7 +82,8 @@ import {
   DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
-import { sanitizeGptOSUserMessage, toUserFriendlyMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
+import { buildAdminIngestFailurePresentation } from "@/lib/enterprise/admin-ingest-failure-presentation";
 import {
   ATTACHMENT_CONTENT_MISSING_CODE,
   assessAdminIngestAttachmentEvidence,
@@ -229,10 +230,6 @@ type AdminIngestConversationSyncSnapshot = {
 
 const tenantId: string | null = null;
 const userId: string | null = null;
-const GPT_FALLBACK_TOAST = {
-  title: "AI暂时不稳定",
-  description: "请稍后再试，或检查模型连接状态。"
-};
 const initialConnectionStatus: IngestConnectionStatus = {
   enterpriseSpace: "本地预览",
   knowledgeBase: "默认知识库",
@@ -1270,50 +1267,6 @@ export function IngestModeToggle() {
     setActionToast({
       id: `toast-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       ...input
-    });
-  }
-
-  function showGptFallbackToast(description = GPT_FALLBACK_TOAST.description, guard?: {
-    reason?: string;
-    stateDomain?: ReturnType<typeof getStateDomain>;
-    requestId?: string;
-    status?: number;
-    errorCode?: string;
-    causeCode?: string;
-    retryable?: boolean;
-  }) {
-    const hasCurrentSuccess = ingestSuccessLockRef.current
-      || Boolean(lastSuccessfulIngestRequestIdRef.current && lastSuccessfulIngestRequestIdRef.current === guard?.requestId);
-
-    if (shouldSuppressFallbackToast({
-      reason: guard?.reason,
-      stateDomain: guard?.stateDomain,
-      requestId: guard?.requestId,
-      activeRequestId: activeIngestRequestIdRef.current,
-      hasCurrentSuccess,
-      lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
-      suppressUntil: suppressFallbackToastUntilRef.current,
-      status: guard?.status,
-      errorCode: guard?.errorCode,
-      causeCode: guard?.causeCode,
-      retryable: guard?.retryable
-    })) {
-      return;
-    }
-
-    console.warn("[admin-ingest:gpt:fallback-toast]", {
-      reason: guard?.reason,
-      status: guard?.status,
-      errorCode: guard?.errorCode,
-      causeCode: guard?.causeCode,
-      requestId: guard?.requestId,
-      hasCurrentSuccess,
-      stateDomain: guard?.stateDomain
-    });
-    setGptFallbackToast({
-      id: `gpt-fallback-${Date.now()}`,
-      title: GPT_FALLBACK_TOAST.title,
-      description
     });
   }
 
@@ -2465,11 +2418,8 @@ export function IngestModeToggle() {
         return null;
       }
 
-      const friendlyError = toUserFriendlyMessage(error);
-      const isDoubaoTimeout = requestModelOption.provider === "doubao-pro" && causeCode === "DOUBAO_TIMEOUT";
-      const message = isDoubaoTimeout
-        ? "Doubao-Seed-2.1-pro 本轮响应超时，系统未切换其他模型。您的输入和附件已保留，可以重新尝试。"
-        : friendlyError?.message ?? sanitizeGptOSUserMessage(error instanceof Error ? error.message : "AI服务暂时不稳定，请稍后再试。");
+      const failurePresentation = buildAdminIngestFailurePresentation(error, currentModelLabel);
+      const message = failurePresentation.message;
 
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
@@ -2493,7 +2443,7 @@ export function IngestModeToggle() {
         status: responseStatus,
         errorCode,
         causeCode,
-        retryable: requestError?.retryable
+        retryable: failurePresentation.retryable
       });
 
       if (!realIngestFailure) {
@@ -2511,15 +2461,8 @@ export function IngestModeToggle() {
         return null;
       }
 
-      showGptFallbackToast(message, {
-        reason: "ingest_failure",
-        stateDomain,
-        requestId,
-        status: responseStatus,
-        errorCode,
-        causeCode,
-        retryable: requestError?.retryable
-      });
+      // The persistent failure card is the single source of truth for generation failures.
+      setGptFallbackToast(null);
       setMessages((current) => replaceIngestRetryOutcome(
         current,
         options?.failedMessageId,
@@ -2540,6 +2483,15 @@ export function IngestModeToggle() {
           expertName: activeAgent.expertId ? activeAgent.name : null,
           model: currentModelLabel,
           provider: requestModelOption.provider,
+          failureMeta: {
+            title: failurePresentation.title,
+            errorCode,
+            causeCode,
+            retryable: failurePresentation.retryable,
+            requestedModel: requestError?.requestedModel,
+            actualModel: requestError?.actualModel,
+            fallbackUsed: requestError?.fallbackUsed
+          },
           isRestored: false,
           isHistorical: false,
           isStreaming: false,
@@ -2589,6 +2541,11 @@ export function IngestModeToggle() {
 
     if (!failedMessage || !previousUserMessage || !prompt.trim()) {
       setNoticeMessage("未找到可重试的原始问题，请重新发送一次。");
+      return null;
+    }
+
+    if (failedMessage.failureMeta?.retryable !== true) {
+      setNoticeMessage("本轮错误不支持直接重试，请先检查模型连接配置或调整输入。");
       return null;
     }
 

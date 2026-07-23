@@ -33,6 +33,10 @@ export function getStateDomain(errorOrResult: unknown): IngestStateDomain {
       : JSON.stringify(errorOrResult ?? {});
   const text = normalizeSignal(raw);
 
+  if (details?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
+    return "ingest";
+  }
+
   if (includesAny(text, [
     "no_ingest_access",
     "license_app_type_mismatch",
@@ -100,6 +104,7 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
   const reason = normalizeSignal(input.reason);
   const errorCode = normalizeSignal(input.errorCode);
   const stateDomain = input.stateDomain ?? "unknown";
+  const isStrictSelectedModelFailure = errorCode.includes("admin_ingest_selected_model_unavailable");
   const isCurrentActiveRequest = Boolean(
     input.requestId
     && input.activeRequestId
@@ -123,19 +128,22 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
   }
 
   if (
-    stateDomain === "auth"
-    || stateDomain === "model_health"
-    || stateDomain === "no_access"
-    || stateDomain === "ui_transient"
+    !isStrictSelectedModelFailure
+    && (
+      stateDomain === "auth"
+      || stateDomain === "model_health"
+      || stateDomain === "no_access"
+      || stateDomain === "ui_transient"
+    )
   ) {
     return true;
   }
 
-  if (input.status === 401 || input.status === 403) {
+  if (!isStrictSelectedModelFailure && (input.status === 401 || input.status === 403)) {
     return true;
   }
 
-  if (includesAny(errorCode, [
+  if (!isStrictSelectedModelFailure && includesAny(errorCode, [
     "auth_required",
     "invalid_session",
     "no_ingest_access",
@@ -144,7 +152,7 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
     return true;
   }
 
-  if (includesAny(reason, [
+  if (!isStrictSelectedModelFailure && includesAny(reason, [
     "health",
     "auth",
     "no-access",

@@ -11,6 +11,15 @@ export type AdminIngestRequestErrorDetails = {
   actualModel?: string | null;
   fallbackUsed?: boolean;
   requestId?: string;
+  failureDetails?: {
+    parseStage?: string;
+    finishReason?: string;
+    eventCount?: number;
+    receivedChars?: number;
+    receivedContent?: boolean;
+    timeoutStage?: string;
+    abortSource?: string;
+  };
 };
 
 export class AdminIngestRequestError extends Error {
@@ -26,6 +35,7 @@ export class AdminIngestRequestError extends Error {
   readonly actualModel?: string | null;
   readonly fallbackUsed?: boolean;
   readonly requestId?: string;
+  readonly failureDetails?: AdminIngestRequestErrorDetails["failureDetails"];
 
   constructor(message: string, details: AdminIngestRequestErrorDetails = {}) {
     super(message);
@@ -42,7 +52,19 @@ export class AdminIngestRequestError extends Error {
     this.actualModel = details.actualModel;
     this.fallbackUsed = details.fallbackUsed;
     this.requestId = details.requestId;
+    this.failureDetails = details.failureDetails;
   }
+}
+
+const RETRYABLE_DOUBAO_STRICT_FAILURE_CODES = new Set([
+  "DOUBAO_RATE_LIMITED",
+  "DOUBAO_REQUEST_FAILED",
+  "DOUBAO_RESPONSE_PARSE_FAILED",
+  "DOUBAO_TIMEOUT"
+]);
+
+export function isRetryableDoubaoStrictModelFailure(causeCode: string) {
+  return RETRYABLE_DOUBAO_STRICT_FAILURE_CODES.has(causeCode.trim().toUpperCase());
 }
 
 export function readAdminIngestRequestError(error: unknown): AdminIngestRequestErrorDetails | null {
@@ -76,7 +98,10 @@ export function readAdminIngestRequestError(error: unknown): AdminIngestRequestE
     requestedModel: readString(record.requestedModel),
     actualModel: readNullableString(record.actualModel),
     fallbackUsed: typeof record.fallbackUsed === "boolean" ? record.fallbackUsed : undefined,
-    requestId: readString(record.requestId)
+    requestId: readString(record.requestId),
+    failureDetails: record.failureDetails && typeof record.failureDetails === "object" && !Array.isArray(record.failureDetails)
+      ? record.failureDetails as AdminIngestRequestErrorDetails["failureDetails"]
+      : undefined
   };
 }
 
