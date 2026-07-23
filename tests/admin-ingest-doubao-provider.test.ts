@@ -185,6 +185,25 @@ try {
   );
   assert.equal(classifyDoubaoResponseError(401).code, "DOUBAO_API_KEY_INVALID");
   assert.equal(classifyDoubaoResponseError(429, "rate limit").code, "DOUBAO_RATE_LIMITED");
+  assert.equal(
+    classifyDoubaoResponseError(429, JSON.stringify({
+      error: {
+        code: "SetLimitExceeded",
+        type: "TooManyRequests",
+        message: "unsafe provider account detail"
+      }
+    })).code,
+    "DOUBAO_INFERENCE_LIMIT_PAUSED"
+  );
+  assert.equal(
+    classifyDoubaoResponseError(429, JSON.stringify({
+      error: {
+        code: "RateLimitExceeded",
+        type: "TooManyRequests"
+      }
+    })).code,
+    "DOUBAO_RATE_LIMITED"
+  );
   assert.equal(classifyDoubaoResponseError(429, "insufficient quota").code, "DOUBAO_QUOTA_EXCEEDED");
   assert.equal(classifyDoubaoResponseError(400, "content policy safety").code, "DOUBAO_SAFETY_REJECTED");
   assert.equal(classifyDoubaoResponseError(404, "model not found").code, "DOUBAO_MODEL_UNAVAILABLE");
@@ -501,6 +520,50 @@ try {
   ]);
   globalThis.fetch = successfulProviderFetch;
 
+  let metadataInferencePausedCalls = 0;
+  const metadataInferencePausedEvents: string[] = [];
+  globalThis.fetch = async (_url, init) => {
+    metadataInferencePausedCalls += 1;
+
+    if (readRequestPhase(init) === "metadata") {
+      return new Response(JSON.stringify({
+        error: {
+          code: "SetLimitExceeded",
+          type: "TooManyRequests",
+          message: "unsafe provider account detail"
+        }
+      }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return createChunkedSseResponse({
+      model: "ep-doubao-provider-test",
+      content: exactReplyMarkdown,
+      responseId: "doubao-metadata-inference-paused-visible"
+    });
+  };
+  const metadataInferencePausedResult = await runDoubaoAdminIngest({
+    ...doubaoInput,
+    onProgressEvent: (event) => {
+      metadataInferencePausedEvents.push(event.type === "metadata_status"
+        ? `${event.type}:${event.state}:${event.failureCode ?? ""}`
+        : event.type);
+    }
+  });
+  assert.equal(metadataInferencePausedCalls, 2);
+  assert.equal(metadataInferencePausedResult.replyMarkdown, exactReplyMarkdown);
+  assert.equal(metadataInferencePausedResult.knowledgeDraft.standardAnswer, exactReplyMarkdown);
+  assert.equal(metadataInferencePausedResult.saveRecommendation, "暂缓入库");
+  assert.ok(metadataInferencePausedResult.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED"));
+  assert.deepEqual(metadataInferencePausedEvents, [
+    "visible_reply",
+    "metadata_status:pending:",
+    "metadata_status:deferred:DOUBAO_INFERENCE_LIMIT_PAUSED"
+  ]);
+  globalThis.fetch = successfulProviderFetch;
+
   let abortAfterVisibleCalls = 0;
   const abortAfterVisibleController = new AbortController();
   globalThis.fetch = async (_url, init) => {
@@ -664,7 +727,18 @@ try {
     )
   );
   assert.equal(crossProviderCallAfterAffinityMismatch, false, "A strict Web model mismatch must fail without calling another provider.");
-  globalThis.fetch = successfulDoubaoFetch;
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
+
+    return new Response(JSON.stringify({
+      id: "doubao-health-exact-model",
+      model: body.model,
+      choices: [{ message: { role: "assistant", content: "OK" } }]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
 
   const health = await checkDoubaoIngestHealth({
     preferredModel: DOUBAO_PRO_MODEL_ID,
@@ -673,7 +747,7 @@ try {
   });
   assert.equal(health.ok, true);
   assert.equal(health.provider, "doubao");
-  assert.equal(health.actualModel, "ep-doubao-provider-test");
+  assert.equal(health.actualModel, DOUBAO_PRO_MODEL_ID);
 
   let passiveHealthFetchCalls = 0;
   globalThis.fetch = async () => {
@@ -728,6 +802,111 @@ try {
   });
   assert.equal(cachedManualHealth.ok, true);
   assert.equal(singleFlightHealthCalls, 1, "A repeated manual connection check must reuse the five-minute cache.");
+
+  process.env.DOUBAO_BASE_URL = "https://ark-health-limit-pause.example.test/api/v3";
+  let pausedHealthCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    pausedHealthCalls += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
+
+    if (pausedHealthCalls === 1) {
+      return new Response(JSON.stringify({
+        error: {
+          code: "SetLimitExceeded",
+          type: "TooManyRequests",
+          message: "unsafe provider account detail"
+        }
+      }), {
+        status: 429,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      id: "doubao-health-after-limit-restored",
+      model: body.model,
+      choices: [{ message: { role: "assistant", content: "OK" } }]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  const pausedHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true,
+    forceTestRequest: true
+  });
+  assert.equal(pausedHealth.ok, false);
+  assert.equal(pausedHealth.errorCode, "DOUBAO_INFERENCE_LIMIT_PAUSED");
+  const restoredHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true,
+    forceTestRequest: true
+  });
+  assert.equal(restoredHealth.ok, true);
+  assert.equal(restoredHealth.requestTested, true);
+  assert.equal(restoredHealth.actualModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(pausedHealthCalls, 2, "A paused health result must not block the next forced real connection check.");
+
+  let invalidRestorationHealthCalls = 0;
+  globalThis.fetch = async () => {
+    invalidRestorationHealthCalls += 1;
+
+    if (invalidRestorationHealthCalls === 1) {
+      return new Response(JSON.stringify({
+        id: "doubao-health-missing-model",
+        choices: [{ message: { role: "assistant", content: "OK" } }]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    if (invalidRestorationHealthCalls === 2) {
+      return new Response(JSON.stringify({
+        id: "doubao-health-empty-content",
+        model: DOUBAO_PRO_MODEL_ID,
+        choices: [{ message: { role: "assistant", content: "   " } }]
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    return new Response(JSON.stringify({
+      id: "doubao-health-model-mismatch",
+      model: "unexpected-doubao-model",
+      choices: [{ message: { role: "assistant", content: "OK" } }]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  const missingModelHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true,
+    forceTestRequest: true
+  });
+  const emptyContentHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true,
+    forceTestRequest: true
+  });
+  const mismatchedModelHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true,
+    forceTestRequest: true
+  });
+  assert.equal(missingModelHealth.ok, false, "A response without an explicit actual model must not restore Doubao.");
+  assert.equal(emptyContentHealth.ok, false, "A response without non-empty assistant content must not restore Doubao.");
+  assert.equal(mismatchedModelHealth.ok, false, "A response from a different actual model must not restore Doubao.");
+  assert.equal(mismatchedModelHealth.errorCode, "DOUBAO_MODEL_UNAVAILABLE");
+
   if (priorDoubaoBaseUrl === undefined) {
     delete process.env.DOUBAO_BASE_URL;
   } else {
@@ -1124,6 +1303,35 @@ try {
   ]);
   assert.equal(retryResult.provider, "doubao");
   assert.equal(retryResult.replyMarkdown, exactReplyMarkdown);
+
+  let inferenceLimitPausedCalls = 0;
+  const inferenceLimitPausedEvents: string[] = [];
+  globalThis.fetch = async () => {
+    inferenceLimitPausedCalls += 1;
+    return new Response(JSON.stringify({
+      error: {
+        code: "SetLimitExceeded",
+        type: "TooManyRequests",
+        message: "unsafe provider account detail"
+      }
+    }), {
+      status: 429,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest({
+      ...doubaoInput,
+      onProgressEvent: (event) => inferenceLimitPausedEvents.push(event.type)
+    }),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_INFERENCE_LIMIT_PAUSED"
+    )
+  );
+  assert.equal(inferenceLimitPausedCalls, 1, "SetLimitExceeded must fail immediately without an automatic retry.");
+  assert.equal(inferenceLimitPausedEvents.includes("rate_limit_wait"), false);
 
   process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS = "15";
   process.env.DOUBAO_HARD_TIMEOUT_MS = "1000";

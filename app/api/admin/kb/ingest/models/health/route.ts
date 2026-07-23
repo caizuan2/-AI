@@ -70,7 +70,8 @@ export async function GET(request: Request) {
   if (provider === "doubao-pro") {
     return jsonUtf8(await checkDoubaoIngestHealth({
       ...input,
-      testRequest: url.searchParams.get("testRequest") === "true"
+      testRequest: url.searchParams.get("testRequest") === "true",
+      forceTestRequest: url.searchParams.get("forceTestRequest") === "true"
     }));
   }
 

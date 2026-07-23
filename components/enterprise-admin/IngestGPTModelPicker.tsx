@@ -17,6 +17,7 @@ interface IngestGPTModelPickerProps {
   compact?: boolean;
   align?: "left" | "right";
   unavailableProviders?: string[];
+  onCheckUnavailableProvider?: (provider: IngestModelOption["provider"]) => void;
 }
 
 const PRIMARY_INGEST_MODEL_PROVIDERS = new Set(["deepseek-pro", "doubao-pro"]);
@@ -63,7 +64,8 @@ export function IngestGPTModelPicker({
   onOpen,
   compact = false,
   align = "left",
-  unavailableProviders = []
+  unavailableProviders = [],
+  onCheckUnavailableProvider
 }: IngestGPTModelPickerProps) {
   const pickerRef = useRef<HTMLDivElement>(null);
   const selectedSelection = useMemo(() => getIngestModelOptionByLabel(selectedModel), [selectedModel]);
@@ -195,6 +197,15 @@ export function IngestGPTModelPicker({
               );
             })}
           </div>
+          {unavailableProviders.includes("doubao-pro") && onCheckUnavailableProvider ? (
+            <button
+              type="button"
+              onClick={() => onCheckUnavailableProvider("doubao-pro")}
+              className="mt-2 w-full rounded-xl border border-[#ead8cf] bg-[#fff8f4] px-3 py-2 text-center text-xs font-semibold text-[#b44b16] transition hover:bg-[#fff1e8]"
+            >
+              检查豆包连接
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>

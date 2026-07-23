@@ -93,6 +93,14 @@ export function buildAdminIngestFailurePresentation(
     );
   }
 
+  if (normalizedCode.includes("DOUBAO_INFERENCE_LIMIT_PAUSED")) {
+    return result(
+      `${modelLabel} 推理服务已暂停`,
+      "火山方舟已触发当前模型的推理限额，本轮没有生成正文。",
+      "请管理员前往火山方舟开通管理调整推理限额或关闭安心体验模式，恢复后再检查连接。"
+    );
+  }
+
   if (normalizedCode.includes("TIMEOUT") || rawText.includes("timeout") || rawText.includes("timed out")) {
     return result(
       `${modelLabel} 响应超时`,

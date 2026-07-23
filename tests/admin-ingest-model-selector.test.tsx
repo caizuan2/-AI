@@ -86,6 +86,7 @@ function testDoubaoHealthAvailabilityBoundary() {
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_API_KEY_MISSING" }), true);
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_API_KEY_INVALID" }), true);
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_MODEL_UNAVAILABLE" }), true);
+  assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_INFERENCE_LIMIT_PAUSED" }), true);
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_TIMEOUT" }), false);
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_RATE_LIMITED" }), false);
   assert.equal(shouldDisableDoubaoForHealth({ ok: false, errorCode: "DOUBAO_REQUEST_FAILED" }), false);
@@ -135,6 +136,8 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(pickerSource, /badge: "豆"/);
   assert.match(pickerSource, /暂未连接/);
   assert.match(pickerSource, /disabled=\{isUnavailable\}/);
+  assert.match(pickerSource, /检查豆包连接/);
+  assert.match(pickerSource, /onCheckUnavailableProvider/);
   assert.doesNotMatch(pickerSource, /投喂端只是 IDE/);
   assert.doesNotMatch(pickerSource, /Provider：/);
   assert.doesNotMatch(pickerSource, /option\.description/);
@@ -159,15 +162,37 @@ function testPickerPlacementAndProviderIdentity() {
   );
   assert.match(
     modeToggleSource,
-    /testRequest: selectedModelOption\.provider === "doubao-pro" \? true : undefined/,
+    /testRequest: healthModelOption\.provider === "doubao-pro" \? true : undefined/,
     "Only an explicit user connection check may make a real Doubao health request."
   );
+  assert.match(modeToggleSource, /forceTestRequest: healthModelOption\.provider === "doubao-pro" \? true : undefined/);
+  assert.match(modeToggleSource, /DOUBAO_INFERENCE_PAUSED_STORAGE_KEY/);
+  assert.match(modeToggleSource, /causeCode\?\.trim\(\)\.toUpperCase\(\) === "DOUBAO_INFERENCE_LIMIT_PAUSED"/);
+  assert.match(modeToggleSource, /readLocalString\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY\) === "true"/);
+  assert.match(modeToggleSource, /writeLocalJson\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true\)/);
+  assert.match(modeToggleSource, /removeLocalValue\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY\)/);
+  assert.match(modeToggleSource, /nextStatus\.requestTested === true/);
+  assert.match(modeToggleSource, /nextStatus\.actualModel === nextStatus\.requestedModel/);
+  assert.match(modeToggleSource, /event\.type === "metadata_status"[\s\S]*event\.state === "deferred"[\s\S]*event\.failureCode\?\.trim\(\)\.toUpperCase\(\) === "DOUBAO_INFERENCE_LIMIT_PAUSED"/);
+  assert.match(modeToggleSource, /setDoubaoInferencePaused\(true\)[\s\S]*writeLocalJson\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true\)[\s\S]*setUnavailableModelProviders/);
+  assert.match(modeToggleSource, /doubaoInferencePaused[\s\S]*\|\| readLocalString\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY\) === "true"/);
+  assert.match(modeToggleSource, /requestVersion !== doubaoHealthRequestVersionRef\.current[\s\S]*readLocalString\(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY\) === "true"[\s\S]*setUnavailableModelProviders/);
+  assert.match(modeToggleSource, /const paused = event\.newValue === "true";[\s\S]*doubaoHealthRequestVersionRef\.current \+= 1;/);
+  assert.match(modeToggleSource, /event\.failureCode\?\.trim\(\)\.toUpperCase\(\) === "DOUBAO_INFERENCE_LIMIT_PAUSED"[\s\S]*doubaoHealthRequestVersionRef\.current \+= 1;/);
+  assert.match(modeToggleSource, /const doubaoPauseVersionAtStart = healthModelOption\.provider === "doubao-pro"[\s\S]*doubaoHealthRequestVersionRef\.current/);
+  assert.match(modeToggleSource, /doubaoPauseVersionAtStart !== null[\s\S]*doubaoPauseVersionAtStart !== doubaoHealthRequestVersionRef\.current[\s\S]*return nextStatus/);
+  assert.match(modeToggleSource, /result\.diagnostics\.includes\("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED"\)/);
+  assert.match(modeToggleSource, /setNoticeMessage\(metadataInferencePaused[\s\S]*metadataPausedNotice/);
+  assert.match(modeToggleSource, /title: metadataInferencePaused[\s\S]*"豆包正文已保留，推理服务已暂停"/);
+  assert.match(shellSource, /检查豆包连接/);
+  assert.match(shellSource, /inferenceLimitPaused/);
   assert.match(
     ingestClientSource,
     /if \(modelProvider !== "doubao-pro"\) \{[\s\S]*?checkGptHealthStatus\(/,
     "The existing DeepSeek and legacy-provider preflight must remain intact."
   );
   assert.match(ingestClientSource, /params\.set\("testRequest", input\.testRequest === true \? "true" : "false"\)/);
+  assert.match(ingestClientSource, /params\.set\("forceTestRequest", "true"\)/);
   assert.match(doubaoHealthSource, /if \(input\.testRequest !== true\)/);
   assert.match(doubaoHealthSource, /testedHealthRequests/);
   assert.match(doubaoHealthSource, /runWithDoubaoRequestSlot/);
@@ -176,6 +201,7 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(modeToggleSource, /onCancel:\s*handleCancelIngest/);
   assert.match(healthRouteSource, /await requireAdminIngestActor\(request/);
   assert.match(healthRouteSource, /testRequest: url\.searchParams\.get\("testRequest"\) === "true"/);
+  assert.match(healthRouteSource, /forceTestRequest: url\.searchParams\.get\("forceTestRequest"\) === "true"/);
   assert.match(healthRouteSource, /targetType:\s*"admin_kb_ingest_model_health"/);
   assert.match(healthRouteSource, /return apiError\(error\)/);
 }

@@ -165,11 +165,18 @@ async function runDoubaoIngestHealthCheck(input: {
     if (response.ok) {
       try {
         const payload = bodyText ? JSON.parse(bodyText) as Record<string, unknown> : {};
-        const actualModel = typeof payload.model === "string" ? payload.model : status.model;
-        const id = typeof payload.id === "string" ? payload.id : "";
+        const actualModel = typeof payload.model === "string" ? payload.model.trim() : "";
         const choices = Array.isArray(payload.choices) ? payload.choices : [];
+        const firstChoice = choices[0];
+        const message = firstChoice && typeof firstChoice === "object"
+          ? (firstChoice as { message?: unknown }).message
+          : undefined;
+        const content = message && typeof message === "object"
+          ? (message as { content?: unknown }).content
+          : undefined;
+        const replyText = typeof content === "string" ? content.trim() : "";
 
-        if (id || choices.length > 0) {
+        if (actualModel === status.model && replyText) {
           return {
             ...status,
             ok: true,
@@ -178,6 +185,18 @@ async function runDoubaoIngestHealthCheck(input: {
             actualModel,
             message: "豆包 Ark 接口可用",
             diagnostics: []
+          };
+        }
+
+        if (actualModel && actualModel !== status.model) {
+          return {
+            ...status,
+            configured: true,
+            requestTested: true,
+            actualModel,
+            message: "豆包实际返回模型与请求模型不一致",
+            errorCode: "DOUBAO_MODEL_UNAVAILABLE",
+            diagnostics: ["Ark Chat API 已响应，但未由当前选择的 Doubao-Seed-2.1-pro 生成。"]
           };
         }
       } catch {
@@ -195,9 +214,9 @@ async function runDoubaoIngestHealthCheck(input: {
         ...status,
         configured: true,
         requestTested: true,
-        message: "豆包返回缺少响应 ID 和 choices",
+        message: "豆包返回缺少可验证的模型或正文",
         errorCode: "DOUBAO_RESPONSE_PARSE_FAILED",
-        diagnostics: ["Ark Chat API 返回 JSON，但缺少可验证的响应字段。"]
+        diagnostics: ["Ark Chat API 返回 JSON，但未同时提供明确模型和非空正文。"]
       };
     }
 
@@ -238,6 +257,10 @@ async function runDoubaoIngestHealthCheck(input: {
 }
 
 function resolveTestedHealthCacheMs(status: DoubaoIngestHealthStatus) {
+  if (status.errorCode === "DOUBAO_INFERENCE_LIMIT_PAUSED") {
+    return 0;
+  }
+
   if (
     status.errorCode === "DOUBAO_TIMEOUT"
     || status.errorCode === "DOUBAO_REQUEST_FAILED"
@@ -259,6 +282,7 @@ export async function checkDoubaoIngestHealth(input: {
   preferredModel?: string | null;
   selectedModelLabel?: string | null;
   testRequest?: boolean;
+  forceTestRequest?: boolean;
 } = {}): Promise<DoubaoIngestHealthStatus> {
   if (input.testRequest !== true) {
     return runDoubaoIngestHealthCheck({
@@ -269,6 +293,9 @@ export async function checkDoubaoIngestHealth(input: {
 
   const { baseUrl, status } = baseStatus(input);
   const cacheKey = `${baseUrl}|${status.model}`;
+  if (input.forceTestRequest === true) {
+    testedHealthCache.delete(cacheKey);
+  }
   const cached = testedHealthCache.get(cacheKey);
   const now = Date.now();
 

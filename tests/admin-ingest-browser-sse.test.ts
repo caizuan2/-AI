@@ -114,7 +114,7 @@ async function main() {
     "A closed replyMarkdown JSON string must survive a malformed metadata tail without body rewriting."
   );
 
-  let mode: "sse_success" | "sse_error" | "sse_rate_limited" | "sse_disconnect" | "legacy_json" = "sse_success";
+  let mode: "sse_success" | "sse_error" | "sse_rate_limited" | "sse_inference_paused" | "sse_disconnect" | "legacy_json" = "sse_success";
   let gptRequestCount = 0;
 
   globalThis.fetch = async (request, init) => {
@@ -215,6 +215,31 @@ async function main() {
           retryAfterMs: 5_000,
           attempt: 1
         }]
+      });
+    }
+
+    if (mode === "sse_inference_paused") {
+      return createBrowserSseResponse({
+        requestId,
+        eventName: "error",
+        status: 429,
+        payload: {
+          ok: false,
+          success: false,
+          errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+          causeCode: "DOUBAO_INFERENCE_LIMIT_PAUSED",
+          message: "Doubao-Seed-2.1-pro 推理限额已达到，模型服务已暂停。",
+          userMessage: "Doubao-Seed-2.1-pro 推理限额已达到，模型服务已暂停。",
+          retryable: false,
+          provider: "doubao-pro",
+          requestedProvider: "doubao-pro",
+          actualProvider: null,
+          selectedModelLabel: "Doubao-Seed-2.1-pro",
+          requestedModel: "doubao-seed-2-1-pro-260628",
+          actualModel: null,
+          fallbackUsed: false,
+          requestId
+        }
       });
     }
 
@@ -367,6 +392,30 @@ async function main() {
     );
     assert.equal(rateLimitWaitMs, 5_000, "Retry-After must survive the browser SSE status channel.");
 
+    mode = "sse_inference_paused";
+    const pausedRequestCountBefore = gptRequestCount;
+    await assert.rejects(
+      () => sendCoreIngest({
+        text: "豆包浏览器 SSE 推理限额暂停测试",
+        category: "测试",
+        model: "Doubao-Seed-2.1-pro",
+        modelProvider: "doubao-pro",
+        selectedModelLabel: "Doubao-Seed-2.1-pro",
+        requestId: "browser-sse-inference-paused",
+        agent
+      }),
+      (error: unknown) => {
+        const details = readAdminIngestRequestError(error);
+
+        return error instanceof AdminIngestRequestError
+          && details?.status === 429
+          && details.causeCode === "DOUBAO_INFERENCE_LIMIT_PAUSED"
+          && details.retryable === false
+          && details.fallbackUsed === false;
+      }
+    );
+    assert.equal(gptRequestCount - pausedRequestCountBefore, 1, "A paused browser request must not retry or switch providers.");
+
     mode = "sse_disconnect";
     let disconnectedVisibleReply = "";
     await assert.rejects(
@@ -404,7 +453,7 @@ async function main() {
     globalThis.fetch = originalFetch;
   }
 
-  assert.equal(gptRequestCount, 5);
+  assert.equal(gptRequestCount, 6);
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   const providerSource = readFileSync("lib/enterprise/ingest-model-provider.ts", "utf8");

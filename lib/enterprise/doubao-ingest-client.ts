@@ -144,6 +144,7 @@ export type DoubaoIngestErrorCode =
   | "DOUBAO_API_KEY_INVALID"
   | "DOUBAO_BASE_URL_INVALID"
   | "DOUBAO_RATE_LIMITED"
+  | "DOUBAO_INFERENCE_LIMIT_PAUSED"
   | "DOUBAO_QUOTA_EXCEEDED"
   | "DOUBAO_SAFETY_REJECTED"
   | "DOUBAO_MODEL_UNAVAILABLE"
@@ -545,6 +546,18 @@ export function classifyDoubaoResponseError(status: number, bodyText = "", optio
   retryAfterMs?: number;
 } = {}) {
   const body = bodyText.toLowerCase();
+  let providerErrorCode = "";
+
+  try {
+    const payload = JSON.parse(bodyText) as {
+      code?: unknown;
+      error?: { code?: unknown };
+    };
+    const candidate = payload.error?.code ?? payload.code;
+    providerErrorCode = typeof candidate === "string" ? candidate.trim().toLowerCase() : "";
+  } catch {
+    providerErrorCode = "";
+  }
 
   if (status === 401 || status === 403) {
     return new DoubaoIngestError("DOUBAO_API_KEY_INVALID", "豆包 Ark API Key 无效或无权访问当前模型。");
@@ -552,6 +565,19 @@ export function classifyDoubaoResponseError(status: number, bodyText = "", optio
 
   if (status === 408 || status === 504) {
     return new DoubaoIngestError("DOUBAO_TIMEOUT", `豆包请求超时（HTTP ${status}）。`);
+  }
+
+  if (
+    status === 429
+    && (
+      providerErrorCode === "setlimitexceeded"
+      || body.includes("setlimitexceeded")
+    )
+  ) {
+    return new DoubaoIngestError(
+      "DOUBAO_INFERENCE_LIMIT_PAUSED",
+      "豆包推理限额已达到，模型服务已暂停（HTTP 429）。"
+    );
   }
 
   if (status === 429 && /(quota|insufficient|balance|余额|额度)/i.test(body)) {

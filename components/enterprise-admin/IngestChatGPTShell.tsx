@@ -227,7 +227,7 @@ interface IngestChatGPTShellProps {
   onRetryFailedMessage?: (messageId: string, prompt: string) => Promise<unknown> | void;
   onCancel?: () => void;
   onSave?: () => Promise<IngestActionResult | null>;
-  onReconnectGpt?: () => Promise<unknown>;
+  onReconnectGpt?: (modelLabel?: string) => Promise<unknown>;
   onUpload?: (files: File[]) => void;
   onRemoveUpload?: (fileId: string) => void;
   onVoiceToggle?: () => void;
@@ -850,6 +850,7 @@ export function IngestChatGPTShell({
   onRetryFailedMessage,
   onCancel,
   onSave,
+  onReconnectGpt,
   onUpload,
   onRemoveUpload,
   onVoiceToggle,
@@ -2349,6 +2350,7 @@ export function IngestChatGPTShell({
                     ? Math.max(0, Math.ceil((message.failureMeta.retryAt - retryClockMs) / 1000))
                     : 0;
                   const retryBlocked = retrySecondsRemaining > 0;
+                  const inferenceLimitPaused = message.failureMeta?.causeCode?.trim().toUpperCase() === "DOUBAO_INFERENCE_LIMIT_PAUSED";
                   const feedbackActions = message.role === "assistant" ? (
                     <IngestAnswerFeedbackActions
                       messageId={message.id}
@@ -2427,6 +2429,16 @@ export function IngestChatGPTShell({
                                 className="rounded-full bg-[#202020] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
                               >
                                 {retryBlocked ? `${retrySecondsRemaining} 秒后重试` : "同模型重试"}
+                              </button>
+                            ) : null}
+                            {onReconnectGpt && inferenceLimitPaused ? (
+                              <button
+                                type="button"
+                                disabled={isParsing}
+                                onClick={() => void onReconnectGpt(message.model)}
+                                className="rounded-full bg-[#202020] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                检查豆包连接
                               </button>
                             ) : null}
                             <span className="text-[11px] text-[#9b5b56]">
@@ -2691,6 +2703,11 @@ export function IngestChatGPTShell({
                   align="right"
                   unavailableProviders={unavailableModelProviders}
                   onModelChange={(selection) => onModelChange?.(selection.label)}
+                  onCheckUnavailableProvider={(provider) => {
+                    if (provider === "doubao-pro") {
+                      void onReconnectGpt?.("Doubao-Seed-2.1-pro");
+                    }
+                  }}
                   onOpen={() => {
                     setIsMoreOpen(false);
                     setIsConnectionOpen(false);

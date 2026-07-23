@@ -26,6 +26,7 @@ async function main() {
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_RESPONSE_PARSE_FAILED"), true);
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_RATE_LIMITED"), true);
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_REQUEST_FAILED"), true);
+  assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_INFERENCE_LIMIT_PAUSED"), false);
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_QUOTA_EXCEEDED"), false);
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_MODEL_UNAVAILABLE"), false);
   assert.equal(isRetryableDoubaoStrictModelFailure("DOUBAO_BASE_URL_INVALID"), false);
@@ -213,8 +214,32 @@ async function main() {
   assert.match(rateLimitedPresentation.message, /7 秒/);
   assert.doesNotMatch(rateLimitedPresentation.message, /unsafe provider 429 body/);
 
+  const inferenceLimitPausedError = new AdminIngestRequestError(
+    "unsafe provider account detail SetLimitExceeded request-id",
+    {
+      status: 429,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_INFERENCE_LIMIT_PAUSED",
+      retryable: false,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      requestedModel: "doubao-seed-2-1-pro-260628",
+      actualModel: null,
+      fallbackUsed: false
+    }
+  );
+  const inferenceLimitPausedPresentation = buildAdminIngestFailurePresentation(
+    inferenceLimitPausedError,
+    "Doubao-Seed-2.1-pro"
+  );
+  assert.equal(inferenceLimitPausedPresentation.retryable, false);
+  assert.match(inferenceLimitPausedPresentation.title, /推理服务已暂停/);
+  assert.match(inferenceLimitPausedPresentation.message, /推理限额|安心体验模式/);
+  assert.doesNotMatch(inferenceLimitPausedPresentation.message, /同模型重试|unsafe provider|request-id|SetLimitExceeded/);
+  assert.equal(isRetryableIngestError(inferenceLimitPausedError), false);
+
   const classifiedFailures = [
     { causeCode: "DOUBAO_RATE_LIMITED", retryable: true, title: /请求繁忙/ },
+    { causeCode: "DOUBAO_INFERENCE_LIMIT_PAUSED", retryable: false, title: /推理服务已暂停/ },
     { causeCode: "DOUBAO_QUOTA_EXCEEDED", retryable: false, title: /额度暂不可用/ },
     { causeCode: "DOUBAO_SAFETY_REJECTED", retryable: false, title: /未通过模型检查/ },
     { causeCode: "DOUBAO_MODEL_UNAVAILABLE", retryable: false, title: /暂时不可用/ },

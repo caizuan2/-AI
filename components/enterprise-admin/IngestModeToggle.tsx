@@ -260,6 +260,7 @@ const INGEST_CONVERSATION_DRAFTS_STORAGE_KEY = "ai-kb-ingest-conversation-drafts
 const INGEST_PINNED_AGENTS_STORAGE_KEY = "ai-kb-ingest-pinned-agents";
 const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
 const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
+const DOUBAO_INFERENCE_PAUSED_STORAGE_KEY = "admin-ingest-doubao-inference-paused-v1";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
 const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
@@ -368,6 +369,14 @@ function readLocalString(key: string) {
 function writeLocalJson(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // localStorage can be unavailable in hardened browsers; UI should keep running.
+  }
+}
+
+function removeLocalValue(key: string) {
+  try {
+    window.localStorage.removeItem(key);
   } catch {
     // localStorage can be unavailable in hardened browsers; UI should keep running.
   }
@@ -720,6 +729,7 @@ export function IngestModeToggle() {
   const [gptHealthStatus, setGptHealthStatus] = useState<IngestGptHealthStatus | null>(null);
   const [isCheckingGptHealth, setIsCheckingGptHealth] = useState(false);
   const [unavailableModelProviders, setUnavailableModelProviders] = useState<string[]>([]);
+  const [doubaoInferencePaused, setDoubaoInferencePaused] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<IngestUploadState[]>([]);
   const [voiceState, setVoiceState] = useState<IngestVoiceState>(initialVoiceState);
   const [notifications, setNotifications] = useState<IngestNotification[]>([
@@ -928,6 +938,13 @@ export function IngestModeToggle() {
       return;
     }
 
+    if (readLocalString(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY) === "true") {
+      doubaoHealthRequestVersionRef.current += 1;
+      setDoubaoInferencePaused(true);
+      setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
+      return;
+    }
+
     let cancelled = false;
     const requestVersion = ++doubaoHealthRequestVersionRef.current;
     const doubaoOption = getIngestModelOptionByProvider("doubao-pro");
@@ -942,12 +959,21 @@ export function IngestModeToggle() {
         return;
       }
 
+      if (readLocalString(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY) === "true") {
+        setDoubaoInferencePaused(true);
+        setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
+        return;
+      }
+
       setUnavailableModelProviders((current) => shouldDisableDoubaoForHealth(status)
         ? Array.from(new Set([...current, "doubao-pro"]))
         : current.filter((provider) => provider !== "doubao-pro"));
     }).catch(() => {
       if (!cancelled && requestVersion === doubaoHealthRequestVersionRef.current) {
-        setUnavailableModelProviders((current) => current.filter((provider) => provider !== "doubao-pro"));
+        const paused = readLocalString(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY) === "true";
+        setUnavailableModelProviders((current) => paused
+          ? Array.from(new Set([...current, "doubao-pro"]))
+          : current.filter((provider) => provider !== "doubao-pro"));
       }
     });
 
@@ -955,6 +981,26 @@ export function IngestModeToggle() {
       cancelled = true;
     };
   }, [historyLoaded]);
+
+  useEffect(() => {
+    function syncDoubaoPauseAcrossTabs(event: StorageEvent) {
+      if (event.key !== DOUBAO_INFERENCE_PAUSED_STORAGE_KEY) {
+        return;
+      }
+
+      const paused = event.newValue === "true";
+      if (paused) {
+        doubaoHealthRequestVersionRef.current += 1;
+      }
+      setDoubaoInferencePaused(paused);
+      setUnavailableModelProviders((current) => paused
+        ? Array.from(new Set([...current, "doubao-pro"]))
+        : current.filter((provider) => provider !== "doubao-pro"));
+    }
+
+    window.addEventListener("storage", syncDoubaoPauseAcrossTabs);
+    return () => window.removeEventListener("storage", syncDoubaoPauseAcrossTabs);
+  }, []);
 
   useEffect(() => {
     if (!historyLoaded) {
@@ -1855,6 +1901,24 @@ export function IngestModeToggle() {
       return null;
     }
 
+    if (
+      requestModelOption.provider === "doubao-pro"
+      && (
+        doubaoInferencePaused
+        || readLocalString(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY) === "true"
+      )
+    ) {
+      const message = "Doubao-Seed-2.1-pro 推理服务已暂停。请管理员恢复火山方舟推理限额，再点击失败卡片中的“检查豆包连接”；真实检查成功后才能继续发送。";
+      setNoticeMessage(message);
+      setErrorMessage("");
+      showActionToast({
+        type: "warning",
+        title: "豆包推理服务已暂停",
+        description: message
+      });
+      return null;
+    }
+
     const composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
     const draftAttachments = composerUploads.map((file) => ({
       ...stripUploadRuntimeFields(file),
@@ -2192,6 +2256,19 @@ export function IngestModeToggle() {
                   return;
                 }
 
+                if (
+                  event.type === "metadata_status"
+                  && event.state === "deferred"
+                  && event.failureCode?.trim().toUpperCase() === "DOUBAO_INFERENCE_LIMIT_PAUSED"
+                ) {
+                  doubaoHealthRequestVersionRef.current += 1;
+                  setDoubaoInferencePaused(true);
+                  writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true);
+                  setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
+                  setNoticeMessage("正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。");
+                  return;
+                }
+
                 if (event.state === "pending" && visibleReplyRendered) {
                   setNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
                 } else if (event.state === "deferred" && visibleReplyRendered) {
@@ -2252,9 +2329,12 @@ export function IngestModeToggle() {
         ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
         : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`);
       const isDoubaoResult = result.provider === "doubao" || result.provider === "doubao-pro";
+      const metadataInferencePaused = isDoubaoResult
+        && result.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED");
       const metadataState: IngestChatMessage["metadataState"] = isDoubaoResult
         ? result.diagnostics.includes("doubao:metadataCompleted:true") ? "ready" : "unavailable"
         : undefined;
+      const metadataPausedNotice = "正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。";
 
       if (visibleReplyRendered && assistantContent !== visibleReplySnapshot) {
         throw new Error("DOUBAO_RESPONSE_PARSE_FAILED: 豆包可见正文与最终正文不一致，已保留先前原文。");
@@ -2322,7 +2402,9 @@ export function IngestModeToggle() {
         description: fallbackDescription
       } : null);
       setErrorMessage("");
-      setNoticeMessage(fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
+      setNoticeMessage(metadataInferencePaused
+        ? metadataPausedNotice
+        : fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
       setMessages((current) => replaceIngestRetryOutcome(
         current.map(markMessageCompleted),
         options?.failedMessageId,
@@ -2380,11 +2462,15 @@ export function IngestModeToggle() {
         requestId
       });
       pushNotification({
-        type: fallbackDescription ? "fallback" : "success",
-        title: fallbackDescription ? "备用模型已完成本次投喂" : "最近投喂完成",
-        description: fallbackDescription || (outgoingAttachments.length > 0
-          ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
-          : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
+        type: metadataInferencePaused || fallbackDescription ? "fallback" : "success",
+        title: metadataInferencePaused
+          ? "豆包正文已保留，推理服务已暂停"
+          : fallbackDescription ? "备用模型已完成本次投喂" : "最近投喂完成",
+        description: metadataInferencePaused
+          ? metadataPausedNotice
+          : fallbackDescription || (outgoingAttachments.length > 0
+            ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
+            : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
       });
       if (metadataState !== "unavailable") {
         void triggerMemoryExtraction({
@@ -2413,6 +2499,12 @@ export function IngestModeToggle() {
       const responseStatus = requestError?.status;
       const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
       const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(error);
+      if (causeCode?.trim().toUpperCase() === "DOUBAO_INFERENCE_LIMIT_PAUSED") {
+        doubaoHealthRequestVersionRef.current += 1;
+        setDoubaoInferencePaused(true);
+        writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true);
+        setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
+      }
       conversationStateByIdRef.current[conversationId] = failAssistantMessage(conversationStateByIdRef.current[conversationId], {
         requestId,
         message: attachmentEvidenceMessage || rawErrorMessage
@@ -2952,31 +3044,73 @@ export function IngestModeToggle() {
     return nextStatus;
   }
 
-  async function handleCheckGptStatus(action: "check" | "reconnect" = "check") {
+  async function handleCheckGptStatus(
+    action: "check" | "reconnect" = "check",
+    modelLabel = selectedModelOption.label
+  ) {
+    const healthModelOption = getIngestModelOptionByLabel(modelLabel);
+    const doubaoPauseVersionAtStart = healthModelOption.provider === "doubao-pro"
+      ? doubaoHealthRequestVersionRef.current
+      : null;
     setIsCheckingGptHealth(true);
     setErrorMessage("");
-    setNoticeMessage(action === "reconnect" ? `正在重新连接 ${selectedModelOption.label}...` : `正在检查 ${selectedModelOption.label} 接口状态...`);
+    setNoticeMessage(action === "reconnect" ? `正在重新连接 ${healthModelOption.label}...` : `正在检查 ${healthModelOption.label} 接口状态...`);
 
     try {
       const nextStatus = await checkGptHealthStatus({
-        provider: selectedModelOption.provider,
-        selectedModelLabel: selectedModelOption.label,
-        preferredModel: selectedModelOption.provider === "openai" ? selectedGptModel.apiModel : selectedModelOption.defaultModel,
-        testRequest: selectedModelOption.provider === "doubao-pro" ? true : undefined
+        provider: healthModelOption.provider,
+        selectedModelLabel: healthModelOption.label,
+        preferredModel: healthModelOption.provider === "openai" ? selectedGptModel.apiModel : healthModelOption.defaultModel,
+        testRequest: healthModelOption.provider === "doubao-pro" ? true : undefined,
+        forceTestRequest: healthModelOption.provider === "doubao-pro" ? true : undefined
       });
 
-      setGptHealthStatus(nextStatus);
+      if (
+        doubaoPauseVersionAtStart !== null
+        && doubaoPauseVersionAtStart !== doubaoHealthRequestVersionRef.current
+      ) {
+        return nextStatus;
+      }
 
-      if (nextStatus.ok) {
+      setGptHealthStatus(nextStatus);
+      const verifiedConnected = healthModelOption.provider !== "doubao-pro"
+        ? nextStatus.ok
+        : nextStatus.ok
+          && nextStatus.requestTested === true
+          && Boolean(nextStatus.actualModel)
+          && nextStatus.actualModel === nextStatus.requestedModel;
+      if (healthModelOption.provider === "doubao-pro") {
+        setUnavailableModelProviders((current) => {
+          if (verifiedConnected) {
+            return current.filter((provider) => provider !== "doubao-pro");
+          }
+          if (shouldDisableDoubaoForHealth(nextStatus)) {
+            return Array.from(new Set([...current, "doubao-pro"]));
+          }
+          return current;
+        });
+        if (verifiedConnected) {
+          setDoubaoInferencePaused(false);
+          removeLocalValue(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY);
+        } else if (nextStatus.errorCode === "DOUBAO_INFERENCE_LIMIT_PAUSED") {
+          doubaoHealthRequestVersionRef.current += 1;
+          setDoubaoInferencePaused(true);
+          writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true);
+        }
+      }
+
+      if (verifiedConnected) {
         setGptFallbackToast(null);
-        setNoticeMessage(action === "reconnect" ? `${selectedModelOption.label} 接口已连接，可重新生成。` : `${selectedModelOption.label} 接口已连接。`);
+        setNoticeMessage(action === "reconnect" ? `${healthModelOption.label} 接口已连接，可重新生成。` : `${healthModelOption.label} 接口已连接。`);
         showActionToast({
           type: "success",
-          title: action === "reconnect" ? `${selectedModelOption.label} 接口已连接，可重新生成` : `${selectedModelOption.label} 接口已连接`,
+          title: action === "reconnect" ? `${healthModelOption.label} 接口已连接，可重新生成` : `${healthModelOption.label} 接口已连接`,
           description: nextStatus.selectedModelLabel
         });
       } else {
-        const safeMessage = sanitizeGptOSUserMessage(nextStatus.message);
+        const safeMessage = healthModelOption.provider === "doubao-pro" && nextStatus.ok
+          ? "豆包真实连接检查没有返回当前指定模型，暂停状态未解除。"
+          : sanitizeGptOSUserMessage(nextStatus.message);
 
         setGptFallbackToast(null);
         setNoticeMessage(safeMessage);
@@ -2988,8 +3122,8 @@ export function IngestModeToggle() {
       }
 
       pushNotification({
-        type: nextStatus.ok ? "success" : "fallback",
-        title: nextStatus.ok ? `${selectedModelOption.label} 接口已连接` : `${selectedModelOption.label} 接口诊断提醒`,
+        type: verifiedConnected ? "success" : "fallback",
+        title: verifiedConnected ? `${healthModelOption.label} 接口已连接` : `${healthModelOption.label} 接口诊断提醒`,
         description: `${nextStatus.selectedModelLabel} · ${nextStatus.message}`
       });
 
@@ -3499,7 +3633,7 @@ export function IngestModeToggle() {
     onRetryFailedMessage: handleRetryFailedMessage,
     onCancel: handleCancelIngest,
     onSave: handleSave,
-    onReconnectGpt: () => handleCheckGptStatus("reconnect"),
+    onReconnectGpt: (modelLabel?: string) => handleCheckGptStatus("reconnect", modelLabel),
     onUpload: handleUpload,
     onRemoveUpload: handleRemoveUpload,
     onVoiceToggle: handleVoiceToggle,

@@ -528,6 +528,7 @@ function toGptFallbackErrorCode(error: unknown) {
   if (
     code === "DOUBAO_BASE_URL_INVALID"
     || code === "DOUBAO_RATE_LIMITED"
+    || code === "DOUBAO_INFERENCE_LIMIT_PAUSED"
     || code === "DOUBAO_QUOTA_EXCEEDED"
     || code === "DOUBAO_SAFETY_REJECTED"
     || code === "DOUBAO_MODEL_UNAVAILABLE"
@@ -1320,7 +1321,8 @@ export async function POST(request: Request) {
     const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
     const isClientCancelled = errorCode === "DOUBAO_REQUEST_CANCELLED";
     const isRateLimited = errorCode === "DOUBAO_RATE_LIMITED";
-    const status = affinityMismatch ? 502 : isClientCancelled ? 499 : isRateLimited ? 429 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
+    const isInferenceLimitPaused = errorCode === "DOUBAO_INFERENCE_LIMIT_PAUSED";
+    const status = affinityMismatch ? 502 : isClientCancelled ? 499 : isRateLimited || isInferenceLimitPaused ? 429 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
     const failureDetails = readSafeDoubaoFailureDetails(error);
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
@@ -1372,6 +1374,8 @@ export async function POST(request: Request) {
     if (strictModelAffinity) {
       const strictMessage = affinityMismatch
         ? `${modelRuntime.displayModelLabel} 返回的模型身份与当前选择不一致，系统已拒绝该结果且未切换其他模型。您的输入和附件已保留。`
+        : isInferenceLimitPaused
+          ? `${modelRuntime.displayModelLabel} 推理限额已达到，模型服务已暂停。系统未切换其他模型。您的输入和附件已保留。`
         : `${modelRuntime.displayModelLabel} 暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试或手动切换模型。`;
 
       return jsonUtf8({
