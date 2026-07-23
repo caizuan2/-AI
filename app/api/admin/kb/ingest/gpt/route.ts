@@ -11,6 +11,7 @@ import {
   resolveAdminIngestModelProvider,
   runAdminIngestWithSelectedModel
 } from "@/lib/enterprise/ingest-model-provider";
+import type { DoubaoAdminIngestProgressEvent } from "@/lib/enterprise/doubao-ingest-client";
 import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
@@ -73,6 +74,7 @@ type SafeDoubaoFailureDetails = {
   receivedContent?: boolean;
   timeoutStage?: string;
   abortSource?: string;
+  retryAfterMs?: number;
 };
 
 function readSafeDoubaoFailureDetails(error: unknown): SafeDoubaoFailureDetails | undefined {
@@ -103,6 +105,7 @@ function readSafeDoubaoFailureDetails(error: unknown): SafeDoubaoFailureDetails 
   const finishReason = readString(rawDetails.finishReason).slice(0, 40);
   const eventCount = Number(rawDetails.eventCount);
   const receivedChars = Number(rawDetails.receivedChars);
+  const retryAfterMs = Number(rawDetails.retryAfterMs);
   const safeDetails: SafeDoubaoFailureDetails = {
     parseStage: parseStages.has(parseStage) ? parseStage : undefined,
     finishReason: finishReason || undefined,
@@ -110,7 +113,8 @@ function readSafeDoubaoFailureDetails(error: unknown): SafeDoubaoFailureDetails 
     receivedChars: Number.isSafeInteger(receivedChars) && receivedChars >= 0 ? receivedChars : undefined,
     receivedContent: typeof rawDetails.receivedContent === "boolean" ? rawDetails.receivedContent : undefined,
     timeoutStage: timeoutStages.has(timeoutStage) ? timeoutStage : undefined,
-    abortSource: abortSources.has(abortSource) ? abortSource : undefined
+    abortSource: abortSources.has(abortSource) ? abortSource : undefined,
+    retryAfterMs: Number.isSafeInteger(retryAfterMs) && retryAfterMs >= 0 ? retryAfterMs : undefined
   };
 
   return Object.values(safeDetails).some((value) => value !== undefined)
@@ -131,7 +135,10 @@ function createDoubaoBrowserSseResponse(input: {
   requestId: string;
   selectedModelLabel: string;
   requestedModel: string;
-  producer: (signal: AbortSignal) => Promise<Response>;
+  producer: (
+    signal: AbortSignal,
+    onProgressEvent: (event: DoubaoAdminIngestProgressEvent) => void
+  ) => Promise<Response>;
 }) {
   const encoder = new TextEncoder();
   const providerController = new AbortController();
@@ -207,7 +214,55 @@ function createDoubaoBrowserSseResponse(input: {
         });
       }, ADMIN_INGEST_SSE_HEARTBEAT_MS);
 
-      void input.producer(providerController.signal).then(async (response) => {
+      const onProgressEvent = (event: DoubaoAdminIngestProgressEvent) => {
+        if (providerController.signal.aborted || closed) {
+          return;
+        }
+
+        if (event.type === "visible_reply") {
+          enqueue("visible", {
+            type: "visible",
+            requestId: input.requestId,
+            provider: "doubao-pro",
+            actualModel: event.model,
+            responseId: event.responseId,
+            fallbackUsed: false,
+            replyMarkdown: event.replyMarkdown,
+            metadataPending: true
+          });
+          return;
+        }
+
+        if (event.type === "queue_wait") {
+          enqueue("status", {
+            type: event.type,
+            requestId: input.requestId,
+            phase: event.phase,
+            queueDepth: event.queueDepth
+          });
+          return;
+        }
+
+        if (event.type === "rate_limit_wait") {
+          enqueue("status", {
+            type: event.type,
+            requestId: input.requestId,
+            phase: event.phase,
+            retryAfterMs: event.retryAfterMs,
+            attempt: event.attempt
+          });
+          return;
+        }
+
+        enqueue("status", {
+          type: event.type,
+          requestId: input.requestId,
+          state: event.state,
+          failureCode: event.failureCode
+        });
+      };
+
+      void input.producer(providerController.signal, onProgressEvent).then(async (response) => {
         const payload = await response.json().catch(() => ({
           ok: false,
           success: false,
@@ -966,7 +1021,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const executeRequest = async (signal?: AbortSignal) => {
+  const executeRequest = async (
+    signal?: AbortSignal,
+    onDoubaoProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void
+  ) => {
   const enterpriseActor = toEnterpriseActor(actor);
   const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
   const effectiveTenantId = enterpriseActor?.tenantId ?? input.tenantId;
@@ -1090,7 +1148,19 @@ export async function POST(request: Request) {
       recentTrainingRecords: input.recentTrainingRecords,
       autonomous: input.autonomous,
       requestId,
-      signal
+      signal,
+      onProgressEvent: onDoubaoProgressEvent
+        ? (event) => {
+            if (
+              event.type === "visible_reply"
+              && findUnsupportedAdminIngestAttachmentClaim(event.replyMarkdown, attachmentEvidence)
+            ) {
+              return;
+            }
+
+            onDoubaoProgressEvent(event);
+          }
+        : undefined
     });
 
     const unsupportedClaim = findUnsupportedAdminIngestAttachmentClaim(
@@ -1249,7 +1319,8 @@ export async function POST(request: Request) {
     const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_INVALID" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
     const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
     const isClientCancelled = errorCode === "DOUBAO_REQUEST_CANCELLED";
-    const status = affinityMismatch ? 502 : isClientCancelled ? 499 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
+    const isRateLimited = errorCode === "DOUBAO_RATE_LIMITED";
+    const status = affinityMismatch ? 502 : isClientCancelled ? 499 : isRateLimited ? 429 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
     const failureDetails = readSafeDoubaoFailureDetails(error);
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,

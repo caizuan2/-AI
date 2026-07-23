@@ -7,9 +7,10 @@ export function replaceIngestRetryOutcome<T extends { id: string }>(
   failedMessageId: string | undefined,
   nextMessage: T
 ) {
-  const retainedMessages = failedMessageId
-    ? messages.filter((message) => message.id !== failedMessageId)
-    : [...messages];
+  const retainedMessages = messages.filter((message) => (
+    message.id !== nextMessage.id
+    && (!failedMessageId || message.id !== failedMessageId)
+  ));
 
   return [...retainedMessages, nextMessage];
 }

@@ -8,12 +8,25 @@ import {
 import {
   buildDoubaoChatCompletionsUrl,
   classifyDoubaoResponseError,
+  readDoubaoRetryAfterMs,
+  runWithDoubaoRequestSlot,
   type DoubaoIngestErrorCode
 } from "@/lib/enterprise/doubao-ingest-client";
 
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL_LABEL = "Doubao-Seed-2.1-pro";
 const HEALTH_TIMEOUT_MS = 25_000;
+const HEALTH_RESULT_CACHE_MS = 5 * 60_000;
+const TRANSIENT_HEALTH_CACHE_MS = 5_000;
+const MAX_RATE_LIMIT_HEALTH_CACHE_MS = 30_000;
+
+type CachedDoubaoHealthStatus = {
+  expiresAt: number;
+  status: DoubaoIngestHealthStatus;
+};
+
+const testedHealthCache = new Map<string, CachedDoubaoHealthStatus>();
+const testedHealthRequests = new Map<string, Promise<DoubaoIngestHealthStatus>>();
 
 export interface DoubaoIngestHealthStatus {
   ok: boolean;
@@ -34,6 +47,7 @@ export interface DoubaoIngestHealthStatus {
   checkedAt: string;
   requestTested: boolean;
   errorCode?: DoubaoIngestErrorCode;
+  retryAfterMs?: number;
 }
 
 function readEnv(name: string) {
@@ -78,7 +92,7 @@ function baseStatus(input: {
   };
 }
 
-export async function checkDoubaoIngestHealth(input: {
+async function runDoubaoIngestHealthCheck(input: {
   preferredModel?: string | null;
   selectedModelLabel?: string | null;
   testRequest?: boolean;
@@ -126,21 +140,25 @@ export async function checkDoubaoIngestHealth(input: {
   const timeout = setTimeout(() => controller.abort(), HEALTH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(chatCompletionsUrl, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: status.model,
-        messages: [{ role: "user", content: "只回复 OK" }],
-        max_tokens: 8,
-        temperature: 0,
-        stream: false
-      }),
+    const response = await runWithDoubaoRequestSlot({
+      phase: "health",
       signal: controller.signal,
-      cache: "no-store"
+      task: () => fetch(chatCompletionsUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: status.model,
+          messages: [{ role: "user", content: "只回复 OK" }],
+          max_tokens: 8,
+          temperature: 0,
+          stream: false
+        }),
+        signal: controller.signal,
+        cache: "no-store"
+      })
     });
     const bodyText = await response.text().catch(() => "");
 
@@ -183,7 +201,10 @@ export async function checkDoubaoIngestHealth(input: {
       };
     }
 
-    const classified = classifyDoubaoResponseError(response.status, bodyText);
+    const retryAfterMs = readDoubaoRetryAfterMs(response.headers);
+    const classified = classifyDoubaoResponseError(response.status, bodyText, {
+      retryAfterMs
+    });
 
     return {
       ...status,
@@ -191,6 +212,7 @@ export async function checkDoubaoIngestHealth(input: {
       requestTested: true,
       message: classified.message,
       errorCode: classified.code,
+      retryAfterMs: classified.details.retryAfterMs,
       diagnostics: [
         "服务端已检测到 ARK_API_KEY，但 Ark chat/completions 真实请求未通过。",
         "请检查 DOUBAO_BASE_URL、DOUBAO_PRO_MODEL、账号额度和模型权限。"
@@ -213,4 +235,68 @@ export async function checkDoubaoIngestHealth(input: {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function resolveTestedHealthCacheMs(status: DoubaoIngestHealthStatus) {
+  if (
+    status.errorCode === "DOUBAO_TIMEOUT"
+    || status.errorCode === "DOUBAO_REQUEST_FAILED"
+  ) {
+    return TRANSIENT_HEALTH_CACHE_MS;
+  }
+
+  if (status.errorCode === "DOUBAO_RATE_LIMITED") {
+    return Math.min(
+      MAX_RATE_LIMIT_HEALTH_CACHE_MS,
+      Math.max(TRANSIENT_HEALTH_CACHE_MS, status.retryAfterMs ?? TRANSIENT_HEALTH_CACHE_MS)
+    );
+  }
+
+  return HEALTH_RESULT_CACHE_MS;
+}
+
+export async function checkDoubaoIngestHealth(input: {
+  preferredModel?: string | null;
+  selectedModelLabel?: string | null;
+  testRequest?: boolean;
+} = {}): Promise<DoubaoIngestHealthStatus> {
+  if (input.testRequest !== true) {
+    return runDoubaoIngestHealthCheck({
+      ...input,
+      testRequest: false
+    });
+  }
+
+  const { baseUrl, status } = baseStatus(input);
+  const cacheKey = `${baseUrl}|${status.model}`;
+  const cached = testedHealthCache.get(cacheKey);
+  const now = Date.now();
+
+  if (cached && cached.expiresAt > now) {
+    return cached.status;
+  }
+
+  const existingRequest = testedHealthRequests.get(cacheKey);
+
+  if (existingRequest) {
+    return existingRequest;
+  }
+
+  const request = runDoubaoIngestHealthCheck({
+    ...input,
+    testRequest: true
+  }).then((nextStatus) => {
+    testedHealthCache.set(cacheKey, {
+      expiresAt: Date.now() + resolveTestedHealthCacheMs(nextStatus),
+      status: nextStatus
+    });
+
+    return nextStatus;
+  }).finally(() => {
+    testedHealthRequests.delete(cacheKey);
+  });
+
+  testedHealthRequests.set(cacheKey, request);
+
+  return request;
 }

@@ -897,6 +897,7 @@ export function IngestChatGPTShell({
   const [highlightedPromptMessageId, setHighlightedPromptMessageId] = useState<string | null>(null);
   const [latestTurnAnchorId, setLatestTurnAnchorId] = useState<string | null>(null);
   const [latestTurnSpacerMode, setLatestTurnSpacerMode] = useState<LatestTurnSpacerMode | null>(null);
+  const [retryClockMs, setRetryClockMs] = useState(() => Date.now());
 
   const agents = controlledAgents ?? EMPTY_AGENTS;
   const activeAgentId = controlledActiveAgentId ?? internalActiveAgentId;
@@ -923,6 +924,31 @@ export function IngestChatGPTShell({
   const selectedModelLabel = normalizedModelSelection.label;
   const autonomousEnabled = controlledAutonomousEnabled ?? internalAutonomousEnabled;
   const setAutonomousEnabled = onAutonomousEnabledChange ?? setInternalAutonomousEnabled;
+
+  useEffect(() => {
+    const now = Date.now();
+    const latestRetryAt = messages.reduce((latest, message) => (
+      typeof message.failureMeta?.retryAt === "number"
+        ? Math.max(latest, message.failureMeta.retryAt)
+        : latest
+    ), 0);
+
+    if (latestRetryAt <= now) {
+      return;
+    }
+
+    setRetryClockMs(now);
+    const timer = window.setInterval(() => {
+      const tick = Date.now();
+      setRetryClockMs(tick);
+
+      if (tick >= latestRetryAt) {
+        window.clearInterval(timer);
+      }
+    }, 1_000);
+
+    return () => window.clearInterval(timer);
+  }, [messages]);
 
   const fallbackAgent = useMemo<IngestChatAgent>(() => ({
     id: "no-agent",
@@ -2280,7 +2306,11 @@ export function IngestChatGPTShell({
             ) : (
               <div className={`${CHAT_CONTENT_WIDTH_CLASS} space-y-5 pt-8`}>
                 {messages.map((message, messageIndex) => {
-                  const isStructuredResult = message.role === "assistant" && message.id.startsWith("assistant-result");
+                  const metadataReadyForActions = message.metadataState !== "pending"
+                    && message.metadataState !== "unavailable";
+                  const isStructuredResult = message.role === "assistant"
+                    && message.id.startsWith("assistant-result")
+                    && metadataReadyForActions;
                   const messageAgent = agentById.get(message.agentId ?? "") ?? activeAgent;
                   const messageFeedbackScope = buildFeedbackAgentScope(messageAgent);
                   const messageQuestion = findPreviousUserQuestion(messages, messageIndex);
@@ -2312,7 +2342,13 @@ export function IngestChatGPTShell({
                   const highlightClass = highlightedPromptMessageId === message.id
                     ? "scroll-mt-24 rounded-[28px] ring-2 ring-[#10a37f]/35 ring-offset-4 ring-offset-white"
                     : "scroll-mt-24";
-                  const isAssistantResult = message.role === "assistant" && message.id.startsWith("assistant-result");
+                  const isAssistantResult = message.role === "assistant"
+                    && message.id.startsWith("assistant-result")
+                    && metadataReadyForActions;
+                  const retrySecondsRemaining = typeof message.failureMeta?.retryAt === "number"
+                    ? Math.max(0, Math.ceil((message.failureMeta.retryAt - retryClockMs) / 1000))
+                    : 0;
+                  const retryBlocked = retrySecondsRemaining > 0;
                   const feedbackActions = message.role === "assistant" ? (
                     <IngestAnswerFeedbackActions
                       messageId={message.id}
@@ -2386,11 +2422,11 @@ export function IngestChatGPTShell({
                             {onRetryFailedMessage && messageQuestion && message.failureMeta?.retryable === true ? (
                               <button
                                 type="button"
-                                disabled={isParsing}
+                                disabled={isParsing || retryBlocked}
                                 onClick={() => void onRetryFailedMessage(message.id, messageQuestion)}
                                 className="rounded-full bg-[#202020] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-50"
                               >
-                                同模型重试
+                                {retryBlocked ? `${retrySecondsRemaining} 秒后重试` : "同模型重试"}
                               </button>
                             ) : null}
                             <span className="text-[11px] text-[#9b5b56]">
@@ -2435,6 +2471,11 @@ export function IngestChatGPTShell({
                         metadata={{ role: message.role, provider: message.provider ?? null }}
                       />
                       <IngestGPTMessageRenderer content={message.content} message={message} />
+                      {message.metadataState === "pending" ? (
+                        <p className="mt-3 text-xs text-[#8a7a5c]">正文已生成，正在用同一个豆包模型整理知识草稿...</p>
+                      ) : message.metadataState === "unavailable" ? (
+                        <p className="mt-3 text-xs text-[#9b5b56]">正文已保留，本轮知识草稿暂缓入库。</p>
+                      ) : null}
                       {SHOW_INTERNAL_OS_UI ? (
                         <IngestGPTOSPanel gptOS={message.gptOS} />
                       ) : null}

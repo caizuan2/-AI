@@ -5,7 +5,10 @@ import {
   buildDoubaoChatCompletionsUrl,
   classifyDoubaoResponseError,
   extractDoubaoReplyMarkdown,
-  runDoubaoAdminIngest
+  readDoubaoRetryAfterMs,
+  resolveDoubaoRetryDelayMs,
+  runDoubaoAdminIngest,
+  runWithDoubaoRequestSlot
 } from "../lib/enterprise/doubao-ingest-client";
 import { runDeepSeekAdminIngest } from "../lib/enterprise/deepseek-ingest-client";
 import { checkDoubaoIngestHealth } from "../lib/enterprise/doubao-health-check";
@@ -38,6 +41,7 @@ const originalEnv = {
   DOUBAO_FIRST_EVENT_TIMEOUT_MS: process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS,
   DOUBAO_STREAM_IDLE_TIMEOUT_MS: process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS,
   DOUBAO_HARD_TIMEOUT_MS: process.env.DOUBAO_HARD_TIMEOUT_MS,
+  DOUBAO_MAX_CONCURRENCY: process.env.DOUBAO_MAX_CONCURRENCY,
   DEEPSEEK_API_KEY: process.env.DEEPSEEK_API_KEY,
   DEEPSEEK_BASE_URL: process.env.DEEPSEEK_BASE_URL,
   DEEPSEEK_PRO_MODEL: process.env.DEEPSEEK_PRO_MODEL
@@ -110,6 +114,34 @@ try {
   assert.equal(getIngestModelOptionByProvider("doubao-pro").requiresApiKeyEnv, "ARK_API_KEY");
   assert.equal(DOUBAO_PRO_MODEL_ID, "doubao-seed-2-1-pro-260628");
 
+  process.env.DOUBAO_MAX_CONCURRENCY = "1";
+  let activeQueuedRequests = 0;
+  let maximumQueuedRequests = 0;
+  const queueEvents: string[] = [];
+  const runQueuedTask = async (phase: "visible" | "metadata", durationMs: number) => (
+    runWithDoubaoRequestSlot({
+      phase,
+      signal: new AbortController().signal,
+      onProgressEvent(event) {
+        if (event.type === "queue_wait") {
+          queueEvents.push(`${event.phase}:${event.queueDepth}`);
+        }
+      },
+      task: async () => {
+        activeQueuedRequests += 1;
+        maximumQueuedRequests = Math.max(maximumQueuedRequests, activeQueuedRequests);
+        await new Promise((resolve) => setTimeout(resolve, durationMs));
+        activeQueuedRequests -= 1;
+      }
+    })
+  );
+  await Promise.all([
+    runQueuedTask("visible", 20),
+    runQueuedTask("metadata", 5)
+  ]);
+  assert.equal(maximumQueuedRequests, 1, "The server-side Doubao scheduler must serialize requests by default.");
+  assert.deepEqual(queueEvents, ["metadata:1"]);
+
   delete process.env.DOUBAO_PRO_MODEL;
   delete process.env.DOUBAO_MODEL;
   assert.equal(resolveIngestActualModel("doubao-pro"), DOUBAO_PRO_MODEL_ID);
@@ -157,6 +189,24 @@ try {
   assert.equal(classifyDoubaoResponseError(400, "content policy safety").code, "DOUBAO_SAFETY_REJECTED");
   assert.equal(classifyDoubaoResponseError(404, "model not found").code, "DOUBAO_MODEL_UNAVAILABLE");
   assert.equal(classifyDoubaoResponseError(503).code, "DOUBAO_REQUEST_FAILED");
+  assert.equal(readDoubaoRetryAfterMs(new Headers({ "Retry-After": "3" })), 3_000);
+  const retryDateNow = Date.parse("2026-07-23T00:00:00.000Z");
+  assert.equal(
+    readDoubaoRetryAfterMs(
+      new Headers({ "Retry-After": "Thu, 23 Jul 2026 00:00:05 GMT" }),
+      retryDateNow
+    ),
+    5_000
+  );
+  assert.equal(resolveDoubaoRetryDelayMs({
+    retryAfterMs: 4_000,
+    retryAttempt: 1,
+    random: () => 0
+  }), 4_000);
+  assert.equal(resolveDoubaoRetryDelayMs({
+    retryAttempt: 2,
+    random: () => 0
+  }), 4_000);
 
   delete process.env.ARK_API_KEY;
   delete process.env.DOUBAO_API_KEY;
@@ -224,6 +274,7 @@ try {
   let capturedAuthorization = "";
   let capturedRequestBody: Record<string, unknown> = {};
   const capturedRequestBodies: Record<string, unknown>[] = [];
+  const progressEvents: string[] = [];
 
   globalThis.fetch = async (url, init) => {
     capturedUrl = String(url);
@@ -297,7 +348,12 @@ try {
       category: "豆包测试",
       saveStatus: "published"
     }],
-    requestId: "request-doubao-contract-test"
+    requestId: "request-doubao-contract-test",
+    onProgressEvent: (event) => {
+      progressEvents.push(event.type === "metadata_status"
+        ? `${event.type}:${event.state}`
+        : event.type);
+    }
   } satisfies Parameters<typeof runDoubaoAdminIngest>[0];
   const result = await runDoubaoAdminIngest(doubaoInput);
 
@@ -311,7 +367,7 @@ try {
   const visibleRequestBody = capturedRequestBodies[0];
   const metadataRequestBody = capturedRequestBodies[1];
   assert.equal(visibleRequestBody.max_tokens, 6000);
-  assert.equal(metadataRequestBody.max_tokens, 3000);
+  assert.equal(metadataRequestBody.max_tokens, 1500);
   const messages = visibleRequestBody.messages as Array<{ role: string; content: string }>;
   assert.equal(messages.length, 2);
   const finalPrompt = messages.map((message) => message.content).join("\n");
@@ -340,6 +396,16 @@ try {
 
   assert.equal(result.provider, "doubao");
   assert.equal(result.replyMarkdown, exactReplyMarkdown, "Provider replyMarkdown must pass through byte-for-byte as a JS string.");
+  assert.equal(
+    result.knowledgeDraft.standardAnswer,
+    exactReplyMarkdown,
+    "Metadata must bind the exact visible Markdown instead of asking Doubao to rewrite the answer."
+  );
+  assert.deepEqual(progressEvents.slice(-3), [
+    "visible_reply",
+    "metadata_status:pending",
+    "metadata_status:completed"
+  ]);
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
   assert.ok(result.diagnostics.includes("doubao:twoPhaseOutput:true"));
@@ -392,6 +458,82 @@ try {
     assert.ok(invalidMetadataResult.diagnostics.includes("doubao:metadataCompleted:false"));
     assert.ok(invalidMetadataResult.diagnostics.includes("doubao:saveRequiresReview:true"));
   }
+  globalThis.fetch = successfulProviderFetch;
+
+  let metadataRateLimitCalls = 0;
+  const metadataRateLimitEvents: string[] = [];
+  globalThis.fetch = async (_url, init) => {
+    metadataRateLimitCalls += 1;
+
+    if (readRequestPhase(init) === "metadata") {
+      return new Response(JSON.stringify({ error: { message: "rate limit" } }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "5"
+        }
+      });
+    }
+
+    return createChunkedSseResponse({
+      model: "ep-doubao-provider-test",
+      content: exactReplyMarkdown,
+      responseId: "doubao-metadata-rate-limit-visible"
+    });
+  };
+  const metadataRateLimitResult = await runDoubaoAdminIngest({
+    ...doubaoInput,
+    onProgressEvent: (event) => {
+      metadataRateLimitEvents.push(event.type === "metadata_status"
+        ? `${event.type}:${event.state}`
+        : event.type);
+    }
+  });
+  assert.equal(metadataRateLimitCalls, 2, "Metadata 429 must not retry or regenerate the visible body.");
+  assert.equal(metadataRateLimitResult.replyMarkdown, exactReplyMarkdown);
+  assert.equal(metadataRateLimitResult.knowledgeDraft.standardAnswer, exactReplyMarkdown);
+  assert.equal(metadataRateLimitResult.saveRecommendation, "暂缓入库");
+  assert.ok(metadataRateLimitResult.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_RATE_LIMITED"));
+  assert.deepEqual(metadataRateLimitEvents, [
+    "visible_reply",
+    "metadata_status:pending",
+    "metadata_status:deferred"
+  ]);
+  globalThis.fetch = successfulProviderFetch;
+
+  let abortAfterVisibleCalls = 0;
+  const abortAfterVisibleController = new AbortController();
+  globalThis.fetch = async (_url, init) => {
+    abortAfterVisibleCalls += 1;
+
+    return createChunkedSseResponse({
+      model: "ep-doubao-provider-test",
+      content: readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown,
+      responseId: "doubao-abort-after-visible"
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest({
+      ...doubaoInput,
+      signal: abortAfterVisibleController.signal,
+      onProgressEvent: (event) => {
+        if (event.type === "visible_reply") {
+          abortAfterVisibleController.abort(new DOMException("Browser response closed.", "AbortError"));
+        }
+      }
+    }),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_REQUEST_CANCELLED"
+    ),
+    "A browser cancellation after the visible body must stop metadata processing instead of returning a saveable result."
+  );
+  assert.equal(
+    abortAfterVisibleCalls,
+    1,
+    "Cancelling after the visible body must not dispatch the background metadata request."
+  );
   globalThis.fetch = successfulProviderFetch;
 
   const routedResult = await runAdminIngestWithSelectedModel({
@@ -526,11 +668,72 @@ try {
 
   const health = await checkDoubaoIngestHealth({
     preferredModel: DOUBAO_PRO_MODEL_ID,
-    selectedModelLabel: "Doubao-Seed-2.1-pro"
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true
   });
   assert.equal(health.ok, true);
   assert.equal(health.provider, "doubao");
   assert.equal(health.actualModel, "ep-doubao-provider-test");
+
+  let passiveHealthFetchCalls = 0;
+  globalThis.fetch = async () => {
+    passiveHealthFetchCalls += 1;
+    return new Response("{}", { status: 500 });
+  };
+  const passiveHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: false
+  });
+  assert.equal(passiveHealth.ok, true);
+  assert.equal(passiveHealth.requestTested, false);
+  assert.equal(passiveHealthFetchCalls, 0, "A passive startup/model-switch check must not call Ark.");
+
+  const priorDoubaoBaseUrl = process.env.DOUBAO_BASE_URL;
+  process.env.DOUBAO_BASE_URL = "https://ark-health-single-flight.example.test/api/v3";
+  let singleFlightHealthCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    singleFlightHealthCalls += 1;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const body = JSON.parse(String(init?.body ?? "{}")) as { model?: string };
+
+    return new Response(JSON.stringify({
+      id: "doubao-health-single-flight",
+      model: body.model,
+      choices: [{ message: { role: "assistant", content: "OK" } }]
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  const [firstManualHealth, secondManualHealth] = await Promise.all([
+    checkDoubaoIngestHealth({
+      preferredModel: DOUBAO_PRO_MODEL_ID,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      testRequest: true
+    }),
+    checkDoubaoIngestHealth({
+      preferredModel: DOUBAO_PRO_MODEL_ID,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      testRequest: true
+    })
+  ]);
+  assert.equal(firstManualHealth.ok, true);
+  assert.equal(secondManualHealth.ok, true);
+  assert.equal(singleFlightHealthCalls, 1, "Concurrent manual connection checks must share one Ark request.");
+  const cachedManualHealth = await checkDoubaoIngestHealth({
+    preferredModel: DOUBAO_PRO_MODEL_ID,
+    selectedModelLabel: "Doubao-Seed-2.1-pro",
+    testRequest: true
+  });
+  assert.equal(cachedManualHealth.ok, true);
+  assert.equal(singleFlightHealthCalls, 1, "A repeated manual connection check must reuse the five-minute cache.");
+  if (priorDoubaoBaseUrl === undefined) {
+    delete process.env.DOUBAO_BASE_URL;
+  } else {
+    process.env.DOUBAO_BASE_URL = priorDoubaoBaseUrl;
+  }
+  globalThis.fetch = successfulDoubaoFetch;
 
   process.env.DEEPSEEK_API_KEY = "deepseek-test-secret";
   process.env.DEEPSEEK_BASE_URL = "https://deepseek.example.test";
@@ -986,6 +1189,73 @@ try {
     "Raw keepalive bytes must not reset the first valid SSE event deadline."
   );
   assert.equal(firstEventKeepaliveCancels, 2, "Timed-out SSE readers must be cancelled and released.");
+
+  let unresolvedCancelCalls = 0;
+  globalThis.fetch = async () => new Response(new ReadableStream<Uint8Array>({
+    start() {
+      // Intentionally leave the stream open without an SSE event.
+    },
+    cancel() {
+      unresolvedCancelCalls += 1;
+      return new Promise<void>(() => {
+        // Simulate a runtime whose stream cancellation never settles.
+      });
+    }
+  }), {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" }
+  });
+  let unresolvedCancelDeadline: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      assert.rejects(
+        () => runDoubaoAdminIngest(doubaoInput),
+        (error: unknown) => Boolean(
+          error
+          && typeof error === "object"
+          && (error as { code?: unknown }).code === "DOUBAO_TIMEOUT"
+          && (error as { details?: { timeoutStage?: unknown } }).details?.timeoutStage === "first_event"
+        )
+      ),
+      new Promise<never>((_resolve, reject) => {
+        unresolvedCancelDeadline = setTimeout(
+          () => reject(new Error("An unresolved reader.cancel() must not retain the Doubao request slot.")),
+          2_000
+        );
+      })
+    ]);
+  } finally {
+    if (unresolvedCancelDeadline) {
+      clearTimeout(unresolvedCancelDeadline);
+    }
+  }
+  assert.equal(unresolvedCancelCalls, 2, "Timed-out requests must attempt best-effort stream cancellation.");
+
+  globalThis.fetch = async (_url, init) => createChunkedSseResponse({
+    model: "ep-doubao-provider-test",
+    content: readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown,
+    responseId: "doubao-after-unresolved-cancel"
+  });
+  const afterUnresolvedCancel = await (async () => {
+    let releasedSlotDeadline: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        runDoubaoAdminIngest(doubaoInput),
+        new Promise<never>((_resolve, reject) => {
+          releasedSlotDeadline = setTimeout(
+            () => reject(new Error("The request after an unresolved cancel could not acquire the Doubao slot.")),
+            2_000
+          );
+        })
+      ]);
+    } finally {
+      if (releasedSlotDeadline) {
+        clearTimeout(releasedSlotDeadline);
+      }
+    }
+  })();
+  assert.equal(afterUnresolvedCancel.replyMarkdown, exactReplyMarkdown);
+
   delete process.env.DOUBAO_FIRST_EVENT_TIMEOUT_MS;
   delete process.env.DOUBAO_HARD_TIMEOUT_MS;
 
@@ -1055,8 +1325,8 @@ try {
       && (error as { details?: { abortSource?: unknown } }).details?.abortSource === "client"
     )
   );
-  assert.equal(providerSignalAborted, true, "The browser request signal must abort the active Ark fetch.");
-  assert.equal(cancelledProviderCalls, 1, "A browser cancellation must not retry or switch providers.");
+  assert.equal(providerSignalAborted, false, "A request cancelled before dispatch must not create an Ark fetch.");
+  assert.equal(cancelledProviderCalls, 0, "A browser cancellation before dispatch must not call or switch providers.");
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   assert.match(routeSource, /result\.provider === "doubao"/);

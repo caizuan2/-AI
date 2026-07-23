@@ -98,6 +98,7 @@ export interface IngestChatMessage {
   expertName?: string | null;
   model?: string;
   provider?: string;
+  metadataState?: "pending" | "ready" | "unavailable";
   failureMeta?: {
     title?: string;
     errorCode?: string;
@@ -106,6 +107,8 @@ export interface IngestChatMessage {
     requestedModel?: string;
     actualModel?: string | null;
     fallbackUsed?: boolean;
+    retryAfterMs?: number;
+    retryAt?: number;
   };
   saveSuggestion?: boolean;
   gptProof?: GptCallProof;

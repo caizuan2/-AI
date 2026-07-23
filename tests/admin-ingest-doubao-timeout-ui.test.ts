@@ -183,6 +183,36 @@ async function main() {
   assert.equal(streamPresentation.retryable, true);
   assert.match(streamPresentation.title, /返回中断/);
 
+  const rateLimitedError = new AdminIngestRequestError(
+    "unsafe provider 429 body",
+    {
+      status: 429,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_RATE_LIMITED",
+      retryable: true,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      requestedModel: "doubao-seed-2-1-pro-260628",
+      actualModel: null,
+      fallbackUsed: false,
+      failureDetails: {
+        parseStage: "http_status",
+        retryAfterMs: 7_000
+      }
+    }
+  );
+  const rateLimitedDetails = readAdminIngestRequestError(rateLimitedError);
+  const rateLimitedPresentation = buildAdminIngestFailurePresentation(
+    rateLimitedError,
+    "Doubao-Seed-2.1-pro"
+  );
+  assert.equal(rateLimitedDetails?.status, 429);
+  assert.equal(rateLimitedDetails?.failureDetails?.retryAfterMs, 7_000);
+  assert.equal(rateLimitedPresentation.retryAfterMs, 7_000);
+  assert.equal(rateLimitedPresentation.retryable, true);
+  assert.match(rateLimitedPresentation.title, /请求繁忙/);
+  assert.match(rateLimitedPresentation.message, /7 秒/);
+  assert.doesNotMatch(rateLimitedPresentation.message, /unsafe provider 429 body/);
+
   const classifiedFailures = [
     { causeCode: "DOUBAO_RATE_LIMITED", retryable: true, title: /请求繁忙/ },
     { causeCode: "DOUBAO_QUOTA_EXCEEDED", retryable: false, title: /额度暂不可用/ },
@@ -294,12 +324,24 @@ async function main() {
       retryable: true,
       requestedModel: "doubao-seed-2-1-pro-260628",
       actualModel: null,
-      fallbackUsed: false
+      fallbackUsed: false,
+      retryAfterMs: 7_000,
+      retryAt: 123_456_789
     }
-  })) as { failureMeta: { causeCode: string; retryable: boolean; fallbackUsed: boolean } };
+  })) as {
+    failureMeta: {
+      causeCode: string;
+      retryable: boolean;
+      fallbackUsed: boolean;
+      retryAfterMs: number;
+      retryAt: number;
+    };
+  };
   assert.equal(persistedFailureMessage.failureMeta.causeCode, "DOUBAO_RESPONSE_PARSE_FAILED");
   assert.equal(persistedFailureMessage.failureMeta.retryable, true);
   assert.equal(persistedFailureMessage.failureMeta.fallbackUsed, false);
+  assert.equal(persistedFailureMessage.failureMeta.retryAfterMs, 7_000);
+  assert.equal(persistedFailureMessage.failureMeta.retryAt, 123_456_789);
   assert.equal(retryMessages.filter((message) => message.role === "user").length, 1);
   const successfulRetry = replaceIngestRetryOutcome(
     retryMessages,
@@ -444,10 +486,22 @@ async function main() {
   assert.match(clientSource, /return new AdminIngestRequestError\(userMessage/);
   assert.match(clientSource, /payload\.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE"/);
   assert.match(clientSource, /causeCode: payload\.causeCode/);
+  assert.match(clientSource, /retryAfterMs:/);
+  assert.match(clientSource, /onVisibleReply:/);
+  assert.match(clientSource, /onStatus:/);
   assert.match(routeSource, /isRetryableDoubaoStrictModelFailure\(errorCode\)/);
+  assert.match(routeSource, /retryAfterMs/);
+  assert.match(routeSource, /enqueue\("visible"/);
+  assert.match(routeSource, /enqueue\("status"/);
   assert.match(modeToggleSource, /!isStrictSelectedModelFailure\(retryError\)/);
   assert.match(modeToggleSource, /status: "failed"/);
   assert.match(modeToggleSource, /failureMeta:/);
+  assert.match(modeToggleSource, /metadataState: "pending"/);
+  assert.match(modeToggleSource, /metadataState: "unavailable"/);
+  assert.match(modeToggleSource, /retryAfterMs: failurePresentation\.retryAfterMs/);
+  assert.match(modeToggleSource, /retryAt:/);
+  assert.match(modeToggleSource, /assistant-result-\$\{requestId\}/);
+  assert.match(modeToggleSource, /visibleReplyRendered/);
   assert.match(modeToggleSource, /setGptFallbackToast\(null\)/);
   assert.doesNotMatch(modeToggleSource, /toUserFriendlyMessage\(error\)/);
   assert.match(modeToggleSource, /reuseUserMessageId: previousUserMessage\.id/);
@@ -458,6 +512,11 @@ async function main() {
   assert.match(shellSource, /message\.failureMeta\?\.retryable === true/);
   assert.match(shellSource, /message\.failureMeta\?\.title/);
   assert.match(shellSource, /message\.status === "failed"/);
+  assert.match(shellSource, /metadataState === "pending"/);
+  assert.match(shellSource, /metadataState === "unavailable"/);
+  assert.match(shellSource, /retrySecondsRemaining/);
+  assert.match(shellSource, /tick >= latestRetryAt/);
+  assert.match(shellSource, /window\.clearInterval\(timer\)/);
   assert.doesNotMatch(presentationSource, /系统正在自动优化/);
 
   console.log("Admin ingest Doubao timeout UI/error contract tests passed.");

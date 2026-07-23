@@ -6,6 +6,7 @@ export type AdminIngestFailurePresentation = {
   retryable: boolean;
   errorCode?: string;
   causeCode?: string;
+  retryAfterMs?: number;
 };
 
 function readRawErrorText(error: unknown) {
@@ -50,6 +51,7 @@ export function buildAdminIngestFailurePresentation(
   const modelLabel = details?.selectedModelLabel?.trim() || fallbackModelLabel.trim() || "当前模型";
   const errorCode = details?.errorCode;
   const causeCode = details?.causeCode;
+  const retryAfterMs = details?.failureDetails?.retryAfterMs;
   // The outer strict-model error is intentionally generic; the cause code carries
   // the actionable provider failure and must take precedence when present.
   const normalizedCode = (causeCode || errorCode || "").toUpperCase();
@@ -63,7 +65,8 @@ export function buildAdminIngestFailurePresentation(
     message: `${reason}${buildRetainedStateSuffix(retryable, nextAction)}`,
     retryable,
     errorCode,
-    causeCode
+    causeCode,
+    retryAfterMs
   });
 
   if (normalizedCode.includes("ADMIN_INGEST_GROUNDING_NO_HIT")) {
@@ -99,10 +102,20 @@ export function buildAdminIngestFailurePresentation(
   }
 
   if (normalizedCode.includes("RATE_LIMIT") || normalizedCode.includes("TOO_MANY_REQUESTS")) {
+    const waitSeconds = typeof retryAfterMs === "number"
+      ? Math.max(1, Math.ceil(retryAfterMs / 1000))
+      : null;
+
     return result(
       `${modelLabel} 请求繁忙`,
-      "当前模型请求量较大，本轮未生成结果。",
-      retryable ? "请稍后点击“同模型重试”。" : undefined
+      waitSeconds
+        ? `当前模型请求量较大，本轮未生成结果。预计 ${waitSeconds} 秒后可重试。`
+        : "当前模型请求量较大，本轮未生成结果。",
+      retryable
+        ? waitSeconds
+          ? `请等待 ${waitSeconds} 秒后点击“同模型重试”。`
+          : "请稍后点击“同模型重试”。"
+        : undefined
     );
   }
 
