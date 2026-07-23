@@ -213,6 +213,7 @@ interface IngestChatGPTShellProps {
   uploadedFiles?: IngestUploadState[];
   voiceState?: IngestVoiceState;
   isParsing?: boolean;
+  showParsingProgress?: boolean;
   isSaving?: boolean;
   onOpenCreateAgent?: () => void;
   onAddExpertToAgent?: (expert: IngestExpert) => void;
@@ -844,6 +845,7 @@ export function IngestChatGPTShell({
     syncTarget: ["web", "exe", "apk"]
   },
   isParsing: controlledIsParsing,
+  showParsingProgress: controlledShowParsingProgress,
   isSaving: controlledIsSaving,
   onOpenCreateAgent,
   onAddExpertToAgent,
@@ -924,6 +926,7 @@ export function IngestChatGPTShell({
   const input = controlledInput ?? internalInput;
   const setInput = onInputChange ?? setInternalInput;
   const isParsing = controlledIsParsing ?? internalIsParsing;
+  const showParsingProgress = controlledShowParsingProgress ?? isParsing;
   const isSaving = controlledIsSaving ?? internalIsSaving;
   const noticeMessage = controlledNoticeMessage ?? internalNoticeMessage;
   const setErrorMessage = onErrorChange ?? (() => undefined);
@@ -2622,7 +2625,7 @@ export function IngestChatGPTShell({
                   );
                 })}
 
-                {isParsing ? (
+                {showParsingProgress ? (
                   <div className="flex w-full justify-start">
                     <div className="inline-flex w-full items-center gap-3 rounded-2xl border border-neutral-100 bg-[#f7f7f8] px-4 py-2.5 text-sm text-[#303030]">
                       <span className="shrink-0 text-xs font-semibold text-[#777]">已思考 {formatThinkingDuration(thinkingElapsedSeconds)} &gt;</span>
