@@ -252,7 +252,7 @@ async function main() {
   assert.match(routeSource, /enqueue\("heartbeat"/);
   assert.match(routeSource, /response\.ok \? "final" : "error"/);
   assert.match(routeSource, /producer: executeRequest/);
-  assert.match(routeSource, /signal\n\s*\}\);/);
+  assert.match(routeSource, /signal\r?\n\s*\}\);/);
   assert.match(providerSource, /signal: providerSignal/);
 
   console.log("Admin ingest browser SSE transport tests passed.");
