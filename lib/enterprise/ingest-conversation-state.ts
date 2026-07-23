@@ -156,3 +156,9 @@ export function shouldAcceptRequestEvent(state: IngestConversationState | null |
 
   return state.activeRequestId === requestId || state.lastCompletedRequestId === requestId;
 }
+
+export function isIngestConversationRequestActive(
+  state: IngestConversationState | null | undefined
+) {
+  return Boolean(state?.isGenerating && state.activeRequestId);
+}

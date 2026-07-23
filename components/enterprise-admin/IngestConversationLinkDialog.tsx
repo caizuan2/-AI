@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy, ExternalLink, Link2Off, X } from "lucide-react";
+import { copyAdminIngestText } from "@/lib/enterprise/admin-ingest-clipboard";
 
 export interface IngestConversationLinkDialogState {
   conversationId: string;
@@ -21,19 +22,28 @@ export function IngestConversationLinkDialog({
   onClose: () => void;
   onRevoke: (state: IngestConversationLinkDialogState) => void;
 }) {
-  const [copyMessage, setCopyMessage] = useState("");
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "manual">("idle");
+  const linkInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setCopyState("idle");
+  }, [state?.url]);
 
   if (!state) {
     return null;
   }
 
   async function copyLink() {
-    try {
-      await navigator.clipboard.writeText(state?.url ?? "");
-      setCopyMessage("链接已复制");
-    } catch {
-      setCopyMessage("复制失败，请手动复制");
+    const copied = await copyAdminIngestText(state?.url ?? "");
+
+    if (copied) {
+      setCopyState("copied");
+      return;
     }
+
+    linkInputRef.current?.focus();
+    linkInputRef.current?.select();
+    setCopyState("manual");
   }
 
   return (
@@ -63,13 +73,26 @@ export function IngestConversationLinkDialog({
         <div className="mt-4 rounded-2xl bg-[#f6f6f4] p-3">
           <p className="truncate text-xs font-semibold text-[#333]">{state.title}</p>
           <input
+            ref={linkInputRef}
             readOnly
             value={state.url}
             aria-label={state.kind === "share" ? "分享链接" : "群聊邀请链接"}
             className="mt-2 h-10 w-full rounded-xl border border-[#dededb] bg-white px-3 text-xs text-[#555] outline-none"
             onFocus={(event) => event.currentTarget.select()}
           />
-          {copyMessage ? <p className="mt-2 text-xs text-[#128246]">{copyMessage}</p> : null}
+          {copyState !== "idle" ? (
+            <p
+              aria-live="polite"
+              className={[
+                "mt-2 text-xs",
+                copyState === "copied" ? "text-[#128246]" : "text-[#9a6500]"
+              ].join(" ")}
+            >
+              {copyState === "copied"
+                ? "链接已复制"
+                : "浏览器未允许自动复制，链接已选中，请按 Ctrl+C。"}
+            </p>
+          ) : null}
         </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2">

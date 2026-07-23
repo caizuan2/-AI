@@ -104,6 +104,7 @@ import {
 } from "@/lib/enterprise/ingest-ui-state";
 import {
   ensureConversationState,
+  isIngestConversationRequestActive,
   markRequestActive,
   type IngestConversationMessage,
   type IngestConversationState
@@ -4115,6 +4116,9 @@ export function IngestModeToggle() {
     notifications,
     settingsState,
     isParsing,
+    showParsingProgress: isParsing && isIngestConversationRequestActive(
+      conversationStateByIdRef.current[activeConversationId]
+    ),
     isSaving,
     onOpenCreateAgent: () => handleRailChange("experts"),
     onAddExpertToAgent: handleAddExpertToAgent,
