@@ -35,6 +35,14 @@ export interface CreateEnterpriseIngestLogInput {
   namespace?: string | null;
   knowledgeVersion?: string | number | null;
   structured: EnterpriseStructuredKnowledge;
+  doubaoMetadataRecovery?: {
+    state: "completed" | "deferred";
+    failureCode?: string | null;
+    replyMarkdown: string;
+    visibleResponseId?: string | null;
+    requestedModel: string;
+    actualModel: string;
+  } | null;
 }
 
 export interface SaveEnterpriseIngestInput {
@@ -50,6 +58,26 @@ export interface SaveEnterpriseIngestInput {
   knowledgeVersion?: string | number | null;
 }
 
+export interface EnterpriseDoubaoMetadataRecoverySeed {
+  recoveryState: "claimed" | "completed";
+  jobId: string;
+  attemptId: string;
+  input: string;
+  replyMarkdown: string;
+  visibleReplyHash: string;
+  visibleResponseId: string | null;
+  requestedModel: string;
+  actualModel: string;
+  agentId: string;
+  agentName: string;
+  knowledgeBaseId: string;
+  namespace: string;
+  category: string;
+  structured?: EnterpriseStructuredKnowledge;
+  metadataResponseId?: string | null;
+  saveRecommendation?: string | null;
+}
+
 export const enterpriseAdminIngestJobSourceTypes = [
   "admin_ai_chat",
   "admin_ai_text",
@@ -57,6 +85,8 @@ export const enterpriseAdminIngestJobSourceTypes = [
   "admin_ai_image",
   "admin_ai_url"
 ] as const;
+
+const DOUBAO_METADATA_RECOVERY_LEASE_MS = 5 * 60 * 1000;
 
 function toJobSourceType(sourceType: EnterpriseIngestSourceType) {
   return `admin_ai_${sourceType}`;
@@ -80,6 +110,10 @@ function toJsonObject(value: Record<string, unknown>) {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readRawString(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function readStringArray(value: unknown) {
@@ -179,6 +213,28 @@ function readStoredSourceUrl(metadata: unknown) {
   const record = readJsonObject(metadata);
 
   return readString(record.sourceUrl) || null;
+}
+
+function readStoredDoubaoRecovery(metadata: unknown) {
+  const record = readJsonObject(metadata);
+
+  return readJsonObject(record.doubaoMetadataRecovery);
+}
+
+function readStoredReplyMarkdown(metadata: unknown) {
+  const record = readJsonObject(metadata);
+  const recovery = readStoredDoubaoRecovery(record);
+  const recoveryReply = readRawString(recovery.replyMarkdown);
+
+  if (recoveryReply) {
+    return recoveryReply;
+  }
+
+  const structured = readJsonObject(record.ai_output);
+  const qaPairs = Array.isArray(structured.qa_pairs) ? structured.qa_pairs : [];
+  const firstPair = qaPairs.length > 0 ? readJsonObject(qaPairs[0]) : {};
+
+  return readRawString(firstPair.a);
 }
 
 function buildJobWhere(actor: EnterpriseIngestActor, jobId: string) {
@@ -322,6 +378,19 @@ export async function createEnterpriseIngestLog(actor: EnterpriseIngestActor, in
     agentName: input.agentName ?? null,
     input: cleanInput,
     ai_output: input.structured,
+    ...(input.doubaoMetadataRecovery ? {
+      doubaoMetadataRecovery: {
+        version: 1,
+        state: input.doubaoMetadataRecovery.state,
+        failureCode: input.doubaoMetadataRecovery.failureCode ?? null,
+        replyMarkdown: input.doubaoMetadataRecovery.replyMarkdown,
+        visibleReplyHash: buildContentHash(input.doubaoMetadataRecovery.replyMarkdown),
+        visibleResponseId: input.doubaoMetadataRecovery.visibleResponseId ?? null,
+        requestedModel: input.doubaoMetadataRecovery.requestedModel,
+        actualModel: input.doubaoMetadataRecovery.actualModel,
+        updatedAt: new Date().toISOString()
+      }
+    } : {}),
     training_record: {
       status: "pending",
       timestamp: new Date().toISOString(),
@@ -366,6 +435,289 @@ export async function createEnterpriseIngestLog(actor: EnterpriseIngestActor, in
   };
 }
 
+export async function claimEnterpriseDoubaoMetadataRecovery(
+  actor: EnterpriseIngestActor,
+  input: {
+    jobId: string;
+    attemptId: string;
+    replyMarkdown: string;
+    sourceResponseId: string;
+  }
+): Promise<EnterpriseDoubaoMetadataRecoverySeed> {
+  const jobId = input.jobId.trim();
+  const attemptId = input.attemptId.trim();
+  const sourceResponseId = input.sourceResponseId.trim();
+  const suppliedReplyMarkdown = input.replyMarkdown;
+
+  if (!jobId || !attemptId || !sourceResponseId || !suppliedReplyMarkdown.trim()) {
+    throw new ValidationError("豆包知识草稿恢复参数不完整。");
+  }
+
+  const existing = await prisma.ingestionJob.findFirst({
+    where: buildJobWhere(actor, jobId)
+  });
+
+  if (!existing) {
+    throw new NotFoundError("待恢复的豆包训练记录不存在。");
+  }
+
+  if (existing.status !== "pending" || existing.knowledgeItemId) {
+    throw new ValidationError("当前训练记录已不处于待确认状态，不能重新整理知识草稿。");
+  }
+
+  const storedMetadata = readJsonObject(existing.metadata);
+  const structured = readStoredStructuredKnowledge(storedMetadata);
+
+  if (!structured || structured.providerUsed.trim().toLowerCase() !== "doubao" || structured.fallbackUsed) {
+    throw new ValidationError("当前训练记录不是可恢复的豆包原始结果。");
+  }
+
+  const storedRecovery = readStoredDoubaoRecovery(storedMetadata);
+  const storedState = readString(storedRecovery.state);
+  const exactStoredRecoveryReply = readRawString(storedRecovery.replyMarkdown);
+  const storedReplyMarkdown = readStoredReplyMarkdown(storedMetadata);
+  const canonicalReplyMarkdown = storedReplyMarkdown || suppliedReplyMarkdown;
+
+  if (!canonicalReplyMarkdown) {
+    throw new ValidationError("训练记录缺少已完成的豆包正文，无法安全恢复知识草稿。");
+  }
+
+  const hasReplyMismatch = exactStoredRecoveryReply
+    ? exactStoredRecoveryReply !== suppliedReplyMarkdown
+    : Boolean(
+        storedReplyMarkdown
+        && storedReplyMarkdown.trim() !== suppliedReplyMarkdown.trim()
+      );
+
+  if (hasReplyMismatch) {
+    throw new ValidationError("当前页面正文与训练记录不一致，已拒绝错绑知识草稿。");
+  }
+
+  const storedVisibleResponseId = readString(storedRecovery.visibleResponseId);
+
+  if (storedVisibleResponseId && storedVisibleResponseId !== sourceResponseId) {
+    throw new ValidationError("当前页面响应与训练记录不一致，已拒绝错绑知识草稿。");
+  }
+
+  const replyMarkdown = suppliedReplyMarkdown;
+  const agentScope = resolveAgentKnowledgeScope({
+    agentId: readString(storedMetadata.agentId),
+    knowledgeBaseId: readString(storedMetadata.knowledgeBaseId),
+    namespace: readString(storedMetadata.namespace)
+  });
+  const requestedModel = readString(storedRecovery.requestedModel) || structured.model;
+  const actualModel = readString(storedRecovery.actualModel) || structured.model;
+  const visibleResponseId = storedVisibleResponseId || sourceResponseId;
+  const baseSeed = {
+    jobId,
+    attemptId,
+    input: readStoredInput(storedMetadata),
+    replyMarkdown,
+    visibleReplyHash: buildContentHash(replyMarkdown),
+    visibleResponseId,
+    requestedModel,
+    actualModel,
+    agentId: agentScope.agentId,
+    agentName: readString(storedMetadata.agentName),
+    knowledgeBaseId: agentScope.knowledgeBaseId,
+    namespace: agentScope.namespace,
+    category: structured.category
+  };
+
+  if (storedState === "completed") {
+    return {
+      ...baseSeed,
+      recoveryState: "completed",
+      structured,
+      metadataResponseId: readString(storedRecovery.metadataResponseId) || null,
+      saveRecommendation: readString(storedRecovery.saveRecommendation) || null
+    };
+  }
+
+  if (storedState === "retrying") {
+    const startedAtMs = Date.parse(readString(storedRecovery.startedAt));
+    const leaseAgeMs = Date.now() - startedAtMs;
+    const hasActiveLease = Number.isFinite(startedAtMs) && leaseAgeMs < DOUBAO_METADATA_RECOVERY_LEASE_MS;
+
+    if (hasActiveLease) {
+      throw new ValidationError("当前豆包知识草稿正在重新整理，请勿重复提交。");
+    }
+  }
+
+  const recoveryMetadata = {
+    ...storedRecovery,
+    version: 1,
+    state: "retrying",
+    activeAttemptId: attemptId,
+    reclaimedAttemptId: storedState === "retrying"
+      ? readString(storedRecovery.activeAttemptId) || null
+      : null,
+    replyMarkdown,
+    visibleReplyHash: buildContentHash(replyMarkdown),
+    visibleResponseId,
+    requestedModel,
+    actualModel,
+    startedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+  const updatedMetadata = toJsonObject({
+    ...storedMetadata,
+    doubaoMetadataRecovery: recoveryMetadata
+  });
+  const claim = await prisma.ingestionJob.updateMany({
+    where: {
+      ...buildJobWhere(actor, jobId),
+      updatedAt: existing.updatedAt,
+      status: "pending",
+      knowledgeItemId: null
+    },
+    data: {
+      metadata: updatedMetadata
+    }
+  });
+
+  if (claim.count !== 1) {
+    throw new ValidationError("当前豆包知识草稿状态已变化，请刷新后重试。");
+  }
+
+  return {
+    ...baseSeed,
+    recoveryState: "claimed"
+  };
+}
+
+export async function completeEnterpriseDoubaoMetadataRecovery(
+  actor: EnterpriseIngestActor,
+  input: {
+    jobId: string;
+    attemptId: string;
+    structured: EnterpriseStructuredKnowledge;
+    metadataResponseId: string;
+    saveRecommendation: string;
+    failureCode?: string | null;
+  }
+) {
+  const existing = await prisma.ingestionJob.findFirst({
+    where: buildJobWhere(actor, input.jobId)
+  });
+
+  if (!existing) {
+    throw new NotFoundError("待恢复的豆包训练记录不存在。");
+  }
+
+  const storedMetadata = readJsonObject(existing.metadata);
+  const recovery = readStoredDoubaoRecovery(storedMetadata);
+
+  if (readString(recovery.state) !== "retrying" || readString(recovery.activeAttemptId) !== input.attemptId) {
+    throw new ValidationError("豆包知识草稿恢复任务已过期，未覆盖当前训练记录。");
+  }
+
+  const completedMetadata = toJsonObject({
+    ...storedMetadata,
+    ai_output: input.structured,
+    doubaoMetadataRecovery: {
+      ...recovery,
+      state: "completed",
+      activeAttemptId: null,
+      lastAttemptId: input.attemptId,
+      metadataResponseId: input.metadataResponseId,
+      saveRecommendation: input.saveRecommendation,
+      failureCode: input.failureCode ?? null,
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    },
+    training_record: {
+      ...readJsonObject(storedMetadata.training_record),
+      status: "pending",
+      category: input.structured.category,
+      updatedAt: new Date().toISOString()
+    }
+  });
+  const updated = await prisma.ingestionJob.updateMany({
+    where: {
+      ...buildJobWhere(actor, input.jobId),
+      updatedAt: existing.updatedAt,
+      status: "pending",
+      knowledgeItemId: null
+    },
+    data: {
+      metadata: completedMetadata
+    }
+  });
+
+  if (updated.count !== 1) {
+    throw new ValidationError("豆包知识草稿恢复结果已过期，未覆盖当前训练记录。");
+  }
+
+  const refreshed = await prisma.ingestionJob.findFirst({
+    where: buildJobWhere(actor, input.jobId),
+    include: {
+      knowledgeItem: {
+        select: {
+          id: true,
+          title: true,
+          category: true
+        }
+      }
+    }
+  });
+
+  if (!refreshed) {
+    throw new NotFoundError("豆包训练记录更新后未找到。");
+  }
+
+  return serializeEnterpriseTrainingRecord(refreshed);
+}
+
+export async function failEnterpriseDoubaoMetadataRecovery(
+  actor: EnterpriseIngestActor,
+  input: {
+    jobId: string;
+    attemptId: string;
+    failureCode: string;
+    failureDetails?: Record<string, unknown>;
+  }
+) {
+  const existing = await prisma.ingestionJob.findFirst({
+    where: buildJobWhere(actor, input.jobId)
+  });
+
+  if (!existing) {
+    return;
+  }
+
+  const storedMetadata = readJsonObject(existing.metadata);
+  const recovery = readStoredDoubaoRecovery(storedMetadata);
+
+  if (readString(recovery.state) !== "retrying" || readString(recovery.activeAttemptId) !== input.attemptId) {
+    return;
+  }
+
+  await prisma.ingestionJob.updateMany({
+    where: {
+      ...buildJobWhere(actor, input.jobId),
+      updatedAt: existing.updatedAt,
+      status: "pending",
+      knowledgeItemId: null
+    },
+    data: {
+      metadata: toJsonObject({
+        ...storedMetadata,
+        doubaoMetadataRecovery: {
+          ...recovery,
+          state: "deferred",
+          activeAttemptId: null,
+          lastAttemptId: input.attemptId,
+          failureCode: input.failureCode,
+          failureDetails: input.failureDetails ?? {},
+          failedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        }
+      })
+    }
+  });
+}
+
 export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor, input: SaveEnterpriseIngestInput) {
   const jobId = input.jobId.trim();
 
@@ -399,7 +751,17 @@ export async function completeEnterpriseIngestSave(actor: EnterpriseIngestActor,
   }
 
   const storedMetadata = readJsonObject(existing.metadata);
-  const structured = input.structured ?? readStoredStructuredKnowledge(storedMetadata);
+  const storedStructured = readStoredStructuredKnowledge(storedMetadata);
+  const doubaoRecovery = readStoredDoubaoRecovery(storedMetadata);
+  const isDeferredDoubaoDraft = storedStructured?.providerUsed.trim().toLowerCase() === "doubao"
+    && storedStructured.fallbackUsed === false
+    && storedStructured.should_save === false;
+
+  if (isDeferredDoubaoDraft && readString(doubaoRecovery.state) !== "completed") {
+    throw new ValidationError("豆包知识草稿元数据尚未完成，不能正式入库。请先重新整理知识草稿。");
+  }
+
+  const structured = input.structured ?? storedStructured;
 
   if (!structured) {
     throw new ValidationError("缺少可保存的 AI 结构化结果。");

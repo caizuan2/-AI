@@ -225,6 +225,8 @@ interface IngestChatGPTShellProps {
   onErrorChange?: (message: string) => void;
   onSend?: (value?: string) => Promise<IngestActionResult | null>;
   onRetryFailedMessage?: (messageId: string, prompt: string) => Promise<unknown> | void;
+  onRetryDoubaoMetadata?: (messageId: string, prompt: string, replyMarkdown: string) => Promise<unknown> | void;
+  recoveringMetadataMessageId?: string | null;
   onCancel?: () => void;
   onSave?: () => Promise<IngestActionResult | null>;
   onReconnectGpt?: (modelLabel?: string) => Promise<unknown>;
@@ -848,6 +850,8 @@ export function IngestChatGPTShell({
   onErrorChange,
   onSend,
   onRetryFailedMessage,
+  onRetryDoubaoMetadata,
+  recoveringMetadataMessageId = null,
   onCancel,
   onSave,
   onReconnectGpt,
@@ -2315,6 +2319,26 @@ export function IngestChatGPTShell({
                   const messageAgent = agentById.get(message.agentId ?? "") ?? activeAgent;
                   const messageFeedbackScope = buildFeedbackAgentScope(messageAgent);
                   const messageQuestion = findPreviousUserQuestion(messages, messageIndex);
+                  const messageProvider = message.provider?.trim().toLowerCase();
+                  const isLatestAssistantResult = !messages.slice(messageIndex + 1).some((candidate) =>
+                    candidate.role === "assistant" && candidate.id.startsWith("assistant-result")
+                  );
+                  const canRetryDoubaoMetadata = Boolean(
+                    onRetryDoubaoMetadata
+                    && messageQuestion
+                    && isLatestAssistantResult
+                    && message.role === "assistant"
+                    && message.id.startsWith("assistant-result")
+                    && message.metadataState === "unavailable"
+                    && (messageProvider === "doubao" || messageProvider === "doubao-pro")
+                    && draft.jobId
+                    && draft.responseId
+                    && message.gptProof?.responseId === draft.responseId
+                    && draft.replyMarkdown === message.content
+                    && message.agentId === activeAgent.id
+                    && (!message.conversationId || message.conversationId === activeConversationId)
+                  );
+                  const isRecoveringMetadata = recoveringMetadataMessageId === message.id;
                   const messageChunkIds: string[] = [];
                   const messageEvidenceIds = isStructuredResult ? buildReplySourceMaterials(draft, uploadedFiles) : [];
                   const trackAssistantBehavior = (
@@ -2486,7 +2510,26 @@ export function IngestChatGPTShell({
                       {message.metadataState === "pending" ? (
                         <p className="mt-3 text-xs text-[#8a7a5c]">正文已生成，正在用同一个豆包模型整理知识草稿...</p>
                       ) : message.metadataState === "unavailable" ? (
-                        <p className="mt-3 text-xs text-[#9b5b56]">正文已保留，本轮知识草稿暂缓入库。</p>
+                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#9b5b56]">
+                          <span>正文与待确认状态已保留，尚未正式入库。</span>
+                          {canRetryDoubaoMetadata ? (
+                            <button
+                              type="button"
+                              disabled={isRecoveringMetadata || isParsing}
+                              onClick={() => void onRetryDoubaoMetadata?.(
+                                message.id,
+                                messageQuestion ?? "",
+                                message.content
+                              )}
+                              className="inline-flex items-center gap-1 rounded-full border border-[#dfb9b5] bg-white px-3 py-1 font-semibold text-[#7d332d] transition hover:bg-[#fff8f7] disabled:cursor-not-allowed disabled:opacity-55"
+                            >
+                              {isRecoveringMetadata ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                              ) : null}
+                              {isRecoveringMetadata ? "正在重新整理..." : "重新整理知识草稿"}
+                            </button>
+                          ) : null}
+                        </div>
                       ) : null}
                       {SHOW_INTERNAL_OS_UI ? (
                         <IngestGPTOSPanel gptOS={message.gptOS} />

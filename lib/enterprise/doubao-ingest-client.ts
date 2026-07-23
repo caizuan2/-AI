@@ -139,6 +139,32 @@ export interface DoubaoAdminIngestResult {
   fallbackUsed: boolean;
 }
 
+export interface DoubaoMetadataRecoveryInput extends DoubaoAdminIngestInput {
+  replyMarkdown: string;
+  sourceResponseId: string;
+}
+
+export interface DoubaoMetadataRecoveryResult {
+  provider: "doubao";
+  model: string;
+  requestedModel: string;
+  actualModel: string;
+  selectedModelLabel: string;
+  modelMode: "highest" | "fixed";
+  metadataResponseId: string;
+  sourceResponseId: string;
+  createdAt: string;
+  usage: OpenAIGptUsage;
+  replyMarkdown: string;
+  knowledgeDraft: GptKnowledgeDraft;
+  structured: GptStructuredKnowledge;
+  structuredResult: GptStructuredKnowledge;
+  saveRecommendation: GptSaveRecommendation;
+  diagnostics: string[];
+  fallback: false;
+  fallbackUsed: false;
+}
+
 export type DoubaoIngestErrorCode =
   | "DOUBAO_API_KEY_MISSING"
   | "DOUBAO_API_KEY_INVALID"
@@ -188,6 +214,7 @@ const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 90_000;
 const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
 const DEFAULT_HARD_TIMEOUT_MS = 270_000;
+const DEFAULT_METADATA_RECOVERY_TIMEOUT_MS = 150_000;
 const DEFAULT_DOUBAO_CONCURRENCY = 1;
 const MAX_CONTINUATION_PREFIX_CHARS = 8_000;
 
@@ -488,7 +515,12 @@ function buildDoubaoMetadataSystemPrompt() {
     "只输出 knowledgeDraft 和 saveRecommendation 两个顶层字段。",
     "knowledgeDraft 只包含 title、summary、category、tags、standardQuestion、saveRecommendation、missingFields、trainingScore。",
     "不要输出 standardAnswer；服务端会把已完成的用户可见正文原样绑定为标准答案。",
-    "不得编造正文、固定知识库或附件中不存在的事实。"
+    "不得编造正文、固定知识库或附件中不存在的事实。",
+    "title 不超过 60 字，summary 不超过 240 字，category 不超过 40 字，tags 最多 8 个且每个不超过 20 字。",
+    "standardQuestion 不超过 120 字，missingFields 最多 6 个，trainingScore 必须是 0 到 100 的整数。",
+    "saveRecommendation 只能是“可以入库”“暂缓入库”或“需要补充资料”。",
+    "必须严格使用以下紧凑结构，不得添加解释文字：",
+    '{"knowledgeDraft":{"title":"","summary":"","category":"","tags":[],"standardQuestion":"","saveRecommendation":"可以入库","missingFields":[],"trainingScore":80},"saveRecommendation":"可以入库"}'
   ].join("\n");
 }
 
@@ -1465,6 +1497,120 @@ function bindDoubaoVisibleReplyToMetadata(
   };
 }
 
+function createDoubaoMetadataParseError(input: {
+  text: string;
+  finishReason?: string;
+}) {
+  return new DoubaoIngestError(
+    "DOUBAO_RESPONSE_PARSE_FAILED",
+    input.finishReason === "length"
+      ? "豆包后台元数据达到长度上限，未完整返回。"
+      : "豆包后台元数据缺少有效 knowledgeDraft 核心字段。",
+    {
+      receivedContent: Boolean(input.text),
+      parseStage: input.finishReason === "length" ? "finish_reason" : "reply_json",
+      finishReason: input.finishReason,
+      receivedChars: input.text.length
+    }
+  );
+}
+
+async function runDoubaoMetadataPhase(input: {
+  config: ReturnType<typeof resolveDoubaoConfig>;
+  ingestInput: DoubaoAdminIngestInput;
+  replyMarkdown: string;
+  expectedModel: string;
+  signal: AbortSignal;
+  maxStructureAttempts: 1 | 2;
+  retryRateLimited: boolean;
+}) {
+  const startedAt = Date.now();
+  let lastError: DoubaoIngestError | null = null;
+
+  for (let structureAttempt = 0; structureAttempt < input.maxStructureAttempts; structureAttempt += 1) {
+    const response = await callDoubaoChatCompletions({
+      chatCompletionsUrl: input.config.chatCompletionsUrl,
+      apiKey: input.config.apiKey,
+      model: input.config.model,
+      systemPrompt: buildDoubaoMetadataSystemPrompt(),
+      userPrompt: [
+        buildDoubaoMetadataUserPrompt(input.ingestInput, input.replyMarkdown),
+        ...(structureAttempt > 0
+          ? [
+              "",
+              "上一轮后台元数据格式无效。本次只返回上述紧凑 JSON，所有字符串保持简短，不要添加任何说明。"
+            ]
+          : [])
+      ].join("\n"),
+      signal: input.signal,
+      phase: "metadata",
+      onProgressEvent: input.ingestInput.onProgressEvent,
+      retryRateLimited: input.retryRateLimited,
+      temperature: 0,
+      maxTokens: 1000
+    });
+
+    if (response.model !== input.expectedModel) {
+      throw new DoubaoIngestError(
+        "DOUBAO_RESPONSE_PARSE_FAILED",
+        "豆包后台元数据返回的模型标识不一致。",
+        {
+          receivedContent: true,
+          parseStage: "model_identity",
+          receivedChars: response.text.length
+        }
+      );
+    }
+
+    const metadataPayload = extractJsonObject(response.text);
+
+    if (
+      metadataPayload
+      && hasValidDoubaoMetadataPayload(metadataPayload)
+      && response.finishReason !== "length"
+    ) {
+      let normalized = normalizeGptOutput({
+        rawText: JSON.stringify({
+          ...metadataPayload,
+          replyMarkdown: input.replyMarkdown
+        }),
+        originalInput: input.ingestInput.input,
+        fallbackCategory: input.ingestInput.category ?? "",
+        strictReply: true
+      });
+      normalized = bindDoubaoVisibleReplyToMetadata(normalized, input.replyMarkdown);
+
+      return {
+        response,
+        normalized,
+        structureAttempts: structureAttempt + 1,
+        durationMs: Date.now() - startedAt
+      };
+    }
+
+    lastError = createDoubaoMetadataParseError({
+      text: response.text,
+      finishReason: response.finishReason
+    });
+
+    logger.warn("enterprise_admin_ingest.doubao_metadata_parse_retry", {
+      requestId: input.ingestInput.requestId,
+      model: response.model,
+      parseStage: lastError.details.parseStage,
+      finishReason: lastError.details.finishReason,
+      receivedChars: lastError.details.receivedChars,
+      structureAttempt: structureAttempt + 1,
+      willRetry: structureAttempt + 1 < input.maxStructureAttempts
+    });
+  }
+
+  throw lastError ?? new DoubaoIngestError(
+    "DOUBAO_RESPONSE_PARSE_FAILED",
+    "豆包后台元数据未完成。",
+    { parseStage: "reply_json" }
+  );
+}
+
 async function runDoubaoVisiblePhase(input: {
   config: ReturnType<typeof resolveDoubaoConfig>;
   ingestInput: DoubaoAdminIngestInput;
@@ -1811,6 +1957,145 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       });
     }
 
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", forwardClientAbort);
+  }
+}
+
+export async function runDoubaoMetadataRecovery(
+  input: DoubaoMetadataRecoveryInput
+): Promise<DoubaoMetadataRecoveryResult> {
+  if (!input.replyMarkdown.trim()) {
+    throw new DoubaoIngestError(
+      "DOUBAO_RESPONSE_PARSE_FAILED",
+      "缺少已完成的豆包正文，无法重新整理知识草稿。",
+      { receivedContent: false, parseStage: "reply_json" }
+    );
+  }
+
+  if (!input.sourceResponseId.trim()) {
+    throw new DoubaoIngestError(
+      "DOUBAO_RESPONSE_PARSE_FAILED",
+      "缺少原豆包响应标识，无法安全绑定知识草稿。",
+      { receivedContent: true, parseStage: "provider_payload", receivedChars: input.replyMarkdown.length }
+    );
+  }
+
+  const resolved = resolveDoubaoConfig(input);
+  const controller = new AbortController();
+  const metadataTimeoutMs = readTimeoutMs(
+    "DOUBAO_METADATA_RECOVERY_TIMEOUT_MS",
+    DEFAULT_METADATA_RECOVERY_TIMEOUT_MS,
+    240_000
+  );
+  let timeoutReached = false;
+  let clientAbortReached = input.signal?.aborted === true;
+  const forwardClientAbort = () => {
+    clientAbortReached = true;
+    controller.abort(input.signal?.reason);
+  };
+
+  if (clientAbortReached) {
+    controller.abort(input.signal?.reason);
+  } else {
+    input.signal?.addEventListener("abort", forwardClientAbort, { once: true });
+  }
+
+  const timeout = setTimeout(() => {
+    timeoutReached = true;
+    controller.abort();
+  }, metadataTimeoutMs);
+
+  try {
+    const metadataPhase = await runDoubaoMetadataPhase({
+      config: resolved,
+      ingestInput: input,
+      replyMarkdown: input.replyMarkdown,
+      expectedModel: resolved.model,
+      signal: controller.signal,
+      maxStructureAttempts: 2,
+      retryRateLimited: true
+    });
+    const { response, normalized } = metadataPhase;
+
+    logger.info("enterprise_admin_ingest.doubao_metadata_recovered", {
+      requestId: input.requestId,
+      model: response.model,
+      sourceResponseId: input.sourceResponseId,
+      metadataResponseId: response.responseId,
+      durationMs: metadataPhase.durationMs,
+      structureAttempts: metadataPhase.structureAttempts,
+      receivedChars: response.text.length,
+      visibleReplyPreserved: true
+    });
+
+    return {
+      provider: "doubao",
+      model: response.model,
+      requestedModel: resolved.model,
+      actualModel: response.model,
+      selectedModelLabel: resolved.selectedModelLabel,
+      modelMode: resolved.modelMode,
+      metadataResponseId: response.responseId,
+      sourceResponseId: input.sourceResponseId,
+      createdAt: response.createdAt,
+      usage: response.usage,
+      replyMarkdown: input.replyMarkdown,
+      knowledgeDraft: normalized.knowledgeDraft,
+      structured: normalized.structured,
+      structuredResult: normalized.structured,
+      saveRecommendation: normalized.knowledgeDraft.saveRecommendation,
+      diagnostics: [
+        "doubao:metadataRecovery:true",
+        "doubao:metadataCompleted:true",
+        "doubao:replyMarkdownPassthrough:true",
+        `doubao:metadataStructureAttempts:${metadataPhase.structureAttempts}`,
+        `doubao:metadataDurationMs:${metadataPhase.durationMs}`,
+        `doubao:metadataResponseChars:${response.text.length}`,
+        "apiResilience:fallbackUsed:false"
+      ],
+      fallback: false,
+      fallbackUsed: false
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && (error as { name?: string }).name === "AbortError") {
+      if (clientAbortReached && !timeoutReached) {
+        throw new DoubaoIngestError(
+          "DOUBAO_REQUEST_CANCELLED",
+          "豆包知识草稿整理已由当前浏览器连接取消。",
+          {
+            receivedContent: true,
+            abortSource: "client",
+            receivedChars: input.replyMarkdown.length
+          }
+        );
+      }
+
+      throw new DoubaoIngestError(
+        "DOUBAO_TIMEOUT",
+        "豆包知识草稿整理超时，正文仍已完整保留。",
+        {
+          receivedContent: true,
+          timeoutStage: "hard",
+          abortSource: "hard_timeout",
+          receivedChars: input.replyMarkdown.length
+        }
+      );
+    }
+
+    const details = error instanceof DoubaoIngestError ? error.details : {};
+
+    logger.warn("enterprise_admin_ingest.doubao_metadata_recovery_failed", {
+      requestId: input.requestId,
+      model: resolved.model,
+      errorCode: error instanceof DoubaoIngestError ? error.code : "DOUBAO_METADATA_FAILED",
+      parseStage: details.parseStage,
+      finishReason: details.finishReason,
+      receivedChars: details.receivedChars,
+      visibleReplyPreserved: true
+    });
     throw error;
   } finally {
     clearTimeout(timeout);

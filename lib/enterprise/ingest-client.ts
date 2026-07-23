@@ -15,6 +15,7 @@ import {
   type GptVersion
 } from "@/lib/enterprise/gpt-model-options";
 import {
+  getIngestModelOptionByProvider,
   getIngestModelOptionByLabel,
   normalizeIngestModelSelection,
   type IngestModelProvider
@@ -166,6 +167,11 @@ interface ApiEnvelope<T> {
 
 interface GptIngestResponse {
   jobId?: string | null;
+  messageId?: string | null;
+  attemptId?: string | null;
+  sourceResponseId?: string | null;
+  metadataResponseId?: string | null;
+  metadataState?: "ready" | "unavailable";
   trainingRecord?: AdminTrainingRecordResponse | null;
   records?: AdminTrainingRecordResponse[];
   provider: IngestModelProvider;
@@ -244,7 +250,7 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE" | "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE" | "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED" | "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
   causeCode?: string;
   message: string;
   userMessage?: string;
@@ -1696,6 +1702,217 @@ export async function sendCoreIngest(input: {
       ? error.message
       : "AI服务暂时不稳定，请稍后再试。"));
   }
+}
+
+export async function retryDoubaoKnowledgeDraftMetadata(input: {
+  originalInput: string;
+  replyMarkdown: string;
+  sourceResponseId: string;
+  messageId: string;
+  draft: IngestKnowledgeDraft;
+  agent: IngestChatAgent;
+  tenantId?: string | null;
+  userId?: string | null;
+  platform?: IngestPlatform;
+  signal?: AbortSignal;
+}) {
+  const jobId = input.draft.jobId?.trim() ?? "";
+  const sourceResponseId = input.sourceResponseId.trim();
+  const messageId = input.messageId.trim();
+
+  if (!jobId || !sourceResponseId || !messageId || !input.replyMarkdown.trim()) {
+    throw new AdminIngestRequestError("当前豆包正文缺少待确认任务或响应标识，无法重新整理知识草稿。", {
+      status: 422,
+      errorCode: "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED",
+      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      retryable: false,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      actualProvider: "doubao-pro",
+      fallbackUsed: false
+    });
+  }
+
+  const platform = input.platform ?? "web";
+  const doubaoOption = getIngestModelOptionByProvider("doubao-pro");
+  const requestId = `metadata-recovery-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const attemptId = `${requestId}:attempt-1`;
+  const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
+  const response = await fetch("/api/admin/kb/ingest/gpt", {
+    method: "POST",
+    credentials: "include",
+    signal: input.signal,
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "x-request-id": requestId
+    },
+    body: JSON.stringify({
+      operation: "retry_doubao_metadata",
+      input: input.originalInput || "重新整理豆包知识草稿",
+      replyMarkdown: input.replyMarkdown,
+      sourceResponseId,
+      jobId,
+      messageId,
+      attemptId,
+      ...agentKnowledgeScope,
+      tenantId: input.tenantId ?? null,
+      userId: input.userId ?? null,
+      platform,
+      syncTarget: [...ingestSyncTarget],
+      modelProvider: "doubao-pro",
+      modelMode: "highest",
+      preferredModel: doubaoOption.defaultModel,
+      selectedModelLabel: doubaoOption.label,
+      modelDisplayName: doubaoOption.label
+    })
+  });
+  const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
+
+  if (!response.ok || !payload || isGptFailureResponse(payload) || payload.ok !== true || !payload.data) {
+    if (payload && isGptFailureResponse(payload)) {
+      throw toAdminIngestRequestError(payload, response.status, requestId);
+    }
+
+    const message = payload && "message" in payload && typeof payload.message === "string"
+      ? payload.message
+      : "豆包知识草稿暂时未整理完成，正文仍已完整保留。";
+    throw new AdminIngestRequestError(message, {
+      status: response.status || 503,
+      errorCode: "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED",
+      causeCode: "DOUBAO_REQUEST_FAILED",
+      retryable: response.status >= 500,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      actualProvider: "doubao-pro",
+      requestedModel: doubaoOption.defaultModel,
+      actualModel: doubaoOption.defaultModel,
+      requestId,
+      fallbackUsed: false
+    });
+  }
+
+  const data = payload.data;
+  const actualProvider = String(data.actualProvider ?? data.provider ?? "").trim().toLowerCase();
+  const actualModel = String(data.actualModel ?? data.model ?? "").trim();
+
+  if (
+    data.jobId !== jobId
+    || data.messageId !== messageId
+    || data.attemptId !== attemptId
+    || data.sourceResponseId !== sourceResponseId
+    || data.metadataState !== "ready"
+    || data.replyMarkdown !== input.replyMarkdown
+    || actualProvider !== "doubao-pro"
+    || actualModel !== doubaoOption.defaultModel
+    || data.fallbackUsed === true
+  ) {
+    throw new AdminIngestRequestError("豆包知识草稿恢复结果与当前正文绑定不一致，已拒绝更新。", {
+      status: 502,
+      errorCode: "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED",
+      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      retryable: false,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      actualProvider,
+      requestedModel: doubaoOption.defaultModel,
+      actualModel,
+      requestId,
+      fallbackUsed: false
+    });
+  }
+
+  const metadataDraft = gptResponseToDraft(data, input.originalInput, input.agent);
+  const recoveredDraft: IngestKnowledgeDraft = {
+    ...metadataDraft,
+    id: input.draft.id,
+    jobId,
+    providerUsed: input.draft.providerUsed ?? "doubao",
+    model: input.draft.model,
+    sourceModel: input.draft.sourceModel,
+    actualModel: input.draft.actualModel ?? actualModel,
+    modelMode: input.draft.modelMode,
+    responseId: sourceResponseId,
+    usage: input.draft.usage,
+    gptProof: input.draft.gptProof,
+    gptOS: input.draft.gptOS,
+    sourceType: input.draft.sourceType,
+    sourceMaterials: input.draft.sourceMaterials,
+    replyMarkdown: input.replyMarkdown,
+    standardAnswer: input.replyMarkdown,
+    standardAnswers: [input.replyMarkdown],
+    fallbackUsed: false,
+    saveStatus: "待确认",
+    knowledgeLoop: undefined,
+    evolution: undefined,
+    storeDecision: undefined,
+    reusableKnowledgeUnits: undefined,
+    reviewRequiredUnits: undefined,
+    autoStoreCandidates: undefined,
+    memory: undefined,
+    memoryPlan: undefined,
+    knowledgeIntelligence: undefined,
+    ragOptimization: undefined
+  };
+  const knowledgeLoopBundle = buildKnowledgeLoopBundle({
+    text: input.originalInput,
+    replyMarkdown: input.replyMarkdown,
+    draft: recoveredDraft
+  });
+  recoveredDraft.knowledgeLoop = knowledgeLoopBundle.knowledgeLoop;
+  recoveredDraft.evolution = knowledgeLoopBundle.evolution;
+  recoveredDraft.storeDecision = knowledgeLoopBundle.storeDecision;
+  recoveredDraft.reusableKnowledgeUnits = knowledgeLoopBundle.reusableKnowledgeUnits;
+  recoveredDraft.reviewRequiredUnits = knowledgeLoopBundle.reviewRequiredUnits;
+  recoveredDraft.autoStoreCandidates = knowledgeLoopBundle.autoStoreCandidates;
+  const memoryPlan = buildDraftMemoryPlan(recoveredDraft);
+  recoveredDraft.memoryPlan = memoryPlan;
+  recoveredDraft.memory = buildDraftMemoryReport(memoryPlan);
+  recoveredDraft.knowledgeIntelligence = memoryPlan.intelligence;
+  recoveredDraft.ragOptimization = memoryPlan.ragOptimization;
+
+  const serverRecords = data.records?.length
+    ? data.records.map((record) => normalizeTrainingRecord(record, input.agent, platform))
+    : data.trainingRecord
+      ? [normalizeTrainingRecord(data.trainingRecord, input.agent, platform)]
+      : [];
+  const hasCurrentRecord = serverRecords.some((record) => record.jobId === jobId);
+  const records = (hasCurrentRecord ? serverRecords : [
+    createTrainingRecord({
+      originalInput: input.originalInput,
+      draft: recoveredDraft,
+      agent: input.agent,
+      tenantId: input.tenantId,
+      userId: input.userId,
+      platform
+    }),
+    ...serverRecords
+  ]).map((record) => record.jobId === jobId
+    ? {
+        ...record,
+        resultTitle: recoveredDraft.title,
+        category: recoveredDraft.category,
+        saveStatus: "待确认" as const,
+        aiOutput: recoveredDraft,
+        updatedAt: new Date().toISOString()
+      }
+    : record);
+
+  return {
+    draft: recoveredDraft,
+    records,
+    jobId,
+    messageId,
+    attemptId,
+    sourceResponseId,
+    metadataResponseId: data.metadataResponseId ?? null,
+    replyMarkdown: input.replyMarkdown,
+    provider: "doubao-pro" as const,
+    requestedModel: data.requestedModel ?? doubaoOption.defaultModel,
+    actualModel,
+    fallbackUsed: false as const,
+    diagnostics: data.diagnostics ?? []
+  };
 }
 
 export async function saveKnowledgeDraft(input: {
