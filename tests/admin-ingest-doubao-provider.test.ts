@@ -182,6 +182,27 @@ try {
     suggestedQuestions: ["是否保留了完整 Markdown？"],
     diagnostics: ["provider-contract-test"]
   });
+  const providerMetadataContent = JSON.stringify({
+    knowledgeDraft: {
+      title: "豆包投喂测试",
+      summary: "验证完整上下文与原文透传。",
+      category: "测试",
+      tags: ["豆包", "Ark"],
+      standardQuestion: "豆包上下文是否完整？",
+      standardAnswer: "完整。",
+      missingFields: []
+    },
+    suggestedQuestions: ["是否保留了完整 Markdown？"],
+    diagnostics: ["provider-contract-test"]
+  });
+  const readRequestPhase = (init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      messages?: Array<{ content?: string }>;
+    };
+    const systemPrompt = body.messages?.[0]?.content ?? "";
+
+    return systemPrompt.includes("后台知识元数据整理器") ? "metadata" : "visible";
+  };
 
   assert.equal(extractDoubaoReplyMarkdown(providerContent), exactReplyMarkdown);
   assert.equal(
@@ -202,17 +223,19 @@ try {
   let capturedUrl = "";
   let capturedAuthorization = "";
   let capturedRequestBody: Record<string, unknown> = {};
+  const capturedRequestBodies: Record<string, unknown>[] = [];
 
   globalThis.fetch = async (url, init) => {
     capturedUrl = String(url);
     const headers = new Headers(init?.headers);
     capturedAuthorization = headers.get("authorization") ?? "";
     capturedRequestBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    capturedRequestBodies.push(capturedRequestBody);
 
     if (capturedRequestBody.stream === true) {
       return createChunkedSseResponse({
         model: "ep-doubao-provider-test",
-        content: providerContent,
+        content: readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown,
         responseId: "doubao-response-contract-test"
       });
     }
@@ -284,7 +307,12 @@ try {
   assert.equal(capturedRequestBody.stream, true);
   assert.deepEqual(capturedRequestBody.stream_options, { include_usage: true });
 
-  const messages = capturedRequestBody.messages as Array<{ role: string; content: string }>;
+  assert.equal(capturedRequestBodies.length, 2, "Doubao must separate visible Markdown and background metadata into two calls.");
+  const visibleRequestBody = capturedRequestBodies[0];
+  const metadataRequestBody = capturedRequestBodies[1];
+  assert.equal(visibleRequestBody.max_tokens, 6000);
+  assert.equal(metadataRequestBody.max_tokens, 3000);
+  const messages = visibleRequestBody.messages as Array<{ role: string; content: string }>;
   assert.equal(messages.length, 2);
   const finalPrompt = messages.map((message) => message.content).join("\n");
 
@@ -305,18 +333,24 @@ try {
   ]) {
     assert.match(finalPrompt, new RegExp(sentinel));
   }
+  assert.match(finalPrompt, /最高优先级固定知识库约束/);
+  assert.match(finalPrompt, /专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts/);
+  assert.match(finalPrompt, /历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据/);
+  assert.match(finalPrompt, /不得跨 Agent、跨知识库或使用通用模型知识替代/);
 
   assert.equal(result.provider, "doubao");
   assert.equal(result.replyMarkdown, exactReplyMarkdown, "Provider replyMarkdown must pass through byte-for-byte as a JS string.");
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
+  assert.ok(result.diagnostics.includes("doubao:twoPhaseOutput:true"));
+  assert.ok(result.diagnostics.includes("doubao:metadataCompleted:true"));
 
   const successfulProviderFetch = globalThis.fetch;
   const recoveredPartialMarkdown = "\n# 已完整生成的豆包正文\n\n只损坏结构化元数据尾部，正文必须原样保留。  \n";
   const malformedStructuredTail = `{"replyMarkdown":${JSON.stringify(recoveredPartialMarkdown)},"knowledgeDraft":{"title":"未闭合"`;
-  globalThis.fetch = async () => createChunkedSseResponse({
+  globalThis.fetch = async (_url, init) => createChunkedSseResponse({
     model: "ep-doubao-provider-test",
-    content: malformedStructuredTail,
+    content: readRequestPhase(init) === "metadata" ? malformedStructuredTail : recoveredPartialMarkdown,
     responseId: "doubao-partial-metadata-recovery"
   });
   const recoveredPartialResult = await runDoubaoAdminIngest(doubaoInput);
@@ -324,9 +358,40 @@ try {
   assert.equal(recoveredPartialResult.saveRecommendation, "暂缓入库");
   assert.equal(recoveredPartialResult.structured.saveSuggestion, false);
   assert.equal(recoveredPartialResult.knowledgeDraft.standardAnswer, recoveredPartialMarkdown);
-  assert.ok(recoveredPartialResult.knowledgeDraft.missingFields.some((item) => item.includes("结构化元数据未完整结束")));
-  assert.ok(recoveredPartialResult.diagnostics.includes("doubao:partialStructuredPayloadRecovered:true"));
+  assert.ok(recoveredPartialResult.knowledgeDraft.missingFields.some((item) => item.includes("后台结构化元数据未完成")));
+  assert.ok(recoveredPartialResult.diagnostics.includes("doubao:metadataCompleted:false"));
   assert.ok(recoveredPartialResult.diagnostics.includes("doubao:saveRequiresReview:true"));
+  globalThis.fetch = successfulProviderFetch;
+
+  for (const invalidMetadataContent of [
+    "{}",
+    JSON.stringify({
+      knowledgeDraft: {
+        title: "只有标题，没有完整核心字段"
+      }
+    })
+  ]) {
+    const visibleBodyWithInvalidMetadata = `\n# 元数据无效时正文仍保留\n\n${invalidMetadataContent === "{}" ? "EMPTY_METADATA" : "INCOMPLETE_METADATA"}  \n`;
+    globalThis.fetch = async (_url, init) => createChunkedSseResponse({
+      model: "ep-doubao-provider-test",
+      content: readRequestPhase(init) === "metadata"
+        ? invalidMetadataContent
+        : visibleBodyWithInvalidMetadata,
+      responseId: "doubao-invalid-metadata-fallback"
+    });
+    const invalidMetadataResult = await runDoubaoAdminIngest(doubaoInput);
+
+    assert.equal(
+      invalidMetadataResult.replyMarkdown,
+      visibleBodyWithInvalidMetadata,
+      "Invalid Doubao metadata must never delete or rewrite the completed visible Markdown."
+    );
+    assert.equal(invalidMetadataResult.saveRecommendation, "暂缓入库");
+    assert.equal(invalidMetadataResult.structured.saveSuggestion, false);
+    assert.equal(invalidMetadataResult.knowledgeDraft.standardAnswer, visibleBodyWithInvalidMetadata);
+    assert.ok(invalidMetadataResult.diagnostics.includes("doubao:metadataCompleted:false"));
+    assert.ok(invalidMetadataResult.diagnostics.includes("doubao:saveRequiresReview:true"));
+  }
   globalThis.fetch = successfulProviderFetch;
 
   const routedResult = await runAdminIngestWithSelectedModel({
@@ -643,6 +708,68 @@ try {
   );
   assert.equal(incompleteEofCalls, 1);
 
+  const continuationFirstPart = "\n# 超长豆包正文\n\n第一段保持原样，";
+  const continuationSecondPart = "第二段从截断点继续。  \n";
+  const continuationRequestModels: string[] = [];
+  let continuationCalls = 0;
+  globalThis.fetch = async (_url, init) => {
+    continuationCalls += 1;
+    const body = JSON.parse(String(init?.body ?? "{}")) as {
+      model?: string;
+      messages?: Array<{ role?: string; content?: string }>;
+    };
+    continuationRequestModels.push(body.model ?? "");
+
+    if (readRequestPhase(init) === "metadata") {
+      return createChunkedSseResponse({
+        model: "ep-doubao-provider-test",
+        content: providerMetadataContent,
+        responseId: "doubao-continuation-metadata"
+      });
+    }
+
+    if (body.messages?.some((message) => message.role === "assistant")) {
+      assert.equal(
+        body.messages.find((message) => message.role === "assistant")?.content,
+        continuationFirstPart,
+        "The same-model continuation must receive the exact prior Markdown without trimming."
+      );
+      return createChunkedSseResponse({
+        model: "ep-doubao-provider-test",
+        content: continuationSecondPart,
+        responseId: "doubao-continuation-finish"
+      });
+    }
+
+    const sse = [
+      `data: ${JSON.stringify({
+        id: "doubao-continuation-start",
+        model: "ep-doubao-provider-test",
+        choices: [{ delta: { content: continuationFirstPart }, finish_reason: "length" }]
+      })}\n\n`,
+      "data: [DONE]\n\n"
+    ].join("");
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(sse));
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  const continuationResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(continuationResult.replyMarkdown, continuationFirstPart + continuationSecondPart);
+  assert.equal(continuationCalls, 3, "Visible first pass, same-model continuation and metadata extraction must remain separate.");
+  assert.deepEqual(continuationRequestModels, [
+    "ep-doubao-provider-test",
+    "ep-doubao-provider-test",
+    "ep-doubao-provider-test"
+  ]);
+  assert.ok(continuationResult.diagnostics.includes("doubao:visibleContinuationCount:1"));
+
   globalThis.fetch = async () => {
     const sse = [
       `data: ${JSON.stringify({
@@ -738,12 +865,13 @@ try {
   );
 
   let completedReaderCancelled = false;
-  globalThis.fetch = async () => {
+  globalThis.fetch = async (_url, init) => {
+    const content = readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown;
     const sse = [
       `data: ${JSON.stringify({
         id: "doubao-reader-cleanup-test",
         model: "ep-doubao-provider-test",
-        choices: [{ delta: { content: providerContent }, finish_reason: "stop" }]
+        choices: [{ delta: { content }, finish_reason: "stop" }]
       })}\n\n`,
       "data: [DONE]\n\n"
     ].join("");
@@ -780,13 +908,17 @@ try {
 
     return createChunkedSseResponse({
       model: "ep-doubao-provider-test",
-      content: providerContent,
+      content: readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown,
       responseId: "doubao-retry-success"
     });
   };
   const retryResult = await runDoubaoAdminIngest(doubaoInput);
-  assert.equal(zeroContentRetryCalls, 2, "A retryable zero-content failure may retry the same provider once.");
-  assert.deepEqual(retryModels, ["ep-doubao-provider-test", "ep-doubao-provider-test"]);
+  assert.equal(zeroContentRetryCalls, 3, "The visible phase may retry the same provider once before the metadata phase.");
+  assert.deepEqual(retryModels, [
+    "ep-doubao-provider-test",
+    "ep-doubao-provider-test",
+    "ep-doubao-provider-test"
+  ]);
   assert.equal(retryResult.provider, "doubao");
   assert.equal(retryResult.replyMarkdown, exactReplyMarkdown);
 

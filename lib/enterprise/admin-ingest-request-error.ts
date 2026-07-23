@@ -106,5 +106,8 @@ export function readAdminIngestRequestError(error: unknown): AdminIngestRequestE
 }
 
 export function isStrictSelectedModelFailure(error: unknown) {
-  return readAdminIngestRequestError(error)?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE";
+  const errorCode = readAdminIngestRequestError(error)?.errorCode;
+
+  return errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE"
+    || errorCode === "ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED";
 }

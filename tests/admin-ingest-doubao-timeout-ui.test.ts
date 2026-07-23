@@ -205,6 +205,66 @@ async function main() {
     assert.doesNotMatch(presentation.message, /unsafe raw provider detail|系统正在自动优化/);
   }
 
+  const strictKnowledgeFailures = [
+    {
+      causeCode: "ADMIN_INGEST_GROUNDING_NO_HIT",
+      status: 422,
+      retryable: false,
+      title: "当前 Agent 固定知识库未命中",
+      message: /补充问题背景|完善当前 Agent 固定知识库/
+    },
+    {
+      causeCode: "ADMIN_INGEST_GROUNDING_SCOPE_INVALID",
+      status: 422,
+      retryable: false,
+      title: "当前 Agent 固定知识库作用域异常",
+      message: /刷新当前 Agent|修复该 Agent 的固定知识库作用域/
+    },
+    {
+      causeCode: "ADMIN_INGEST_GROUNDING_UNAVAILABLE",
+      status: 503,
+      retryable: true,
+      title: "当前 Agent 固定知识库暂时不可用",
+      message: /同模型重试/
+    }
+  ];
+
+  for (const item of strictKnowledgeFailures) {
+    const strictKnowledgeError = new AdminIngestRequestError("unsafe raw grounding detail", {
+      status: item.status,
+      errorCode: "ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED",
+      causeCode: item.causeCode,
+      retryable: item.retryable,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      requestedModel: "doubao-seed-2-1-pro-260628",
+      fallbackUsed: false
+    });
+    const presentation = buildAdminIngestFailurePresentation(
+      strictKnowledgeError,
+      "Doubao-Seed-2.1-pro"
+    );
+    const strictKnowledgeGuard = {
+      reason: strictKnowledgeError.message,
+      stateDomain: getStateDomain(strictKnowledgeError),
+      requestId: `request-${item.causeCode}`,
+      activeRequestId: `request-${item.causeCode}`,
+      status: item.status,
+      errorCode: "ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED",
+      causeCode: item.causeCode,
+      retryable: item.retryable
+    } as const;
+
+    assert.equal(presentation.title, item.title);
+    assert.equal(presentation.retryable, item.retryable);
+    assert.match(presentation.message, item.message);
+    assert.match(presentation.message, /输入和附件已保留/);
+    assert.doesNotMatch(presentation.message, /unsafe raw grounding detail|检查模型连接配置/);
+    assert.equal(isStrictSelectedModelFailure(strictKnowledgeError), true);
+    assert.equal(getStateDomain(strictKnowledgeError), "ingest");
+    assert.equal(shouldSuppressFallbackToast(strictKnowledgeGuard), false);
+    assert.equal(isRealIngestFailure(strictKnowledgeGuard), true);
+  }
+
   const networkPresentation = buildAdminIngestFailurePresentation(
     new TypeError("Failed to fetch https://example.invalid?token=secret"),
     "Doubao-Seed-2.1-pro"

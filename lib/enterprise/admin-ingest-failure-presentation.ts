@@ -66,6 +66,30 @@ export function buildAdminIngestFailurePresentation(
     causeCode
   });
 
+  if (normalizedCode.includes("ADMIN_INGEST_GROUNDING_NO_HIT")) {
+    return result(
+      "当前 Agent 固定知识库未命中",
+      "当前问题没有检索到可作为专业依据的固定知识内容，因此豆包未生成正文。",
+      "请补充问题背景，或先完善当前 Agent 固定知识库后再试。"
+    );
+  }
+
+  if (normalizedCode.includes("ADMIN_INGEST_GROUNDING_SCOPE_INVALID")) {
+    return result(
+      "当前 Agent 固定知识库作用域异常",
+      "当前 Agent、固定知识库与 namespace 不一致，为避免跨库生成，本轮未调用豆包。",
+      "请刷新当前 Agent；若仍出现此提示，请修复该 Agent 的固定知识库作用域。"
+    );
+  }
+
+  if (normalizedCode.includes("ADMIN_INGEST_GROUNDING_UNAVAILABLE")) {
+    return result(
+      "当前 Agent 固定知识库暂时不可用",
+      "本轮知识库检索没有正常完成，因此豆包未生成正文。",
+      retryable ? "可以点击“同模型重试”。" : undefined
+    );
+  }
+
   if (normalizedCode.includes("TIMEOUT") || rawText.includes("timeout") || rawText.includes("timed out")) {
     return result(
       `${modelLabel} 响应超时`,

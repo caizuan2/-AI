@@ -106,5 +106,54 @@ assert.match(ingestRouteSource, /retrieveAdminIngestGrounding\(\{/);
 assert.match(ingestRouteSource, /buildAdminIngestPublishedMemoryContext\(\{/);
 assert.match(ingestRouteSource, /knowledgeContexts,/);
 assert.match(ingestRouteSource, /readAdminIngestContextRequestFields\(body\)/);
+assert.match(
+  ingestRouteSource,
+  /groundingModelProvider\s*=\s*resolveAdminIngestModelProvider\(\{[\s\S]*?\}\)\.provider/,
+  "Strict grounding must use the normalized selected-model provider."
+);
+assert.match(ingestRouteSource, /shouldUseStrictAdminIngestGrounding\(\{/);
+assert.match(ingestRouteSource, /strictKnowledgeMode:\s*strictDoubaoGrounding/);
+assert.match(ingestRouteSource, /recentMessages:\s*strictDoubaoGrounding\s*\?\s*input\.recentMessages\s*:\s*undefined/);
+assert.match(
+  ingestRouteSource,
+  /if\s*\(strictDoubaoGrounding\s*&&\s*\(!canonicalAgentScope\s*\|\|\s*!grounding\.applied\)\)/,
+  "Doubao requests with missing/conflicting scope or no hit must stop before model invocation."
+);
+assert.match(ingestRouteSource, /ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED/);
+assert.match(ingestRouteSource, /adminIngestGrounding:modelInvoked:false/);
+assert.match(ingestRouteSource, /retrievedChunkIds:\s*grounding\.retrievedSourceIds\.chunkIds/);
+assert.match(ingestRouteSource, /retrievedKnowledgeItemIds:\s*grounding\.retrievedSourceIds\.knowledgeItemIds/);
+assert.match(ingestRouteSource, /providedChunkIds:\s*grounding\.sourceIds\.chunkIds/);
+assert.match(ingestRouteSource, /providedKnowledgeItemIds:\s*grounding\.sourceIds\.knowledgeItemIds/);
+assert.doesNotMatch(ingestRouteSource, /\busedChunkIds\b|\busedKnowledgeItemIds\b/);
+assert.doesNotMatch(
+  ingestRouteSource,
+  /strictDoubaoGrounding[\s\S]{0,240}deepseek-pro/,
+  "The Doubao-only grounding gate must not be coupled to DeepSeek."
+);
+
+const trainingLogBuilderSource = ingestRouteSource.slice(
+  ingestRouteSource.indexOf("function buildStructuredKnowledgeForTrainingLog"),
+  ingestRouteSource.indexOf("function toEnterpriseActor")
+);
+assert.match(trainingLogBuilderSource, /rawStructured\.saveSuggestion === "boolean"/);
+assert.match(trainingLogBuilderSource, /readString\(input\.rawResult\.saveRecommendation\)/);
+assert.match(trainingLogBuilderSource, /const isDoubaoResult\s*=\s*readString\(input\.rawResult\.provider\)\s*===\s*"doubao"/);
+assert.match(trainingLogBuilderSource, /暂缓入库\|需要补充资料/);
+assert.match(
+  trainingLogBuilderSource,
+  /return\s+isDoubaoResult[\s\S]*?\.\.\.directStructured,\s*should_save:\s*doubaoShouldSave[\s\S]*?:\s*directStructured/,
+  "Direct structured results must honor Doubao saveSuggestion and pause recommendations."
+);
+assert.match(
+  trainingLogBuilderSource,
+  /should_save:\s*isDoubaoResult\s*\?\s*doubaoShouldSave\s*:\s*true/,
+  "Fallback training records must not be hard-coded as saveable."
+);
+assert.match(
+  trainingLogBuilderSource,
+  /directStructured\?\.should_save \?\? true/,
+  "Existing successful provider semantics must remain the fallback when no pause signal exists."
+);
 
 console.log("Admin ingest provider context grounding tests passed.");

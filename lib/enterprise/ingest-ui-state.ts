@@ -104,7 +104,10 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
   const reason = normalizeSignal(input.reason);
   const errorCode = normalizeSignal(input.errorCode);
   const stateDomain = input.stateDomain ?? "unknown";
-  const isStrictSelectedModelFailure = errorCode.includes("admin_ingest_selected_model_unavailable");
+  const isStrictSelectedModelFailure = includesAny(errorCode, [
+    "admin_ingest_selected_model_unavailable",
+    "admin_ingest_strict_knowledge_required"
+  ]);
   const isCurrentActiveRequest = Boolean(
     input.requestId
     && input.activeRequestId
@@ -190,6 +193,8 @@ export function isRealIngestFailure(input: IngestToastGuardInput) {
   if (includesAny(errorCode, [
     "ingest_failure",
     "admin_ingest_selected_model_unavailable",
+    "admin_ingest_strict_knowledge_required",
+    "admin_ingest_grounding_",
     "doubao_timeout",
     "provider_error",
     "provider_crash",

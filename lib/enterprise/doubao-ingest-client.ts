@@ -290,6 +290,58 @@ function buildUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult
   });
 }
 
+function buildDoubaoVisibleSystemPrompt() {
+  return [
+    buildGptIngestBrainSystemPrompt(),
+    "",
+    "## Doubao 可见正文阶段（最终覆盖规则）",
+    "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
+    "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
+    "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
+    "当前调用只生成用户可见正文。以上关于外层 JSON、knowledgeDraft、userClientCallPlan、diagnostics 的输出要求在本阶段全部暂停。",
+    "只输出最终自然 Markdown 正文，不要输出 JSON、代码围栏、字段名、内部推理或后台元数据。",
+    "必须继续完整理解以上 Agent、最近对话、长期记忆、固定知识库、附件正文和专项方向规则；其中只有当前 knowledgeContexts 可以提供专业依据，其余内容只用于理解场景和组织表达。",
+    "正文必须直接来自你的最终表达，禁止为适配系统而缩写、裁剪、改写或套固定模板。"
+  ].join("\n");
+}
+
+function buildDoubaoVisibleUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult) {
+  return [
+    buildUserPrompt(input, gptOS),
+    "",
+    "## 本阶段唯一输出",
+    "现在只回答管理员当前问题，并只输出用户可见的自然 Markdown 正文。",
+    "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。"
+  ].join("\n");
+}
+
+function buildDoubaoMetadataSystemPrompt() {
+  return [
+    "你是小董AI投喂端的后台知识元数据整理器。",
+    "本阶段不生成、重写、缩写或评价用户可见正文，只基于给定正文和原始任务提取后台结构。",
+    "只返回一个合法 JSON 对象，不要使用 Markdown 代码围栏，不要包含 replyMarkdown 字段。",
+    "字段为 knowledgeDraft、userClientCallPlan、suggestedQuestions、saveRecommendation、diagnostics。",
+    "knowledgeDraft 尽量包含 title、summary、category、categories、tags、standardQuestion、standardAnswer、standardQuestions、standardAnswers、scenarios、sourceMaterials、complianceNotes、saveRecommendation、missingFields、trainingScore。",
+    "userClientCallPlan 包含 retrievalStrategy、userAnswerStyle、safetyRules、recommendedAgents、exampleUserQuestions、answerTemplates。",
+    "不得编造正文、固定知识库或附件中不存在的事实。"
+  ].join("\n");
+}
+
+function buildDoubaoMetadataUserPrompt(input: DoubaoAdminIngestInput, replyMarkdown: string) {
+  return [
+    "## 原始管理员任务",
+    input.input,
+    "",
+    "## 当前 Agent",
+    input.agentName || input.agentId || "当前投喂 Agent",
+    "",
+    "## 已完成的用户可见正文（只用于提取元数据，不得重写）",
+    replyMarkdown,
+    "",
+    "请只输出后台 JSON 元数据。"
+  ].join("\n");
+}
+
 export function classifyDoubaoResponseError(status: number, bodyText = "") {
   const body = bodyText.toLowerCase();
 
@@ -620,7 +672,11 @@ async function collectDoubaoSseCompletion(input: {
       }
     }
 
-    if (accumulator.finishReason && accumulator.finishReason !== "stop") {
+    if (
+      accumulator.finishReason
+      && accumulator.finishReason !== "stop"
+      && accumulator.finishReason !== "length"
+    ) {
       throw new DoubaoIngestError(
         "DOUBAO_RESPONSE_PARSE_FAILED",
         `豆包流式返回未完整结束（finish_reason=${accumulator.finishReason}）。`,
@@ -824,11 +880,25 @@ async function callDoubaoChatCompletions(input: {
   systemPrompt: string;
   userPrompt: string;
   signal: AbortSignal;
+  maxTokens?: number;
+  temperature?: number;
+  assistantPrefix?: string;
+  continuationInstruction?: string;
 }) {
   const startedAt = Date.now();
   const messages = [
     { role: "system" as const, content: input.systemPrompt },
-    { role: "user" as const, content: input.userPrompt }
+    { role: "user" as const, content: input.userPrompt },
+    ...(input.assistantPrefix !== undefined
+      ? [
+          { role: "assistant" as const, content: input.assistantPrefix },
+          {
+            role: "user" as const,
+            content: input.continuationInstruction
+              || "请从上一段末尾继续，只输出尚未完成的 Markdown 正文，不要重复已经输出的内容。"
+          }
+        ]
+      : [])
   ];
   let retryCount = 0;
   let value: unknown;
@@ -840,8 +910,8 @@ async function callDoubaoChatCompletions(input: {
         baseUrl: input.chatCompletionsUrl,
         model: input.model,
         messages,
-        temperature: 0.7,
-        maxTokens: 6000,
+        temperature: input.temperature ?? 0.7,
+        maxTokens: input.maxTokens ?? 6000,
         signal: input.signal
       });
       break;
@@ -879,6 +949,7 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
   const rawChatText = typeof message.content === "string" ? message.content : "";
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = typeof record.model === "string" ? record.model.trim() : "";
+  const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason.trim() : "";
 
   if (!actualModel) {
     throw new DoubaoIngestError(
@@ -904,7 +975,8 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
     usage: normalized.usage ?? normalizeUsage(record.usage),
     rawResponseType: normalized.rawResponseType,
     normalized: normalized.normalized,
-    parserUsed: normalized.parserUsed
+    parserUsed: normalized.parserUsed,
+    finishReason
   };
 }
 
@@ -927,6 +999,27 @@ function extractJsonObject(text: string) {
   } catch {
     return null;
   }
+}
+
+function hasValidDoubaoMetadataPayload(payload: Record<string, unknown>) {
+  const draft = payload.knowledgeDraft;
+
+  if (!draft || typeof draft !== "object" || Array.isArray(draft)) {
+    return false;
+  }
+
+  const record = draft as Record<string, unknown>;
+  const hasText = (value: unknown) => typeof value === "string" && Boolean(value.trim());
+  const hasTextArray = (value: unknown) => Array.isArray(value)
+    && value.some((item) => hasText(item));
+  const hasQuestion = hasText(record.standardQuestion) || hasTextArray(record.standardQuestions);
+  const hasAnswer = hasText(record.standardAnswer) || hasTextArray(record.standardAnswers);
+
+  return hasText(record.title)
+    && hasText(record.summary)
+    && hasText(record.category)
+    && hasQuestion
+    && hasAnswer;
 }
 
 function extractClosedJsonStringField(text: string, fieldName: string) {
@@ -1012,6 +1105,141 @@ export function extractDoubaoReplyMarkdown(text: string) {
   return extractDoubaoReply(text).replyMarkdown;
 }
 
+const DOUBAO_METADATA_FALLBACK_NOTE = "豆包正文已完整返回，但后台结构化元数据未完成；正文保留原样，知识草稿暂缓入库。";
+
+function mergeDoubaoUsage(...values: OpenAIGptUsage[]): OpenAIGptUsage {
+  const add = (field: keyof OpenAIGptUsage) => {
+    const numbers = values
+      .map((value) => value[field])
+      .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+    return numbers.length > 0 ? numbers.reduce((total, value) => total + value, 0) : undefined;
+  };
+
+  return {
+    inputTokens: add("inputTokens"),
+    outputTokens: add("outputTokens"),
+    totalTokens: add("totalTokens"),
+    reasoningTokens: add("reasoningTokens")
+  };
+}
+
+function withDoubaoMetadataFallback(
+  normalized: ReturnType<typeof normalizeGptOutput>,
+  replyMarkdown: string
+) {
+  const knowledgeDraft: GptKnowledgeDraft = {
+    ...normalized.knowledgeDraft,
+    standardAnswer: replyMarkdown,
+    standardAnswers: [replyMarkdown],
+    complianceNotes: Array.from(new Set([
+      ...(normalized.knowledgeDraft.complianceNotes ?? []),
+      DOUBAO_METADATA_FALLBACK_NOTE
+    ])),
+    missingFields: Array.from(new Set([
+      ...normalized.knowledgeDraft.missingFields,
+      DOUBAO_METADATA_FALLBACK_NOTE
+    ])),
+    trainingScore: Math.min(normalized.knowledgeDraft.trainingScore, 60),
+    saveRecommendation: "暂缓入库"
+  };
+  const structured: GptStructuredKnowledge = {
+    ...normalized.structured,
+    answer: replyMarkdown,
+    confidence: Math.min(normalized.structured.confidence, 60),
+    saveSuggestion: false
+  };
+
+  return {
+    ...normalized,
+    knowledgeDraft,
+    structured,
+    saveRecommendation: knowledgeDraft.saveRecommendation
+  };
+}
+
+async function runDoubaoVisiblePhase(input: {
+  config: ReturnType<typeof resolveDoubaoConfig>;
+  ingestInput: DoubaoAdminIngestInput;
+  gptOS: GptOSRouteResult;
+  signal: AbortSignal;
+}) {
+  const systemPrompt = buildDoubaoVisibleSystemPrompt();
+  const userPrompt = buildDoubaoVisibleUserPrompt(input.ingestInput, input.gptOS);
+  const responses = [];
+  let replyMarkdown = "";
+  let response = await callDoubaoChatCompletions({
+    chatCompletionsUrl: input.config.chatCompletionsUrl,
+    apiKey: input.config.apiKey,
+    model: input.config.model,
+    systemPrompt,
+    userPrompt,
+    signal: input.signal,
+    maxTokens: 6000
+  });
+  responses.push(response);
+  replyMarkdown += response.text;
+
+  for (let continuation = 0; response.finishReason === "length" && continuation < 2; continuation += 1) {
+    if (!replyMarkdown.trim()) {
+      break;
+    }
+
+    const nextResponse = await callDoubaoChatCompletions({
+      chatCompletionsUrl: input.config.chatCompletionsUrl,
+      apiKey: input.config.apiKey,
+      model: input.config.model,
+      systemPrompt,
+      userPrompt,
+      assistantPrefix: replyMarkdown,
+      continuationInstruction: "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
+      signal: input.signal,
+      maxTokens: 4000
+    });
+
+    if (nextResponse.model !== response.model) {
+      throw new DoubaoIngestError(
+        "DOUBAO_RESPONSE_PARSE_FAILED",
+        "豆包续写返回的模型标识不一致。",
+        {
+          receivedContent: true,
+          parseStage: "model_identity",
+          receivedChars: replyMarkdown.length
+        }
+      );
+    }
+
+    replyMarkdown += nextResponse.text;
+    response = nextResponse;
+    responses.push(nextResponse);
+  }
+
+  if (!replyMarkdown.trim() || response.finishReason === "length") {
+    throw new DoubaoIngestError(
+      "DOUBAO_RESPONSE_PARSE_FAILED",
+      response.finishReason === "length"
+        ? "豆包正文达到长度上限，已使用同模型续写但仍未完整结束。"
+        : "豆包未返回可见正文。",
+      {
+        receivedContent: Boolean(replyMarkdown),
+        parseStage: response.finishReason === "length" ? "finish_reason" : "reply_json",
+        finishReason: response.finishReason,
+        receivedChars: replyMarkdown.length
+      }
+    );
+  }
+
+  return {
+    primary: responses[0],
+    final: response,
+    replyMarkdown,
+    continuationCount: responses.length - 1,
+    usage: mergeDoubaoUsage(...responses.map((item) => item.usage)),
+    responseLatency: responses.reduce((total, item) => total + item.responseLatency, 0),
+    retryCount: responses.reduce((total, item) => total + item.retryCount, 0)
+  };
+}
+
 export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promise<DoubaoAdminIngestResult> {
   const { hardMs } = resolveDoubaoStreamTimeouts();
   const controller = new AbortController();
@@ -1037,56 +1265,92 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
   try {
     const resolved = resolveDoubaoConfig(input);
     const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
-    const response = await callDoubaoChatCompletions({
-      chatCompletionsUrl: resolved.chatCompletionsUrl,
-      apiKey: resolved.apiKey,
-      model: resolved.model,
-      systemPrompt: buildGptIngestBrainSystemPrompt(),
-      userPrompt: buildUserPrompt(input, gptOS),
+    const visiblePhase = await runDoubaoVisiblePhase({
+      config: resolved,
+      ingestInput: input,
+      gptOS,
       signal: controller.signal
     });
-    const extractedReply = extractDoubaoReply(response.text);
-    const replyMarkdown = extractedReply.replyMarkdown;
-    const structuredPayload = extractJsonObject(response.text) ?? {};
-    const normalized = normalizeGptOutput({
-      rawText: JSON.stringify({
-        ...structuredPayload,
-        replyMarkdown
-      }),
+    const response = visiblePhase.primary;
+    const replyMarkdown = visiblePhase.replyMarkdown;
+    let metadataCompleted = false;
+    let metadataFailureCode = "";
+    let metadataResponse: Awaited<ReturnType<typeof callDoubaoChatCompletions>> | null = null;
+    let normalized = normalizeGptOutput({
+      rawText: JSON.stringify({ replyMarkdown }),
       originalInput: input.input,
       fallbackCategory: input.category ?? "",
       strictReply: true
     });
-    const partialStructuredPayloadNote = "豆包正文已完整返回，但结构化元数据未完整结束，请重新生成或人工复核后再入库。";
-    const knowledgeDraft = extractedReply.recoveredFromPartialJson
-      ? {
-          ...normalized.knowledgeDraft,
-          standardAnswer: replyMarkdown,
-          standardAnswers: [replyMarkdown],
-          complianceNotes: Array.from(new Set([
-            ...(normalized.knowledgeDraft.complianceNotes ?? []),
-            partialStructuredPayloadNote
-          ])),
-          missingFields: Array.from(new Set([
-            ...normalized.knowledgeDraft.missingFields,
-            partialStructuredPayloadNote
-          ])),
-          trainingScore: Math.min(normalized.knowledgeDraft.trainingScore, 60),
-          saveRecommendation: "暂缓入库" as const
-        }
-      : normalized.knowledgeDraft;
-    const structured = extractedReply.recoveredFromPartialJson
-      ? {
-          ...normalized.structured,
-          answer: replyMarkdown,
-          confidence: Math.min(normalized.structured.confidence, 60),
-          saveSuggestion: false
-        }
-      : normalized.structured;
+
+    try {
+      metadataResponse = await callDoubaoChatCompletions({
+        chatCompletionsUrl: resolved.chatCompletionsUrl,
+        apiKey: resolved.apiKey,
+        model: resolved.model,
+        systemPrompt: buildDoubaoMetadataSystemPrompt(),
+        userPrompt: buildDoubaoMetadataUserPrompt(input, replyMarkdown),
+        signal: controller.signal,
+        temperature: 0.2,
+        maxTokens: 3000
+      });
+      if (metadataResponse.model !== response.model) {
+        throw new DoubaoIngestError(
+          "DOUBAO_RESPONSE_PARSE_FAILED",
+          "豆包后台元数据返回的模型标识不一致。",
+          { receivedContent: true, parseStage: "model_identity", receivedChars: metadataResponse.text.length }
+        );
+      }
+      const metadataPayload = extractJsonObject(metadataResponse.text);
+      if (
+        !metadataPayload
+        || !hasValidDoubaoMetadataPayload(metadataPayload)
+        || metadataResponse.finishReason === "length"
+      ) {
+        throw new DoubaoIngestError(
+          "DOUBAO_RESPONSE_PARSE_FAILED",
+          metadataResponse.finishReason === "length"
+            ? "豆包后台元数据达到长度上限，未完整返回。"
+            : "豆包后台元数据缺少有效 knowledgeDraft 核心字段。",
+          {
+            receivedContent: Boolean(metadataResponse.text),
+            parseStage: metadataResponse.finishReason === "length" ? "finish_reason" : "reply_json",
+            finishReason: metadataResponse.finishReason,
+            receivedChars: metadataResponse.text.length
+          }
+        );
+      }
+      normalized = normalizeGptOutput({
+        rawText: JSON.stringify({
+          ...metadataPayload,
+          replyMarkdown
+        }),
+        originalInput: input.input,
+        fallbackCategory: input.category ?? "",
+        strictReply: true
+      });
+      metadataCompleted = true;
+    } catch (error) {
+      metadataFailureCode = error instanceof DoubaoIngestError ? error.code : "DOUBAO_METADATA_FAILED";
+      normalized = withDoubaoMetadataFallback(normalized, replyMarkdown);
+      logger.warn("enterprise_admin_ingest.doubao_metadata_failed", {
+        requestId: input.requestId,
+        model: response.model,
+        errorCode: metadataFailureCode,
+        visibleReplyPreserved: true
+      });
+    }
+
+    const knowledgeDraft = normalized.knowledgeDraft;
+    const structured = normalized.structured;
     const quality = assessGptProResponseQuality(replyMarkdown, {
       userInput: input.input
     });
     const qualitySoftAccepted = Boolean(replyMarkdown.trim());
+    const combinedUsage = mergeDoubaoUsage(
+      visiblePhase.usage,
+      ...(metadataResponse ? [metadataResponse.usage] : [])
+    );
     const gptProof: GptCallProof = {
       provider: "doubao",
       endpoint: "/chat/completions",
@@ -1100,7 +1364,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       qualityPassed: quality.ok || qualitySoftAccepted,
       deepenAttempts: 0,
       createdAt: response.createdAt,
-      usage: response.usage
+      usage: combinedUsage
     };
 
     logger.info("enterprise_admin_ingest.doubao_success", {
@@ -1109,7 +1373,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       requestedModel: resolved.model,
       responseId: response.responseId,
       durationMs: Date.now() - startedAt,
-      outputTokens: response.usage.outputTokens,
+      outputTokens: combinedUsage.outputTokens,
       replyLength: replyMarkdown.length
     });
 
@@ -1121,7 +1385,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       responseId: response.responseId,
       proofId: response.proofId,
       createdAt: response.createdAt,
-      usage: response.usage,
+      usage: combinedUsage,
       gptProof,
       intent: quality.intent,
       fixedTemplateRisk: quality.fixedTemplateRisk,
@@ -1148,13 +1412,16 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:normalized:${response.normalized ? "true" : "false"}`,
         `apiResilience:parserUsed:${response.parserUsed}`,
         `apiResilience:rawResponseType:${response.rawResponseType}`,
-        `apiResilience:retryCount:${response.retryCount}`,
+        `apiResilience:retryCount:${visiblePhase.retryCount + (metadataResponse?.retryCount ?? 0)}`,
         "apiResilience:fallbackUsed:false",
-        `apiResilience:responseLatency:${response.responseLatency}`,
+        `apiResilience:responseLatency:${visiblePhase.responseLatency + (metadataResponse?.responseLatency ?? 0)}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
-        `doubao:partialStructuredPayloadRecovered:${extractedReply.recoveredFromPartialJson ? "true" : "false"}`,
-        `doubao:saveRequiresReview:${extractedReply.recoveredFromPartialJson ? "true" : "false"}`,
+        "doubao:twoPhaseOutput:true",
+        `doubao:visibleContinuationCount:${visiblePhase.continuationCount}`,
+        `doubao:metadataCompleted:${metadataCompleted ? "true" : "false"}`,
+        `doubao:metadataFailureCode:${metadataFailureCode || "none"}`,
+        `doubao:saveRequiresReview:${metadataCompleted ? "false" : "true"}`,
         `observability:traceId:${gptOS.observability.trace.traceId}`,
         `observability:requestId:${gptOS.observability.trace.requestId}`,
         `observability:modelUsed:${response.model}`,

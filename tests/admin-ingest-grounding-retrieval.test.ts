@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import {
+  buildStrictAdminIngestGroundingQuery,
+  hasCanonicalAdminIngestGroundingScope,
   retrieveAdminIngestGrounding,
+  shouldUseStrictAdminIngestGrounding,
   type AdminIngestGroundingRetriever,
 } from "../lib/enterprise/admin-ingest-grounding";
 import {
@@ -35,6 +38,68 @@ const baseInput = {
 };
 
 async function main() {
+  const agentScopes = [
+    {
+      agentId: "expert-agent-expert-career",
+      knowledgeBaseId: "kb:expert-agent-expert-career",
+      namespace: "agent:expert-agent-expert-career:kb:kb-business-coach",
+    },
+    {
+      agentId: "expert-kks",
+      knowledgeBaseId: "kb-kks-slim",
+      namespace: "kb-kks-slim",
+    },
+    {
+      agentId: "expert-health",
+      knowledgeBaseId: "kb-health-expert",
+      namespace: "kb-health-expert",
+    },
+    {
+      agentId: "expert-future-coach",
+      knowledgeBaseId: "kb-future-coach",
+      namespace: "kb-future-coach",
+    },
+  ];
+
+  for (const scope of agentScopes) {
+    assert.equal(hasCanonicalAdminIngestGroundingScope({
+      tenantId: "tenant-a",
+      ...scope,
+    }), true);
+    assert.equal(shouldUseStrictAdminIngestGrounding({
+      provider: "doubao-pro",
+    }), true);
+    assert.equal(shouldUseStrictAdminIngestGrounding({
+      provider: "deepseek-pro",
+    }), false);
+  }
+
+  assert.equal(hasCanonicalAdminIngestGroundingScope({
+    tenantId: "tenant-a",
+    agentId: "expert-kks",
+    knowledgeBaseId: "kb-health-expert",
+    namespace: "kb-kks-slim",
+  }), false);
+  assert.equal(shouldUseStrictAdminIngestGrounding({
+    provider: "doubao-pro",
+  }), true);
+
+  const completedFollowUpQuery = buildStrictAdminIngestGroundingQuery({
+    query: "再来一个",
+    recentMessages: [
+      { role: "user", content: "客户听完事业介绍以后说价格有点贵。" },
+      { role: "assistant", content: "先不要急着反驳，要确认客户真正的顾虑。" },
+      { role: "user", content: "客户还是说要考虑。" },
+    ],
+  });
+  assert.match(completedFollowUpQuery, /本轮问题：再来一个/);
+  assert.match(completedFollowUpQuery, /客户听完事业介绍以后说价格有点贵/);
+  assert.match(completedFollowUpQuery, /客户还是说要考虑/);
+  assert.equal(buildStrictAdminIngestGroundingQuery({
+    query: "客户主动想了解事业的完整流程应该怎么讲？",
+    recentMessages: [{ role: "user", content: "不应拼接到完整独立问题" }],
+  }), "客户主动想了解事业的完整流程应该怎么讲？");
+
   const retrievalCalls: Array<{
     query: string;
     options: Parameters<AdminIngestGroundingRetriever>[1];
@@ -131,6 +196,22 @@ async function main() {
   assert.equal(conflictingResult.scope, null);
   assert.match(conflictingResult.warnings.join("\n"), /互相冲突/);
 
+  let strictInvalidScopeCalls = 0;
+  const strictInvalidScope = await retrieveAdminIngestGrounding({
+    ...baseInput,
+    knowledgeBaseId: "kb-health-expert",
+    strictKnowledgeMode: true,
+  }, {
+    retrieveRelevantChunks: async () => {
+      strictInvalidScopeCalls += 1;
+      return [];
+    },
+  });
+  assert.equal(strictInvalidScopeCalls, 0);
+  assert.equal(strictInvalidScope.applied, false);
+  assert.equal(strictInvalidScope.failureReason, "invalid_scope");
+  assert.equal(strictInvalidScope.scope, null);
+
   let noHitCalls = 0;
   const noHitResult = await retrieveAdminIngestGrounding(baseInput, {
     retrieveRelevantChunks: async (_query, options) => {
@@ -194,6 +275,109 @@ async function main() {
   assert.equal(truncatedResult.truncated, true);
   assert.ok(truncatedResult.context.length <= 2_200);
   assert.match(truncatedResult.warnings.join("\n"), /长度上限截断/);
+
+  const strictCalls: Array<{
+    query: string;
+    options: Parameters<AdminIngestGroundingRetriever>[1];
+  }> = [];
+  const strictResult = await retrieveAdminIngestGrounding({
+    ...baseInput,
+    query: "再来一个",
+    strictKnowledgeMode: true,
+    recentMessages: [
+      { role: "user", content: "客户听完讲事业后说价格有点贵。" },
+      { role: "assistant", content: "先锁定客户真正的顾虑。" },
+    ],
+    maxContextChars: 2_200,
+  }, {
+    retrieveRelevantChunks: async (query, options) => {
+      strictCalls.push({ query, options });
+
+      return [
+        createCandidate({
+          chunkId: "chunk-career-strict-1",
+          knowledgeItemId: "item-career-strict-1",
+          content: "客户提出价格顾虑时，先认可，再锁定真正问题。",
+        }),
+        createCandidate({
+          chunkId: "chunk-career-strict-2",
+          knowledgeItemId: "item-career-strict-2",
+          content: "严格知识正文。".repeat(1_000),
+        }),
+        createCandidate({
+          chunkId: "chunk-career-strict-3",
+          knowledgeItemId: "item-career-strict-3",
+          content: "这条仍被检索，但上下文预算不足时不应伪装成已使用。",
+        }),
+        createCandidate({
+          chunkId: "chunk-kks-strict-cross-library",
+          knowledgeItemId: "item-kks-strict-cross-library",
+          agentId: "expert-kks",
+          knowledgeBaseId: "kb-kks-slim",
+          namespace: "kb-kks-slim",
+          content: "KKS 跨库候选不得进入讲事业导师豆包提示词。",
+        }),
+        createCandidate({
+          chunkId: "chunk-health-strict-cross-library",
+          knowledgeItemId: "item-health-strict-cross-library",
+          agentId: "expert-health",
+          knowledgeBaseId: "kb-health-expert",
+          namespace: "kb-health-expert",
+          content: "大健康跨库候选不得进入讲事业导师豆包提示词。",
+        }),
+      ];
+    },
+  });
+
+  assert.equal(strictCalls.length, 1);
+  assert.match(strictCalls[0].query, /本轮问题：再来一个/);
+  assert.match(strictCalls[0].query, /客户听完讲事业后说价格有点贵/);
+  assert.equal(strictCalls[0].options.allowScopedFallback, false);
+  assert.equal(strictCalls[0].options.includeShared, true);
+  assert.equal(strictCalls[0].options.includePublished, true);
+  assert.equal(strictResult.applied, true);
+  assert.equal(strictResult.failureReason, "none");
+  assert.deepEqual(strictResult.retrievedSourceIds.chunkIds, [
+    "chunk-career-strict-1",
+    "chunk-career-strict-2",
+    "chunk-career-strict-3",
+  ]);
+  assert.deepEqual(strictResult.retrievedSourceIds.knowledgeItemIds, [
+    "item-career-strict-1",
+    "item-career-strict-2",
+    "item-career-strict-3",
+  ]);
+  assert.ok(strictResult.sourceIds.chunkIds.length < strictResult.retrievedSourceIds.chunkIds.length);
+  assert.equal(strictResult.truncated, true);
+  assert.match(strictResult.context, /豆包固定知识库严格依据/);
+  assert.match(strictResult.context, /只能依据以下固定知识片段/);
+  assert.match(strictResult.context, /不得使用通用知识补充/);
+  assert.doesNotMatch(strictResult.context, /KKS 跨库候选|大健康跨库候选/);
+
+  const strictNoHit = await retrieveAdminIngestGrounding({
+    ...baseInput,
+    strictKnowledgeMode: true,
+  }, {
+    retrieveRelevantChunks: async (_query, options) => {
+      assert.equal(options.allowScopedFallback, false);
+      return [];
+    },
+  });
+  assert.equal(strictNoHit.applied, false);
+  assert.equal(strictNoHit.failureReason, "no_hit");
+  assert.match(strictNoHit.warnings.join("\n"), /已阻止模型生成/);
+
+  const strictUnavailable = await retrieveAdminIngestGrounding({
+    ...baseInput,
+    strictKnowledgeMode: true,
+  }, {
+    retrieveRelevantChunks: async () => {
+      throw new Error("private database details");
+    },
+  });
+  assert.equal(strictUnavailable.applied, false);
+  assert.equal(strictUnavailable.failureReason, "retrieval_error");
+  assert.equal(strictUnavailable.warnings.some((warning) => warning.includes("private")), false);
 
   let scopedFallbackFetches = 0;
   const fallbackDb = {

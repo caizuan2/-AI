@@ -26,7 +26,12 @@ import {
 } from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
-import { retrieveAdminIngestGrounding } from "@/lib/enterprise/admin-ingest-grounding";
+import {
+  hasCanonicalAdminIngestGroundingScope,
+  retrieveAdminIngestGrounding,
+  shouldUseStrictAdminIngestGrounding,
+  type AdminIngestGroundingResult
+} from "@/lib/enterprise/admin-ingest-grounding";
 import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
@@ -289,6 +294,69 @@ function attachmentEvidenceError(code: typeof ATTACHMENT_CONTENT_MISSING_CODE | 
     message,
     retryable: false
   }, 422);
+}
+
+function buildAdminIngestGroundingMetadata(
+  grounding: AdminIngestGroundingResult,
+  strictKnowledgeMode: boolean
+) {
+  return {
+    strictKnowledgeMode,
+    applied: grounding.applied,
+    failureReason: grounding.failureReason,
+    scope: grounding.scope,
+    retrievedChunkIds: grounding.retrievedSourceIds.chunkIds,
+    retrievedKnowledgeItemIds: grounding.retrievedSourceIds.knowledgeItemIds,
+    providedChunkIds: grounding.sourceIds.chunkIds,
+    providedKnowledgeItemIds: grounding.sourceIds.knowledgeItemIds,
+    truncated: grounding.truncated
+  };
+}
+
+function strictDoubaoGroundingError(input: {
+  grounding: AdminIngestGroundingResult;
+  selectedModelLabel: string;
+  requestedModel: string;
+  requestId: string;
+}) {
+  const unavailable = input.grounding.failureReason === "retrieval_error";
+  const invalidScope = input.grounding.failureReason === "invalid_scope";
+  const causeCode = unavailable
+    ? "ADMIN_INGEST_GROUNDING_UNAVAILABLE"
+    : invalidScope
+      ? "ADMIN_INGEST_GROUNDING_SCOPE_INVALID"
+      : "ADMIN_INGEST_GROUNDING_NO_HIT";
+  const message = unavailable
+    ? "当前 Agent 固定知识库暂时无法检索。为避免豆包脱离知识库生成，本轮未调用模型。您的输入和附件已保留，请稍后重试。"
+    : invalidScope
+      ? "当前 Agent、固定知识库与 namespace 作用域不一致。为避免豆包跨库生成，本轮未调用模型。请刷新当前 Agent 后重试。"
+      : "当前问题未命中当前 Agent 固定知识库。为避免豆包脱离知识库自由生成，本轮未调用模型。请补充问题背景或先完善当前固定知识库后重试。";
+
+  return jsonUtf8({
+    ok: false,
+    success: false,
+    fallback: false,
+    fallbackUsed: false,
+    retryable: unavailable,
+    errorCode: "ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED",
+    causeCode,
+    userMessage: message,
+    message,
+    provider: "doubao-pro",
+    requestedProvider: "doubao-pro",
+    actualProvider: null,
+    selectedModelLabel: input.selectedModelLabel,
+    requestedModel: input.requestedModel,
+    actualModel: null,
+    requestId: input.requestId,
+    knowledgeGrounding: buildAdminIngestGroundingMetadata(input.grounding, true),
+    diagnostics: [
+      "adminIngestGrounding:strictKnowledgeMode:true",
+      "adminIngestGrounding:modelInvoked:false",
+      `adminIngestGrounding:failureReason:${input.grounding.failureReason}`,
+      ...input.grounding.warnings.map((warning) => `adminIngestGrounding:warning:${warning}`)
+    ]
+  }, unavailable ? 503 : 422);
 }
 
 function readString(value: unknown) {
@@ -753,9 +821,24 @@ function buildStructuredKnowledgeForTrainingLog(input: {
   visibleReply: string;
 }) {
   const directStructured = normalizeEnterpriseStructuredKnowledge(input.rawResult.structured);
+  const isDoubaoResult = readString(input.rawResult.provider) === "doubao";
+  const rawStructured = isPlainObject(input.rawResult.structured) ? input.rawResult.structured : {};
+  const saveRecommendation = readString(input.rawResult.saveRecommendation);
+  const shouldPauseSave = isDoubaoResult
+    && /暂缓入库|需要补充资料/.test(saveRecommendation);
+  const doubaoShouldSave = shouldPauseSave
+    ? false
+    : typeof rawStructured.saveSuggestion === "boolean"
+      ? rawStructured.saveSuggestion
+      : directStructured?.should_save ?? true;
 
   if (directStructured) {
-    return directStructured;
+    return isDoubaoResult
+      ? {
+          ...directStructured,
+          should_save: doubaoShouldSave
+        }
+      : directStructured;
   }
 
   const draft = isPlainObject(input.rawResult.knowledgeDraft) ? input.rawResult.knowledgeDraft : {};
@@ -777,7 +860,7 @@ function buildStructuredKnowledgeForTrainingLog(input: {
     summary,
     qa_pairs: [{ q: standardQuestion, a: standardAnswer }],
     confidence,
-    should_save: true,
+    should_save: isDoubaoResult ? doubaoShouldSave : true,
     providerUsed: readString(input.rawResult.provider) || "unknown",
     model: readString(input.rawResult.model) || "unknown",
     fallbackUsed: input.rawResult.fallbackUsed === true
@@ -887,6 +970,30 @@ export async function POST(request: Request) {
   const enterpriseActor = toEnterpriseActor(actor);
   const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
   const effectiveTenantId = enterpriseActor?.tenantId ?? input.tenantId;
+  const canonicalAgentScope = hasCanonicalAdminIngestGroundingScope({
+    tenantId: effectiveTenantId,
+    agentId: input.agentId ?? "",
+    knowledgeBaseId: input.knowledgeBaseId ?? "",
+    namespace: input.namespace ?? ""
+  });
+  let groundingModelProvider: string | null = null;
+
+  try {
+    groundingModelProvider = resolveAdminIngestModelProvider({
+      modelProvider: input.modelProvider,
+      selectedModelLabel: input.selectedModelLabel,
+      modelDisplayName: input.modelDisplayName,
+      preferredModel: input.preferredModel,
+      input: input.input,
+      attachments: input.attachments
+    }).provider;
+  } catch {
+    // The existing selected-model error path below remains authoritative.
+  }
+
+  const strictDoubaoGrounding = shouldUseStrictAdminIngestGrounding({
+    provider: groundingModelProvider
+  });
   const [grounding, publishedMemoryContext] = await Promise.all([
     retrieveAdminIngestGrounding({
       query: input.input,
@@ -894,7 +1001,9 @@ export async function POST(request: Request) {
       tenantId: effectiveTenantId,
       agentId: input.agentId ?? "",
       knowledgeBaseId: input.knowledgeBaseId ?? "",
-      namespace: input.namespace ?? ""
+      namespace: input.namespace ?? "",
+      strictKnowledgeMode: strictDoubaoGrounding,
+      recentMessages: strictDoubaoGrounding ? input.recentMessages : undefined
     }),
     buildAdminIngestPublishedMemoryContext({
       query: input.input,
@@ -916,6 +1025,22 @@ export async function POST(request: Request) {
           : null
       }]
     : [];
+
+  if (strictDoubaoGrounding && (!canonicalAgentScope || !grounding.applied)) {
+    const strictRuntime = resolveIngestModelRuntime({
+      provider: "doubao-pro",
+      selectedModelLabel: input.selectedModelLabel,
+      modelDisplayName: input.modelDisplayName,
+      preferredModel: input.preferredModel
+    });
+
+    return strictDoubaoGroundingError({
+      grounding,
+      selectedModelLabel: strictRuntime.displayModelLabel,
+      requestedModel: strictRuntime.actualModel,
+      requestId
+    });
+  }
 
   try {
     const modelOption = resolveAdminIngestModelProvider({
@@ -1076,6 +1201,10 @@ export async function POST(request: Request) {
       actualModel: rawResult.actualModel,
       normalizedFrom: modelRuntime.normalizedFrom,
       modelDiagnostics,
+      knowledgeGrounding: buildAdminIngestGroundingMetadata(
+        grounding,
+        strictDoubaoGrounding
+      ),
       responseId: rawResult.responseId,
       jobId: trainingLog?.job.id ?? null,
       trainingRecord: trainingLog?.record ?? null,
