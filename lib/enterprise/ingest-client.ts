@@ -61,6 +61,7 @@ import { AIRuntimeOrchestrator } from "@/lib/enterprise/runtime/ai-runtime-orche
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import { buildAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { AdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
+import { shouldRunAdminIngestHealthPreflight } from "@/lib/enterprise/admin-ingest-wechat-request";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -1349,6 +1350,7 @@ export async function sendCoreIngest(input: {
   memoryContextText?: string;
   agentLearningInstruction?: string;
   usedMemoryIds?: string[];
+  skipHealthPreflight?: boolean;
 }) {
   const platform = input.platform ?? "web";
   const normalizedModelSelection = normalizeIngestModelSelection({
@@ -1382,7 +1384,10 @@ export async function sendCoreIngest(input: {
   const requestId = input.requestId ?? runtimeResult.requestId;
   const useDoubaoBrowserSse = platform === "web" && modelProvider === "doubao-pro";
 
-  if (modelProvider !== "doubao-pro") {
+  if (shouldRunAdminIngestHealthPreflight({
+    modelProvider,
+    skipHealthPreflight: input.skipHealthPreflight
+  })) {
     try {
       const health = await checkGptHealthStatus({
         provider: modelProvider,
