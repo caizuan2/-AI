@@ -1,13 +1,35 @@
 "use client";
 
-import { MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  MoreHorizontal,
+  Pencil,
+  Pin,
+  PinOff,
+  Share2,
+  Trash2,
+  Users
+} from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 export function IngestConversationActionMenu({
+  isPinned,
+  isArchived,
+  onShare,
+  onStartGroupChat,
   onRename,
+  onTogglePin,
+  onToggleArchive,
   onDelete
 }: {
+  isPinned?: boolean;
+  isArchived?: boolean;
+  onShare?: () => void;
+  onStartGroupChat?: () => void;
   onRename: () => void;
+  onTogglePin?: () => void;
+  onToggleArchive?: () => void;
   onDelete: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -55,7 +77,35 @@ export function IngestConversationActionMenu({
       </button>
 
       {open ? (
-        <div className="absolute right-0 top-8 z-30 w-32 overflow-hidden rounded-2xl border border-[#e7e7e4] bg-white p-1 text-xs font-semibold text-[#404040] shadow-[0_18px_48px_rgba(15,23,42,0.14)]">
+        <div className="absolute right-0 top-8 z-30 w-40 overflow-hidden rounded-2xl border border-[#e7e7e4] bg-white p-1 text-xs font-semibold text-[#404040] shadow-[0_18px_48px_rgba(15,23,42,0.14)]">
+          {onShare ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                onShare();
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition hover:bg-[#f6f6f5]"
+            >
+              <Share2 className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+              分享
+            </button>
+          ) : null}
+          {onStartGroupChat ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                onStartGroupChat();
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition hover:bg-[#f6f6f5]"
+            >
+              <Users className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+              开始群聊
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={(event) => {
@@ -68,6 +118,39 @@ export function IngestConversationActionMenu({
             <Pencil className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
             编辑名称
           </button>
+          {onTogglePin && !isArchived ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                onTogglePin();
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition hover:bg-[#f6f6f5]"
+            >
+              {isPinned
+                ? <PinOff className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+                : <Pin className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />}
+              {isPinned ? "取消置顶" : "置顶"}
+            </button>
+          ) : null}
+          {onToggleArchive ? (
+            <button
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                setOpen(false);
+                onToggleArchive();
+              }}
+              className="flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left transition hover:bg-[#f6f6f5]"
+            >
+              {isArchived
+                ? <ArchiveRestore className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+                : <Archive className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />}
+              {isArchived ? "取消归档" : "归档"}
+            </button>
+          ) : null}
+          <div className="my-1 border-t border-[#eeeeeb]" />
           <button
             type="button"
             onClick={(event) => {

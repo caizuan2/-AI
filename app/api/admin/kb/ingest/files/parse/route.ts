@@ -189,6 +189,15 @@ export async function POST(request: Request) {
 
   const fileName = readString(formData.get("fileName")) || file.name;
   const mimeType = readString(formData.get("mimeType")) || file.type || "application/octet-stream";
+  const recognitionModeValue = readString(formData.get("recognitionMode"));
+  const recognitionMode = recognitionModeValue === "wechat_conversation"
+    ? "wechat_conversation" as const
+    : undefined;
+
+  if (recognitionModeValue && !recognitionMode) {
+    return apiError(new ValidationError("图片识别模式无效。"));
+  }
+
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
   const parsed = await parseAdminIngestFile({
@@ -198,6 +207,7 @@ export async function POST(request: Request) {
     buffer,
     pageStart,
     pageBatchSize,
+    recognitionMode,
     signal: request.signal
   });
 

@@ -129,6 +129,7 @@ export interface IngestUploadState {
   tenantId?: string | null;
   userId?: string | null;
   agentId?: string | null;
+  recognitionMode?: "wechat_conversation";
   createdAt: string;
 }
 
@@ -2073,6 +2074,7 @@ export function createUploadState(file: File, context: {
   userId?: string | null;
   agentId?: string | null;
   platform?: IngestPlatform;
+  recognitionMode?: "wechat_conversation";
 } = {}): IngestUploadState {
   const isImage = file.type.startsWith("image/") || /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file.name);
   const previewUrl = isImage && typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
@@ -2096,6 +2098,7 @@ export function createUploadState(file: File, context: {
     tenantId: context.tenantId ?? null,
     userId: context.userId ?? null,
     agentId: context.agentId ?? null,
+    recognitionMode: context.recognitionMode,
     createdAt: new Date().toISOString()
   };
 }
@@ -2352,6 +2355,9 @@ export async function parseUploadedFileForGpt(
     formData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
     formData.append("pageStart", String(pageStart));
     formData.append("pageBatchSize", String(pageBatchSize));
+    if (file.recognitionMode) {
+      formData.append("recognitionMode", file.recognitionMode);
+    }
 
     if (modelAffinity) {
       formData.append("modelProvider", modelAffinity.modelProvider);
