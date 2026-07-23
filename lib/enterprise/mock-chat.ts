@@ -98,6 +98,15 @@ export interface IngestChatMessage {
   expertName?: string | null;
   model?: string;
   provider?: string;
+  failureMeta?: {
+    title?: string;
+    errorCode?: string;
+    causeCode?: string;
+    retryable: boolean;
+    requestedModel?: string;
+    actualModel?: string | null;
+    fallbackUsed?: boolean;
+  };
   saveSuggestion?: boolean;
   gptProof?: GptCallProof;
   gptOS?: GptOSRouteResult;

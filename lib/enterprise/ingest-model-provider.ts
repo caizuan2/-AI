@@ -46,6 +46,7 @@ export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminInges
   strictModelAffinity?: boolean;
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
+  signal?: AbortSignal;
 };
 
 export type AdminIngestModelResult = (OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult | DoubaoAdminIngestResult) & {
@@ -166,6 +167,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     modelDisplayName: input.modelDisplayName,
     preferredModel: input.preferredModel
   });
+  const providerSignal = input.signal;
   const baseInput = { ...input };
   const actualModel = resolveIngestActualModel(provider);
   const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
@@ -177,6 +179,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     : option.displayName;
 
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
+  delete (baseInput as { signal?: unknown }).signal;
 
   const payload = {
     ...baseInput,
@@ -199,7 +202,8 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
 
   if (provider === "doubao-pro") {
     return runDoubaoAdminIngest({
-      ...payload
+      ...payload,
+      signal: providerSignal
     } as DoubaoAdminIngestInput);
   }
 

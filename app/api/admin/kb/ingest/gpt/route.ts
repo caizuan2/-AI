@@ -28,6 +28,7 @@ import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
 import { retrieveAdminIngestGrounding } from "@/lib/enterprise/admin-ingest-grounding";
 import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
+import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
 import {
   createEnterpriseIngestLog,
@@ -53,6 +54,226 @@ function jsonUtf8(data: unknown, status = 200) {
     headers: {
       "Content-Type": "application/json; charset=utf-8",
       "Cache-Control": "no-store"
+    }
+  });
+}
+
+const ADMIN_INGEST_SSE_HEARTBEAT_MS = 12_000;
+
+type SafeDoubaoFailureDetails = {
+  parseStage?: string;
+  finishReason?: string;
+  eventCount?: number;
+  receivedChars?: number;
+  receivedContent?: boolean;
+  timeoutStage?: string;
+  abortSource?: string;
+};
+
+function readSafeDoubaoFailureDetails(error: unknown): SafeDoubaoFailureDetails | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const rawDetails = (error as { details?: unknown }).details;
+
+  if (!isPlainObject(rawDetails)) {
+    return undefined;
+  }
+
+  const parseStages = new Set([
+    "provider_payload",
+    "sse_event",
+    "provider_error",
+    "model_identity",
+    "finish_reason",
+    "stream_eof",
+    "reply_json"
+  ]);
+  const timeoutStages = new Set(["connect", "first_event", "idle", "hard"]);
+  const abortSources = new Set(["client", "hard_timeout"]);
+  const parseStage = readString(rawDetails.parseStage);
+  const timeoutStage = readString(rawDetails.timeoutStage);
+  const abortSource = readString(rawDetails.abortSource);
+  const finishReason = readString(rawDetails.finishReason).slice(0, 40);
+  const eventCount = Number(rawDetails.eventCount);
+  const receivedChars = Number(rawDetails.receivedChars);
+  const safeDetails: SafeDoubaoFailureDetails = {
+    parseStage: parseStages.has(parseStage) ? parseStage : undefined,
+    finishReason: finishReason || undefined,
+    eventCount: Number.isSafeInteger(eventCount) && eventCount >= 0 ? eventCount : undefined,
+    receivedChars: Number.isSafeInteger(receivedChars) && receivedChars >= 0 ? receivedChars : undefined,
+    receivedContent: typeof rawDetails.receivedContent === "boolean" ? rawDetails.receivedContent : undefined,
+    timeoutStage: timeoutStages.has(timeoutStage) ? timeoutStage : undefined,
+    abortSource: abortSources.has(abortSource) ? abortSource : undefined
+  };
+
+  return Object.values(safeDetails).some((value) => value !== undefined)
+    ? safeDetails
+    : undefined;
+}
+
+function browserAcceptsAdminIngestSse(request: Request) {
+  return request.headers.get("accept")?.toLowerCase().includes("text/event-stream") === true;
+}
+
+function encodeAdminIngestSseEvent(event: string, data: unknown) {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+function createDoubaoBrowserSseResponse(input: {
+  request: Request;
+  requestId: string;
+  selectedModelLabel: string;
+  requestedModel: string;
+  producer: (signal: AbortSignal) => Promise<Response>;
+}) {
+  const encoder = new TextEncoder();
+  const providerController = new AbortController();
+  const startedAt = Date.now();
+  let closed = false;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+  let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+  const abortProvider = () => {
+    if (!providerController.signal.aborted) {
+      providerController.abort(input.request.signal.reason);
+    }
+  };
+  const cleanup = () => {
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+    input.request.signal.removeEventListener("abort", abortProvider);
+  };
+  const enqueue = (event: string, data: unknown) => {
+    if (closed || !streamController) {
+      return false;
+    }
+
+    try {
+      streamController.enqueue(encoder.encode(encodeAdminIngestSseEvent(event, data)));
+      return true;
+    } catch {
+      closed = true;
+      cleanup();
+      abortProvider();
+      return false;
+    }
+  };
+  const close = () => {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    cleanup();
+
+    try {
+      streamController?.close();
+    } catch {
+      // The browser may have cancelled the response between the final event and close.
+    }
+  };
+
+  if (input.request.signal.aborted) {
+    abortProvider();
+  } else {
+    input.request.signal.addEventListener("abort", abortProvider, { once: true });
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      streamController = controller;
+      enqueue("accepted", {
+        type: "accepted",
+        requestId: input.requestId,
+        provider: "doubao-pro",
+        selectedModelLabel: input.selectedModelLabel,
+        requestedModel: input.requestedModel,
+        fallbackUsed: false
+      });
+      heartbeat = setInterval(() => {
+        enqueue("heartbeat", {
+          type: "heartbeat",
+          requestId: input.requestId,
+          elapsedMs: Date.now() - startedAt
+        });
+      }, ADMIN_INGEST_SSE_HEARTBEAT_MS);
+
+      void input.producer(providerController.signal).then(async (response) => {
+        const payload = await response.json().catch(() => ({
+          ok: false,
+          success: false,
+          errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+          causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+          retryable: true,
+          fallback: false,
+          fallbackUsed: false,
+          provider: "doubao-pro",
+          requestedProvider: "doubao-pro",
+          selectedModelLabel: input.selectedModelLabel,
+          requestedModel: input.requestedModel,
+          requestId: input.requestId,
+          message: `${input.selectedModelLabel} 返回无法解析，系统未切换其他模型。`
+        }));
+
+        if (providerController.signal.aborted || closed) {
+          close();
+          return;
+        }
+
+        enqueue(response.ok ? "final" : "error", {
+          type: response.ok ? "final" : "error",
+          requestId: input.requestId,
+          status: response.status,
+          payload
+        });
+        close();
+      }).catch(() => {
+        if (providerController.signal.aborted || closed) {
+          close();
+          return;
+        }
+
+        enqueue("error", {
+          type: "error",
+          requestId: input.requestId,
+          status: 503,
+          payload: {
+            ok: false,
+            success: false,
+            errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+            causeCode: "DOUBAO_REQUEST_FAILED",
+            retryable: true,
+            fallback: false,
+            fallbackUsed: false,
+            provider: "doubao-pro",
+            requestedProvider: "doubao-pro",
+            selectedModelLabel: input.selectedModelLabel,
+            requestedModel: input.requestedModel,
+            requestId: input.requestId,
+            message: `${input.selectedModelLabel} 暂时不可用，系统未切换其他模型。`
+          }
+        });
+        close();
+      });
+    },
+    cancel() {
+      closed = true;
+      cleanup();
+      abortProvider();
+    }
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
+      "X-Admin-Ingest-Transport": "sse"
     }
   });
 }
@@ -190,6 +411,7 @@ function toGptFallbackErrorCode(error: unknown) {
     || code === "DOUBAO_REQUEST_FAILED"
     || code === "DOUBAO_RESPONSE_PARSE_FAILED"
     || code === "DOUBAO_TIMEOUT"
+    || code === "DOUBAO_REQUEST_CANCELLED"
   ) {
     return code;
   }
@@ -340,6 +562,7 @@ function logGptRoute(event: {
   ok?: boolean;
   contentLength?: number;
   errorCode?: string | null;
+  failureDetails?: SafeDoubaoFailureDetails;
 }) {
   console.info("[admin-ingest:gpt-route]", {
     requestId: event.requestId,
@@ -353,7 +576,8 @@ function logGptRoute(event: {
     fallbackUsed: Boolean(event.fallbackUsed),
     ok: Boolean(event.ok),
     contentLength: event.contentLength ?? 0,
-    errorCode: event.errorCode ?? null
+    errorCode: event.errorCode ?? null,
+    failureDetails: event.failureDetails ?? null
   });
 }
 
@@ -659,6 +883,7 @@ export async function POST(request: Request) {
     );
   }
 
+  const executeRequest = async (signal?: AbortSignal) => {
   const enterpriseActor = toEnterpriseActor(actor);
   const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
   const effectiveTenantId = enterpriseActor?.tenantId ?? input.tenantId;
@@ -739,7 +964,8 @@ export async function POST(request: Request) {
       previousKnowledgeDrafts: input.previousKnowledgeDrafts,
       recentTrainingRecords: input.recentTrainingRecords,
       autonomous: input.autonomous,
-      requestId
+      requestId,
+      signal
     });
 
     const unsupportedClaim = findUnsupportedAdminIngestAttachmentClaim(
@@ -893,7 +1119,9 @@ export async function POST(request: Request) {
     const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "DOUBAO_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
     const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_INVALID" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
     const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
-    const status = affinityMismatch ? 502 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
+    const isClientCancelled = errorCode === "DOUBAO_REQUEST_CANCELLED";
+    const status = affinityMismatch ? 502 : isClientCancelled ? 499 : isTimeout ? 504 : isMissingKey ? 401 : isSafetyRejection ? 422 : 503;
+    const failureDetails = readSafeDoubaoFailureDetails(error);
     const modelOption = resolveAdminIngestModelProvider({
       modelProvider: input.modelProvider,
       selectedModelLabel: input.selectedModelLabel,
@@ -909,6 +1137,9 @@ export async function POST(request: Request) {
       preferredModel: input.preferredModel
     });
     const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
+    const strictFailureRetryable = modelOption.provider === "doubao-pro"
+      ? !affinityMismatch && isRetryableDoubaoStrictModelFailure(errorCode)
+      : !affinityMismatch && !isMissingKey && !isSafetyRejection && !isClientCancelled;
     const modelDiagnostics = buildModelDiagnostics({
       provider: modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash" ? "deepseek" : modelOption.provider,
       requestedProvider: modelOption.provider,
@@ -934,7 +1165,8 @@ export async function POST(request: Request) {
       fallbackUsed: !strictModelAffinity,
       ok: false,
       contentLength: 0,
-      errorCode
+      errorCode,
+      ...(failureDetails ? { failureDetails } : {})
     });
 
     if (strictModelAffinity) {
@@ -947,7 +1179,7 @@ export async function POST(request: Request) {
         success: false,
         fallback: false,
         fallbackUsed: false,
-        retryable: !affinityMismatch && !isMissingKey && !isSafetyRejection,
+        retryable: strictFailureRetryable,
         errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
         causeCode: errorCode,
         userMessage: strictMessage,
@@ -958,6 +1190,8 @@ export async function POST(request: Request) {
         selectedModelLabel: modelRuntime.displayModelLabel,
         requestedModel: modelRuntime.actualModel,
         actualModel: affinityMismatch?.actualModel ?? null,
+        requestId,
+        failureDetails,
         normalizedFrom: modelRuntime.normalizedFrom,
         modelDiagnostics,
         diagnostics: [
@@ -1026,4 +1260,36 @@ export async function POST(request: Request) {
       modelDiagnostics
     }, status);
   }
+  };
+
+  const streamModelOption = resolveAdminIngestModelProvider({
+    modelProvider: input.modelProvider,
+    selectedModelLabel: input.selectedModelLabel,
+    modelDisplayName: input.modelDisplayName,
+    preferredModel: input.preferredModel,
+    input: input.input,
+    attachments: input.attachments
+  });
+  const streamModelRuntime = resolveIngestModelRuntime({
+    provider: streamModelOption.provider,
+    selectedModelLabel: input.selectedModelLabel,
+    modelDisplayName: input.modelDisplayName,
+    preferredModel: input.preferredModel
+  });
+
+  if (
+    input.platform === "web"
+    && streamModelOption.provider === "doubao-pro"
+    && browserAcceptsAdminIngestSse(request)
+  ) {
+    return createDoubaoBrowserSseResponse({
+      request,
+      requestId,
+      selectedModelLabel: streamModelRuntime.displayModelLabel,
+      requestedModel: streamModelRuntime.actualModel,
+      producer: executeRequest
+    });
+  }
+
+  return executeRequest(request.signal);
 }

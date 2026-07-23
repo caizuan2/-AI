@@ -257,6 +257,15 @@ interface GptFailureResponse {
   actualModel?: string | null;
   fallbackUsed?: boolean;
   requestId?: string;
+  failureDetails?: {
+    parseStage?: string;
+    finishReason?: string;
+    eventCount?: number;
+    receivedChars?: number;
+    receivedContent?: boolean;
+    timeoutStage?: string;
+    abortSource?: string;
+  };
   raw?: null;
   diagnostics?: unknown;
 }
@@ -321,7 +330,7 @@ interface AdminSavedKnowledgeResponse extends SavedKnowledgeLike {
   chunkCount: number;
 }
 
-export function getFriendlyIngestError(response: Response, payload: ApiEnvelope<unknown> | null) {
+export function getFriendlyIngestError(response: Pick<Response, "status">, payload: ApiEnvelope<unknown> | null) {
   if (payload?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
     return payload.userMessage || payload.message || "当前模型暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试。";
   }
@@ -480,6 +489,223 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function isGptFailureResponse(value: unknown): value is GptFailureResponse {
   return isPlainRecord(value) && value.ok === false;
+}
+
+function toAdminIngestRequestError(
+  payload: GptFailureResponse,
+  status: number,
+  fallbackRequestId: string
+) {
+  const userMessage = sanitizeGptOSUserMessage(
+    payload.userMessage || payload.message || "AI服务暂时不稳定，请稍后再试。"
+  );
+
+  return new AdminIngestRequestError(userMessage, {
+    status,
+    errorCode: payload.errorCode,
+    causeCode: payload.causeCode,
+    retryable: payload.retryable,
+    provider: payload.provider,
+    requestedProvider: payload.requestedProvider,
+    actualProvider: payload.actualProvider,
+    selectedModelLabel: payload.selectedModelLabel,
+    requestedModel: payload.requestedModel,
+    actualModel: payload.actualModel,
+    fallbackUsed: payload.fallbackUsed,
+    requestId: payload.requestId || fallbackRequestId,
+    failureDetails: payload.failureDetails
+  });
+}
+
+type AdminIngestBrowserSseTerminal = {
+  status: number;
+  payload: ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
+};
+
+function parseAdminIngestSseBlock(block: string): AdminIngestBrowserSseTerminal | null {
+  let eventName = "message";
+  const dataLines: string[] = [];
+
+  for (const line of block.split(/\r?\n/)) {
+    if (line.startsWith("event:")) {
+      eventName = line.slice(6).trim();
+      continue;
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).replace(/^ /, ""));
+    }
+  }
+
+  if ((eventName !== "final" && eventName !== "error") || dataLines.length === 0) {
+    return null;
+  }
+
+  let envelope: unknown;
+
+  try {
+    envelope = JSON.parse(dataLines.join("\n")) as unknown;
+  } catch {
+    throw new AdminIngestRequestError("豆包浏览器流式结果解析失败，系统未切换其他模型。", {
+      status: 503,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      retryable: true,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      fallbackUsed: false,
+      failureDetails: { parseStage: "browser_sse_event" }
+    });
+  }
+
+  if (!isPlainRecord(envelope)) {
+    return null;
+  }
+
+  const status = Number(envelope.status);
+  const payload = envelope.payload;
+
+  if (!Number.isInteger(status) || status < 200 || status > 599) {
+    throw new AdminIngestRequestError("豆包浏览器流式状态无效，系统未切换其他模型。", {
+      status: 503,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      retryable: true,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      fallbackUsed: false,
+      failureDetails: { parseStage: "browser_sse_event" }
+    });
+  }
+
+  return {
+    status,
+    payload: isPlainRecord(payload)
+      ? payload as unknown as ApiEnvelope<GptIngestResponse> | GptFailureResponse
+      : null
+  };
+}
+
+async function readAdminIngestResponse(
+  response: Response,
+  signal?: AbortSignal
+): Promise<AdminIngestBrowserSseTerminal> {
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+
+  if (!contentType.includes("text/event-stream")) {
+    return {
+      status: response.status,
+      payload: await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null
+    };
+  }
+
+  const reader = response.body?.getReader();
+
+  if (!reader) {
+    throw new AdminIngestRequestError("豆包浏览器流式连接没有响应正文，系统未切换其他模型。", {
+      status: 503,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_REQUEST_FAILED",
+      retryable: true,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      fallbackUsed: false,
+      failureDetails: { parseStage: "browser_sse_body" }
+    });
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let streamAcknowledged = false;
+
+  try {
+    while (true) {
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error
+          ? signal.reason
+          : new DOMException("The operation was aborted.", "AbortError");
+      }
+
+      const chunk = await reader.read();
+
+      if (chunk.done) {
+        buffer += decoder.decode();
+        break;
+      }
+
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+
+      for (const block of blocks) {
+        if (/^event:\s*(?:accepted|heartbeat)\s*$/im.test(block)) {
+          streamAcknowledged = true;
+        }
+
+        const terminal = parseAdminIngestSseBlock(block);
+
+        if (terminal) {
+          return terminal;
+        }
+      }
+    }
+
+    if (buffer.trim()) {
+      const terminal = parseAdminIngestSseBlock(buffer);
+
+      if (terminal) {
+        return terminal;
+      }
+    }
+
+    throw new AdminIngestRequestError("豆包浏览器流式连接提前结束，系统未切换其他模型。", {
+      status: 503,
+      errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+      causeCode: "DOUBAO_REQUEST_FAILED",
+      retryable: true,
+      provider: "doubao-pro",
+      requestedProvider: "doubao-pro",
+      fallbackUsed: false,
+      failureDetails: { parseStage: "browser_sse_eof" }
+    });
+  } catch (error) {
+    if (error instanceof AdminIngestRequestError) {
+      throw error;
+    }
+
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : new DOMException("The operation was aborted.", "AbortError");
+    }
+
+    if (streamAcknowledged || /^event:\s*(?:accepted|heartbeat)\s*$/im.test(buffer)) {
+      throw new AdminIngestRequestError("豆包浏览器长连接中断，系统未切换其他模型。", {
+        status: 503,
+        errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
+        causeCode: "DOUBAO_REQUEST_FAILED",
+        retryable: true,
+        provider: "doubao-pro",
+        requestedProvider: "doubao-pro",
+        fallbackUsed: false,
+        failureDetails: { parseStage: "browser_sse_network" }
+      });
+    }
+
+    throw error;
+  } finally {
+    try {
+      await reader.cancel();
+    } catch {
+      // The response stream may already be closed or aborted.
+    }
+
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader can already be released by the browser after abort.
+    }
+  }
 }
 
 function readGptResponseContent(data: GptIngestResponse) {
@@ -1051,6 +1277,7 @@ export async function sendCoreIngest(input: {
   });
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const requestId = input.requestId ?? runtimeResult.requestId;
+  const useDoubaoBrowserSse = platform === "web" && modelProvider === "doubao-pro";
 
   try {
     const health = await checkGptHealthStatus({
@@ -1095,6 +1322,7 @@ export async function sendCoreIngest(input: {
       signal: input.streaming?.signal,
       headers: {
         "Content-Type": "application/json",
+        Accept: useDoubaoBrowserSse ? "text/event-stream, application/json" : "application/json",
         "x-request-id": requestId
       },
       body: JSON.stringify({
@@ -1143,8 +1371,18 @@ export async function sendCoreIngest(input: {
         autoSave: false
       })
     });
-    const payload = await response.json().catch(() => null) as ApiEnvelope<GptIngestResponse> | GptFailureResponse | null;
-    const ingestResult = normalizeIngestResult(response, payload);
+    const transportResult = await readAdminIngestResponse(response, input.streaming?.signal);
+    const payload = transportResult.payload;
+    const responseStatus = transportResult.status;
+    const responseMeta = {
+      status: responseStatus,
+      ok: responseStatus >= 200 && responseStatus < 300
+    };
+    const ingestResult = normalizeIngestResult(responseMeta, payload);
+
+    if (isGptFailureResponse(payload) && payload.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
+      throw toAdminIngestRequestError(payload, responseStatus, requestId);
+    }
 
     if (ingestResult.type === "auth_failure") {
       console.warn("[admin-ingest:auth-access:error]", {
@@ -1175,7 +1413,7 @@ export async function sendCoreIngest(input: {
 
       if (payload.errorCode === "ATTACHMENT_CONTENT_MISSING" || payload.errorCode === "ATTACHMENT_EVIDENCE_MISMATCH") {
         console.warn("[admin-ingest:attachment-evidence:warning]", {
-          status: response.status,
+          status: responseStatus,
           errorCode: payload.errorCode,
           requestId
         });
@@ -1184,7 +1422,7 @@ export async function sendCoreIngest(input: {
 
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
-        status: response.status,
+        status: responseStatus,
         errorCode: payload.errorCode,
         message: payload.message,
         provider: payload.provider,
@@ -1192,24 +1430,11 @@ export async function sendCoreIngest(input: {
         requestId
       });
 
-      throw new AdminIngestRequestError(userMessage, {
-        status: response.status,
-        errorCode: payload.errorCode,
-        causeCode: payload.causeCode,
-        retryable: payload.retryable,
-        provider: payload.provider,
-        requestedProvider: payload.requestedProvider,
-        actualProvider: payload.actualProvider,
-        selectedModelLabel: payload.selectedModelLabel,
-        requestedModel: payload.requestedModel,
-        actualModel: payload.actualModel,
-        fallbackUsed: payload.fallbackUsed,
-        requestId: payload.requestId || requestId
-      });
+      throw toAdminIngestRequestError(payload, responseStatus, requestId);
     }
 
     if (ingestResult.type !== "success" || !ingestResult.raw) {
-      const normalizedError = normalizeIngestErrorPayload(response, payload);
+      const normalizedError = normalizeIngestErrorPayload(responseMeta, payload);
       console.error("[admin-ingest:gpt:error]", {
         url: "/api/admin/kb/ingest/gpt",
         status: normalizedError.status,
@@ -1219,7 +1444,7 @@ export async function sendCoreIngest(input: {
         actualModel: normalizedError.actualModel,
         requestId
       });
-      throw new AdminIngestRequestError(getFriendlyIngestError(response, payload), {
+      throw new AdminIngestRequestError(getFriendlyIngestError(responseMeta, payload), {
         status: normalizedError.status,
         errorCode: normalizedError.errorCode,
         provider: normalizedError.provider,
@@ -1343,7 +1568,7 @@ export async function sendCoreIngest(input: {
       requestId,
       conversationId: input.conversationId,
       ok: true,
-      status: response.status,
+      status: responseStatus,
       replyText: styledReply,
       retryable: false,
       streamEvent,

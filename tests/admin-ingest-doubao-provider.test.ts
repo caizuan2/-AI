@@ -311,6 +311,24 @@ try {
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
 
+  const successfulProviderFetch = globalThis.fetch;
+  const recoveredPartialMarkdown = "\n# 已完整生成的豆包正文\n\n只损坏结构化元数据尾部，正文必须原样保留。  \n";
+  const malformedStructuredTail = `{"replyMarkdown":${JSON.stringify(recoveredPartialMarkdown)},"knowledgeDraft":{"title":"未闭合"`;
+  globalThis.fetch = async () => createChunkedSseResponse({
+    model: "ep-doubao-provider-test",
+    content: malformedStructuredTail,
+    responseId: "doubao-partial-metadata-recovery"
+  });
+  const recoveredPartialResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(recoveredPartialResult.replyMarkdown, recoveredPartialMarkdown);
+  assert.equal(recoveredPartialResult.saveRecommendation, "暂缓入库");
+  assert.equal(recoveredPartialResult.structured.saveSuggestion, false);
+  assert.equal(recoveredPartialResult.knowledgeDraft.standardAnswer, recoveredPartialMarkdown);
+  assert.ok(recoveredPartialResult.knowledgeDraft.missingFields.some((item) => item.includes("结构化元数据未完整结束")));
+  assert.ok(recoveredPartialResult.diagnostics.includes("doubao:partialStructuredPayloadRecovered:true"));
+  assert.ok(recoveredPartialResult.diagnostics.includes("doubao:saveRequiresReview:true"));
+  globalThis.fetch = successfulProviderFetch;
+
   const routedResult = await runAdminIngestWithSelectedModel({
     ...doubaoInput,
     modelProvider: "doubao-pro"
@@ -871,6 +889,42 @@ try {
   assert.equal(roleOnlyIdleCalls, 2, "A zero-content idle timeout may retry the same Doubao model once.");
   delete process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS;
   delete process.env.DOUBAO_HARD_TIMEOUT_MS;
+
+  let cancelledProviderCalls = 0;
+  let providerSignalAborted = false;
+  const browserAbortController = new AbortController();
+  globalThis.fetch = async (_input, init) => {
+    cancelledProviderCalls += 1;
+    const providerSignal = init?.signal;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        providerSignal?.addEventListener("abort", () => {
+          providerSignalAborted = true;
+          controller.error(new DOMException("The operation was aborted.", "AbortError"));
+        }, { once: true });
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  const cancelledRequest = runDoubaoAdminIngest({
+    ...doubaoInput,
+    signal: browserAbortController.signal
+  });
+  browserAbortController.abort(new DOMException("Browser response closed.", "AbortError"));
+  await assert.rejects(
+    () => cancelledRequest,
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_REQUEST_CANCELLED"
+      && (error as { details?: { abortSource?: unknown } }).details?.abortSource === "client"
+    )
+  );
+  assert.equal(providerSignalAborted, true, "The browser request signal must abort the active Ark fetch.");
+  assert.equal(cancelledProviderCalls, 1, "A browser cancellation must not retry or switch providers.");
 
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   assert.match(routeSource, /result\.provider === "doubao"/);

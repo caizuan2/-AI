@@ -2380,10 +2380,10 @@ export function IngestChatGPTShell({
                           role="alert"
                           className="w-full rounded-2xl border border-[#f1c8c5] bg-[#fff8f7] px-4 py-3 text-sm text-[#6f2924] shadow-sm"
                         >
-                          <p className="font-semibold">本轮未生成结果</p>
+                          <p className="font-semibold">{message.failureMeta?.title ?? "本轮未生成结果"}</p>
                           <p className="mt-1 whitespace-pre-wrap leading-6">{message.content}</p>
                           <div className="mt-3 flex flex-wrap items-center gap-3">
-                            {onRetryFailedMessage && messageQuestion ? (
+                            {onRetryFailedMessage && messageQuestion && message.failureMeta?.retryable === true ? (
                               <button
                                 type="button"
                                 disabled={isParsing}
