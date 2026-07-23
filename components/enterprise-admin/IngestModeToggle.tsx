@@ -150,6 +150,10 @@ import {
   replaceIngestRetryOutcome,
   resolveIngestSendAttachments
 } from "@/lib/enterprise/ingest-retry-state";
+import {
+  hasAdminIngestWechatConversationAttachment,
+  shouldRetryAdminIngestWechatModelTimeout
+} from "@/lib/enterprise/admin-ingest-wechat-request";
 
 type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -2245,7 +2249,7 @@ export function IngestModeToggle() {
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget]
     }));
-    const isWechatConversationReply = draftAttachments.some((file) => file.recognitionMode === "wechat_conversation");
+    const isWechatConversationReply = hasAdminIngestWechatConversationAttachment(draftAttachments);
     const baseInput = value || (draftAttachments.length > 0
       ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
@@ -2445,19 +2449,24 @@ export function IngestModeToggle() {
         throw new Error(`${ATTACHMENT_CONTENT_MISSING_CODE}: ${buildAttachmentContentMissingMessage(attachmentEvidence)}`);
       }
 
-      const memoryV2Trace = await prepareMemoryV2Context({
-        query: effectiveInput,
-        conversationId,
-        agentId: activeAgent.id,
-        knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-        messages: conversationState.messages
-      });
+      const memoryV2Trace: MemoryV2Trace = isWechatConversationReply
+        ? {
+            promptPreview: null,
+            warnings: ["WECHAT_DIRECT_REPLY_SKIPPED_MEMORY_PREVIEW"]
+          }
+        : await prepareMemoryV2Context({
+            query: effectiveInput,
+            conversationId,
+            agentId: activeAgent.id,
+            knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+            messages: conversationState.messages
+          });
       const memoryV2Preview = memoryV2Trace.promptPreview;
       const contextPayload = buildIngestContextPayload({
         conversationId,
         agentId: activeAgent.id,
         knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-        messages: conversationState.messages,
+        messages: isWechatConversationReply ? [] : conversationState.messages,
         prompt: effectiveInput,
         maxMessages: 12,
         maxChars: MAX_INGEST_CONTEXT_CHARS,
@@ -2470,7 +2479,9 @@ export function IngestModeToggle() {
         model: null,
         provider: null
       }));
-      const previousKnowledgeDrafts = toPreviousKnowledgeDrafts(draft);
+      const previousKnowledgeDrafts = isWechatConversationReply
+        ? []
+        : toPreviousKnowledgeDrafts(draft);
 
       let attempt = 0;
       let result: IngestActionResult;
@@ -2496,17 +2507,20 @@ export function IngestModeToggle() {
             agentLearningInstruction: contextPayload.agentLearningInstruction,
             usedMemoryIds: contextPayload.usedMemoryIds,
             previousKnowledgeDrafts,
-            recentTrainingRecords: records.slice(0, 6).map((record) => ({
-              input: record.input,
-              resultTitle: record.resultTitle,
-              category: record.category,
-              saveStatus: record.saveStatus
-            })),
+            recentTrainingRecords: isWechatConversationReply
+              ? []
+              : records.slice(0, 6).map((record) => ({
+                  input: record.input,
+                  resultTitle: record.resultTitle,
+                  category: record.category,
+                  saveStatus: record.saveStatus
+                })),
             autonomous: {
               enabled: autonomousEnabled,
               mode: autonomousEnabled ? "execute_safe" : "plan_only"
             },
             platform: platformContext.platform,
+            skipHealthPreflight: isWechatConversationReply,
             streaming: {
               signal: abortController.signal,
               onVisibleReply: (event) => {
@@ -2611,11 +2625,20 @@ export function IngestModeToggle() {
             throw retryError;
           }
 
+          const retryRequestError = readAdminIngestRequestError(retryError);
+          const canRetryWechatTimeout = isWechatConversationReply
+            && !visibleReplyRendered
+            && shouldRetryAdminIngestWechatModelTimeout({
+              attempt,
+              modelProvider: requestModelOption.provider,
+              errorCode: retryRequestError?.errorCode,
+              causeCode: retryRequestError?.causeCode
+            });
           const canRetry = attempt < 1
             && !abortController.signal.aborted
             && isCurrentRequest()
-            && !isStrictSelectedModelFailure(retryError)
-            && isRetryableIngestError(retryError);
+            && isRetryableIngestError(retryError)
+            && (canRetryWechatTimeout || !isStrictSelectedModelFailure(retryError));
 
           if (!canRetry) {
             throw retryError;
@@ -2623,6 +2646,10 @@ export function IngestModeToggle() {
 
           attempt += 1;
           const retryDelayMs = getRetryDelayMs(attempt);
+
+          if (canRetryWechatTimeout) {
+            setNoticeMessage(`${requestModelOption.label} 首次等待超时，正在使用同一个模型自动重试...`);
+          }
 
           console.warn("[admin-ingest:gpt:retry]", {
             requestId,
