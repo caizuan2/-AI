@@ -29,7 +29,7 @@ test("ingest registration normalizes account data and requires a license key", (
       confirmPassword: "new-password-123",
       licenseKey: ""
     }),
-    /请输入投喂端卡密/
+    /请输入小董AI卡密/
   );
   assert.throws(
     () => parseIngestRegisterRequest({
@@ -54,6 +54,15 @@ test("ingest password reset validates the original card and matching new passwor
     newPassword: "replacement-password-123"
   });
 
+  assert.throws(
+    () => parseIngestPasswordResetRequest({
+      phone: "18628777821",
+      licenseKey: "",
+      newPassword: "replacement-password-123",
+      confirmPassword: "replacement-password-123"
+    }),
+    /请输入小董AI卡密/
+  );
   assert.throws(
     () => parseIngestPasswordResetRequest({
       phone: "18628777821",
@@ -112,7 +121,7 @@ test("ingest reset route accepts only the bound active ingest card", () => {
   assert.match(route, /limit: 5/);
   assert.match(route, /passwordHash/);
   assert.match(route, /prisma\.session\.deleteMany/);
-  assert.match(route, /手机号或投喂端卡密验证失败/);
+  assert.match(route, /手机号或小董AI卡密验证失败/);
   assert.doesNotMatch(route, /prisma\.licenseKey\.(?:update|delete)/);
 });
 
@@ -127,7 +136,13 @@ test("ingest auth UI exposes register activation and password recovery only in i
   assert.match(portal, /mode === "activate" \|\| mode === "register" \|\| mode === "reset"/);
   assert.match(portal, /\/api\/ingest\/auth\/reset-password/);
   assert.match(portal, /忘记密码？/);
-  assert.match(portal, /原投喂端卡密/);
+  assert.match(portal, /src="\/brand\/xiaodong-ai-logo\.png"/);
+  assert.match(portal, /alt="小董AI Logo"/);
+  assert.match(portal, /title: "登录小董AI"/);
+  assert.match(portal, /title: "找回小董AI密码"/);
+  assert.match(portal, /原小董AI卡密/);
+  assert.match(portal, /mode === "register" \? "小董AI卡密"/);
+  assert.doesNotMatch(portal, /找回投喂端密码|原投喂端卡密/);
   assert.match(portal, /passwordReset=1/);
   assert.match(forgotPage, /IngestSaasAuthPortal mode="reset"/);
   assert.match(middleware, /publicExactPaths[\s\S]*"\/ingest\/forgot-password"/);
