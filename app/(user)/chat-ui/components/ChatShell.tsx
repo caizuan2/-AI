@@ -2781,14 +2781,30 @@ export function ChatShell() {
                 <Menu className="h-8 w-8" strokeWidth={2.4} aria-hidden="true" />
               </button>
 
-              <button
-                type="button"
-                onClick={handleNewChat}
-                className="focus-ring relative z-10 ml-auto inline-flex h-11 w-11 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100"
-                aria-label="新建对话"
-              >
-                <Plus className="h-7 w-7" strokeWidth={2.4} aria-hidden="true" />
-              </button>
+              <div className="relative z-10 ml-auto flex shrink-0 items-center gap-1">
+                <UserAnswerModelPicker
+                  value={answerModelProvider}
+                  disabled={loading}
+                  onChange={(provider) => {
+                    setAnswerModelProvider(provider);
+                    writeStoredUserAnswerModel(currentUser, provider);
+                  }}
+                />
+                <KnowledgeBaseSelector
+                  selectedCount={selectedKnowledgeBases.length}
+                  activeTitle={activeKnowledgeBase?.title ?? null}
+                  open={expertMarketOpen}
+                  onOpen={() => setExpertMarketOpen(true)}
+                />
+                <button
+                  type="button"
+                  onClick={handleNewChat}
+                  className="focus-ring inline-flex h-11 w-11 items-center justify-center rounded-full text-slate-950 hover:bg-slate-100"
+                  aria-label="新建对话"
+                >
+                  <Plus className="h-7 w-7" strokeWidth={2.4} aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </header>
 
@@ -2865,24 +2881,6 @@ export function ChatShell() {
             onStatusMessage={showNotice}
             onAttachmentsChange={setInputAttachments}
             placeholder={inputPlaceholder}
-            answerModelSelector={(
-              <UserAnswerModelPicker
-                value={answerModelProvider}
-                disabled={loading}
-                onChange={(provider) => {
-                  setAnswerModelProvider(provider);
-                  writeStoredUserAnswerModel(currentUser, provider);
-                }}
-              />
-            )}
-            knowledgeBaseSelector={(
-              <KnowledgeBaseSelector
-                selectedCount={selectedKnowledgeBases.length}
-                activeTitle={activeKnowledgeBase?.title ?? null}
-                open={expertMarketOpen}
-                onOpen={() => setExpertMarketOpen(true)}
-              />
-            )}
           />
           <ExpertMarketDrawer
             open={expertMarketOpen}

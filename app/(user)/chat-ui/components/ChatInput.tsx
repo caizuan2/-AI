@@ -16,8 +16,6 @@ interface ChatInputProps {
   onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
   onAttachmentsChange?: (attachments: ChatAttachmentDraft[]) => void;
-  answerModelSelector?: React.ReactNode;
-  knowledgeBaseSelector?: React.ReactNode;
 }
 
 export const MAX_CHAT_ATTACHMENTS = 5;
@@ -173,9 +171,7 @@ export function ChatInput({
   onSubmit,
   onCancel,
   onStatusMessage,
-  onAttachmentsChange,
-  answerModelSelector,
-  knowledgeBaseSelector
+  onAttachmentsChange
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
   const [attachments, setAttachments] = React.useState<ChatAttachmentDraft[]>([]);
@@ -334,8 +330,6 @@ export function ChatInput({
           />
         </div>
 
-        {answerModelSelector}
-
         <Textarea
           ref={textareaRef}
           value={value}
@@ -352,8 +346,6 @@ export function ChatInput({
           rows={1}
           wrap="soft"
         />
-
-        {knowledgeBaseSelector}
 
         <button
           type="button"
