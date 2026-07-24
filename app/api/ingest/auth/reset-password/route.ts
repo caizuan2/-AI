@@ -20,7 +20,7 @@ import { hasDatabaseUrl } from "@/lib/server-config";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const RESET_FAILED_MESSAGE = "手机号或投喂端卡密验证失败，请检查后重试。";
+const RESET_FAILED_MESSAGE = "手机号或小董AI卡密验证失败，请检查后重试。";
 
 function resetUnauthorized() {
   return new UnauthorizedError(RESET_FAILED_MESSAGE);
@@ -28,7 +28,7 @@ function resetUnauthorized() {
 
 export async function POST(request: Request) {
   if (!hasDatabaseUrl()) {
-    return apiError(databaseConfigError("重置投喂端密码"));
+    return apiError(databaseConfigError("重置小董AI密码"));
   }
 
   let body: unknown;

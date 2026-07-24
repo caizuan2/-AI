@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -63,9 +64,9 @@ const modeCopy: Record<IngestAuthMode, {
   cta: string;
 }> = {
   login: {
-    eyebrow: "欢迎回来",
-    title: "登录投喂工作台",
-    description: "登录后会检查卡密状态，已激活账号可直接进入 admin-ingest。",
+    eyebrow: "",
+    title: "登录小董AI",
+    description: "",
     sideTitle: "用账号和卡密保护你的投喂系统。",
     sideDescription: "商业化入口会先校验登录态，再校验投喂端卡密激活状态。",
     cta: "登录"
@@ -88,10 +89,10 @@ const modeCopy: Record<IngestAuthMode, {
   },
   reset: {
     eyebrow: "账号安全",
-    title: "找回投喂端密码",
-    description: "使用该账号原先激活的投喂端卡密验证身份并设置新密码。",
+    title: "找回小董AI密码",
+    description: "使用该账号原先激活的小董AI卡密验证身份并设置新密码。",
     sideTitle: "卡密验证账号归属，安全找回访问权限。",
-    sideDescription: "手机号与原投喂端卡密必须属于同一账号；重置成功后需使用新密码重新登录。",
+    sideDescription: "手机号与原小董AI卡密必须属于同一账号；重置成功后需使用新密码重新登录。",
     cta: "设置新密码"
   }
 };
@@ -292,7 +293,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
     }
 
     if ((mode === "activate" || mode === "register" || mode === "reset") && !licenseKey.trim()) {
-      setError("请输入投喂端卡密。");
+      setError(mode === "activate" ? "请输入投喂端卡密。" : "请输入小董AI卡密。");
       return;
     }
 
@@ -392,12 +393,14 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
       <section className="flex items-center justify-center px-4 py-10 sm:px-6">
         <div data-ui-health="ingest-auth-card" className="w-full max-w-md rounded-3xl border border-black/5 bg-white p-6 shadow-[0_18px_70px_rgba(15,23,42,.08)] sm:p-8">
-          <div className="mb-8 lg:hidden">
-            <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#111816] text-white">
-              <Sparkles className="h-5 w-5" />
-            </span>
-            <h1 className="mt-4 text-2xl font-semibold">AI 投喂 SaaS</h1>
-          </div>
+          {mode !== "login" ? (
+            <div className="mb-8 lg:hidden">
+              <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#111816] text-white">
+                <Sparkles className="h-5 w-5" />
+              </span>
+              <h1 className="mt-4 text-2xl font-semibold">AI 投喂 SaaS</h1>
+            </div>
+          ) : null}
 
           {mode === "activate" ? (
             <button
@@ -410,7 +413,18 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             </button>
           ) : null}
 
-          {mode !== "register" ? (
+          {mode === "login" ? (
+            <div className="flex items-center gap-3">
+              <Image
+                src="/brand/xiaodong-ai-logo.png"
+                alt="小董AI Logo"
+                width={56}
+                height={56}
+                className="h-14 w-14 rounded-2xl border border-slate-200 object-cover"
+              />
+              <h2 className="text-3xl font-semibold">{copy.title}</h2>
+            </div>
+          ) : mode !== "register" ? (
             <div>
               <p className="text-sm font-medium text-emerald-700">{copy.eyebrow}</p>
               <h2 className="mt-2 text-3xl font-semibold">{copy.title}</h2>
@@ -519,7 +533,9 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
               {mode === "activate" || mode === "register" || mode === "reset" ? (
                 <label className="block">
-                  <span className="text-sm font-medium">{mode === "reset" ? "原投喂端卡密" : "投喂端卡密"}</span>
+                  <span className="text-sm font-medium">
+                    {mode === "reset" ? "原小董AI卡密" : mode === "register" ? "小董AI卡密" : "投喂端卡密"}
+                  </span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <KeyRound className="h-4 w-4 text-slate-400" />
                     <Input

@@ -28,11 +28,11 @@ function readPhone(record: Record<string, unknown>) {
   return phone;
 }
 
-function readLicenseKey(record: Record<string, unknown>) {
+function readLicenseKey(record: Record<string, unknown>, label = "投喂端卡密") {
   const licenseKey = readString(record, "licenseKey", "license_key", "code", "key").trim();
 
   if (!licenseKey) {
-    throw new ValidationError("请输入投喂端卡密。");
+    throw new ValidationError(`请输入${label}。`);
   }
 
   if (licenseKey.length > INGEST_LICENSE_KEY_MAX_LENGTH) {
@@ -61,7 +61,7 @@ export function parseIngestRegisterRequest(body: unknown) {
   const phone = readPhone(record);
   const password = readString(record, "password");
   const confirmPassword = readString(record, "confirmPassword", "confirm_password");
-  const licenseKey = readLicenseKey(record);
+  const licenseKey = readLicenseKey(record, "小董AI卡密");
   const name = readString(record, "name").trim() || phone;
 
   validatePassword(password);
@@ -85,7 +85,7 @@ export function parseIngestPasswordResetRequest(body: unknown) {
 
   const record = body as Record<string, unknown>;
   const phone = readPhone(record);
-  const licenseKey = readLicenseKey(record);
+  const licenseKey = readLicenseKey(record, "小董AI卡密");
   const newPassword = readString(record, "newPassword", "new_password");
   const confirmPassword = readString(record, "confirmPassword", "confirm_password");
 
