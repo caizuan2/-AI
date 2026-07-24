@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ThumbsDown, ThumbsUp } from "lucide-react";
 import { trackIngestBehaviorEvent } from "@/components/enterprise-admin/IngestBehaviorTracker";
 
 type FeedbackRating = "up" | "down";
@@ -97,10 +98,10 @@ export function IngestAnswerFeedbackActions({
   };
 
   const feedbackButtonClass = (active: boolean) => [
-    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-sm shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d28700]/20 disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50",
     active
-      ? "border-[#e4bd62] bg-[#fff3d8] text-[#9a6500]"
-      : "border-[#f2ddb0] bg-white/80 text-[#d28700] hover:border-[#e4bd62] hover:bg-[#fff8e8] hover:text-[#9a6500]"
+      ? "border-blue-200 bg-blue-100 text-blue-700"
+      : "border-blue-100 bg-blue-50 text-blue-600 hover:border-blue-200 hover:bg-blue-100 hover:text-blue-700"
   ].join(" ");
 
   const content = (
@@ -113,7 +114,7 @@ export function IngestAnswerFeedbackActions({
         disabled={status === "sending"}
         onClick={() => void submitFeedback("up")}
       >
-        👍
+        <ThumbsUp className="h-4 w-4 stroke-[2]" aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -123,7 +124,7 @@ export function IngestAnswerFeedbackActions({
         disabled={status === "sending"}
         onClick={() => void submitFeedback("down")}
       >
-        👎
+        <ThumbsDown className="h-4 w-4 stroke-[2]" aria-hidden="true" />
       </button>
       {rating ? (
         <div className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-full border border-neutral-200 bg-white/70 px-2 py-1">
