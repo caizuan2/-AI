@@ -63,14 +63,21 @@ async function main() {
   );
   assert.equal(fullAnswer.latestCustomerMessage, defaultReply.latestCustomerMessage);
   assert.equal(fullAnswer.strictKnowledgeMode, true);
-  assert.match(fullAnswer.modelInput, /自行决定最合适的结构、标题、篇幅和表达重点/);
-  assert.match(fullAnswer.modelInput, /不得机械套用固定模板/);
-  assert.match(fullAnswer.modelInput, /客户只是询问知识或答案明确时，直接回答/);
-  assert.match(fullAnswer.modelInput, /客户存在顾虑、异议或犹豫时/);
-  assert.match(fullAnswer.modelInput, /客户情绪明显时/);
-  assert.match(fullAnswer.modelInput, /复杂问题可以使用合适的小标题或步骤，简单问题保持简洁/);
-  assert.match(fullAnswer.modelInput, /省略不适用的判断、话术、推进建议或注意事项/);
+  assert.match(fullAnswer.modelInput, /完整正文必须与“精准回复话术”有明显区别/);
+  assert.match(fullAnswer.modelInput, /不能退化为只输出一段可直接发送给客户的话术/);
+  assert.match(fullAnswer.modelInput, /完整说明当前沟通阶段、客户最近消息的真实意图或顾虑/);
+  assert.match(fullAnswer.modelInput, /关键依据；再给出有针对性的解决思路和可执行建议/);
+  assert.match(fullAnswer.modelInput, /补充可直接发送的回复示例、下一步沟通节奏及需要注意的风险/);
+  assert.match(fullAnswer.modelInput, /即使客户问题较简单/);
+  assert.match(fullAnswer.modelInput, /不能缩减成一句简短回复/);
+  assert.match(fullAnswer.modelInput, /结构、标题、段落数量、篇幅和表达重点由你根据真实对话自行决定/);
+  assert.match(fullAnswer.modelInput, /不得机械套用固定四段模板/);
   assert.match(fullAnswer.modelInput, /不得虚构客户背景、沟通阶段或未出现的顾虑/);
+  assert.doesNotMatch(
+    fullAnswer.modelInput,
+    /简单问题保持简洁|省略不适用的判断、话术、推进建议或注意事项/,
+    "完整正文模式不能再使用会让回答退化成短话术的旧约束。"
+  );
   assert.doesNotMatch(
     fullAnswer.modelInput,
     /## 核心判断|## 当下可直接发的回复|## 接下来的推进节奏|## 这几个坑千万别踩/,
@@ -126,7 +133,7 @@ async function main() {
   assert.match(shellSource, /onWechatOutputModeChange\?\.\(option\.mode\)/);
   assert.match(modeToggleSource, /file\.recognitionMode === "wechat_conversation"/);
   assert.match(modeToggleSource, /wechatOutputMode:\s*mode/);
-  assert.match(modeToggleSource, /不得机械套用固定模板/);
+  assert.match(modeToggleSource, /不得退化为只输出一段精准回复话术/);
   assert.doesNotMatch(
     modeToggleSource,
     /包含核心判断、当下可直接发的回复、接下来的推进节奏和注意事项/,
