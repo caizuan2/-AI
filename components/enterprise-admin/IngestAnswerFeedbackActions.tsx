@@ -98,10 +98,10 @@ export function IngestAnswerFeedbackActions({
   };
 
   const feedbackButtonClass = (active: boolean) => [
-    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20 disabled:cursor-not-allowed disabled:opacity-50",
+    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3b8df5]/20 disabled:cursor-not-allowed disabled:opacity-50",
     active
-      ? "border-blue-200 bg-blue-100 text-blue-700"
-      : "border-blue-100 bg-blue-50 text-blue-600 hover:border-blue-200 hover:bg-blue-100 hover:text-blue-700"
+      ? "border-[#c8e1ff] bg-[#eaf5ff] text-[#2178df]"
+      : "border-[#e1efff] bg-[#f6faff] text-[#3b8df5] hover:border-[#cfe5ff] hover:bg-[#edf6ff] hover:text-[#2178df]"
   ].join(" ");
 
   const content = (

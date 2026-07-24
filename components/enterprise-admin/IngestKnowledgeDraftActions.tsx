@@ -110,14 +110,14 @@ export function IngestKnowledgeDraftActions({
     () => Array.from(new Set(sourceMaterials.map((source) => source.trim()).filter(Boolean))),
     [sourceMaterials]
   );
-  const actionButtonClass = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-100 bg-blue-50 text-blue-600 shadow-sm transition hover:border-blue-200 hover:bg-blue-100 hover:text-blue-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/20";
+  const actionButtonClass = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#e1efff] bg-[#f6faff] text-[#3b8df5] shadow-sm transition hover:border-[#cfe5ff] hover:bg-[#edf6ff] hover:text-[#2178df] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#3b8df5]/20";
   const iconClass = "h-4 w-4 stroke-[2]";
   const saveTitle = saveState === "saving" ? "保存中" : saveState === "saved" ? "已入库" : saveState === "error" ? "保存失败，点击重试" : "保存知识库";
   const saveButtonClass = [
     "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border shadow-sm transition focus:outline-none focus-visible:ring-2 disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400",
     saveState === "error"
       ? "border-rose-200 bg-rose-50 text-[#b93b4a] hover:bg-[#ffe5e9] focus-visible:ring-[#b93b4a]/20"
-      : "border-blue-100 bg-blue-50 text-blue-600 hover:border-blue-200 hover:bg-blue-100 hover:text-blue-700 focus-visible:ring-blue-500/20"
+      : "border-[#e1efff] bg-[#f6faff] text-[#3b8df5] hover:border-[#cfe5ff] hover:bg-[#edf6ff] hover:text-[#2178df] focus-visible:ring-[#3b8df5]/20"
   ].join(" ");
   const saveStatusMessage = saveError ?? lastSaveResult;
 

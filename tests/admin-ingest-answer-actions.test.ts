@@ -24,8 +24,8 @@ assert.match(
 assert.match(actionsSource, /title="复制" aria-label="复制"/);
 assert.match(actionsSource, /title=\{saveTitle\}[\s\S]*?aria-label=\{saveTitle\}/);
 assert.match(actionsSource, /title=\{isParsing \? "生成中" : "重新生成"\}/);
-assert.match(actionsSource, /border-blue-100 bg-blue-50 text-blue-600/);
-assert.match(actionsSource, /hover:border-blue-200 hover:bg-blue-100 hover:text-blue-700/);
+assert.match(actionsSource, /border-\[#e1efff\] bg-\[#f6faff\] text-\[#3b8df5\]/);
+assert.match(actionsSource, /hover:border-\[#cfe5ff\] hover:bg-\[#edf6ff\] hover:text-\[#2178df\]/);
 
 assert.match(
   actionsSource,
@@ -38,8 +38,8 @@ assert.match(
   "禁用状态必须继续保持灰色。"
 );
 assert.match(actionsSource, /\{feedbackActions\}/);
-assert.match(feedbackSource, /border-blue-100 bg-blue-50 text-blue-600/);
-assert.match(feedbackSource, /border-blue-200 bg-blue-100 text-blue-700/);
+assert.match(feedbackSource, /border-\[#e1efff\] bg-\[#f6faff\] text-\[#3b8df5\]/);
+assert.match(feedbackSource, /border-\[#c8e1ff\] bg-\[#eaf5ff\] text-\[#2178df\]/);
 assert.match(feedbackSource, /<ThumbsUp className="h-4 w-4 stroke-\[2\]"/);
 assert.match(feedbackSource, /<ThumbsDown className="h-4 w-4 stroke-\[2\]"/);
 assert.match(feedbackSource, /title="有帮助"[\s\S]*?aria-label="有帮助"/);
