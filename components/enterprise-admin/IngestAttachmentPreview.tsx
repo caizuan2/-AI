@@ -84,7 +84,13 @@ function getAttachmentKind(file: IngestUploadState): AttachmentKind {
   return { label: "文件", description: "附件文件", Icon: File, tone: "bg-[#f0f1f3] text-[#475569]" };
 }
 
-function getWrapperClass(fileCount: number, compact: boolean) {
+function getWrapperClass(fileCount: number, compact: boolean, imageOnly: boolean) {
+  if (imageOnly) {
+    return compact
+      ? "flex max-h-[220px] w-full max-w-[420px] flex-wrap items-end justify-end gap-2 overflow-y-auto"
+      : "flex max-h-[108px] flex-nowrap items-start gap-2 overflow-x-auto";
+  }
+
   if (compact) {
     return "flex max-h-[220px] w-full max-w-[420px] flex-col items-end gap-2 overflow-hidden";
   }
@@ -103,26 +109,29 @@ function getWrapperClass(fileCount: number, compact: boolean) {
 export function IngestAttachmentPreview({
   files,
   onRemove,
-  compact = false
+  compact = false,
+  imageOnly = false
 }: {
   files: IngestUploadState[];
   onRemove?: (fileId: string) => void;
   compact?: boolean;
+  imageOnly?: boolean;
 }) {
   if (files.length === 0) {
     return null;
   }
 
-  const visibleLimit = files.length > 4 ? 3 : files.length;
+  const visibleLimit = imageOnly ? files.length : files.length > 4 ? 3 : files.length;
   const visibleFiles = files.slice(0, visibleLimit);
   const extraCount = Math.max(0, files.length - visibleFiles.length);
 
   return (
-    <div className={getWrapperClass(files.length, compact)}>
+    <div className={getWrapperClass(files.length, compact, imageOnly)}>
       {visibleFiles.map((file) => {
         const kind = getAttachmentKind(file);
         const isImage = kind.label === "图片";
         const Icon = kind.Icon;
+        const imageUrl = file.persistentUrl || file.previewUrl;
         const statusLabel = file.parseStatus === "partial"
           ? "部分解析"
           : statusLabels[file.status];
@@ -131,6 +140,43 @@ export function IngestAttachmentPreview({
           : file.parseStatus === "partial"
             ? "bg-[#fff6df] text-[#9a5b00]"
             : "bg-[#e9f8ef] text-[#128246]";
+
+        if (imageOnly && isImage) {
+          return (
+            <div
+              key={file.id}
+              className={[
+                "relative shrink-0 overflow-hidden rounded-2xl bg-[#f6f6f3]",
+                compact ? "h-40 w-28" : "h-20 w-20"
+              ].join(" ")}
+            >
+              {imageUrl ? (
+                <Image
+                  src={imageUrl}
+                  alt=""
+                  fill
+                  sizes={compact ? "112px" : "80px"}
+                  unoptimized
+                  className="object-contain"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-[#128246]">
+                  <FileImage className="h-6 w-6" aria-hidden="true" />
+                </div>
+              )}
+              {onRemove ? (
+                <button
+                  type="button"
+                  aria-label="移除图片"
+                  onClick={() => onRemove(file.id)}
+                  className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-white/95 text-[#777] shadow-sm transition hover:text-[#b93b4a]"
+                >
+                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              ) : null}
+            </div>
+          );
+        }
 
         return (
           <div
@@ -142,8 +188,8 @@ export function IngestAttachmentPreview({
           >
             <div className="flex h-full min-w-0 items-center gap-3">
               <div className={["relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl", kind.tone, compact ? "h-11 w-11" : "h-12 w-12"].join(" ")}>
-                {isImage && file.previewUrl ? (
-                  <Image src={file.previewUrl} alt={file.fileName} fill sizes={compact ? "44px" : "48px"} unoptimized className="object-cover" />
+                {isImage && imageUrl ? (
+                  <Image src={imageUrl} alt={file.fileName} fill sizes={compact ? "44px" : "48px"} unoptimized className="object-cover" />
                 ) : (
                   <Icon className="h-5 w-5 text-current" aria-hidden="true" />
                 )}
