@@ -10,6 +10,7 @@ import type {
   SelectedKnowledgeBase
 } from "./types";
 import type { ConversionFeedbackEvent } from "@/lib/agent/conversion-feedback-loop";
+import { DEFAULT_USER_ANSWER_MODEL_PROVIDER } from "@/lib/ai-chat/user-answer-model";
 import {
   GLOBAL_LEARNING_BEHAVIOR_STORAGE_KEY,
   type SessionOutcome,
@@ -844,6 +845,7 @@ export function createAskRequestPayload(input: AskChatRequest) {
     question: text,
     text,
     attachments: input.attachments.map(createAskAttachmentPayload),
+    answer_model_provider: input.answerModelProvider ?? DEFAULT_USER_ANSWER_MODEL_PROVIDER,
     conversation_id: input.conversation_id,
     mode: normalizeChatMode(input.mode),
     ...(input.userMode ? { userMode: input.userMode } : {}),
@@ -902,6 +904,7 @@ export function appendAskResult(
       id: result.message_id,
       role: "assistant",
       content: result.answer,
+      answer_output_mode: result.answer_output_mode ?? null,
       rawContent: result.rawAnswerBeforeFinalizer ?? result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
       rawText: result.rawAnswerBeforeFinalizer ?? result.rawText ?? result.rawAnswer ?? null,
       customerCopy: result.customerCopy ?? result.customer_answer ?? null,
@@ -919,7 +922,9 @@ export function appendAskResult(
         rawContent: result.rawAnswerBeforeFinalizer ?? result.rawContent ?? result.rawText ?? result.rawAnswer ?? null,
         rawText: result.rawAnswerBeforeFinalizer ?? result.rawText ?? result.rawAnswer ?? null,
         runtimeOutput: result.runtime_output ?? null,
-        runtimeSources: result.runtime_sources ?? null
+        runtimeSources: result.runtime_sources ?? null,
+        answerOutputMode: result.answer_output_mode ?? null,
+        naturalBodyPassthrough: result.answer_output_mode === "admin_ingest_reply_markdown"
       },
       created_at: new Date().toISOString()
     }

@@ -4,6 +4,7 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
   askChat,
+  askChatStream,
   changeCurrentUserPassword,
   fetchConversationHistory,
   fetchConversations,
@@ -61,7 +62,18 @@ import { ChatSidebarDrawer } from "../app/(user)/chat-ui/components/ChatSidebarD
 import { ModeToggle } from "../app/(user)/chat-ui/components/ModeToggle";
 import { AttachmentMenu } from "../app/(user)/chat-ui/components/AttachmentMenu";
 import { KnowledgeBaseSelector } from "../app/(user)/chat-ui/components/KnowledgeBaseSelector";
-import { isCareerMentorMessage } from "../app/(user)/app/components/chat/message-renderer";
+import {
+  UserAnswerModelMenu,
+  UserAnswerModelPicker
+} from "../app/(user)/chat-ui/components/UserAnswerModelPicker";
+import {
+  DEFAULT_USER_ANSWER_MODEL_PROVIDER,
+  USER_ANSWER_MODEL_OPTIONS
+} from "../lib/ai-chat/user-answer-model";
+import {
+  isCareerMentorMessage,
+  isRawMarkdownPassthroughMessage
+} from "../app/(user)/app/components/chat/message-renderer";
 import {
   extractCareerMentorInlineCopyTargets,
   ProductAnswerView,
@@ -110,6 +122,39 @@ async function main() {
       }
     }
   }), false);
+  assert.equal(isRawMarkdownPassthroughMessage({
+    ...messageBase,
+    answer_output_mode: "admin_ingest_reply_markdown"
+  }), true);
+  assert.equal(isRawMarkdownPassthroughMessage({
+    ...messageBase,
+    metadata: {
+      answerOutputMode: "admin_ingest_reply_markdown"
+    }
+  }), true);
+
+  const exactGenericAgentMarkdown = "\n# 豆包原始正文\n\n> 原始引用块\n\n客户话术：这只是正文的一部分，不得拆成二次卡片。  \n";
+  const exactGenericAgentMarkup = renderToStaticMarkup(
+    <ProductAnswerView
+      answer={{
+        title: "小董AI",
+        rawContent: exactGenericAgentMarkdown,
+        problemUnderstanding: "",
+        keyConclusion: "",
+        suggestedSteps: [],
+        customerReply: "",
+        nextAction: ""
+      }}
+      rawAnswerText={exactGenericAgentMarkdown}
+      rawMarkdownPassthrough
+      sources={[]}
+    />
+  );
+
+  assert.match(exactGenericAgentMarkup, /豆包原始正文/);
+  assert.match(exactGenericAgentMarkup, /原始引用块/);
+  assert.match(exactGenericAgentMarkup, /客户话术：这只是正文的一部分，不得拆成二次卡片/);
+  assert.equal((exactGenericAgentMarkup.match(/复制话术/g) ?? []).length, 0);
   assert.equal(isCareerMentorMessage({
     ...messageBase,
     metadata: {
@@ -1854,6 +1899,35 @@ async function main() {
   assert.match(knowledgeBaseSelectorMarkup, /pointer-events-auto/);
   assert.match(knowledgeBaseSelectorMarkup, /active:scale-95/);
 
+  const answerModelPickerMarkup = renderToStaticMarkup(
+    <UserAnswerModelPicker
+      value={DEFAULT_USER_ANSWER_MODEL_PROVIDER}
+      onChange={() => undefined}
+    />
+  );
+  const answerModelMenuMarkup = renderToStaticMarkup(
+    <UserAnswerModelMenu
+      value="doubao-pro"
+      onSelect={() => undefined}
+    />
+  );
+
+  assert.deepEqual(USER_ANSWER_MODEL_OPTIONS.map((option) => option.provider), [
+    "deepseek-pro",
+    "doubao-pro"
+  ]);
+  assert.deepEqual(USER_ANSWER_MODEL_OPTIONS.map((option) => option.model), [
+    "deepseek-v4-pro",
+    "doubao-seed-2-1-pro-260628"
+  ]);
+  assert.match(answerModelPickerMarkup, /当前为DeepSeek-V4-Pro/);
+  assert.match(answerModelPickerMarkup, />DS</);
+  assert.match(answerModelMenuMarkup, /DeepSeek-V4-Pro/);
+  assert.match(answerModelMenuMarkup, /Doubao-Seed-2\.1-pro/);
+  assert.doesNotMatch(answerModelMenuMarkup, /Flash|Qwen|Kimi|GPT-5/);
+  assert.match(answerModelMenuMarkup, /touch-manipulation/);
+  assert.match(answerModelMenuMarkup, /aria-pressed="true"/);
+
   const expertMarketDrawerSource = readFileSync(
     "app/(user)/chat-ui/components/ExpertMarketDrawer.tsx",
     "utf8"
@@ -1881,6 +1955,12 @@ async function main() {
       onValueChange={() => undefined}
       onSubmit={() => undefined}
       onStatusMessage={() => undefined}
+      answerModelSelector={(
+        <UserAnswerModelPicker
+          value="deepseek-pro"
+          onChange={() => undefined}
+        />
+      )}
       knowledgeBaseSelector={knowledgeBaseSelector}
     />
   );
@@ -1890,9 +1970,12 @@ async function main() {
   assert.match(chatInputMarkup, /multiple=""/);
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
+  assert.match(chatInputMarkup, /选择回答大模型，当前为DeepSeek-V4-Pro/);
   assert.match(chatInputMarkup, /aria-label="选择专家知识库"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
-  assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf('aria-label="选择专家知识库"'));
+  assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf("选择回答大模型"));
+  assert.ok(chatInputMarkup.indexOf("选择回答大模型") < chatInputMarkup.indexOf("<textarea"));
+  assert.ok(chatInputMarkup.indexOf("<textarea") < chatInputMarkup.indexOf('aria-label="选择专家知识库"'));
   assert.ok(chatInputMarkup.indexOf('aria-label="选择专家知识库"') < chatInputMarkup.indexOf('aria-label="发送消息"'));
   assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
   assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
@@ -1967,14 +2050,16 @@ async function main() {
   assert.equal(removeChatAttachment([attachment], attachment.id ?? "").length, 0);
   assert.equal(removeChatAttachment([imageAttachment], imageAttachment.id ?? "").length, 0);
   assert.deepEqual(revokedUrls, ["blob:chat-image-preview"]);
-  assert.equal(createAskRequestPayload({
+  const emptyAttachmentPayload = createAskRequestPayload({
     text: "删除附件后发送",
     attachments: removeChatAttachment([attachment], attachment.id ?? ""),
     conversation_id: null,
     mode: "fast",
     enable_deep_thinking: false,
     enable_web_search: false
-  }).attachments.length, 0);
+  });
+  assert.equal(emptyAttachmentPayload.attachments.length, 0);
+  assert.equal(emptyAttachmentPayload.answer_model_provider, "deepseek-pro");
   assert.equal(createAskAttachmentPayload(attachment).metadata.source, "file");
   const chatInputSource = readFileSync("app/(user)/chat-ui/components/ChatInput.tsx", "utf8");
 
@@ -2048,14 +2133,13 @@ async function main() {
   const chatTransportApiSource = readFileSync("app/(user)/chat-ui/api.ts", "utf8");
   const chatSseStreamingSource = readFileSync("lib/ai-chat/streaming.ts", "utf8");
 
-  assert.match(chatTransportApiSource, /ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000/);
-  assert.match(chatTransportApiSource, /function isCareerMentorAskRequest\(input: AskChatRequest\)/);
-  assert.match(chatTransportApiSource, /CAREER_MENTOR_AGENT_IDS\.has\(agentId\)[\s\S]{0,100}CAREER_MENTOR_KNOWLEDGE_BASE_IDS\.has\(knowledgeBaseId\)/);
-  assert.match(chatTransportApiSource, /const timeout = isCareerMentorAskRequest\(input\)[\s\S]{0,40}\? null/);
+  assert.doesNotMatch(chatTransportApiSource, /ASK_CHAT_TOTAL_TIMEOUT_MS|回答时间较长，连接已自动结束/);
+  assert.doesNotMatch(chatTransportApiSource, /setTimeout\([\s\S]{0,120}requestController\.abort/);
   assert.match(chatTransportApiSource, /回答连接已中断，请检查网络后重新发送/);
-  assert.match(chatTransportApiSource, /回答时间较长，连接已自动结束/);
   assert.match(chatSseStreamingSource, /SSE_HEARTBEAT_INTERVAL_MS = 12_000/);
   assert.match(chatSseStreamingSource, /CAREER_MENTOR_STREAM_CHUNK_SIZE = 24/);
+  assert.match(chatSseStreamingSource, /isAdminIngestReplyPassthrough\(finalResult\)/);
+  assert.match(chatSseStreamingSource, /answer_output_mode === "admin_ingest_reply_markdown"/);
   assert.match(chatSseStreamingSource, /streamTextTokens\(finalResult\.answer \?\? "", emit, signal, streamChunkSize\)/);
   assert.match(chatSseStreamingSource, /writer\.enqueue\(`: heartbeat/);
   assert.doesNotMatch(chatSseStreamingSource, /type: "token"[\s\S]{0,120}heartbeat/);
@@ -3036,6 +3120,50 @@ async function main() {
   assert.match(String(calls[0].init?.body), /"downloadUrl":"\/api\/ai\/chat\/attachments\/download\?key=user_1\/2026\/06\/photo\.jpg"/);
   assert.match(String(calls[0].init?.body), /"storage":"netlify-blobs"/);
   assert.match(String(calls[0].init?.body), /"blobKey":"user_1\/2026\/06\/photo\.jpg"/);
+
+  const exactSseRawMarkdown = "\n# DeepSeek SSE 原文\n\n> 首尾空行必须保留。  \n";
+  const exactSseTokens: string[] = [];
+  globalThis.fetch = (async () => new Response([
+    `data: ${JSON.stringify({ type: "token", content: exactSseRawMarkdown })}\n\n`,
+    `data: ${JSON.stringify({
+      type: "final",
+      content: exactSseRawMarkdown,
+      data: {
+        answer: exactSseRawMarkdown,
+        rawAnswerBeforeFinalizer: exactSseRawMarkdown,
+        answer_output_mode: "admin_ingest_reply_markdown",
+        conversation_id: "conv_raw_model",
+        message_id: "msg_raw_model",
+        mode: "fast",
+        sources: [],
+        confidence: "high",
+        provider_status: "ok"
+      }
+    })}\n\n`,
+    "data: [DONE]\n\n"
+  ].join(""), {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8"
+    }
+  })) as typeof fetch;
+
+  const rawStreamResult = await askChatStream({
+    text: "原文输出",
+    attachments: [],
+    answerModelProvider: "deepseek-pro",
+    conversation_id: null,
+    mode: "fast",
+    enable_deep_thinking: false,
+    enable_web_search: false
+  }, {
+    onToken: (token) => exactSseTokens.push(token)
+  });
+
+  assert.equal(exactSseTokens.join(""), exactSseRawMarkdown);
+  assert.equal(rawStreamResult.answer, exactSseRawMarkdown);
+  assert.equal(rawStreamResult.rawAnswerBeforeFinalizer, exactSseRawMarkdown);
+  assert.equal(rawStreamResult.answer_output_mode, "admin_ingest_reply_markdown");
 
   globalThis.fetch = originalFetch;
   calls.length = 0;

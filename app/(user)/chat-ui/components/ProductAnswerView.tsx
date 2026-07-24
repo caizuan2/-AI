@@ -36,6 +36,7 @@ interface ProductAnswerViewProps {
   confidence?: RagConfidence | null;
   streaming?: boolean;
   careerMentorMode?: boolean;
+  rawMarkdownPassthrough?: boolean;
   className?: string;
 }
 
@@ -1421,7 +1422,7 @@ function buildAnalysisMarkdown(display: NonNullable<ReturnType<typeof buildProdu
     .join("\n\n");
 }
 
-function getCareerMentorMarkdownAnswerText(
+function getVerbatimMarkdownAnswerText(
   answer: FinalizedAnswerView | null,
   rawAnswerText?: string | null
 ) {
@@ -1436,12 +1437,9 @@ function getCareerMentorMarkdownAnswerText(
     answer?.content
   ].find((candidate) => typeof candidate === "string" && candidate.trim());
 
-  // Career mentor receives the admin-ingest replyMarkdown verbatim. Do not send it
-  // through the generic visible-text cleaner: that cleaner can remove blank lines and
-  // change Markdown block boundaries, which makes copy-button decoration imprecise.
-  return (directMarkdown ?? getFinalizedRawAnswerText(answer))
-    .replace(/\r\n/g, "\n")
-    .trim();
+  // User agents receive the admin-ingest replyMarkdown verbatim. Do not send it
+  // through the generic visible-text cleaner or change its Markdown boundaries.
+  return directMarkdown ?? getFinalizedRawAnswerText(answer);
 }
 
 export function ProductAnswerView({
@@ -1455,6 +1453,7 @@ export function ProductAnswerView({
   confidence: _confidence,
   streaming = false,
   careerMentorMode = false,
+  rawMarkdownPassthrough = false,
   className
 }: ProductAnswerViewProps) {
   void _confidence;
@@ -1473,10 +1472,10 @@ export function ProductAnswerView({
     };
   }, [answer, userQuery]);
   const naturalAnswerText = React.useMemo(
-    () => careerMentorMode
-      ? getCareerMentorMarkdownAnswerText(answerForDisplay, rawAnswerText)
+    () => rawMarkdownPassthrough || careerMentorMode
+      ? getVerbatimMarkdownAnswerText(answerForDisplay, rawAnswerText)
       : getFinalNaturalMarkdownAnswerText(answerForDisplay, [rawAnswerText]),
-    [answerForDisplay, careerMentorMode, rawAnswerText]
+    [answerForDisplay, careerMentorMode, rawAnswerText, rawMarkdownPassthrough]
   );
   const naturalAnswerSegments = React.useMemo(
     () => naturalAnswerText
@@ -1545,6 +1544,12 @@ export function ProductAnswerView({
             {careerMentorMode ? (
               <div className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1">
                 <ReactMarkdown remarkPlugins={[remarkGfm]} components={careerMarkdownComponents}>
+                  {naturalAnswerText}
+                </ReactMarkdown>
+              </div>
+            ) : rawMarkdownPassthrough ? (
+              <div className="prose prose-slate max-w-none prose-headings:mb-2 prose-headings:mt-4 prose-headings:text-[15px] prose-headings:font-semibold prose-headings:text-slate-950 prose-p:my-2 prose-li:my-1">
+                <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents()}>
                   {naturalAnswerText}
                 </ReactMarkdown>
               </div>

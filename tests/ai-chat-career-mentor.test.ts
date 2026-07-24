@@ -468,18 +468,18 @@ function main() {
   assert.match(userAskRouteSource, /runCareerMentorIngestAnswer/);
   assert.doesNotMatch(userAskRouteSource, /generateCareerMentorGroundedAnswer/);
   assert.match(careerIngestAdapterSource, /runAdminIngestWithSelectedModel/);
-  assert.match(careerIngestAdapterSource, /modelProvider: "deepseek-pro"/);
-  assert.match(careerIngestAdapterSource, /enhanceGPTStyle/);
-  assert.match(careerIngestAdapterSource, /source: "admin_ingest_gpt_route"/);
-  assert.match(careerIngestAdapterSource, /mode: "api_response"/);
+  assert.match(careerIngestAdapterSource, /getUserAnswerModelOption\(input\.modelProvider\)/);
+  assert.match(careerIngestAdapterSource, /strictModelAffinity: true/);
+  assert.match(careerIngestAdapterSource, /answer: result\.replyMarkdown \|\| ""/);
+  assert.doesNotMatch(careerIngestAdapterSource, /enhanceGPTStyle|processAIOutput|normalizeUserChatMarkdown/);
   assert.match(userAskServiceSource, /cleanCareerMentorUserAnswer/);
   assert.match(userAskServiceSource, /extractCareerMentorCustomerAnswer/);
   assert.match(userAskServiceSource, /careerMentorFastAnswerQualityGatePassed/);
   assert.match(userAskServiceSource, /supplementalHybridRetrievalSkipped/);
   assert.match(userAskServiceSource, /careerMentorFastAnswer && !careerMentorFastAnswerQualityGatePassed/);
   assert.match(userAskServiceSource, /providerResult\.answerOutputMode === "admin_ingest_reply_markdown"/);
-  assert.match(userAskServiceSource, /naturalBodyPassthrough: careerIngestReplyPassthrough/);
-  assert.match(userStreamingSource, /result\.career_output_mode === "admin_ingest_reply_markdown"/);
+  assert.match(userAskServiceSource, /naturalBodyPassthrough: ingestReplyPassthrough/);
+  assert.match(userStreamingSource, /result\.answer_output_mode === "admin_ingest_reply_markdown"/);
 
   const objectionPolicy = buildCareerMentorBusinessContext("客户说贵、还说不靠谱，怎么办？");
 

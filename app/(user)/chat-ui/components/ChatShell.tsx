@@ -5,6 +5,10 @@ import { ArrowDown, Menu, Plus } from "lucide-react";
 import { AppUpdateNotice } from "@/components/AppUpdateNotice";
 import { CapacitorOtaUpdater } from "@/components/ota/CapacitorOtaUpdater";
 import { USER_APP_KIND } from "@/lib/app-version";
+import {
+  DEFAULT_USER_ANSWER_MODEL_PROVIDER,
+  type UserAnswerModelProvider
+} from "@/lib/ai-chat/user-answer-model";
 import { buildBusinessExecutionPlan, buildBusinessExecutionPrompt } from "@/lib/business-execution-engine";
 import { cn } from "@/lib/utils";
 import { detectUserIntent } from "@/lib/user-intent-detector";
@@ -64,6 +68,7 @@ import { ChatQuickActions } from "./ChatQuickActions";
 import { ChatSidebarDrawer, type SidebarConversationAction } from "./ChatSidebarDrawer";
 import { ExpertMarketDrawer } from "./ExpertMarketDrawer";
 import { KnowledgeBaseSelector } from "./KnowledgeBaseSelector";
+import { UserAnswerModelPicker } from "./UserAnswerModelPicker";
 import { PromptKnowledgeBar } from "./PromptKnowledgeBar";
 import {
   ConfirmActionDialog,
@@ -78,6 +83,10 @@ import {
   setActiveKnowledgeBaseSelection,
   writeStoredKnowledgeBases
 } from "../lib/knowledge-base-selection";
+import {
+  readStoredUserAnswerModel,
+  writeStoredUserAnswerModel
+} from "../lib/user-answer-model-selection";
 import type {
   ChatConversation,
   ChatAttachmentDraft,
@@ -542,6 +551,9 @@ export function ChatShell() {
   const [currentAvatarUrl, setCurrentAvatarUrl] = React.useState<string | null>(null);
   const [expertMarketOpen, setExpertMarketOpen] = React.useState(false);
   const [selectedKnowledgeBases, setSelectedKnowledgeBases] = React.useState<SelectedKnowledgeBase[]>([]);
+  const [answerModelProvider, setAnswerModelProvider] = React.useState<UserAnswerModelProvider>(
+    DEFAULT_USER_ANSWER_MODEL_PROVIDER
+  );
   const [linkDialog, setLinkDialog] = React.useState<LinkDialogState>(null);
   const [linkActionBusy, setLinkActionBusy] = React.useState(false);
   const [linkCopyFailureSignal, setLinkCopyFailureSignal] = React.useState(0);
@@ -1057,10 +1069,12 @@ export function ChatShell() {
   React.useEffect(() => {
     if (!currentUserLoaded || !currentUserIdentity) {
       setSelectedKnowledgeBases([]);
+      setAnswerModelProvider(DEFAULT_USER_ANSWER_MODEL_PROVIDER);
       return;
     }
 
     setSelectedKnowledgeBases(readStoredKnowledgeBases(currentUser));
+    setAnswerModelProvider(readStoredUserAnswerModel(currentUser));
   }, [currentUser, currentUserIdentity, currentUserLoaded]);
 
   React.useEffect(() => {
@@ -2136,6 +2150,7 @@ export function ChatShell() {
       ? conversationId
       : sourceConversationId ?? createDraftConversationId(requestId);
     const submittedMode = mode;
+    const submittedAnswerModelProvider = answerModelProvider;
     const submittedManualChatMode = manualChatMode;
     const submittedFinalChatModeDecision = finalChatModeDecision;
     const selectedKnowledgeBasesForSubmit = selectedKnowledgeBases;
@@ -2154,11 +2169,15 @@ export function ChatShell() {
       id: `local-assistant-${requestId}`,
       role: "assistant",
       content: "",
+      answer_output_mode: "admin_ingest_reply_markdown",
       sources: null,
       confidence: null,
       customer_answer: null,
       provider_status: null,
-      metadata: {},
+      metadata: {
+        answerOutputMode: "admin_ingest_reply_markdown",
+        naturalBodyPassthrough: true
+      },
       created_at: "",
       pending: true
     };
@@ -2255,17 +2274,22 @@ export function ChatShell() {
           commercialExecution,
           businessExecution,
           finalChatModeDecision: submitModeDecision,
-          knowledgeSelection: knowledgeSelectionMetadata
+          knowledgeSelection: knowledgeSelectionMetadata,
+          answerModelProvider: submittedAnswerModelProvider
         }
       };
       const nextAssistantMessage: ChatMessageView = {
         ...optimisticAssistantMessage,
+        answer_output_mode: "admin_ingest_reply_markdown",
         metadata: {
           commercialExecution,
           businessExecution,
           businessExecutionPrompt,
           finalChatModeDecision: submitModeDecision,
-          knowledgeSelection: knowledgeSelectionMetadata
+          knowledgeSelection: knowledgeSelectionMetadata,
+          answerModelProvider: submittedAnswerModelProvider,
+          answerOutputMode: "admin_ingest_reply_markdown",
+          naturalBodyPassthrough: true
         },
       };
 
@@ -2290,6 +2314,7 @@ export function ChatShell() {
       await askChatStream({
         text: askText,
         attachments: uploadedAttachments,
+        answerModelProvider: submittedAnswerModelProvider,
         conversation_id: sourceConversationId,
         mode: submittedMode,
         userMode: submitModeDecision.mode.key,
@@ -2499,6 +2524,7 @@ export function ChatShell() {
                 id: streamResult.message_id,
                 role: "assistant",
                 content: resolvedAnswer,
+                answer_output_mode: streamResult.answer_output_mode ?? "admin_ingest_reply_markdown",
                 rawContent: rawAnswerForDisplay,
                 rawText: rawAnswerForDisplay,
                 customerCopy: streamResult.customerCopy ?? streamResult.customer_answer ?? null,
@@ -2520,6 +2546,9 @@ export function ChatShell() {
                   traceId: streamResult.traceId ?? currentMetadata.traceId,
                   runtimeOutput: streamResult.runtime_output ?? currentMetadata.runtimeOutput,
                   runtimeSources: streamResult.runtime_sources ?? currentMetadata.runtimeSources,
+                  answerModelProvider: submittedAnswerModelProvider,
+                  answerOutputMode: streamResult.answer_output_mode ?? "admin_ingest_reply_markdown",
+                  naturalBodyPassthrough: true,
                   userQuery: text,
                   responseId: streamResult.message_id,
                   behaviorFeedbackSeed: {
@@ -2836,6 +2865,16 @@ export function ChatShell() {
             onStatusMessage={showNotice}
             onAttachmentsChange={setInputAttachments}
             placeholder={inputPlaceholder}
+            answerModelSelector={(
+              <UserAnswerModelPicker
+                value={answerModelProvider}
+                disabled={loading}
+                onChange={(provider) => {
+                  setAnswerModelProvider(provider);
+                  writeStoredUserAnswerModel(currentUser, provider);
+                }}
+              />
+            )}
             knowledgeBaseSelector={(
               <KnowledgeBaseSelector
                 selectedCount={selectedKnowledgeBases.length}

@@ -108,6 +108,7 @@ async function main() {
       content: "客户看了资料没有回复，应该怎么办？"
     }],
     agentId: "expert-career",
+    modelProvider: "deepseek-pro",
     userId: "career-test-user",
     requestId: "career-knowledge-first-test"
   });
@@ -156,6 +157,7 @@ async function main() {
     contexts: [],
     recentConversation: [],
     agentId: "expert-career",
+    modelProvider: "deepseek-pro",
     userId: "career-test-user",
     requestId: "career-guided-open-test"
   });
