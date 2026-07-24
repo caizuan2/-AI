@@ -108,16 +108,14 @@ export function IngestKnowledgeDraftActions({
     () => Array.from(new Set(sourceMaterials.map((source) => source.trim()).filter(Boolean))),
     [sourceMaterials]
   );
-  const actionButtonClass = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-neutral-200 bg-white/80 text-[#6f6f6a] shadow-sm transition hover:border-neutral-300 hover:bg-[#f5f5f3] hover:text-[#202020] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#202020]/15";
+  const actionButtonClass = "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#f2ddb0] bg-white/80 text-[#d28700] shadow-sm transition hover:border-[#e4bd62] hover:bg-[#fff8e8] hover:text-[#9a6500] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#d28700]/20";
   const iconClass = "h-4 w-4 stroke-[2]";
   const saveTitle = saveState === "saving" ? "保存中" : saveState === "saved" ? "已入库" : saveState === "error" ? "保存失败，点击重试" : "保存知识库";
   const saveButtonClass = [
     "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-white/80 shadow-sm transition focus:outline-none focus-visible:ring-2 disabled:text-[#aaa]",
     saveState === "error"
       ? "border-rose-200 text-[#b93b4a] hover:bg-[#ffe5e9] focus-visible:ring-[#b93b4a]/20"
-      : saveState === "saved"
-        ? "border-emerald-200 text-[#128246] hover:bg-[#ecf8f0] focus-visible:ring-[#128246]/20"
-        : "border-neutral-200 text-[#238a4f] hover:border-emerald-200 hover:bg-[#ecf8f0] focus-visible:ring-[#128246]/20"
+      : "border-[#f2ddb0] text-[#d28700] hover:border-[#e4bd62] hover:bg-[#fff8e8] hover:text-[#9a6500] focus-visible:ring-[#d28700]/20"
   ].join(" ");
   const saveStatusMessage = saveError ?? lastSaveResult;
 
@@ -172,7 +170,7 @@ export function IngestKnowledgeDraftActions({
       <button type="button" onClick={onCopy} title="复制" aria-label="复制" className={actionButtonClass}>
         <Copy className={iconClass} aria-hidden="true" />
       </button>
-      <div className="relative">
+      <div className="relative hidden" aria-hidden="true">
         <button
           type="button"
           onClick={() => {
@@ -224,9 +222,11 @@ export function IngestKnowledgeDraftActions({
       <button type="button" onClick={onRegenerate} disabled={isParsing} title={isParsing ? "生成中" : "重新生成"} aria-label={isParsing ? "生成中" : "重新生成"} className={`${actionButtonClass} disabled:text-[#aaa]`}>
         <RefreshCw className={isParsing ? `${iconClass} animate-spin` : iconClass} aria-hidden="true" />
       </button>
-      <button type="button" onClick={onContinueOptimize} title="继续优化" aria-label="继续优化" className={actionButtonClass}>
-        <Pencil className={iconClass} aria-hidden="true" />
-      </button>
+      <span className="hidden" aria-hidden="true">
+        <button type="button" onClick={onContinueOptimize} title="继续优化" aria-label="继续优化" className={actionButtonClass}>
+          <Pencil className={iconClass} aria-hidden="true" />
+        </button>
+      </span>
       {onReconnectGpt ? (
         <button type="button" onClick={onReconnectGpt} title="重新连接 GPT" aria-label="重新连接 GPT" className={actionButtonClass}>
           <Plug className={iconClass} aria-hidden="true" />
@@ -234,7 +234,7 @@ export function IngestKnowledgeDraftActions({
       ) : null}
       {feedbackActions}
       {saveStatusMessage ? (
-        <span className={saveState === "error" ? "ml-1 text-xs font-medium text-[#b93b4a]" : "ml-1 text-xs font-medium text-[#5f6f67]"} role={saveState === "error" ? "alert" : "status"}>
+        <span className={saveState === "error" ? "ml-1 text-xs font-medium text-[#b93b4a]" : "ml-1 text-xs font-medium text-[#9a6500]"} role={saveState === "error" ? "alert" : "status"}>
           {saveStatusMessage}
         </span>
       ) : null}
