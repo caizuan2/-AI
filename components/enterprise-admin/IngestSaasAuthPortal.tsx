@@ -20,7 +20,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
 
-type IngestAuthMode = "login" | "register" | "activate";
+type IngestAuthMode = "login" | "register" | "activate" | "reset";
 
 type IngestAuthUser = {
   id: string;
@@ -71,12 +71,12 @@ const modeCopy: Record<IngestAuthMode, {
     cta: "登录"
   },
   register: {
-    eyebrow: "创建账号",
-    title: "注册投喂账号",
-    description: "注册后输入超级管理员生成的投喂端卡密，即可进入 AI 投喂系统。",
+    eyebrow: "",
+    title: "",
+    description: "",
     sideTitle: "注册、激活、进入工作台，一条商业闭环。",
-    sideDescription: "账号默认未激活，必须绑定有效卡密后才能进入 admin-ingest。",
-    cta: "注册并继续"
+    sideDescription: "注册时绑定有效投喂端卡密，成功后即可进入 admin-ingest。",
+    cta: "注册并激活"
   },
   activate: {
     eyebrow: "卡密激活",
@@ -85,6 +85,14 @@ const modeCopy: Record<IngestAuthMode, {
     sideTitle: "卡密就是 SaaS 权限入口。",
     sideDescription: "有效卡密会绑定当前账号，并授予管理员投喂版访问权限。",
     cta: "激活并进入"
+  },
+  reset: {
+    eyebrow: "账号安全",
+    title: "找回投喂端密码",
+    description: "使用该账号原先激活的投喂端卡密验证身份并设置新密码。",
+    sideTitle: "卡密验证账号归属，安全找回访问权限。",
+    sideDescription: "手机号与原投喂端卡密必须属于同一账号；重置成功后需使用新密码重新登录。",
+    cta: "设置新密码"
   }
 };
 
@@ -101,7 +109,9 @@ function safeNextPath(value: string | null) {
     pathname === "/ingest/register" ||
     pathname.startsWith("/ingest/register/") ||
     pathname === "/ingest/activate" ||
-    pathname.startsWith("/ingest/activate/")
+    pathname.startsWith("/ingest/activate/") ||
+    pathname === "/ingest/forgot-password" ||
+    pathname.startsWith("/ingest/forgot-password/")
   ) {
     return "";
   }
@@ -182,6 +192,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
   const [checkError, setCheckError] = useState("");
+  const passwordReset = mode === "login" && searchParams.get("passwordReset") === "1";
 
   const goNext = useCallback((hasIngestAccess: boolean) => {
     router.replace(hasIngestAccess ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
@@ -275,13 +286,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       return;
     }
 
-    if (mode === "register" && password !== confirmPassword) {
+    if ((mode === "register" || mode === "reset") && password !== confirmPassword) {
       setError("两次输入的密码不一致。");
       return;
     }
 
-    if (mode === "activate" && !licenseKey.trim()) {
-      setError("请输入卡密。");
+    if ((mode === "activate" || mode === "register" || mode === "reset") && !licenseKey.trim()) {
+      setError("请输入投喂端卡密。");
       return;
     }
 
@@ -293,14 +304,25 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         ? "/api/ingest/auth/login"
         : mode === "register"
           ? "/api/ingest/auth/register"
-          : "/api/ingest/auth/activate-license";
+          : mode === "reset"
+            ? "/api/ingest/auth/reset-password"
+            : "/api/ingest/auth/activate-license";
       const body = mode === "activate"
         ? { licenseKey, appType: "ingest_admin", app: "ingest_admin" }
+        : mode === "reset"
+          ? {
+              phone: username,
+              licenseKey,
+              newPassword: password,
+              confirmPassword
+            }
         : {
             name,
             username,
             phone: username,
-            password
+            password,
+            confirmPassword,
+            ...(mode === "register" ? { licenseKey } : {})
           };
       const response = await fetch(endpoint, {
         method: "POST",
@@ -310,8 +332,14 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         },
         body: JSON.stringify(body)
       });
-      const data = await unwrapApiResponse<IngestAuthResponse>(response, "请求失败，请稍后重试。");
+      if (mode === "reset") {
+        await unwrapApiResponse<{ reset: true; sessionsRevoked: true }>(response, "密码重置失败，请稍后重试。");
+        router.replace(`/ingest/login?passwordReset=1&next=${encodeURIComponent(nextPath)}`);
+        router.refresh();
+        return;
+      }
 
+      const data = await unwrapApiResponse<IngestAuthResponse>(response, "请求失败，请稍后重试。");
       const hasIngestAccess = data.hasIngestAccess
         ?? data.user.hasIngestAccess
         ?? (data.licenseActivated || data.user.licenseActivated);
@@ -382,11 +410,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             </button>
           ) : null}
 
-          <div>
-            <p className="text-sm font-medium text-emerald-700">{copy.eyebrow}</p>
-            <h2 className="mt-2 text-3xl font-semibold">{copy.title}</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-500">{copy.description}</p>
-          </div>
+          {mode !== "register" ? (
+            <div>
+              <p className="text-sm font-medium text-emerald-700">{copy.eyebrow}</p>
+              <h2 className="mt-2 text-3xl font-semibold">{copy.title}</h2>
+              <p className="mt-2 text-sm leading-6 text-slate-500">{copy.description}</p>
+            </div>
+          ) : null}
 
           {checking ? (
             <div className="mt-8 flex items-center justify-center gap-2 rounded-2xl bg-slate-50 px-4 py-5 text-sm text-slate-500">
@@ -409,13 +439,19 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               </Button>
             </div>
           ) : (
-            <form onSubmit={submit} className="mt-8 space-y-4">
+            <form onSubmit={submit} className={mode === "register" ? "space-y-4" : "mt-8 space-y-4"}>
+              {passwordReset ? (
+                <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  密码已重置，请使用新密码登录。
+                </div>
+              ) : null}
               {mode === "register" ? (
                 <label className="block">
                   <span className="text-sm font-medium">姓名</span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <UserRound className="h-4 w-4 text-slate-400" />
                     <Input
+                      name="name"
                       value={name}
                       onChange={(event) => setName(event.target.value)}
                       autoComplete="name"
@@ -433,6 +469,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                     <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                       <Phone className="h-4 w-4 text-slate-400" />
                       <Input
+                        name="phone"
                         value={username}
                         onChange={(event) => setUsername(event.target.value)}
                         type="tel"
@@ -445,10 +482,11 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                   </label>
 
                   <label className="block">
-                    <span className="text-sm font-medium">密码</span>
+                    <span className="text-sm font-medium">{mode === "reset" ? "新密码" : "密码"}</span>
                     <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                       <LockKeyhole className="h-4 w-4 text-slate-400" />
                       <Input
+                        name={mode === "reset" ? "newPassword" : "password"}
                         value={password}
                         onChange={(event) => setPassword(event.target.value)}
                         type="password"
@@ -461,12 +499,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                 </>
               ) : null}
 
-              {mode === "register" ? (
+              {mode === "register" || mode === "reset" ? (
                 <label className="block">
-                  <span className="text-sm font-medium">确认密码</span>
+                  <span className="text-sm font-medium">{mode === "reset" ? "确认新密码" : "确认密码"}</span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <LockKeyhole className="h-4 w-4 text-slate-400" />
                     <Input
+                      name="confirmPassword"
                       value={confirmPassword}
                       onChange={(event) => setConfirmPassword(event.target.value)}
                       type="password"
@@ -478,12 +517,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                 </label>
               ) : null}
 
-              {mode === "activate" ? (
+              {mode === "activate" || mode === "register" || mode === "reset" ? (
                 <label className="block">
-                  <span className="text-sm font-medium">投喂端卡密</span>
+                  <span className="text-sm font-medium">{mode === "reset" ? "原投喂端卡密" : "投喂端卡密"}</span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <KeyRound className="h-4 w-4 text-slate-400" />
                     <Input
+                      name="licenseKey"
                       value={licenseKey}
                       onChange={(event) => setLicenseKey(event.target.value)}
                       autoComplete="one-time-code"
@@ -507,12 +547,19 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               </Button>
 
               {mode === "login" ? (
-                <p className="text-center text-sm text-slate-500">
-                  没有账号？
-                  <Link href={`/ingest/register?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
-                    去注册
-                  </Link>
-                </p>
+                <div className="space-y-2 text-center text-sm text-slate-500">
+                  <p>
+                    <Link href={`/ingest/forgot-password?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                      忘记密码？
+                    </Link>
+                  </p>
+                  <p>
+                    没有账号？
+                    <Link href={`/ingest/register?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                      去注册
+                    </Link>
+                  </p>
+                </div>
               ) : null}
 
               {mode === "register" ? (
@@ -520,6 +567,15 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                   已有账号？
                   <Link href={`/ingest/login?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
                     去登录
+                  </Link>
+                </p>
+              ) : null}
+
+              {mode === "reset" ? (
+                <p className="text-center text-sm text-slate-500">
+                  想起密码了？
+                  <Link href={`/ingest/login?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                    返回登录
                   </Link>
                 </p>
               ) : null}
