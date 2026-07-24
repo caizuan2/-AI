@@ -105,6 +105,7 @@ export interface StreamableAiChatResult {
   appliedAgentPolicies?: string[] | null;
   confidence?: string | null;
   provider_status?: string | null;
+  answer_output_mode?: "admin_ingest_reply_markdown" | null;
   career_output_mode?: "admin_ingest_reply_markdown" | null;
   [key: string]: unknown;
 }
@@ -197,7 +198,7 @@ export async function streamAiChatResult(
 ) {
   const finalResult = await ensureFinalizedStreamResult(result);
   const runtimeInput = isRecord(finalResult.runtime_input) ? finalResult.runtime_input : {};
-  const streamChunkSize = isCareerMentorScope({
+  const streamChunkSize = isAdminIngestReplyPassthrough(finalResult) || isCareerMentorScope({
     agentId: readString(runtimeInput.agentId) || readString(finalResult.agentId),
     expertId: readString(runtimeInput.expertId) || readString(finalResult.expert_id),
     knowledgeBaseId: readString(runtimeInput.knowledgeBaseId) || readString(finalResult.knowledgeBaseId),
@@ -227,6 +228,21 @@ function isRecord(value: unknown): value is UnknownRecord {
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function readFirstRawString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.length > 0) {
+      return value;
+    }
+  }
+
+  return "";
+}
+
+function isAdminIngestReplyPassthrough(result: StreamableAiChatResult) {
+  return result.answer_output_mode === "admin_ingest_reply_markdown"
+    || result.career_output_mode === "admin_ingest_reply_markdown";
 }
 
 function readRuntimePlatform(value: unknown): "web" | "exe" | "apk" {
@@ -323,15 +339,21 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     readString(runtimeInput.query) ||
     readString(result.message) ||
     readString(result.question);
-  const rawPreservedMainAnswer =
-    readString(result.rawAnswerBeforeFinalizer) ||
-    readString(result.rawContent) ||
-    readString(result.rawText) ||
-    readString(result.rawAnswer) ||
-    readString(result.answer);
-  const careerIngestReplyPassthrough = careerMentorGroundedScope
-    && result.career_output_mode === "admin_ingest_reply_markdown";
-  const preservedMainAnswer = careerIngestReplyPassthrough
+  const ingestReplyPassthrough = isAdminIngestReplyPassthrough(result);
+  const rawPreservedMainAnswer = ingestReplyPassthrough
+    ? readFirstRawString(
+        result.rawAnswerBeforeFinalizer,
+        result.rawContent,
+        result.rawText,
+        result.rawAnswer,
+        result.answer
+      )
+    : readString(result.rawAnswerBeforeFinalizer)
+      || readString(result.rawContent)
+      || readString(result.rawText)
+      || readString(result.rawAnswer)
+      || readString(result.answer);
+  const preservedMainAnswer = ingestReplyPassthrough
     ? rawPreservedMainAnswer
     : normalizeUserChatMarkdown(rawPreservedMainAnswer);
   const finalizedAnswer = getFinalizedAnswer(result.finalized_answer) ?? finalizeUserAnswer({
@@ -340,12 +362,14 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     sources: getFinalizerSources(result),
     userMessage,
   });
-  const protectedCareerCustomerReply = careerMentorGroundedScope
+  const protectedCareerCustomerReply = careerMentorGroundedScope || ingestReplyPassthrough
     ? typeof result.customer_answer === "string"
       ? result.customer_answer
-      : finalizedAnswer.customerReply
+      : ingestReplyPassthrough
+        ? ""
+        : finalizedAnswer.customerReply
     : null;
-  const streamFinalizedAnswer: FinalizedAnswer = careerMentorGroundedScope
+  const streamFinalizedAnswer: FinalizedAnswer = careerMentorGroundedScope || ingestReplyPassthrough
     ? {
         ...finalizedAnswer,
         customerReply: protectedCareerCustomerReply ?? ""
@@ -362,6 +386,36 @@ async function ensureFinalizedStreamResult(result: StreamableAiChatResult): Prom
     customer_answer: streamFinalizedAnswer.customerReply,
     finalized_answer: streamFinalizedAnswer
   };
+
+  if (ingestReplyPassthrough) {
+    return {
+      ...normalizedResult,
+      answer: preservedMainAnswer,
+      rawAnswerBeforeFinalizer: preservedMainAnswer,
+      rawContent: preservedMainAnswer,
+      rawText: preservedMainAnswer,
+      customerCopy: protectedCareerCustomerReply ?? "",
+      customer_answer: protectedCareerCustomerReply ?? "",
+      finalized_answer: streamFinalizedAnswer,
+      nextStep: result.nextStep ?? null,
+      metadata: {
+        ...metadata,
+        answerOutputMode: "admin_ingest_reply_markdown",
+        naturalBodyPassthrough: true,
+        rawAnswerBeforeFinalizer: preservedMainAnswer,
+        rawContent: preservedMainAnswer,
+        rawText: preservedMainAnswer,
+        rawAnswer: preservedMainAnswer,
+        customerCopy: protectedCareerCustomerReply ?? "",
+        debug: {
+          ...debug,
+          rawInternalAnswerHidden: true,
+          internalPanelsAvailable: true
+        }
+      }
+    };
+  }
+
   const runtimeOutput = await routeUserChatToRuntimeV2(normalizedResult, {
     query: readString(runtimeInput.query) || readString(result.message) || readString(result.question) || result.answer,
     userId: readString(runtimeInput.userId) || readString(result.userId),

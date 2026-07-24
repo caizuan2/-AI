@@ -3,71 +3,18 @@ import { isPlainObject } from "@/lib/api/responses";
 import { handleAiChatAsk } from "@/lib/ai-chat/ask";
 import { runCareerMentorIngestAnswer } from "@/lib/ai-chat/career-mentor-ingest-answer";
 import { isCareerMentorScope } from "@/lib/ai-chat/career-mentor";
+import { runUserAgentIngestAnswer } from "@/lib/ai-chat/user-agent-ingest-answer";
 import { createAiChatSseResponse } from "@/lib/ai-chat/streaming";
-import { generateRagAnswer, type GenerateRagAnswerOptions } from "@/lib/ai/rag-answer";
+import {
+  DEFAULT_USER_ANSWER_MODEL_PROVIDER,
+  parseUserAnswerModelProvider
+} from "@/lib/ai-chat/user-answer-model";
 import { requireAiChatAccess } from "@/lib/auth/guards";
 import { ValidationError } from "@/lib/errors";
-import { getOrCreateUserSettings } from "@/lib/settings";
-import {
-  hasDatabaseUrl,
-  hasUsableChatProvider,
-  type ChatProviderName
-} from "@/lib/server-config";
-import type { RagConfidence } from "@/lib/rag/search";
+import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const CHAT_PROVIDER_PRIORITY: ChatProviderName[] = ["deepseek", "qwen", "openai"];
-
-function isChatProviderName(value: unknown): value is ChatProviderName {
-  return value === "deepseek" || value === "qwen" || value === "openai";
-}
-
-function getFirstUsableProvider(value: string | null | undefined): ChatProviderName | null {
-  if (isChatProviderName(value) && hasUsableChatProvider(value)) {
-    return value;
-  }
-
-  return CHAT_PROVIDER_PRIORITY.find((candidate) => hasUsableChatProvider(candidate)) ?? null;
-}
-
-function normalizeProvider(value: string | null | undefined): ChatProviderName {
-  return getFirstUsableProvider(value) ?? "openai";
-}
-
-function normalizeProviderChain(
-  primary: string | null | undefined,
-  providerChain: readonly unknown[] | undefined,
-  fallbackProvider: ChatProviderName | null,
-): ChatProviderName[] {
-  const providers: ChatProviderName[] = [];
-  const pushProvider = (candidate: unknown) => {
-    if (!isChatProviderName(candidate) || providers.includes(candidate) || !hasUsableChatProvider(candidate)) {
-      return;
-    }
-    providers.push(candidate);
-  };
-
-  pushProvider(primary);
-  for (const candidate of providerChain ?? []) {
-    pushProvider(candidate);
-  }
-  pushProvider(fallbackProvider);
-  for (const candidate of CHAT_PROVIDER_PRIORITY) {
-    pushProvider(candidate);
-  }
-
-  return providers;
-}
-
-function confidenceToNumber(confidence: RagConfidence) {
-  if (confidence === "high") {
-    return 0.82;
-  }
-
-  return confidence === "medium" ? 0.52 : 0.18;
-}
 
 function getSearchQuery(body: Record<string, unknown>) {
   const value = body.question ?? body.message ?? body.text;
@@ -79,6 +26,60 @@ function getOptionalString(body: Record<string, unknown>, key: string) {
   const value = body[key];
 
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function getNestedString(
+  record: Record<string, unknown> | null,
+  ...keys: string[]
+) {
+  if (!record) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function getUserAgentPresentation(
+  body: Record<string, unknown>,
+  agentId: string,
+  knowledgeBaseId: string
+) {
+  const activeKnowledgeBase = isPlainObject(body.activeKnowledgeBase)
+    ? body.activeKnowledgeBase
+    : null;
+  const normalizedScope = `${agentId} ${knowledgeBaseId}`.toLowerCase();
+  const knownProfile = /expert-kks|slim-kks|kb-kks/.test(normalizedScope)
+    ? {
+        name: "瘦身KKS专业师",
+        category: "健康管理",
+        description: "基于瘦身KKS专家知识库提供完整、可执行的用户回答。"
+      }
+    : /expert-health|health-expert|kb-health/.test(normalizedScope)
+      ? {
+          name: "大健康专家",
+          category: "大健康",
+          description: "基于大健康专家知识库提供完整、可执行的用户回答。"
+        }
+      : null;
+  const title = getNestedString(activeKnowledgeBase, "expertName", "title", "name");
+
+  return {
+    agentName: knownProfile?.name || title || "小董AI",
+    agentCategory: knownProfile?.category
+      || getNestedString(activeKnowledgeBase, "category")
+      || "知识问答",
+    agentDescription: knownProfile?.description
+      || getNestedString(activeKnowledgeBase, "description")
+      || "基于当前用户选择的 Agent 知识库生成完整、自然的回答。"
+  };
 }
 
 export async function POST(request: Request) {
@@ -106,6 +107,15 @@ export async function POST(request: Request) {
     return apiError(new ValidationError("请求体必须是 JSON 对象。"));
   }
 
+  const requestedAnswerModel = body.answer_model_provider ?? body.answerModelProvider;
+  const selectedAnswerModelProvider = requestedAnswerModel === undefined || requestedAnswerModel === null
+    ? DEFAULT_USER_ANSWER_MODEL_PROVIDER
+    : parseUserAnswerModelProvider(requestedAnswerModel);
+
+  if (!selectedAnswerModelProvider) {
+    return apiError(new ValidationError("用户端回答模型只支持 DeepSeek-V4-Pro 或 Doubao-Seed-2.1-pro。"));
+  }
+
   return createAiChatSseResponse({
     signal: request.signal,
     producer: async ({ emit, streamResult }) => {
@@ -113,10 +123,6 @@ export async function POST(request: Request) {
         type: "thinking",
         content: "分析问题中..."
       });
-
-      const settings = await getOrCreateUserSettings(actor.id);
-      const configuredProvider = getFirstUsableProvider(settings.preferredProvider);
-      const providerConfigured = configuredProvider !== null;
 
       await emit({
         type: "thinking",
@@ -131,78 +137,56 @@ export async function POST(request: Request) {
         id: actor.id,
         role: actor.role
       }, body, {
-        providerConfigured,
         answerProvider: async ({
-              question,
+          question,
+          originalQuestion,
+          contexts,
+          traceId,
+          businessExecutionContext,
+          recentConversation,
+          agentId,
+          knowledgeBaseId,
+          namespace,
+          careerMentorStage
+        }) => {
+          const careerMentorNaturalBodyEnabled = isCareerMentorScope({
+            agentId,
+            knowledgeBaseId,
+            namespace
+          });
+
+          if (careerMentorNaturalBodyEnabled) {
+            return runCareerMentorIngestAnswer({
               originalQuestion,
+              scenarioQuestion: question,
+              careerMentorStage: careerMentorStage ?? "unknown",
               contexts,
-              mode,
-              enableDeepThinking,
-              confidence,
-              actualModel,
-              provider: requestedProvider,
-              providerFallbackChain,
-              traceId,
-              businessExecutionContext,
               recentConversation,
               agentId,
-              knowledgeBaseId,
-              namespace,
-              careerMentorStage
-            }) => {
-              const careerMentorNaturalBodyEnabled = isCareerMentorScope({
-                agentId,
-                knowledgeBaseId,
-                namespace
-              });
+              modelProvider: selectedAnswerModelProvider,
+              userId: actor.id,
+              requestId: traceId,
+              signal: request.signal
+            });
+          }
 
-              if (careerMentorNaturalBodyEnabled) {
-                return runCareerMentorIngestAnswer({
-                  originalQuestion,
-                  scenarioQuestion: question,
-                  careerMentorStage: careerMentorStage ?? "unknown",
-                  contexts,
-                  recentConversation,
-                  agentId,
-                  userId: actor.id,
-                  requestId: traceId
-                });
-              }
+          const presentation = getUserAgentPresentation(body, agentId, knowledgeBaseId);
 
-              const answerProvider = getFirstUsableProvider(requestedProvider)
-                ?? configuredProvider
-                ?? normalizeProvider(requestedProvider);
-              const answerProviderChain = normalizeProviderChain(
-                answerProvider,
-                providerFallbackChain,
-                configuredProvider
-              );
-              const ragAnswerOptions = {
-                userId: actor.id,
-                provider: answerProvider,
-                providerChain: answerProviderChain,
-                model: actualModel,
+          return runUserAgentIngestAnswer({
+                originalQuestion,
+                contexts,
+                recentConversation,
                 agentId,
-                knowledgeBaseId,
-                namespace,
-                answerMode: mode === "fast" && confidence !== "high" ? "partial" : "full",
-                confidence: confidenceToNumber(confidence),
-                intentLabel: enableDeepThinking ? "deep_thinking_enabled" : "standard",
+                ...presentation,
                 businessExecutionContext,
-                recentConversation
-              } satisfies GenerateRagAnswerOptions;
-              const ragAnswer = await generateRagAnswer(question, contexts, ragAnswerOptions);
-
-              return {
-                answer: ragAnswer.answer,
-                providerUsed: ragAnswer.providerUsed,
-                modelUsed: ragAnswer.model,
-                fallbackUsed: ragAnswer.fallbackUsed,
-                answerGroundingScore: ragAnswer.answer_grounding_score,
-                modelFeedbackEvent: ragAnswer.model_feedback_event,
-                originalProviderErrorCode: ragAnswer.originalProviderErrorCode
-              };
-            }
+                modelProvider: selectedAnswerModelProvider,
+                userId: actor.id,
+                requestId: traceId,
+                signal: request.signal
+          });
+        },
+        strictAnswerModelSelection: true,
+        providerConfigured: true
       });
 
       await streamResult({
@@ -218,6 +202,7 @@ export async function POST(request: Request) {
           namespace: getOptionalString(body, "namespace"),
           tenantId: getOptionalString(body, "tenantId") ?? getOptionalString(body, "tenant_id"),
           outputMode: getOptionalString(body, "outputMode") ?? getOptionalString(body, "mode"),
+          answerModelProvider: selectedAnswerModelProvider,
           appType: "user_app",
           channel: "chat-ui",
           platform: getOptionalString(body, "platform") ?? "web"

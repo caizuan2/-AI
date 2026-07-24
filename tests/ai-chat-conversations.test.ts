@@ -11,6 +11,7 @@ type AnyRecord = Record<string, unknown>;
 
 const LARGE_METADATA_SENTINEL = "LIST_METADATA_MUST_NOT_LEAK";
 const FULL_HISTORY_ANSWER = "# 完整历史回答\n\n这是需要原样保留的 **DeepSeek/GPT Markdown 正文**。";
+const RAW_PASSTHROUGH_HISTORY_ANSWER = "\n# 豆包历史原文\n\n> 首尾空行与 Markdown 必须保留。  \n";
 const actor: AiChatActor = {
   id: "user_1",
   role: "user"
@@ -148,6 +149,20 @@ async function main() {
               }
             },
             createdAt: new Date("2026-07-14T10:01:00.000Z")
+          },
+          {
+            id: "message_2",
+            userId: actor.id,
+            role: "ASSISTANT",
+            content: RAW_PASSTHROUGH_HISTORY_ANSWER,
+            attachments: [],
+            sources: [],
+            metadata: {
+              answerOutputMode: "admin_ingest_reply_markdown",
+              naturalBodyPassthrough: true,
+              answerModelProvider: "doubao-pro"
+            },
+            createdAt: new Date("2026-07-14T10:02:00.000Z")
           }
         ]
       })
@@ -228,7 +243,7 @@ async function main() {
   const history = await getAiChatHistory(actor, "conv_active", db);
 
   assert.equal(history.conversation.metadata, null);
-  assert.equal(history.messages.length, 1);
+  assert.equal(history.messages.length, 2);
   assert.equal(history.messages[0]?.content, FULL_HISTORY_ANSWER);
   assert.equal(history.messages[0]?.rawContent, FULL_HISTORY_ANSWER);
   assert.equal(history.messages[0]?.customer_answer, "您好，可以先从共同话题开始。");
@@ -246,6 +261,14 @@ async function main() {
     suggestedSteps: ["观察朋友圈", "选择共同话题"],
     customerReply: "您好，可以先从共同话题开始。",
     nextAction: "等待客户回复后再承接。"
+  });
+  assert.equal(history.messages[1]?.content, RAW_PASSTHROUGH_HISTORY_ANSWER);
+  assert.equal(history.messages[1]?.rawContent, RAW_PASSTHROUGH_HISTORY_ANSWER);
+  assert.equal(history.messages[1]?.answer_output_mode, "admin_ingest_reply_markdown");
+  assert.deepEqual(history.messages[1]?.metadata, {
+    answerModelProvider: "doubao-pro",
+    answerOutputMode: "admin_ingest_reply_markdown",
+    naturalBodyPassthrough: true
   });
   assert.equal(JSON.stringify(history).includes(LARGE_METADATA_SENTINEL), false);
   assert.ok(Buffer.byteLength(JSON.stringify(history)) < 10_000);

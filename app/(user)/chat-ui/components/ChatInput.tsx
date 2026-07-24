@@ -16,6 +16,7 @@ interface ChatInputProps {
   onCancel?: () => void;
   onStatusMessage?: (message: string) => void;
   onAttachmentsChange?: (attachments: ChatAttachmentDraft[]) => void;
+  answerModelSelector?: React.ReactNode;
   knowledgeBaseSelector?: React.ReactNode;
 }
 
@@ -173,6 +174,7 @@ export function ChatInput({
   onCancel,
   onStatusMessage,
   onAttachmentsChange,
+  answerModelSelector,
   knowledgeBaseSelector
 }: ChatInputProps) {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
@@ -331,6 +333,8 @@ export function ChatInput({
             onCameraOpen={() => cameraInputRef.current?.click()}
           />
         </div>
+
+        {answerModelSelector}
 
         <Textarea
           ref={textareaRef}

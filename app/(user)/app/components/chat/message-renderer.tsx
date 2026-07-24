@@ -101,6 +101,14 @@ function getString(value: unknown) {
   return isLostHistoryAnswerText(text) ? "" : text;
 }
 
+function getRawMarkdownString(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return "";
+  }
+
+  return isLostHistoryAnswerText(value) ? "" : value;
+}
+
 const CAREER_MENTOR_AGENT_IDS = new Set([
   "expert-career",
   "expert-business",
@@ -141,6 +149,13 @@ export function isCareerMentorMessage(message: ChatMessageView) {
 
   return CAREER_MENTOR_AGENT_IDS.has(agentId)
     && CAREER_MENTOR_KNOWLEDGE_BASE_IDS.has(knowledgeBaseId);
+}
+
+export function isRawMarkdownPassthroughMessage(message: ChatMessageView) {
+  const metadata = getRecord(message.metadata);
+
+  return message.answer_output_mode === "admin_ingest_reply_markdown"
+    || metadata.answerOutputMode === "admin_ingest_reply_markdown";
 }
 
 const LOST_HISTORY_ANSWER_PATTERNS = [
@@ -1443,6 +1458,7 @@ function RagSources({
 export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, streaming = false }: ChatMessageRendererProps) {
   const isStreaming = streaming || Boolean(message.pending);
   const careerMentorMode = isCareerMentorMessage(message);
+  const rawMarkdownPassthrough = isRawMarkdownPassthroughMessage(message);
   const finalizedAnswer = getFinalizedAnswer(message);
   const finalAnswer = isDevDebug ? getFinalAnswer(finalizedAnswer) : "";
   const businessSchemaGuard = getRecord(
@@ -1458,14 +1474,25 @@ export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, str
   const messageTime = formatMessageTime(message.created_at);
   const ragHitState = getRagHitState(message, finalizedAnswer);
   const userQuery = explicitUserQuery?.trim() || getMessageUserQuery(message);
-  const rawAnswerText = getString(message.metadata?.rawAnswerBeforeFinalizer)
-    || getString(message.metadata?.rawCustomerAnswerBeforeFinalizer)
-    || getString(message.rawContent)
-    || getString(message.rawText)
-    || getString(message.metadata?.rawContent)
-    || getString(message.metadata?.rawText)
-    || getString(message.metadata?.rawAnswer)
-    || message.content;
+  const rawAnswerText = rawMarkdownPassthrough
+    ? [
+        message.metadata?.rawAnswerBeforeFinalizer,
+        message.metadata?.rawCustomerAnswerBeforeFinalizer,
+        message.rawContent,
+        message.rawText,
+        message.metadata?.rawContent,
+        message.metadata?.rawText,
+        message.metadata?.rawAnswer,
+        message.content
+      ].map(getRawMarkdownString).find(Boolean) ?? ""
+    : getString(message.metadata?.rawAnswerBeforeFinalizer)
+      || getString(message.metadata?.rawCustomerAnswerBeforeFinalizer)
+      || getString(message.rawContent)
+      || getString(message.rawText)
+      || getString(message.metadata?.rawContent)
+      || getString(message.metadata?.rawText)
+      || getString(message.metadata?.rawAnswer)
+      || message.content;
 
   return (
     <div className="w-full max-w-[min(820px,92vw)] rounded-3xl rounded-bl-lg border border-slate-200 bg-white p-3 text-slate-900 shadow-sm">
@@ -1491,6 +1518,7 @@ export function ChatMessageRenderer({ message, userQuery: explicitUserQuery, str
           confidence={message.confidence}
           streaming={isStreaming}
           careerMentorMode={careerMentorMode}
+          rawMarkdownPassthrough={rawMarkdownPassthrough}
         />
 
         {isDevDebug ? (

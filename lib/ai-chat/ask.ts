@@ -158,6 +158,7 @@ export interface AiChatAskOptions {
   db?: AiChatDb;
   answerProvider?: (input: AiChatAnswerProviderInput) => Promise<AiChatAnswerProviderResult>;
   providerConfigured?: boolean;
+  strictAnswerModelSelection?: boolean;
 }
 
 type JsonObject = Record<string, unknown>;
@@ -1814,9 +1815,13 @@ export async function handleAiChatAsk(
   let modelFeedbackEvent: ModelFeedbackEvent | undefined;
   let businessSchemaGuard: BusinessSchemaGuardResult | null = null;
   let careerEvidencePlan: CareerMentorEvidencePlanSummary | undefined;
-  let careerIngestReplyPassthrough = false;
+  let ingestReplyPassthrough = false;
 
-  if (careerMentorEnabled || (contexts.length > 0 && careerKnowledgeHit)) {
+  if (
+    options.strictAnswerModelSelection
+    || careerMentorEnabled
+    || (contexts.length > 0 && careerKnowledgeHit)
+  ) {
     customerAnswer = buildCustomerAnswerFromChunks({
       question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
       chunks,
@@ -1824,7 +1829,10 @@ export async function handleAiChatAsk(
       mode
     });
 
-    if (options.answerProvider && (careerMentorEnabled || options.providerConfigured)) {
+    if (
+      options.answerProvider
+      && (options.strictAnswerModelSelection || careerMentorEnabled || options.providerConfigured)
+    ) {
       try {
         const providerResult = await options.answerProvider({
           question: careerMentorEnabled ? careerMentorScenarioQuestion : question,
@@ -1847,12 +1855,11 @@ export async function handleAiChatAsk(
           ...agentScope
         });
 
-        careerIngestReplyPassthrough = careerMentorEnabled
-          && providerResult.answerOutputMode === "admin_ingest_reply_markdown";
-        careerEvidencePlan = careerIngestReplyPassthrough
+        ingestReplyPassthrough = providerResult.answerOutputMode === "admin_ingest_reply_markdown";
+        careerEvidencePlan = ingestReplyPassthrough
           ? undefined
           : providerResult.careerEvidencePlan;
-        answer = careerIngestReplyPassthrough
+        answer = ingestReplyPassthrough
           ? providerResult.answer
           : careerMentorEnabled
           ? cleanCareerMentorUserAnswer(
@@ -1868,7 +1875,7 @@ export async function handleAiChatAsk(
               }
             )
           : cleanUserFacingRagAnswer(providerResult.answer);
-        customerAnswer = careerIngestReplyPassthrough
+        customerAnswer = ingestReplyPassthrough
           ? ""
           : careerMentorEnabled
           ? extractCareerMentorCustomerAnswer(answer)
@@ -1885,8 +1892,12 @@ export async function handleAiChatAsk(
           throw new AppError("AI_PROVIDER_FAILED", "AI provider 返回了空回答。", 502);
         }
       } catch (error) {
+        if (options.strictAnswerModelSelection) {
+          throw error;
+        }
+
         const appError = toAppError(error);
-        careerIngestReplyPassthrough = false;
+        ingestReplyPassthrough = false;
         answer = careerMentorEnabled
           ? buildCareerMentorNaturalProviderErrorAnswer()
           : RAG_CUSTOMER_DRAFT_ANSWER;
@@ -1926,12 +1937,12 @@ export async function handleAiChatAsk(
   });
 
   const businessSchemaGuardMetadata = toBusinessSchemaGuardMetadata(businessSchemaGuard);
-  const rawAnswerBeforeFinalizer = careerIngestReplyPassthrough
+  const rawAnswerBeforeFinalizer = ingestReplyPassthrough
     ? providerMainAnswer
     : normalizeUserChatMarkdown(providerMainAnswer || businessSchemaGuard.response);
-  const rawCustomerAnswerBeforeFinalizer = normalizeUserChatMarkdown(
-    providerCustomerAnswer || businessSchemaGuard.response
-  );
+  const rawCustomerAnswerBeforeFinalizer = ingestReplyPassthrough
+    ? ""
+    : normalizeUserChatMarkdown(providerCustomerAnswer || businessSchemaGuard.response);
   const finalizedAnswer = finalizeUserAnswer({
     rawAnswer: rawAnswerBeforeFinalizer,
     customerAnswer: rawCustomerAnswerBeforeFinalizer,
@@ -1942,25 +1953,28 @@ export async function handleAiChatAsk(
   });
 
   const finalizedDisplayAnswer = formatFinalizedAnswerForDisplay(finalizedAnswer);
-  answer = careerIngestReplyPassthrough
+  answer = ingestReplyPassthrough
     ? rawAnswerBeforeFinalizer
     : careerMentorEnabled && providerStatus !== "ok"
     ? rawAnswerBeforeFinalizer
     : providerStatus === "ok" && rawAnswerBeforeFinalizer
       ? rawAnswerBeforeFinalizer
       : finalizedDisplayAnswer;
-  customerAnswer = finalizedAnswer.customerReply;
+  customerAnswer = ingestReplyPassthrough ? "" : finalizedAnswer.customerReply;
+  finalizedAnswer.customerReply = customerAnswer;
 
   const actualModel = modelUsed ?? osContext.route.actualModel;
-  const visibleFallbackUsed = (fallbackUsed ?? false) || osContext.route.fallbackUsed;
-  const outputControlledAnswer = careerIngestReplyPassthrough
+  const visibleFallbackUsed = ingestReplyPassthrough
+    ? fallbackUsed ?? false
+    : (fallbackUsed ?? false) || osContext.route.fallbackUsed;
+  const outputControlledAnswer = ingestReplyPassthrough
     ? answer
     : processAIOutput(normalizeUserChatMarkdown(answer), {
         model: actualModel,
         source: "ai_chat_ask",
         mode
       }).output;
-  const cleanOutputControlledAnswer = careerIngestReplyPassthrough
+  const cleanOutputControlledAnswer = ingestReplyPassthrough
     ? outputControlledAnswer
     : careerMentorEnabled
       ? cleanCareerMentorUserAnswer(
@@ -1987,8 +2001,8 @@ export async function handleAiChatAsk(
     }
   }
 
-  if (careerMentorEnabled) {
-    customerAnswer = careerIngestReplyPassthrough
+  if (careerMentorEnabled || ingestReplyPassthrough) {
+    customerAnswer = ingestReplyPassthrough
       ? ""
       : extractCareerMentorCustomerAnswer(answer);
     finalizedAnswer.customerReply = customerAnswer;
@@ -2095,6 +2109,12 @@ export async function handleAiChatAsk(
     sourceCount: sources.length,
     enableDeepThinking,
     enableWebSearch,
+    ...(ingestReplyPassthrough
+      ? {
+          answerOutputMode: "admin_ingest_reply_markdown",
+          naturalBodyPassthrough: true
+        }
+      : {}),
     ...(knowledgeSelectionContext
       ? {
           knowledgeSelection: knowledgeSelectionContext.metadata
@@ -2118,10 +2138,10 @@ export async function handleAiChatAsk(
             writerPassed: careerEvidencePlan?.writerPassed ?? false,
             groundingValidationPassed: careerEvidencePlan?.groundingValidationPassed ?? false,
             plannerRepairUsed: careerEvidencePlan?.plannerRepairUsed ?? false,
-            outputMode: careerIngestReplyPassthrough
+            outputMode: ingestReplyPassthrough
               ? "admin_ingest_reply_markdown"
               : "natural_markdown_with_cards",
-            naturalBodyPassthrough: careerIngestReplyPassthrough
+            naturalBodyPassthrough: ingestReplyPassthrough
               || Boolean(careerEvidencePlan?.groundingValidationPassed),
             deepThinkingApplied: enableDeepThinking,
             staticFallbackUsed: Boolean(
@@ -2309,13 +2329,16 @@ export async function handleAiChatAsk(
     sources,
     confidence,
     provider_status: providerStatus,
-    career_output_mode: careerIngestReplyPassthrough
+    answer_output_mode: ingestReplyPassthrough
       ? "admin_ingest_reply_markdown" as const
       : null,
-    model: osContext.route.model,
+    career_output_mode: careerMentorEnabled && ingestReplyPassthrough
+      ? "admin_ingest_reply_markdown" as const
+      : null,
+    model: ingestReplyPassthrough ? actualModel : osContext.route.model,
     actualModel,
-    selected_model: osContext.route.selected_model,
-    provider: osContext.route.provider,
+    selected_model: ingestReplyPassthrough ? actualModel : osContext.route.selected_model,
+    provider: ingestReplyPassthrough ? providerUsed ?? osContext.route.provider : osContext.route.provider,
     fallbackUsed: visibleFallbackUsed,
     fallback_chain: osContext.route.fallback_chain,
     fallback_chain_v2: osContext.route.fallback_chain_v2,
@@ -2545,6 +2568,15 @@ function readSerializedMessageContent(
   metadata: Record<string, unknown>,
   finalizedAnswer: unknown,
 ) {
+  if (
+    metadata.answerOutputMode === "admin_ingest_reply_markdown"
+    && typeof message.content === "string"
+    && message.content.trim()
+    && !isLostHistoryAnswerText(message.content)
+  ) {
+    return message.content;
+  }
+
   return [
     message.content,
     metadata.rawContent,
@@ -2586,7 +2618,10 @@ const HISTORY_FINALIZED_ANSWER_FIELDS = [
 const HISTORY_MESSAGE_METADATA_FIELDS = [
   "responseId",
   "userQuery",
-  "behaviorFeedbackSeed"
+  "behaviorFeedbackSeed",
+  "answerModelProvider",
+  "answerOutputMode",
+  "naturalBodyPassthrough"
 ] as const;
 
 function pickHistoryDisplayFields(
@@ -2623,11 +2658,15 @@ function serializeMessage(message: MessageRecord) {
     HISTORY_FINALIZED_ANSWER_FIELDS
   );
   const historyMetadata = pickHistoryDisplayFields(metadata, HISTORY_MESSAGE_METADATA_FIELDS);
+  const answerOutputMode = metadata.answerOutputMode === "admin_ingest_reply_markdown"
+    ? "admin_ingest_reply_markdown" as const
+    : null;
 
   return {
     id: String(message.id),
     role: role || "user",
     content,
+    answer_output_mode: answerOutputMode,
     rawContent: content || null,
     rawText: content || null,
     attachments: message.attachments ?? null,

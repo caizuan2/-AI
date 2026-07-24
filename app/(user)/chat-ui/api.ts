@@ -35,40 +35,8 @@ import type {
 } from "./types";
 
 export const USER_CHAT_LOGIN_URL = "/login?app=user&next=/app";
-const ASK_CHAT_TOTAL_TIMEOUT_MS = 90_000;
-const CAREER_MENTOR_AGENT_IDS = new Set([
-  "expert-career",
-  "expert-business",
-  "expert-agent-expert-career",
-  "agent-expert-career",
-  "business-coach",
-  "career-mentor"
-]);
-const CAREER_MENTOR_KNOWLEDGE_BASE_IDS = new Set([
-  "kb-business-coach",
-  "kb-career-mentor",
-  "kb:expert-agent-expert-career",
-  "business-coach",
-  "career-mentor"
-]);
 
-function normalizeAskScopeValue(value: unknown) {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
-function isCareerMentorAskRequest(input: AskChatRequest) {
-  const agentId = normalizeAskScopeValue(input.agentId ?? input.expert_id);
-  const knowledgeBaseId = normalizeAskScopeValue(input.knowledgeBaseId ?? input.kb_id ?? input.namespace);
-
-  return CAREER_MENTOR_AGENT_IDS.has(agentId)
-    && CAREER_MENTOR_KNOWLEDGE_BASE_IDS.has(knowledgeBaseId);
-}
-
-function normalizeAskChatNetworkError(error: unknown, timedOut: boolean) {
-  if (timedOut) {
-    return new Error("回答时间较长，连接已自动结束。请重新发送问题后重试。");
-  }
-
+function normalizeAskChatNetworkError(error: unknown) {
   if (error instanceof DOMException && error.name === "AbortError") {
     return error;
   }
@@ -492,6 +460,8 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
 
   if (event.data) {
     const dataRecord = event.data as unknown as Record<string, unknown>;
+    const rawMarkdownPassthrough = dataRecord.answer_output_mode === "admin_ingest_reply_markdown"
+      || dataRecord.career_output_mode === "admin_ingest_reply_markdown";
     const runtimeOutput = event.data.runtime_output && typeof event.data.runtime_output === "object" && !Array.isArray(event.data.runtime_output)
       ? event.data.runtime_output as Record<string, unknown>
       : {};
@@ -508,24 +478,40 @@ function normalizeStreamFinalEvent(event: AskChatStreamEvent): AskChatResponse |
       undefined;
     const readAnswerField = <K extends keyof FinalizedAnswerView>(key: K): FinalizedAnswerView[K] | undefined =>
       (event.data?.finalized_answer?.[key] ?? runtimeOutput[key] ?? dataRecord[key]) as FinalizedAnswerView[K] | undefined;
-    const readRawString = (value: unknown) => typeof value === "string" && value.trim() ? value.trim() : "";
+    const readRawString = (value: unknown) => {
+      if (typeof value !== "string" || !value.trim()) {
+        return "";
+      }
+
+      return rawMarkdownPassthrough ? value : value.trim();
+    };
+    const pickRawString = (values: unknown[]) => (
+      values.find((value): value is string => typeof value === "string" && Boolean(value.trim())) ?? ""
+    );
     const rawAnswerBeforeFinalizer = readRawString(dataRecord.rawAnswerBeforeFinalizer)
       || readRawString(runtimeOutput.rawAnswerBeforeFinalizer);
     const rawCustomerAnswerBeforeFinalizer = readRawString(dataRecord.rawCustomerAnswerBeforeFinalizer)
       || readRawString(runtimeOutput.rawCustomerAnswerBeforeFinalizer);
-    const resolveRawAnswer = (finalizedAnswer: FinalizedAnswerView) => rawAnswerBeforeFinalizer || pickSingleRawAssistantText([
-      rawCustomerAnswerBeforeFinalizer,
-      dataRecord.rawContent,
-      dataRecord.rawText,
-      dataRecord.rawAnswer,
-      runtimeOutput.rawContent,
-      runtimeOutput.rawText,
-      runtimeOutput.rawAnswer,
-      event.data?.answer,
-      event.content,
-      getFinalizedRawAnswerText(finalizedAnswer),
-      runtimeOutput.answer
-    ]);
+    const resolveRawAnswer = (finalizedAnswer: FinalizedAnswerView) => {
+      const candidates = [
+        rawAnswerBeforeFinalizer,
+        rawCustomerAnswerBeforeFinalizer,
+        dataRecord.rawContent,
+        dataRecord.rawText,
+        dataRecord.rawAnswer,
+        runtimeOutput.rawContent,
+        runtimeOutput.rawText,
+        runtimeOutput.rawAnswer,
+        event.data?.answer,
+        event.content,
+        getFinalizedRawAnswerText(finalizedAnswer),
+        runtimeOutput.answer
+      ];
+
+      return rawMarkdownPassthrough
+        ? pickRawString(candidates)
+        : pickSingleRawAssistantText(candidates);
+    };
 
     if (event.data.finalized_answer) {
       const finalizedAnswer: FinalizedAnswerView = {
@@ -876,14 +862,7 @@ async function consumeAskChatEventStream(
 
 export async function askChatStream(input: AskChatRequest, handlers: AskChatStreamHandlers = {}) {
   const requestController = new AbortController();
-  let timedOut = false;
   const abortFromCaller = () => requestController.abort();
-  const timeout = isCareerMentorAskRequest(input)
-    ? null
-    : setTimeout(() => {
-        timedOut = true;
-        requestController.abort();
-      }, ASK_CHAT_TOTAL_TIMEOUT_MS);
 
   handlers.signal?.addEventListener("abort", abortFromCaller, { once: true });
 
@@ -923,11 +902,8 @@ export async function askChatStream(input: AskChatRequest, handlers: AskChatStre
 
     return result;
   } catch (error) {
-    throw normalizeAskChatNetworkError(error, timedOut);
+    throw normalizeAskChatNetworkError(error);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
     handlers.signal?.removeEventListener("abort", abortFromCaller);
   }
 }

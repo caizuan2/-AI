@@ -15,6 +15,7 @@ import type {
 import type { RuntimeV3GrowthOutput } from "@/lib/knowledge-runtime/runtime-v3-sales-learning-types";
 import type { RuntimeV4GrowthFlywheelOutput } from "@/lib/knowledge-runtime/runtime-v4-growth-types";
 import type { RuntimeV5EvolutionOutput } from "@/lib/knowledge-runtime/runtime-v5-strategy-types";
+import type { UserAnswerModelProvider } from "@/lib/ai-chat/user-answer-model";
 
 export type ChatMode = "fast" | "expert";
 export type RagConfidence = "high" | "medium" | "low";
@@ -70,6 +71,7 @@ export interface ChatMessageView {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  answer_output_mode?: "admin_ingest_reply_markdown" | null;
   rawContent?: string | null;
   rawText?: string | null;
   attachments?: ChatAttachmentDraft[] | null;
@@ -285,6 +287,7 @@ export interface ChangePasswordInput {
 export interface AskChatRequest {
   text: string;
   attachments: ChatAttachmentDraft[];
+  answerModelProvider?: UserAnswerModelProvider;
   conversation_id: string | null;
   mode: ChatMode;
   userMode?: ChatModeKey;
@@ -313,6 +316,8 @@ export interface AskChatRequest {
 
 export interface AskChatResponse {
   answer: string;
+  answer_output_mode?: "admin_ingest_reply_markdown" | null;
+  career_output_mode?: "admin_ingest_reply_markdown" | null;
   rawContent?: string | null;
   rawText?: string | null;
   rawAnswer?: string | null;
