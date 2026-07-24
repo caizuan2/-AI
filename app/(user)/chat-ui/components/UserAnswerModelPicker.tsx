@@ -116,7 +116,7 @@ export function UserAnswerModelPicker({
         disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         className={cn(
-          "focus-ring inline-flex h-9 w-9 touch-manipulation items-center justify-center rounded-full border text-[11px] font-bold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-60",
+          "focus-ring inline-flex h-11 w-11 touch-manipulation items-center justify-center rounded-full border text-[11px] font-bold transition active:scale-95 disabled:cursor-not-allowed disabled:opacity-60",
           selected.provider === "doubao-pro"
             ? "border-orange-100 bg-orange-50 text-orange-600 hover:bg-orange-100"
             : "border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
@@ -133,7 +133,7 @@ export function UserAnswerModelPicker({
         <div
           role="dialog"
           aria-label="选择回答大模型"
-          className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-50 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-300/60 sm:absolute sm:bottom-12 sm:left-0 sm:right-auto sm:w-72"
+          className="fixed inset-x-3 bottom-[calc(5.5rem+env(safe-area-inset-bottom,0px))] z-50 rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl shadow-slate-300/60 sm:absolute sm:bottom-auto sm:left-auto sm:right-0 sm:top-12 sm:w-72"
         >
           <div className="px-2 pb-2 text-xs font-semibold text-slate-500">
             选择回答大模型

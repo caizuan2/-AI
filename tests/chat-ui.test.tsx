@@ -1429,6 +1429,7 @@ async function main() {
   assert.match(shellMarkup, /新建对话/);
   assert.doesNotMatch(shellMarkup, /语音输入/);
   assert.match(shellMarkup, /打开上传菜单/);
+  assert.match(shellMarkup, /选择回答大模型，当前为DeepSeek-V4-Pro/);
   assert.match(shellMarkup, /aria-label="选择专家知识库"/);
   assert.match(shellMarkup, /问问 小董AI/);
   assert.doesNotMatch(shellMarkup, /aria-label="打开相机"/);
@@ -1442,6 +1443,23 @@ async function main() {
     /<KnowledgeBaseSelector[\s\S]*?onOpen=\{\(\) => setExpertMarketOpen\(true\)\}/
   );
   assert.match(chatShellSource, /open=\{expertMarketOpen\}/);
+  const headerStart = chatShellSource.indexOf("<header");
+  const headerEnd = chatShellSource.indexOf("</header>", headerStart);
+  const headerSource = chatShellSource.slice(headerStart, headerEnd);
+  const chatInputStart = chatShellSource.lastIndexOf("<ChatInput");
+  const chatInputEnd = chatShellSource.indexOf("/>", chatInputStart);
+  const chatInputInvocationSource = chatShellSource.slice(chatInputStart, chatInputEnd);
+
+  assert.ok(headerStart >= 0 && headerEnd > headerStart);
+  assert.ok(headerSource.indexOf("<UserAnswerModelPicker") >= 0);
+  assert.ok(headerSource.indexOf("<KnowledgeBaseSelector") >= 0);
+  assert.ok(
+    headerSource.indexOf("<UserAnswerModelPicker") < headerSource.indexOf("<KnowledgeBaseSelector")
+  );
+  assert.ok(
+    headerSource.indexOf("<KnowledgeBaseSelector") < headerSource.indexOf('aria-label="新建对话"')
+  );
+  assert.doesNotMatch(chatInputInvocationSource, /answerModelSelector|knowledgeBaseSelector/);
   assert.match(chatShellSource, /已打开扫描入口/);
   assert.match(chatShellSource, /已选择扫描图片/);
   assert.match(chatShellSource, /已打开通知面板/);
@@ -1922,11 +1940,22 @@ async function main() {
   ]);
   assert.match(answerModelPickerMarkup, /当前为DeepSeek-V4-Pro/);
   assert.match(answerModelPickerMarkup, />DS</);
+  assert.match(answerModelPickerMarkup, /class="[^"]*\bh-11\b/);
+  assert.match(answerModelPickerMarkup, /class="[^"]*\bw-11\b/);
   assert.match(answerModelMenuMarkup, /DeepSeek-V4-Pro/);
   assert.match(answerModelMenuMarkup, /Doubao-Seed-2\.1-pro/);
   assert.doesNotMatch(answerModelMenuMarkup, /Flash|Qwen|Kimi|GPT-5/);
   assert.match(answerModelMenuMarkup, /touch-manipulation/);
   assert.match(answerModelMenuMarkup, /aria-pressed="true"/);
+  const answerModelPickerSource = readFileSync(
+    "app/(user)/chat-ui/components/UserAnswerModelPicker.tsx",
+    "utf8"
+  );
+
+  assert.match(answerModelPickerSource, /sm:bottom-auto/);
+  assert.match(answerModelPickerSource, /sm:right-0/);
+  assert.match(answerModelPickerSource, /sm:top-12/);
+  assert.doesNotMatch(answerModelPickerSource, /sm:bottom-12/);
 
   const expertMarketDrawerSource = readFileSync(
     "app/(user)/chat-ui/components/ExpertMarketDrawer.tsx",
@@ -1955,13 +1984,6 @@ async function main() {
       onValueChange={() => undefined}
       onSubmit={() => undefined}
       onStatusMessage={() => undefined}
-      answerModelSelector={(
-        <UserAnswerModelPicker
-          value="deepseek-pro"
-          onChange={() => undefined}
-        />
-      )}
-      knowledgeBaseSelector={knowledgeBaseSelector}
     />
   );
 
@@ -1970,13 +1992,11 @@ async function main() {
   assert.match(chatInputMarkup, /multiple=""/);
   assert.match(chatInputMarkup, /capture="environment"/);
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
-  assert.match(chatInputMarkup, /选择回答大模型，当前为DeepSeek-V4-Pro/);
-  assert.match(chatInputMarkup, /aria-label="选择专家知识库"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
-  assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf("选择回答大模型"));
-  assert.ok(chatInputMarkup.indexOf("选择回答大模型") < chatInputMarkup.indexOf("<textarea"));
-  assert.ok(chatInputMarkup.indexOf("<textarea") < chatInputMarkup.indexOf('aria-label="选择专家知识库"'));
-  assert.ok(chatInputMarkup.indexOf('aria-label="选择专家知识库"') < chatInputMarkup.indexOf('aria-label="发送消息"'));
+  assert.doesNotMatch(chatInputMarkup, /选择回答大模型/);
+  assert.doesNotMatch(chatInputMarkup, /aria-label="选择专家知识库"/);
+  assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf("<textarea"));
+  assert.ok(chatInputMarkup.indexOf("<textarea") < chatInputMarkup.indexOf('aria-label="发送消息"'));
   assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
   assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
   assert.match(chatInputMarkup, /disabled=""/);
