@@ -2131,6 +2131,7 @@ interface ParseFileResponse {
     successRatePercent?: number;
     deadlineReached?: boolean;
     limitationNote: string;
+    recognitionMode?: "wechat_conversation";
   };
   message?: string;
   error?: {
@@ -2336,6 +2337,7 @@ export async function parseUploadedFileForGpt(
       coveragePercent: complete ? 100 : coveragePercent,
       successRatePercent: finalSuccessRatePercent,
       deadlineReached,
+      recognitionMode: lastData?.recognitionMode ?? file.recognitionMode,
       parseStatus,
       limitationNote: mergeUniqueText(limitationNotes, [cancellationNote]).join(" "),
       status: hasEvidence ? "parsed" : input.cancelled ? "ready_to_send" : "failed"
