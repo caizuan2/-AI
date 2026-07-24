@@ -109,12 +109,14 @@ async function main() {
 
   const [
     previewSource,
+    fileMessageSource,
     shellSource,
     modeToggleSource,
     routeSource,
     storeSource
   ] = await Promise.all([
     readFile("components/enterprise-admin/IngestAttachmentPreview.tsx", "utf8"),
+    readFile("components/enterprise-admin/IngestChatGPTFileMessage.tsx", "utf8"),
     readFile("components/enterprise-admin/IngestChatGPTShell.tsx", "utf8"),
     readFile("components/enterprise-admin/IngestModeToggle.tsx", "utf8"),
     readFile("app/api/admin/ingest-images/route.ts", "utf8"),
@@ -124,6 +126,14 @@ async function main() {
   assert.match(previewSource, /if \(imageOnly && isImage\)/);
   assert.match(previewSource, /const imageUrl = file\.persistentUrl \|\| file\.previewUrl/);
   assert.match(previewSource, /aria-label="移除图片"/);
+  const sentMessageRenderSource = fileMessageSource.slice(
+    fileMessageSource.indexOf("export function IngestChatGPTFileMessage")
+  );
+  assert.match(
+    sentMessageRenderSource,
+    /<IngestAttachmentPreview files=\{message\.attachments\} imageOnly \/>/,
+    "投喂端 Web 已发送消息应保留纯图片缩略图。"
+  );
   assert.match(shellSource, /files=\{message\.attachments\} compact imageOnly/);
   assert.match(shellSource, /files=\{uploadedFiles\} onRemove=\{onRemoveUpload\} imageOnly/);
   assert.match(modeToggleSource, /platformContext\.platform === "web"/);
