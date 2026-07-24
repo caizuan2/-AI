@@ -2790,12 +2790,6 @@ export function ChatShell() {
                     writeStoredUserAnswerModel(currentUser, provider);
                   }}
                 />
-                <KnowledgeBaseSelector
-                  selectedCount={selectedKnowledgeBases.length}
-                  activeTitle={activeKnowledgeBase?.title ?? null}
-                  open={expertMarketOpen}
-                  onOpen={() => setExpertMarketOpen(true)}
-                />
                 <button
                   type="button"
                   onClick={handleNewChat}
@@ -2881,6 +2875,14 @@ export function ChatShell() {
             onStatusMessage={showNotice}
             onAttachmentsChange={setInputAttachments}
             placeholder={inputPlaceholder}
+            knowledgeBaseSelector={(
+              <KnowledgeBaseSelector
+                selectedCount={selectedKnowledgeBases.length}
+                activeTitle={activeKnowledgeBase?.title ?? null}
+                open={expertMarketOpen}
+                onOpen={() => setExpertMarketOpen(true)}
+              />
+            )}
           />
           <ExpertMarketDrawer
             open={expertMarketOpen}

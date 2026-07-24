@@ -1452,14 +1452,13 @@ async function main() {
 
   assert.ok(headerStart >= 0 && headerEnd > headerStart);
   assert.ok(headerSource.indexOf("<UserAnswerModelPicker") >= 0);
-  assert.ok(headerSource.indexOf("<KnowledgeBaseSelector") >= 0);
+  assert.ok(headerSource.indexOf('aria-label="新建对话"') >= 0);
+  assert.doesNotMatch(headerSource, /<KnowledgeBaseSelector/);
+  assert.doesNotMatch(chatInputInvocationSource, /answerModelSelector/);
+  assert.match(chatInputInvocationSource, /knowledgeBaseSelector=\{\(/);
   assert.ok(
-    headerSource.indexOf("<UserAnswerModelPicker") < headerSource.indexOf("<KnowledgeBaseSelector")
+    chatInputInvocationSource.indexOf("<KnowledgeBaseSelector") >= 0
   );
-  assert.ok(
-    headerSource.indexOf("<KnowledgeBaseSelector") < headerSource.indexOf('aria-label="新建对话"')
-  );
-  assert.doesNotMatch(chatInputInvocationSource, /answerModelSelector|knowledgeBaseSelector/);
   assert.match(chatShellSource, /已打开扫描入口/);
   assert.match(chatShellSource, /已选择扫描图片/);
   assert.match(chatShellSource, /已打开通知面板/);
@@ -1984,6 +1983,7 @@ async function main() {
       onValueChange={() => undefined}
       onSubmit={() => undefined}
       onStatusMessage={() => undefined}
+      knowledgeBaseSelector={knowledgeBaseSelector}
     />
   );
 
@@ -1994,9 +1994,10 @@ async function main() {
   assert.match(chatInputMarkup, /aria-label="打开上传菜单"/);
   assert.match(chatInputMarkup, /aria-label="发送消息"/);
   assert.doesNotMatch(chatInputMarkup, /选择回答大模型/);
-  assert.doesNotMatch(chatInputMarkup, /aria-label="选择专家知识库"/);
+  assert.match(chatInputMarkup, /aria-label="选择专家知识库"/);
   assert.ok(chatInputMarkup.indexOf('aria-label="打开上传菜单"') < chatInputMarkup.indexOf("<textarea"));
-  assert.ok(chatInputMarkup.indexOf("<textarea") < chatInputMarkup.indexOf('aria-label="发送消息"'));
+  assert.ok(chatInputMarkup.indexOf("<textarea") < chatInputMarkup.indexOf('aria-label="选择专家知识库"'));
+  assert.ok(chatInputMarkup.indexOf('aria-label="选择专家知识库"') < chatInputMarkup.indexOf('aria-label="发送消息"'));
   assert.doesNotMatch(chatInputMarkup, /aria-label="语音输入"/);
   assert.doesNotMatch(chatInputMarkup, /aria-label="停止语音输入"/);
   assert.match(chatInputMarkup, /disabled=""/);
