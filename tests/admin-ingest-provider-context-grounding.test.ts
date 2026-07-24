@@ -112,12 +112,21 @@ assert.match(
   "Strict grounding must use the normalized selected-model provider."
 );
 assert.match(ingestRouteSource, /shouldUseStrictAdminIngestGrounding\(\{/);
-assert.match(ingestRouteSource, /strictKnowledgeMode:\s*strictDoubaoGrounding/);
+assert.match(ingestRouteSource, /strictKnowledgeMode:\s*strictKnowledgeGrounding/);
 assert.match(ingestRouteSource, /recentMessages:\s*strictDoubaoGrounding\s*\?\s*input\.recentMessages\s*:\s*undefined/);
 assert.match(
   ingestRouteSource,
-  /if\s*\(strictDoubaoGrounding\s*&&\s*\(!canonicalAgentScope\s*\|\|\s*!grounding\.applied\)\)/,
-  "Doubao requests with missing/conflicting scope or no hit must stop before model invocation."
+  /if\s*\(strictKnowledgeGrounding\s*&&\s*\(!canonicalAgentScope\s*\|\|\s*!grounding\.applied\)\)/,
+  "Strict Doubao and WeChat screenshot requests with missing/conflicting scope or no hit must stop before model invocation."
+);
+assert.match(
+  ingestRouteSource,
+  /const strictKnowledgeGrounding\s*=\s*strictDoubaoGrounding\s*\|\|\s*strictWechatGrounding/
+);
+assert.match(
+  ingestRouteSource,
+  /strictWechatGrounding[\s\S]{0,240}groundingModelProvider\s*===\s*"deepseek-pro"[\s\S]{0,160}groundingModelProvider\s*===\s*"doubao-pro"/,
+  "WeChat screenshot grounding must remain limited to the two already supported selected-model providers."
 );
 assert.match(ingestRouteSource, /ADMIN_INGEST_STRICT_KNOWLEDGE_REQUIRED/);
 assert.match(ingestRouteSource, /adminIngestGrounding:modelInvoked:false/);
@@ -126,11 +135,6 @@ assert.match(ingestRouteSource, /retrievedKnowledgeItemIds:\s*grounding\.retriev
 assert.match(ingestRouteSource, /providedChunkIds:\s*grounding\.sourceIds\.chunkIds/);
 assert.match(ingestRouteSource, /providedKnowledgeItemIds:\s*grounding\.sourceIds\.knowledgeItemIds/);
 assert.doesNotMatch(ingestRouteSource, /\busedChunkIds\b|\busedKnowledgeItemIds\b/);
-assert.doesNotMatch(
-  ingestRouteSource,
-  /strictDoubaoGrounding[\s\S]{0,240}deepseek-pro/,
-  "The Doubao-only grounding gate must not be coupled to DeepSeek."
-);
 
 const trainingLogBuilderSource = ingestRouteSource.slice(
   ingestRouteSource.indexOf("function buildStructuredKnowledgeForTrainingLog"),

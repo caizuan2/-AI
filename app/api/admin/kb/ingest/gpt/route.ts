@@ -38,6 +38,9 @@ import {
   shouldUseStrictAdminIngestGrounding,
   type AdminIngestGroundingResult
 } from "@/lib/enterprise/admin-ingest-grounding";
+import {
+  buildAdminIngestWechatGroundingRequest
+} from "@/lib/enterprise/admin-ingest-wechat-grounding";
 import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
@@ -376,8 +379,9 @@ function buildAdminIngestGroundingMetadata(
   };
 }
 
-function strictDoubaoGroundingError(input: {
+function strictAdminIngestGroundingError(input: {
   grounding: AdminIngestGroundingResult;
+  provider: "deepseek-pro" | "doubao-pro";
   selectedModelLabel: string;
   requestedModel: string;
   requestId: string;
@@ -389,11 +393,12 @@ function strictDoubaoGroundingError(input: {
     : invalidScope
       ? "ADMIN_INGEST_GROUNDING_SCOPE_INVALID"
       : "ADMIN_INGEST_GROUNDING_NO_HIT";
+  const providerName = input.provider === "doubao-pro" ? "豆包" : "DeepSeek";
   const message = unavailable
-    ? "当前 Agent 固定知识库暂时无法检索。为避免豆包脱离知识库生成，本轮未调用模型。您的输入和附件已保留，请稍后重试。"
+    ? `当前 Agent 固定知识库暂时无法检索。为避免${providerName}脱离知识库生成，本轮未调用模型。您的输入和附件已保留，请稍后重试。`
     : invalidScope
-      ? "当前 Agent、固定知识库与 namespace 作用域不一致。为避免豆包跨库生成，本轮未调用模型。请刷新当前 Agent 后重试。"
-      : "当前问题未命中当前 Agent 固定知识库。为避免豆包脱离知识库自由生成，本轮未调用模型。请补充问题背景或先完善当前固定知识库后重试。";
+      ? `当前 Agent、固定知识库与 namespace 作用域不一致。为避免${providerName}跨库生成，本轮未调用模型。请刷新当前 Agent 后重试。`
+      : `当前问题未命中当前 Agent 固定知识库。为避免${providerName}脱离知识库自由生成，本轮未调用模型。请补充问题背景或先完善当前固定知识库后重试。`;
 
   return jsonUtf8({
     ok: false,
@@ -405,8 +410,8 @@ function strictDoubaoGroundingError(input: {
     causeCode,
     userMessage: message,
     message,
-    provider: "doubao-pro",
-    requestedProvider: "doubao-pro",
+    provider: input.provider,
+    requestedProvider: input.provider,
     actualProvider: null,
     selectedModelLabel: input.selectedModelLabel,
     requestedModel: input.requestedModel,
@@ -1365,15 +1370,22 @@ export async function POST(request: Request) {
   const strictDoubaoGrounding = shouldUseStrictAdminIngestGrounding({
     provider: groundingModelProvider
   });
+  const wechatGroundingRequest = buildAdminIngestWechatGroundingRequest({
+    input: input.input,
+    attachments: input.attachments
+  });
+  const strictWechatGrounding = wechatGroundingRequest.strictKnowledgeMode
+    && (groundingModelProvider === "deepseek-pro" || groundingModelProvider === "doubao-pro");
+  const strictKnowledgeGrounding = strictDoubaoGrounding || strictWechatGrounding;
   const [grounding, publishedMemoryContext] = await Promise.all([
     retrieveAdminIngestGrounding({
-      query: input.input,
+      query: wechatGroundingRequest.query,
       actorUserId: effectiveActorId,
       tenantId: effectiveTenantId,
       agentId: input.agentId ?? "",
       knowledgeBaseId: input.knowledgeBaseId ?? "",
       namespace: input.namespace ?? "",
-      strictKnowledgeMode: strictDoubaoGrounding,
+      strictKnowledgeMode: strictKnowledgeGrounding,
       recentMessages: strictDoubaoGrounding ? input.recentMessages : undefined
     }),
     buildAdminIngestPublishedMemoryContext({
@@ -1397,16 +1409,20 @@ export async function POST(request: Request) {
       }]
     : [];
 
-  if (strictDoubaoGrounding && (!canonicalAgentScope || !grounding.applied)) {
+  if (strictKnowledgeGrounding && (!canonicalAgentScope || !grounding.applied)) {
+    const strictProvider = groundingModelProvider === "deepseek-pro"
+      ? "deepseek-pro" as const
+      : "doubao-pro" as const;
     const strictRuntime = resolveIngestModelRuntime({
-      provider: "doubao-pro",
+      provider: strictProvider,
       selectedModelLabel: input.selectedModelLabel,
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
 
-    return strictDoubaoGroundingError({
+    return strictAdminIngestGroundingError({
       grounding,
+      provider: strictProvider,
       selectedModelLabel: strictRuntime.displayModelLabel,
       requestedModel: strictRuntime.actualModel,
       requestId
@@ -1430,7 +1446,7 @@ export async function POST(request: Request) {
     });
     const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
     const result = await runAdminIngestWithSelectedModel({
-      input: input.input,
+      input: wechatGroundingRequest.modelInput,
       attachments: input.attachments,
       agentId: input.agentId,
       expertId: input.expertId,
@@ -1602,7 +1618,7 @@ export async function POST(request: Request) {
       modelDiagnostics,
       knowledgeGrounding: buildAdminIngestGroundingMetadata(
         grounding,
-        strictDoubaoGrounding
+        strictKnowledgeGrounding
       ),
       responseId: rawResult.responseId,
       jobId: trainingLog?.job.id ?? null,

@@ -10,7 +10,8 @@ import {
 import { extractChatImageText } from "@/lib/ai-chat/image-ocr";
 import {
   buildAdminIngestWechatReplyEvidence,
-  parseAdminIngestWechatRoleTranscript
+  parseAdminIngestWechatRoleTranscript,
+  reconcileAdminIngestWechatRoleTranscripts
 } from "@/lib/enterprise/ingest-wechat-transcript";
 
 export type IngestParsedFileStatus = "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
@@ -1123,6 +1124,7 @@ async function parseWechatConversationImage(input: { buffer: Buffer; signal?: Ab
     && Boolean(result.text)
     && Boolean(result.latestCustomerMessage)
     && result.lowConfidence !== true
+    && result.roleReliable !== false
     && (result.confidence ?? 0) >= 60;
 
   if (localRoleReliable) {
@@ -1157,7 +1159,12 @@ async function parseWechatConversationImage(input: { buffer: Buffer; signal?: Ab
     mimeType: detectedMimeType
   });
   const visionTranscript = visionResult.status === "ok" && visionResult.text
-    ? parseAdminIngestWechatRoleTranscript(visionResult.text)
+    ? result.transcript
+      ? reconcileAdminIngestWechatRoleTranscripts({
+          visionTranscript: visionResult.text,
+          localTranscript: result.transcript
+        })
+      : parseAdminIngestWechatRoleTranscript(visionResult.text)
     : null;
 
   if (visionTranscript?.transcript && visionTranscript.latestCustomerMessage) {

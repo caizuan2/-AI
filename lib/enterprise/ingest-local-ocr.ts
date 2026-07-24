@@ -8,9 +8,12 @@ import engLanguage from "@tesseract.js-data/eng";
 import sharp, { type Metadata } from "sharp";
 import Tesseract from "tesseract.js";
 import {
+  assessAdminIngestWechatTranscriptReliability,
   buildAdminIngestWechatReplyEvidence,
   buildAdminIngestWechatTranscript,
   calculateAdminIngestWechatSegments,
+  inferAdminIngestWechatRoleHintFromColor,
+  type AdminIngestWechatTranscriptReliabilityReason,
   type AdminIngestWechatOcrLine
 } from "@/lib/enterprise/ingest-wechat-transcript";
 
@@ -50,6 +53,11 @@ export interface AdminIngestWechatOcrResult extends AdminIngestLocalOcrResult {
   transcript?: string;
   latestCustomerMessage?: string;
   uncertainLineCount?: number;
+  noisyLineCount?: number;
+  roleReliable?: boolean;
+  uncertainLineRatio?: number;
+  noisyLineRatio?: number;
+  reliabilityReasons?: AdminIngestWechatTranscriptReliabilityReason[];
 }
 
 interface TesseractLanguagePackage {
@@ -386,7 +394,7 @@ async function prepareWechatOcrSegment(input: {
   top: number;
   height: number;
 }) {
-  return sharp(Buffer.from(input.bytes), { limitInputPixels: 60_000_000 })
+  const colorBytes = await sharp(Buffer.from(input.bytes), { limitInputPixels: 60_000_000 })
     .rotate()
     .extract({
       left: 0,
@@ -395,17 +403,96 @@ async function prepareWechatOcrSegment(input: {
       height: input.height
     })
     .flatten({ background: "#ffffff" })
-    .grayscale()
-    .normalize()
-    .sharpen()
     .png()
     .toBuffer();
+  const [ocrBytes, colorPixels] = await Promise.all([
+    sharp(colorBytes)
+      .grayscale()
+      .normalize()
+      .sharpen()
+      .png()
+      .toBuffer(),
+    sharp(colorBytes)
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true })
+  ]);
+
+  return {
+    ocrBytes,
+    colorPixels: {
+      data: colorPixels.data,
+      width: colorPixels.info.width,
+      height: colorPixels.info.height,
+      channels: colorPixels.info.channels
+    }
+  };
+}
+
+function sampleWechatLineColorEvidence(input: {
+  data: Buffer;
+  width: number;
+  height: number;
+  channels: number;
+  x0: number;
+  x1: number;
+  y0: number;
+  y1: number;
+}) {
+  const horizontalPadding = Math.max(8, Math.round(input.width * 0.012));
+  const verticalPadding = 6;
+  const left = Math.max(0, Math.floor(input.x0 - horizontalPadding));
+  const right = Math.min(input.width, Math.ceil(input.x1 + horizontalPadding));
+  const top = Math.max(0, Math.floor(input.y0 - verticalPadding));
+  const bottom = Math.min(input.height, Math.ceil(input.y1 + verticalPadding));
+  let greenPixels = 0;
+  let lightPixels = 0;
+  let sampledPixels = 0;
+
+  for (let y = top; y < bottom; y += 2) {
+    for (let x = left; x < right; x += 2) {
+      const offset = (y * input.width + x) * input.channels;
+      const red = input.data[offset] ?? 0;
+      const green = input.data[offset + 1] ?? red;
+      const blue = input.data[offset + 2] ?? red;
+
+      sampledPixels += 1;
+
+      if (
+        green >= 145
+        && green - red >= 25
+        && green - blue >= 35
+      ) {
+        greenPixels += 1;
+      }
+
+      if (
+        red >= 225
+        && green >= 225
+        && blue >= 225
+        && Math.max(red, green, blue) - Math.min(red, green, blue) <= 35
+      ) {
+        lightPixels += 1;
+      }
+    }
+  }
+
+  return {
+    greenPixelRatio: sampledPixels > 0 ? greenPixels / sampledPixels : 0,
+    lightPixelRatio: sampledPixels > 0 ? lightPixels / sampledPixels : 0
+  };
 }
 
 function readWechatOcrLines(input: {
   data: Tesseract.Page;
   imageWidth: number;
   segmentTop: number;
+  colorPixels: {
+    data: Buffer;
+    width: number;
+    height: number;
+    channels: number;
+  };
 }) {
   const lines: AdminIngestWechatOcrLine[] = [];
 
@@ -418,6 +505,14 @@ function readWechatOcrLines(input: {
           continue;
         }
 
+        const colorEvidence = sampleWechatLineColorEvidence({
+          ...input.colorPixels,
+          x0: line.bbox.x0,
+          x1: line.bbox.x1,
+          y0: line.bbox.y0,
+          y1: line.bbox.y1
+        });
+
         lines.push({
           text,
           confidence: normalizeOcrConfidence(line.confidence),
@@ -425,7 +520,13 @@ function readWechatOcrLines(input: {
           x1: line.bbox.x1,
           y0: input.segmentTop + line.bbox.y0,
           y1: input.segmentTop + line.bbox.y1,
-          imageWidth: input.imageWidth
+          imageWidth: input.imageWidth,
+          roleHint: inferAdminIngestWechatRoleHintFromColor({
+            ...colorEvidence,
+            x0: line.bbox.x0,
+            x1: line.bbox.x1,
+            imageWidth: input.imageWidth
+          })
         });
       }
     }
@@ -703,7 +804,7 @@ export async function extractAdminIngestWechatConversationText(input: {
           })
         );
         const data = await recognizeImage({
-          bytes: processed,
+          bytes: processed.ocrBytes,
           budget,
           pageSegmentationMode: Tesseract.PSM.SPARSE_TEXT,
           includeBlocks: true
@@ -711,7 +812,8 @@ export async function extractAdminIngestWechatConversationText(input: {
         const lines = readWechatOcrLines({
           data,
           imageWidth: width,
-          segmentTop: segment.top
+          segmentTop: segment.top,
+          colorPixels: processed.colorPixels
         });
 
         if (lines.length > 0) {
@@ -752,6 +854,19 @@ export async function extractAdminIngestWechatConversationText(input: {
       ? lines.reduce((sum, line) => sum + line.confidence, 0) / lines.length
       : 0;
     const partial = recognizedSegmentCount < segmentCount;
+    const customerMessageCount = transcript.messages
+      .filter((message) => message.role === "customer")
+      .length;
+    const reliability = assessAdminIngestWechatTranscriptReliability({
+      confidence: averageConfidence,
+      messageCount: transcript.messages.length,
+      customerMessageCount,
+      uncertainLineCount: transcript.uncertainCount,
+      segmentCount,
+      recognizedSegmentCount,
+      latestCustomerMessage: transcript.latestCustomerMessage,
+      noisyLineCount: transcript.noisyCount
+    });
     const evidence = buildAdminIngestWechatReplyEvidence({
       transcript: transcript.transcript,
       latestCustomerMessage: transcript.latestCustomerMessage,
@@ -764,7 +879,9 @@ export async function extractAdminIngestWechatConversationText(input: {
         code: "LOCAL_OCR_OK",
         text: evidence.slice(0, MAX_OCR_TEXT_CHARS),
         confidence: normalizeOcrConfidence(averageConfidence),
-        lowConfidence: partial || averageConfidence < DEFAULT_LOW_CONFIDENCE_THRESHOLD,
+        lowConfidence: partial
+          || averageConfidence < DEFAULT_LOW_CONFIDENCE_THRESHOLD
+          || !reliability.reliable,
         attempts: 1,
         truncated: evidence.length > MAX_OCR_TEXT_CHARS
       }),
@@ -773,7 +890,12 @@ export async function extractAdminIngestWechatConversationText(input: {
       recognizedSegmentCount,
       transcript: transcript.transcript,
       latestCustomerMessage: transcript.latestCustomerMessage,
-      uncertainLineCount: transcript.uncertainCount
+      uncertainLineCount: transcript.uncertainCount,
+      noisyLineCount: transcript.noisyCount,
+      roleReliable: reliability.reliable,
+      uncertainLineRatio: reliability.uncertainRatio,
+      noisyLineRatio: reliability.noisyLineRatio,
+      reliabilityReasons: reliability.reasons
     };
   } catch (error) {
     const controlCode = error instanceof LocalOcrControlError ? error.code : null;
