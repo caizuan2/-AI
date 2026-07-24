@@ -2249,11 +2249,11 @@ export function IngestModeToggle() {
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget]
     }));
-    const isWechatConversationReply = hasAdminIngestWechatConversationAttachment(draftAttachments);
+    let isWechatConversationReply = hasAdminIngestWechatConversationAttachment(draftAttachments);
     const baseInput = value || (draftAttachments.length > 0
       ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
-    const effectiveInput = isWechatConversationReply
+    const buildEffectiveInput = (isWechatConversation: boolean) => isWechatConversation
       ? [
         value || "请根据这张微信对话截图回复客户。",
         "固定规则：左侧头像或白色气泡是客户，右侧头像或绿色气泡是用户本人。",
@@ -2261,6 +2261,7 @@ export function IngestModeToggle() {
         "只输出可直接发送给客户的答案正文，不要输出识别结果、分析、回复思路、标题、前言、角色标签或模型信息。"
       ].join("\n")
       : baseInput;
+    let effectiveInput = buildEffectiveInput(isWechatConversationReply);
 
     if (!effectiveInput) {
       setNoticeMessage("请输入投喂任务或先选择附件后再发送。");
@@ -2433,6 +2434,12 @@ export function IngestModeToggle() {
           platform: platformContext.platform,
           syncTarget: [...platformContext.syncTarget]
         }));
+        const parsedAsWechatConversation = hasAdminIngestWechatConversationAttachment(outgoingAttachments);
+
+        if (!isWechatConversationReply && parsedAsWechatConversation) {
+          isWechatConversationReply = true;
+          effectiveInput = buildEffectiveInput(true);
+        }
 
         if (!isCurrentRequest()) {
           return null;

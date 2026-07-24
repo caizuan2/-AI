@@ -13,6 +13,9 @@ import {
   parseAdminIngestWechatRoleTranscript,
   reconcileAdminIngestWechatRoleTranscripts
 } from "@/lib/enterprise/ingest-wechat-transcript";
+import {
+  detectAdminIngestWechatConversationImage
+} from "@/lib/enterprise/admin-ingest-wechat-image-detection";
 
 export type IngestParsedFileStatus = "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
 
@@ -39,6 +42,7 @@ export interface IngestParsedFileResult {
   coveragePercent?: number;
   successRatePercent?: number;
   deadlineReached?: boolean;
+  recognitionMode?: "wechat_conversation";
 }
 
 export interface AdminIngestParseBatchOptions {
@@ -1586,9 +1590,16 @@ export async function parseAdminIngestFile(input: {
   }
 
   if (fileType === "image") {
+    const autoDetectedWechatConversation = input.recognitionMode
+      ? false
+      : (await detectAdminIngestWechatConversationImage(input.buffer)).detected;
+    const recognitionMode = input.recognitionMode
+      ?? (autoDetectedWechatConversation ? "wechat_conversation" as const : undefined);
+
     return {
       ...base,
-      ...(input.recognitionMode === "wechat_conversation"
+      recognitionMode,
+      ...(recognitionMode === "wechat_conversation"
         ? await parseWechatConversationImage({ buffer: input.buffer, signal: batch.signal })
         : await parseImage({ buffer: input.buffer, signal: batch.signal }))
     };
