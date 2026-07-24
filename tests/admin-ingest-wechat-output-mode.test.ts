@@ -63,10 +63,19 @@ async function main() {
   );
   assert.equal(fullAnswer.latestCustomerMessage, defaultReply.latestCustomerMessage);
   assert.equal(fullAnswer.strictKnowledgeMode, true);
-  assert.match(fullAnswer.modelInput, /## 核心判断/);
-  assert.match(fullAnswer.modelInput, /## 当下可直接发的回复/);
-  assert.match(fullAnswer.modelInput, /## 接下来的推进节奏/);
-  assert.match(fullAnswer.modelInput, /## 这几个坑千万别踩/);
+  assert.match(fullAnswer.modelInput, /自行决定最合适的结构、标题、篇幅和表达重点/);
+  assert.match(fullAnswer.modelInput, /不得机械套用固定模板/);
+  assert.match(fullAnswer.modelInput, /客户只是询问知识或答案明确时，直接回答/);
+  assert.match(fullAnswer.modelInput, /客户存在顾虑、异议或犹豫时/);
+  assert.match(fullAnswer.modelInput, /客户情绪明显时/);
+  assert.match(fullAnswer.modelInput, /复杂问题可以使用合适的小标题或步骤，简单问题保持简洁/);
+  assert.match(fullAnswer.modelInput, /省略不适用的判断、话术、推进建议或注意事项/);
+  assert.match(fullAnswer.modelInput, /不得虚构客户背景、沟通阶段或未出现的顾虑/);
+  assert.doesNotMatch(
+    fullAnswer.modelInput,
+    /## 核心判断|## 当下可直接发的回复|## 接下来的推进节奏|## 这几个坑千万别踩/,
+    "完整正文模式不能再强制模型输出固定四段标题。"
+  );
   assert.match(fullAnswer.modelInput, /严格依据当前 Agent 已命中的固定知识库/);
   assert.doesNotMatch(
     fullAnswer.modelInput,
@@ -113,9 +122,16 @@ async function main() {
   assert.match(shellSource, /wechatUpload\s*\?/);
   assert.match(shellSource, /精准回复话术/);
   assert.match(shellSource, /完整正文答案/);
+  assert.match(shellSource, /根据对话智能组织正文结构、篇幅与重点/);
   assert.match(shellSource, /onWechatOutputModeChange\?\.\(option\.mode\)/);
   assert.match(modeToggleSource, /file\.recognitionMode === "wechat_conversation"/);
   assert.match(modeToggleSource, /wechatOutputMode:\s*mode/);
+  assert.match(modeToggleSource, /不得机械套用固定模板/);
+  assert.doesNotMatch(
+    modeToggleSource,
+    /包含核心判断、当下可直接发的回复、接下来的推进节奏和注意事项/,
+    "发送前任务说明不能继续要求固定四段结构。"
+  );
   assert.match(routeSource, /wechatOutputMode:\s*readString\(item\.wechatOutputMode\)/);
   assert.match(routeSource, /input:\s*wechatGroundingRequest\.modelInput/);
 
