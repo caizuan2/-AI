@@ -41,6 +41,9 @@ import {
 import {
   buildAdminIngestWechatGroundingRequest
 } from "@/lib/enterprise/admin-ingest-wechat-grounding";
+import type {
+  AdminIngestWechatOutputMode
+} from "@/lib/enterprise/admin-ingest-wechat-output-mode";
 import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
@@ -63,6 +66,10 @@ import {
 } from "@/lib/enterprise/ingest-attachment-evidence";
 
 export const runtime = "nodejs";
+
+type AdminIngestRequestAttachment = OpenAIAdminIngestAttachment & {
+  wechatOutputMode?: AdminIngestWechatOutputMode;
+};
 export const dynamic = "force-dynamic";
 
 function jsonUtf8(data: unknown, status = 200) {
@@ -722,12 +729,12 @@ function logGptRoute(event: {
   });
 }
 
-function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
+function readAttachments(value: unknown): AdminIngestRequestAttachment[] {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  const attachments: OpenAIAdminIngestAttachment[] = [];
+  const attachments: AdminIngestRequestAttachment[] = [];
 
   for (const item of value) {
     if (!isPlainObject(item)) {
@@ -769,7 +776,12 @@ function readAttachments(value: unknown): OpenAIAdminIngestAttachment[] {
       coveragePercent: readBoundedPercent(item.coveragePercent),
       successRatePercent: readBoundedPercent(item.successRatePercent),
       deadlineReached: item.deadlineReached === true,
-      limitationNote: readString(item.limitationNote) || undefined
+      limitationNote: readString(item.limitationNote) || undefined,
+      wechatOutputMode: readString(item.wechatOutputMode) === "full_answer"
+        ? "full_answer"
+        : readString(item.wechatOutputMode) === "reply_script"
+          ? "reply_script"
+          : undefined
     });
 
     if (attachments.length >= 12) {

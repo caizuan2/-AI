@@ -64,6 +64,10 @@ import {
   resolveAdminIngestDisplayProfile,
   type AdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
+import {
+  normalizeAdminIngestWechatOutputMode,
+  type AdminIngestWechatOutputMode
+} from "@/lib/enterprise/admin-ingest-wechat-output-mode";
 import type {
   IngestConnectionStatus,
   IngestVoiceState,
@@ -233,6 +237,7 @@ interface IngestChatGPTShellProps {
   onReconnectGpt?: (modelLabel?: string) => Promise<unknown>;
   onUpload?: (files: File[], recognitionMode?: "wechat_conversation") => void;
   onRemoveUpload?: (fileId: string) => void;
+  onWechatOutputModeChange?: (mode: AdminIngestWechatOutputMode) => void;
   onVoiceToggle?: () => void;
   onToolAction?: (label: string) => void;
   onToast?: (toast: { title: string; description?: string; type?: "success" | "warning" | "info" }) => void;
@@ -863,6 +868,7 @@ export function IngestChatGPTShell({
   onReconnectGpt,
   onUpload,
   onRemoveUpload,
+  onWechatOutputModeChange,
   onVoiceToggle,
   onToolAction,
   onToast,
@@ -871,6 +877,8 @@ export function IngestChatGPTShell({
 }: IngestChatGPTShellProps = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadRecognitionModeRef = useRef<"wechat_conversation" | undefined>(undefined);
+  const wechatUpload = uploadedFiles.find((file) => file.recognitionMode === "wechat_conversation");
+  const wechatOutputMode = normalizeAdminIngestWechatOutputMode(wechatUpload?.wechatOutputMode);
   const inputTextareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollContentRef = useRef<HTMLDivElement | null>(null);
@@ -2671,6 +2679,40 @@ export function IngestChatGPTShell({
             {uploadedFiles.length > 0 ? (
               <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
                 <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} />
+                {wechatUpload ? (
+                  <fieldset className="mt-2 flex flex-wrap items-center gap-2 border-t border-[#e8e8e5] px-1 pt-2">
+                    <legend className="sr-only">微信截图输出方式</legend>
+                    <span className="text-xs font-semibold text-[#555]">输出方式</span>
+                    {([
+                      { mode: "reply_script", label: "精准回复话术" },
+                      { mode: "full_answer", label: "完整正文答案" }
+                    ] as const).map((option) => {
+                      const selected = wechatOutputMode === option.mode;
+
+                      return (
+                        <button
+                          key={option.mode}
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => onWechatOutputModeChange?.(option.mode)}
+                          className={[
+                            "h-8 rounded-full px-3 text-xs font-semibold transition",
+                            selected
+                              ? "bg-[#202020] text-white"
+                              : "border border-[#deded9] bg-white text-[#555] hover:border-[#bdbdb7] hover:text-[#202020]"
+                          ].join(" ")}
+                        >
+                          {option.label}
+                        </button>
+                      );
+                    })}
+                    <span className="text-[11px] text-[#858580]">
+                      {wechatOutputMode === "full_answer"
+                        ? "输出判断、可发送回复、推进节奏与注意事项"
+                        : "只输出可直接发送给客户的一段话术"}
+                    </span>
+                  </fieldset>
+                ) : null}
               </div>
             ) : null}
             <input

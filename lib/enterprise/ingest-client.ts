@@ -62,6 +62,7 @@ import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import { buildAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { AdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
 import { shouldRunAdminIngestHealthPreflight } from "@/lib/enterprise/admin-ingest-wechat-request";
+import type { AdminIngestWechatOutputMode } from "@/lib/enterprise/admin-ingest-wechat-output-mode";
 
 export const ingestSyncTarget = ADMIN_INGEST_SYNC_TARGET;
 
@@ -131,6 +132,7 @@ export interface IngestUploadState {
   userId?: string | null;
   agentId?: string | null;
   recognitionMode?: "wechat_conversation";
+  wechatOutputMode?: AdminIngestWechatOutputMode;
   createdAt: string;
 }
 
@@ -2080,6 +2082,7 @@ export function createUploadState(file: File, context: {
   agentId?: string | null;
   platform?: IngestPlatform;
   recognitionMode?: "wechat_conversation";
+  wechatOutputMode?: AdminIngestWechatOutputMode;
 } = {}): IngestUploadState {
   const isImage = file.type.startsWith("image/") || /\.(avif|bmp|gif|jpe?g|png|svg|webp)$/i.test(file.name);
   const previewUrl = isImage && typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
@@ -2104,6 +2107,9 @@ export function createUploadState(file: File, context: {
     userId: context.userId ?? null,
     agentId: context.agentId ?? null,
     recognitionMode: context.recognitionMode,
+    wechatOutputMode: context.recognitionMode === "wechat_conversation"
+      ? context.wechatOutputMode ?? "reply_script"
+      : undefined,
     createdAt: new Date().toISOString()
   };
 }
@@ -2338,6 +2344,9 @@ export async function parseUploadedFileForGpt(
       successRatePercent: finalSuccessRatePercent,
       deadlineReached,
       recognitionMode: lastData?.recognitionMode ?? file.recognitionMode,
+      wechatOutputMode: (lastData?.recognitionMode ?? file.recognitionMode) === "wechat_conversation"
+        ? file.wechatOutputMode ?? "reply_script"
+        : undefined,
       parseStatus,
       limitationNote: mergeUniqueText(limitationNotes, [cancellationNote]).join(" "),
       status: hasEvidence ? "parsed" : input.cancelled ? "ready_to_send" : "failed"

@@ -87,6 +87,10 @@ import {
   DEFAULT_ADMIN_INGEST_ASSISTANT_NAME,
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
+import {
+  normalizeAdminIngestWechatOutputMode,
+  type AdminIngestWechatOutputMode
+} from "@/lib/enterprise/admin-ingest-wechat-output-mode";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { buildAdminIngestFailurePresentation } from "@/lib/enterprise/admin-ingest-failure-presentation";
 import {
@@ -2250,6 +2254,9 @@ export function IngestModeToggle() {
       syncTarget: [...platformContext.syncTarget]
     }));
     let isWechatConversationReply = hasAdminIngestWechatConversationAttachment(draftAttachments);
+    let wechatOutputMode = normalizeAdminIngestWechatOutputMode(
+      draftAttachments.find((file) => file.recognitionMode === "wechat_conversation")?.wechatOutputMode
+    );
     const baseInput = value || (draftAttachments.length > 0
       ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
@@ -2258,7 +2265,9 @@ export function IngestModeToggle() {
         value || "请根据这张微信对话截图回复客户。",
         "固定规则：左侧头像或白色气泡是客户，右侧头像或绿色气泡是用户本人。",
         "右侧消息只作上下文；回答客户最后一个问题、顾虑或需要回应的话。",
-        "只输出可直接发送给客户的答案正文，不要输出识别结果、分析、回复思路、标题、前言、角色标签或模型信息。"
+        wechatOutputMode === "full_answer"
+          ? "输出完整正文答案：包含核心判断、当下可直接发的回复、接下来的推进节奏和注意事项；不要输出 OCR 原文、知识来源、角色标签或模型信息。"
+          : "只输出可直接发送给客户的答案正文，不要输出识别结果、分析、回复思路、标题、前言、角色标签或模型信息。"
       ].join("\n")
       : baseInput;
     let effectiveInput = buildEffectiveInput(isWechatConversationReply);
@@ -2359,7 +2368,13 @@ export function IngestModeToggle() {
         {
           id: userMessageId,
           role: "user",
-          content: value || (isWechatConversationReply ? "微信截图识别并回复客户" : "附件投喂"),
+          content: value || (
+            isWechatConversationReply
+              ? wechatOutputMode === "full_answer"
+                ? "微信截图识别并输出完整正文"
+                : "微信截图识别并回复客户"
+              : "附件投喂"
+          ),
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
           attachments: draftAttachments,
           source: "admin_ingest",
@@ -2438,6 +2453,9 @@ export function IngestModeToggle() {
 
         if (!isWechatConversationReply && parsedAsWechatConversation) {
           isWechatConversationReply = true;
+          wechatOutputMode = normalizeAdminIngestWechatOutputMode(
+            outgoingAttachments.find((file) => file.recognitionMode === "wechat_conversation")?.wechatOutputMode
+          );
           effectiveInput = buildEffectiveInput(true);
         }
 
@@ -3458,7 +3476,8 @@ export function IngestModeToggle() {
       userId,
       agentId: activeAgent.id,
       platform: platformContext.platform,
-      recognitionMode
+      recognitionMode,
+      wechatOutputMode: recognitionMode === "wechat_conversation" ? "reply_script" : undefined
     }));
 
     if (states.length === 0) {
@@ -3490,6 +3509,20 @@ export function IngestModeToggle() {
       type: "info",
       title: "已移除附件"
     });
+  }
+
+  function handleWechatOutputModeChange(mode: AdminIngestWechatOutputMode) {
+    setUploadedFiles((current) => current.map((file) => (
+      file.recognitionMode === "wechat_conversation"
+        ? { ...file, wechatOutputMode: mode }
+        : file
+    )));
+    setNoticeMessage(
+      mode === "full_answer"
+        ? "微信截图将输出完整正文答案。"
+        : "微信截图将只输出精准回复话术。"
+    );
+    setErrorMessage("");
   }
 
   async function handleModelChange(model: string) {
@@ -4172,6 +4205,7 @@ export function IngestModeToggle() {
     onReconnectGpt: (modelLabel?: string) => handleCheckGptStatus("reconnect", modelLabel),
     onUpload: handleUpload,
     onRemoveUpload: handleRemoveUpload,
+    onWechatOutputModeChange: handleWechatOutputModeChange,
     onVoiceToggle: handleVoiceToggle,
     onSettingsChange: setSettingsState,
     onToolAction: handleToolAction,
