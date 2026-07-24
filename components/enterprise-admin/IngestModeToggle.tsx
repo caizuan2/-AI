@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Brain, GaugeCircle, MessageSquareText, Rocket } from "lucide-react";
+import { Brain, GaugeCircle, MessageSquareText } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
@@ -4297,17 +4297,6 @@ export function IngestModeToggle() {
           >
             <Brain className="h-4 w-4" aria-hidden="true" />
             训练记忆
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("release")}
-            className={[
-              "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-              mode === "release" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
-            ].join(" ")}
-          >
-            <Rocket className="h-4 w-4" aria-hidden="true" />
-            发布中心
           </button>
         </div>
       ) : null}

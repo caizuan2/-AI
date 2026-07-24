@@ -131,11 +131,14 @@ async function main() {
   );
   assert.match(
     sentMessageRenderSource,
-    /<IngestAttachmentPreview files=\{message\.attachments\} imageOnly \/>/,
-    "投喂端 Web 已发送消息应保留纯图片缩略图。"
+    /<IngestAttachmentPreview files=\{message\.attachments\} imageOnly enableImagePreview \/>/,
+    "投喂端 Web 已发送消息应保留可放大查看的纯图片缩略图。"
   );
   assert.match(shellSource, /files=\{message\.attachments\} compact imageOnly/);
-  assert.match(shellSource, /files=\{uploadedFiles\} onRemove=\{onRemoveUpload\} imageOnly/);
+  assert.match(
+    shellSource,
+    /files=\{uploadedFiles\}[\s\S]*?onRemove=\{onRemoveUpload\}[\s\S]*?imageOnly[\s\S]*?enableImagePreview[\s\S]*?composerThumbnailLayout/
+  );
   assert.match(modeToggleSource, /platformContext\.platform === "web"/);
   assert.match(modeToggleSource, /await persistAdminIngestUploadImages\(composerUploads\)/);
   assert.ok(
@@ -152,7 +155,7 @@ async function main() {
   assert.ok(imageOnlyBranchStart >= 0 && imageOnlyBranchEnd > imageOnlyBranchStart);
   assert.doesNotMatch(
     previewSource.slice(imageOnlyBranchStart, imageOnlyBranchEnd),
-    /fileName|formatFileSize|statusLabel/
+    /formatFileSize|statusLabel|kind\.description|<p[\s>]/
   );
 
   console.log("Admin ingest image-only persistence tests passed.");
