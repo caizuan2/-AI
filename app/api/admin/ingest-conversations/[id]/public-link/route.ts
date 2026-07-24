@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import {
   createOrUpdateAdminIngestPublicConversation,
   revokeAdminIngestPublicConversation
@@ -61,10 +61,7 @@ function jsonError(error: unknown) {
 
 export async function POST(request: Request, context: RouteContext) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_public_conversation"
-    });
+    const actor = await requireAdminIngestChatActor();
     const conversationId = await readConversationId(context);
 
     if (!conversationId) {
@@ -100,10 +97,7 @@ export async function POST(request: Request, context: RouteContext) {
 
 export async function DELETE(request: Request, context: RouteContext) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_public_conversation"
-    });
+    const actor = await requireAdminIngestChatActor();
     const conversationId = await readConversationId(context);
     const body = await request.json() as Record<string, unknown>;
     const record = await revokeAdminIngestPublicConversation({

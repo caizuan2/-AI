@@ -1,6 +1,6 @@
 import { apiError } from "@/lib/api-response";
 import { ValidationError } from "@/lib/errors";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import {
   buildAdminIngestImageUrl,
   readAdminIngestImage,
@@ -24,10 +24,7 @@ function jsonUtf8(data: unknown, status = 200) {
 
 export async function POST(request: Request) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_image"
-    });
+    const actor = await requireAdminIngestChatActor();
     const formData = await request.formData();
     const file = formData.get("file");
 
@@ -62,10 +59,7 @@ export async function POST(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_image"
-    });
+    const actor = await requireAdminIngestChatActor();
     const imageId = new URL(request.url).searchParams.get("id");
     const image = await readAdminIngestImage({
       ownerUserId: actor.id,

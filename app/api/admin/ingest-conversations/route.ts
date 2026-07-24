@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import {
   readAdminIngestConversationSyncState,
   writeAdminIngestConversationSyncState
@@ -27,12 +27,9 @@ function jsonError(error: unknown) {
   }, { status: 500 });
 }
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_conversation_sync"
-    });
+    const actor = await requireAdminIngestChatActor();
     const state = await readAdminIngestConversationSyncState(actor.id);
 
     return NextResponse.json({
@@ -47,10 +44,7 @@ export async function GET(request: Request) {
 
 export async function PUT(request: Request) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_conversation_sync"
-    });
+    const actor = await requireAdminIngestChatActor();
     const body = await request.json() as Record<string, unknown>;
     const state = await writeAdminIngestConversationSyncState(actor.id, body);
 

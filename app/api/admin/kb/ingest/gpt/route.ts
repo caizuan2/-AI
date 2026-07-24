@@ -31,7 +31,10 @@ import {
   type GptOSStyleLayerResult
 } from "@/lib/enterprise/gpt-os-style-layer";
 import { resolveIngestModelRuntime } from "@/lib/enterprise/ingest-model-options";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import {
+  requireAdminIngestChatAccess,
+  requireFullAdminIngestAccess
+} from "@/lib/enterprise/admin-ingest-auth";
 import {
   hasCanonicalAdminIngestGroundingScope,
   retrieveAdminIngestGrounding,
@@ -1101,12 +1104,12 @@ function readRequest(body: unknown) {
 export async function POST(request: Request) {
   const requestId = getRequestIdFromHeaders(request.headers);
   let actor: RbacUser | null = null;
+  let hasFullIngestAccess = false;
 
   try {
-    actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_kb_ingest_gpt"
-    });
+    const chatAccess = await requireAdminIngestChatAccess();
+    actor = chatAccess.actor;
+    hasFullIngestAccess = chatAccess.access.accessTier === "full_ingest";
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);
@@ -1126,6 +1129,12 @@ export async function POST(request: Request) {
   }
 
   if (input.operation === "retry_doubao_metadata") {
+    try {
+      await requireFullAdminIngestAccess();
+    } catch (error) {
+      return apiError(error);
+    }
+
     const enterpriseActor = toEnterpriseActor(actor);
     const attemptId = input.attemptId;
 
@@ -1575,7 +1584,7 @@ export async function POST(request: Request) {
     const doubaoMetadataFailureCode = isDoubaoTrainingResult
       ? readDiagnosticValue(rawResult.diagnostics, "doubao:metadataFailureCode:")
       : null;
-    const trainingLog = enterpriseActor && hasDatabaseUrl() && structuredForTrainingLog
+    const trainingLog = hasFullIngestAccess && enterpriseActor && hasDatabaseUrl() && structuredForTrainingLog
       ? await createEnterpriseIngestLog(enterpriseActor, {
         input: input.input,
         sourceType: "chat",
@@ -1597,7 +1606,7 @@ export async function POST(request: Request) {
           : null
       })
       : null;
-    const trainingRecords = enterpriseActor && hasDatabaseUrl()
+    const trainingRecords = hasFullIngestAccess && enterpriseActor && hasDatabaseUrl()
       ? await listEnterpriseTrainingRecords(enterpriseActor)
       : trainingLog?.record ? [trainingLog.record] : [];
 

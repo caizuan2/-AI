@@ -16,6 +16,7 @@ const friendlyMessages: Record<AppErrorCode, string> = {
   LICENSE_ACTIVATION_LIMIT_REACHED: "卡密激活次数已达上限。",
   LICENSE_USED: "卡密已使用。",
   LICENSE_APP_MISMATCH: "卡密不属于当前应用。",
+  INGEST_FULL_ACCESS_REQUIRED: "当前账号仅支持投喂端对话，需要投喂端卡密才能使用该功能。",
   USER_NOT_AUTHENTICATED: "当前账号未登录，请先登录。",
   REDEEM_FAILED: "卡密激活失败，请稍后重试。",
   NOT_FOUND: "没有找到对应内容。",

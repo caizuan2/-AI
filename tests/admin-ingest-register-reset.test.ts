@@ -98,11 +98,11 @@ test("register route activates before session creation and compensates failed ac
   const redeemIndex = route.indexOf("await redeemLicenseKey");
   const sessionIndex = route.indexOf("createSession(user.id");
 
-  assert.match(route, /getLicenseAppTypeFromKey\(normalizedLicenseKey\) !== "ingest_admin"/);
+  assert.match(route, /appType !== "user_app" && appType !== "ingest_admin"/);
   assert.match(route, /namespace: "ingest-auth-register-activation"/);
   assert.match(route, /limit: 5/);
   assert.match(route, /isActive: false/);
-  assert.match(route, /appType: "ingest_admin"/);
+  assert.match(route, /appType,\s+ip:/);
   assert.match(route, /registrationActivationCompleted/);
   assert.match(route, /prisma\.user\.delete/);
   assert.ok(createIndex >= 0 && redeemIndex > createIndex);
@@ -110,13 +110,13 @@ test("register route activates before session creation and compensates failed ac
   assert.match(route, /redirectTarget: "\/admin-ingest\?app=ingest-admin&platform=web"/);
 });
 
-test("ingest reset route accepts only the bound active ingest card", () => {
+test("ingest reset route accepts the bound active user or ingest card", () => {
   const route = readFileSync("app/api/ingest/auth/reset-password/route.ts", "utf8");
 
-  assert.match(route, /getLicenseAppTypeFromKey\(normalizedLicenseKey\) === "ingest_admin"/);
+  assert.match(route, /appType === "user_app" \|\| appType === "ingest_admin"/);
   assert.match(route, /status: LicenseKeyStatus\.USED/);
   assert.match(route, /license\.redeemedByUserId !== user\.id/);
-  assert.match(route, /hasRedeemedLicenseForAppType\(user\.id, "ingest_admin"\)/);
+  assert.match(route, /hasRedeemedLicenseForAppType\(user\.id, appType\)/);
   assert.match(route, /namespace: "ingest-auth-password-reset"/);
   assert.match(route, /limit: 5/);
   assert.match(route, /passwordHash/);
@@ -141,7 +141,7 @@ test("ingest auth UI exposes register activation and password recovery only in i
   assert.match(portal, /title: "登录小董AI"/);
   assert.match(portal, /title: "找回小董AI密码"/);
   assert.match(portal, /原小董AI卡密/);
-  assert.match(portal, /mode === "register" \? "小董AI卡密"/);
+  assert.match(portal, /用户端／投喂端卡密/);
   assert.doesNotMatch(portal, /找回投喂端密码|原投喂端卡密/);
   assert.match(portal, /passwordReset=1/);
   assert.match(forgotPage, /IngestSaasAuthPortal mode="reset"/);

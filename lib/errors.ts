@@ -38,6 +38,7 @@ export type AppErrorCode =
   | "LICENSE_ACTIVATION_LIMIT_REACHED"
   | "LICENSE_USED"
   | "LICENSE_APP_MISMATCH"
+  | "INGEST_FULL_ACCESS_REQUIRED"
   | "USER_NOT_AUTHENTICATED"
   | "REDEEM_FAILED"
   | "RATE_LIMITED";
@@ -130,6 +131,13 @@ export class LicenseActivationLimitReachedError extends AppError {
   }
 }
 
+export class IngestFullAccessRequiredError extends AppError {
+  constructor(message = "当前账号仅支持投喂端对话，需要投喂端卡密才能使用知识入库与训练功能。") {
+    super("INGEST_FULL_ACCESS_REQUIRED", message, 403);
+    this.name = "IngestFullAccessRequiredError";
+  }
+}
+
 export class NotFoundError extends AppError {
   constructor(message = "请求的资源不存在。") {
     super("NOT_FOUND", message, 404);
@@ -198,6 +206,7 @@ const appErrorCodes = new Set<AppErrorCode>([
   "LICENSE_ACTIVATION_LIMIT_REACHED",
   "LICENSE_USED",
   "LICENSE_APP_MISMATCH",
+  "INGEST_FULL_ACCESS_REQUIRED",
   "USER_NOT_AUTHENTICATED",
   "REDEEM_FAILED",
   "RATE_LIMITED"

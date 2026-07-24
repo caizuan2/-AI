@@ -146,7 +146,7 @@ async function main() {
       < modeToggleSource.indexOf("attachments: draftAttachments"),
     "图片永久地址必须在消息写入历史前生成。"
   );
-  assert.match(routeSource, /requireAdminIngestActor/);
+  assert.match(routeSource, /requireAdminIngestChatActor/);
   assert.match(routeSource, /Cache-Control": "private, max-age=31536000, immutable"/);
   assert.match(storeSource, /\/var\/www\/ai-knowledge-shared\/admin-ingest\/images/);
   const imageOnlyBranchStart = previewSource.indexOf("if (imageOnly && isImage)");

@@ -63,9 +63,10 @@ export async function POST(request: Request) {
 
   try {
     const normalizedLicenseKey = normalizeLicenseKey(input.licenseKey);
-    const isIngestLicense =
+    const appType = getLicenseAppTypeFromKey(normalizedLicenseKey);
+    const isPortalLicense =
       isSupportedLicenseKeyInput(normalizedLicenseKey) &&
-      getLicenseAppTypeFromKey(normalizedLicenseKey) === "ingest_admin";
+      (appType === "user_app" || appType === "ingest_admin");
     const [user, license] = await Promise.all([
       prisma.user.findUnique({
         where: {
@@ -99,10 +100,11 @@ export async function POST(request: Request) {
       !user ||
       !user.isActive ||
       !user.licenseActivated ||
-      !isIngestLicense ||
+      !isPortalLicense ||
       !license ||
       license.redeemedByUserId !== user.id ||
-      !(await hasRedeemedLicenseForAppType(user.id, "ingest_admin"))
+      !appType ||
+      !(await hasRedeemedLicenseForAppType(user.id, appType))
     ) {
       throw resetUnauthorized();
     }

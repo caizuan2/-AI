@@ -380,18 +380,23 @@ function testDialogAndLifecycleWiring() {
   ), "utf8");
   const layoutSource = readFileSync(path.join(process.cwd(), "app/admin-ingest/layout.tsx"), "utf8");
   const authStatusSource = readFileSync(path.join(process.cwd(), "app/api/ingest/auth/me/route.ts"), "utf8");
+  const accessTierSource = readFileSync(path.join(
+    process.cwd(),
+    "lib/enterprise/ingest-access-tier.ts"
+  ), "utf8");
 
   assert.match(gateSource, /invalidCodeRef\.current === code/);
   assert.match(gateSource, /guardEnabled = false/);
   assert.doesNotMatch(gateSource, /setInput|setUploadedFiles|setMessages|clearDraft/);
-  assert.match(layoutSource, /LicenseDisabledError/);
-  assert.match(layoutSource, /LicenseExpiredError/);
-  assert.match(layoutSource, /requireKbAdmin/);
-  assert.match(layoutSource, /requiredAppType:\s*"ingest_admin"/);
-  assert.match(authStatusSource, /requireKbAdmin/);
-  assert.match(authStatusSource, /requiredAppType:\s*"ingest_admin"/);
-  assert.match(authStatusSource, /LICENSE_DISABLED/);
-  assert.match(authStatusSource, /LICENSE_EXPIRED/);
+  assert.match(layoutSource, /resolveIngestAccessTier/);
+  assert.match(layoutSource, /initialLicenseCode = access\.invalidLicenseCode/);
+  assert.match(layoutSource, /initialAccessTier=\{initialAccessTier\}/);
+  assert.doesNotMatch(layoutSource, /requireKbAdmin/);
+  assert.match(authStatusSource, /resolveIngestAccessTier/);
+  assert.match(authStatusSource, /hasIngestPortalAccess/);
+  assert.match(authStatusSource, /accessTier: access\.accessTier/);
+  assert.match(accessTierSource, /LICENSE_DISABLED/);
+  assert.match(accessTierSource, /LICENSE_EXPIRED/);
 }
 
 async function main() {
