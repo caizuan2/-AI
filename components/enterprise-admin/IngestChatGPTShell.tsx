@@ -2583,7 +2583,7 @@ export function IngestChatGPTShell({
                       ) : null}
                       {message.attachments?.length ? (
                         <div className="mt-3">
-                          <IngestAttachmentPreview files={message.attachments} compact />
+                          <IngestAttachmentPreview files={message.attachments} compact imageOnly />
                         </div>
                       ) : null}
                       {message.provider === "local-fallback" ? (
@@ -2678,7 +2678,7 @@ export function IngestChatGPTShell({
           <form onSubmit={handleSubmit} className={`${CHAT_CONTENT_WIDTH_CLASS} rounded-[28px] border border-neutral-200 bg-white/95 p-2 shadow-none`}>
             {uploadedFiles.length > 0 ? (
               <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
-                <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} />
+                <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} imageOnly />
                 {wechatUpload ? (
                   <fieldset className="mt-2 flex flex-wrap items-center gap-2 border-t border-[#e8e8e5] px-1 pt-2">
                     <legend className="sr-only">微信截图输出方式</legend>

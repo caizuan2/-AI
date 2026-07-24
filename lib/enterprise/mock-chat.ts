@@ -70,6 +70,7 @@ export interface IngestChatMessage {
     fileSize: number;
     isImage?: boolean;
     previewUrl?: string;
+    persistentUrl?: string;
     extractedText?: string;
     summary?: string;
     mimeType?: string;

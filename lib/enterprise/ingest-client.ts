@@ -105,6 +105,7 @@ export interface IngestUploadState {
   fileSize: number;
   isImage?: boolean;
   previewUrl?: string;
+  persistentUrl?: string;
   rawFile?: File;
   extractedText?: string;
   summary?: string;
@@ -2247,7 +2248,65 @@ export function stripUploadRuntimeFields(file: IngestUploadState): Omit<IngestUp
 
   delete safeFile.rawFile;
 
+  if (safeFile.persistentUrl) {
+    safeFile.previewUrl = safeFile.persistentUrl;
+  } else if (
+    safeFile.previewUrl?.startsWith("blob:")
+    || safeFile.previewUrl?.startsWith("data:")
+  ) {
+    delete safeFile.previewUrl;
+  }
+
   return safeFile;
+}
+
+export async function persistAdminIngestUploadImages(
+  files: IngestUploadState[],
+  signal?: AbortSignal
+): Promise<IngestUploadState[]> {
+  const persistedFiles = await Promise.all(files.map(async (file) => {
+    if (!file.isImage || file.persistentUrl || !file.rawFile) {
+      return file;
+    }
+
+    const formData = new FormData();
+    formData.append("file", file.rawFile, file.fileName);
+    const response = await fetch("/api/admin/ingest-images", {
+      method: "POST",
+      body: formData,
+      signal
+    });
+    const data = await response.json() as ApiEnvelope<{
+      imageId: string;
+      imageUrl: string;
+      contentType: string;
+      sizeBytes: number;
+    }>;
+    const persistentUrl = data.data?.imageUrl?.trim() ?? "";
+
+    if (!response.ok || !data.ok || !persistentUrl.startsWith("/api/admin/ingest-images?id=")) {
+      throw new Error(data.userMessage || data.message || "图片永久保存失败，请稍后重试。");
+    }
+
+    return {
+      ...file,
+      previewUrl: persistentUrl,
+      persistentUrl
+    };
+  }));
+
+  if (typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    files.forEach((file, index) => {
+      if (
+        file.previewUrl?.startsWith("blob:")
+        && persistedFiles[index]?.persistentUrl
+      ) {
+        URL.revokeObjectURL(file.previewUrl);
+      }
+    });
+  }
+
+  return persistedFiles;
 }
 
 export async function parseUploadedFileForGpt(

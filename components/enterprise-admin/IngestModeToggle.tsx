@@ -29,6 +29,7 @@ import {
   ingestSyncTarget,
   AdminIngestFileParseCancelledError,
   parseUploadedFilesForGpt,
+  persistAdminIngestUploadImages,
   retryDoubaoKnowledgeDraftMetadata,
   saveKnowledgeDraft,
   sendCoreIngest,
@@ -2243,8 +2244,8 @@ export function IngestModeToggle() {
       return null;
     }
 
-    const composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
-    const draftAttachments = composerUploads.map((file) => ({
+    let composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
+    let draftAttachments = composerUploads.map((file) => ({
       ...stripUploadRuntimeFields(file),
       status: "attached" as const,
       agentId: activeAgent.id,
@@ -2301,6 +2302,45 @@ export function IngestModeToggle() {
       setNoticeMessage("上一条还在生成，请稍候。已保留最后一条输入，生成完成后可继续发送。");
       setErrorMessage("");
       return null;
+    }
+
+    if (
+      platformContext.platform === "web"
+      && composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl)
+    ) {
+      setIsParsing(true);
+      setNoticeMessage("正在永久保存图片...");
+      setErrorMessage("");
+
+      try {
+        composerUploads = await persistAdminIngestUploadImages(composerUploads);
+        draftAttachments = composerUploads.map((file) => ({
+          ...stripUploadRuntimeFields(file),
+          status: "attached" as const,
+          agentId: activeAgent.id,
+          tenantId,
+          userId,
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget]
+        }));
+        isWechatConversationReply = hasAdminIngestWechatConversationAttachment(draftAttachments);
+        wechatOutputMode = normalizeAdminIngestWechatOutputMode(
+          draftAttachments.find((file) => file.recognitionMode === "wechat_conversation")?.wechatOutputMode
+        );
+        effectiveInput = buildEffectiveInput(isWechatConversationReply);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "图片永久保存失败，请稍后重试。";
+
+        setIsParsing(false);
+        setNoticeMessage("");
+        setErrorMessage(message);
+        showActionToast({
+          type: "warning",
+          title: "图片未发送",
+          description: message
+        });
+        return null;
+      }
     }
 
     requestQueueRef.current = recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt);
@@ -3500,7 +3540,11 @@ export function IngestModeToggle() {
   function handleRemoveUpload(fileId: string) {
     const target = uploadedFiles.find((file) => file.id === fileId);
 
-    if (target?.previewUrl && typeof URL !== "undefined" && typeof URL.revokeObjectURL === "function") {
+    if (
+      target?.previewUrl?.startsWith("blob:")
+      && typeof URL !== "undefined"
+      && typeof URL.revokeObjectURL === "function"
+    ) {
       URL.revokeObjectURL(target.previewUrl);
     }
 
