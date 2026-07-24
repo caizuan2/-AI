@@ -51,7 +51,8 @@ export function IngestKnowledgeDraftActions({
   onContinueOptimize,
   onSourceOpen,
   onReconnectGpt,
-  feedbackActions
+  feedbackActions,
+  canSaveKnowledge = true
 }: {
   isSaving: boolean;
   isSaved: boolean;
@@ -69,6 +70,7 @@ export function IngestKnowledgeDraftActions({
   onSourceOpen?: () => void;
   onReconnectGpt?: () => void;
   feedbackActions?: ReactNode;
+  canSaveKnowledge?: boolean;
 }) {
   const [isSourceOpen, setIsSourceOpen] = useState(false);
   const [saveState, setSaveState] = useState<SaveState>(() => getInitialSaveState(isSaved, isError, isSaving));
@@ -209,16 +211,18 @@ export function IngestKnowledgeDraftActions({
           </div>
         ) : null}
       </div>
-      <button
-        type="button"
-        onClick={() => void handleSaveClick()}
-        disabled={saveState === "saving"}
-        title={saveTitle}
-        aria-label={saveTitle}
-        className={saveButtonClass}
-      >
-        {saveState === "saving" ? <Loader2 className={`${iconClass} animate-spin`} aria-hidden="true" /> : saveState === "saved" ? <Check className={iconClass} aria-hidden="true" /> : saveState === "error" ? <AlertTriangle className={iconClass} aria-hidden="true" /> : <Save className={iconClass} aria-hidden="true" />}
-      </button>
+      {canSaveKnowledge ? (
+        <button
+          type="button"
+          onClick={() => void handleSaveClick()}
+          disabled={saveState === "saving"}
+          title={saveTitle}
+          aria-label={saveTitle}
+          className={saveButtonClass}
+        >
+          {saveState === "saving" ? <Loader2 className={`${iconClass} animate-spin`} aria-hidden="true" /> : saveState === "saved" ? <Check className={iconClass} aria-hidden="true" /> : saveState === "error" ? <AlertTriangle className={iconClass} aria-hidden="true" /> : <Save className={iconClass} aria-hidden="true" />}
+        </button>
+      ) : null}
       <button type="button" onClick={onRegenerate} disabled={isParsing} title={isParsing ? "生成中" : "重新生成"} aria-label={isParsing ? "生成中" : "重新生成"} className={`${actionButtonClass} disabled:text-[#aaa]`}>
         <RefreshCw className={isParsing ? `${iconClass} animate-spin` : iconClass} aria-hidden="true" />
       </button>
@@ -233,7 +237,7 @@ export function IngestKnowledgeDraftActions({
         </button>
       ) : null}
       {feedbackActions}
-      {saveStatusMessage ? (
+      {canSaveKnowledge && saveStatusMessage ? (
         <span className={saveState === "error" ? "ml-1 text-xs font-medium text-[#b93b4a]" : "ml-1 text-xs font-medium text-[#9a6500]"} role={saveState === "error" ? "alert" : "status"}>
           {saveStatusMessage}
         </span>

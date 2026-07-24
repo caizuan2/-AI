@@ -4,7 +4,7 @@ import { checkDoubaoIngestHealth } from "@/lib/enterprise/doubao-health-check";
 import { checkKimiIngestHealth } from "@/lib/enterprise/kimi-health-check";
 import { checkOpenAIIngestHealth } from "@/lib/enterprise/openai-health-check";
 import { checkQwenIngestHealth } from "@/lib/enterprise/qwen-health-check";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import {
   normalizeIngestModelProvider,
   resolveIngestModelRuntime
@@ -36,10 +36,7 @@ function isLocalDevWithoutDatabase(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_kb_ingest_model_health"
-    });
+    await requireAdminIngestChatActor();
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);

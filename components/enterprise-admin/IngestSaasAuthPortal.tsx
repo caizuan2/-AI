@@ -29,7 +29,9 @@ type IngestAuthUser = {
   name: string;
   isActive?: boolean;
   licenseActivated: boolean;
+  hasIngestPortalAccess?: boolean;
   hasIngestAccess?: boolean;
+  accessTier?: "none" | "chat_only" | "full_ingest";
   isSuperAdmin?: boolean;
   roles?: string[];
 };
@@ -38,6 +40,7 @@ type IngestAuthResponse = {
   success: true;
   sessionToken?: string;
   licenseActivated: boolean;
+  hasIngestPortalAccess?: boolean;
   hasIngestAccess?: boolean;
   user: IngestAuthUser;
 };
@@ -47,7 +50,9 @@ type IngestAuthMeState = {
   authenticated: boolean;
   activated: boolean;
   licenseActivated: boolean;
+  hasIngestPortalAccess: boolean;
   hasIngestAccess: boolean;
+  accessTier: "none" | "chat_only" | "full_ingest";
   role: string | null;
   roles: string[];
   user: IngestAuthUser | null;
@@ -68,7 +73,7 @@ const modeCopy: Record<IngestAuthMode, {
     title: "登录小董AI",
     description: "",
     sideTitle: "用账号和卡密保护你的投喂系统。",
-    sideDescription: "商业化入口会先校验登录态，再校验投喂端卡密激活状态。",
+    sideDescription: "商业化入口会先校验登录态，再按用户端或投喂端卡密加载对应权限。",
     cta: "登录"
   },
   register: {
@@ -76,15 +81,15 @@ const modeCopy: Record<IngestAuthMode, {
     title: "",
     description: "",
     sideTitle: "注册、激活、进入工作台，一条商业闭环。",
-    sideDescription: "注册时绑定有效投喂端卡密，成功后即可进入 admin-ingest。",
+    sideDescription: "注册时可绑定有效用户端或投喂端卡密，成功后即可进入对应工作台。",
     cta: "注册并激活"
   },
   activate: {
     eyebrow: "卡密激活",
-    title: "激活投喂权限",
-    description: "请输入超级管理员生成的投喂端卡密，激活后自动进入工作台。",
+    title: "激活小董AI权限",
+    description: "请输入超级管理员生成的用户端或投喂端卡密，激活后自动进入对应工作台。",
     sideTitle: "卡密就是 SaaS 权限入口。",
-    sideDescription: "有效卡密会绑定当前账号，并授予管理员投喂版访问权限。",
+    sideDescription: "有效卡密会绑定当前账号，并按卡密类型授予对话版或完整投喂版权限。",
     cta: "激活并进入"
   },
   reset: {
@@ -144,7 +149,20 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
       ? user.roles.filter((role): role is string => typeof role === "string")
       : [];
   const hasPrivilegedIngestRole = roles.some((role) => role === "super_admin" || role === "ingest_admin" || role === "kb_admin");
-  const hasIngestAccess = source.hasIngestAccess === true || (authenticated && hasPrivilegedIngestRole && activated);
+  const hasIngestAccess = typeof source.hasIngestAccess === "boolean"
+    ? source.hasIngestAccess
+    : authenticated && hasPrivilegedIngestRole && activated;
+  const rawAccessTier = typeof source.accessTier === "string"
+    ? source.accessTier
+    : user?.accessTier;
+  const accessTier = rawAccessTier === "chat_only" || rawAccessTier === "full_ingest"
+    ? rawAccessTier
+    : hasIngestAccess
+      ? "full_ingest"
+      : "none";
+  const hasIngestPortalAccess = source.hasIngestPortalAccess === true
+    || user?.hasIngestPortalAccess === true
+    || accessTier !== "none";
   const role = typeof source.role === "string" ? source.role : null;
   const errorCode = typeof source.errorCode === "string" ? source.errorCode : undefined;
   const message = typeof source.message === "string" ? source.message : undefined;
@@ -154,7 +172,9 @@ function normalizeAuthMePayload(payload: unknown): IngestAuthMeState | null {
     authenticated,
     activated,
     licenseActivated,
+    hasIngestPortalAccess,
     hasIngestAccess,
+    accessTier,
     role,
     roles,
     user,
@@ -195,8 +215,8 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const [checkError, setCheckError] = useState("");
   const passwordReset = mode === "login" && searchParams.get("passwordReset") === "1";
 
-  const goNext = useCallback((hasIngestAccess: boolean) => {
-    router.replace(hasIngestAccess ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
+  const goNext = useCallback((hasIngestPortalAccess: boolean) => {
+    router.replace(hasIngestPortalAccess ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
     router.refresh();
   }, [nextPath, router]);
 
@@ -244,7 +264,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         }
 
         if (mode === "activate") {
-          if (authState.hasIngestAccess) {
+          if (authState.hasIngestAccess || authState.accessTier === "full_ingest") {
             goNext(true);
             return;
           }
@@ -253,7 +273,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           return;
         }
 
-        goNext(authState.hasIngestAccess);
+        goNext(authState.hasIngestPortalAccess);
         return;
       } catch {
         if (!active) {
@@ -293,7 +313,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
     }
 
     if ((mode === "activate" || mode === "register" || mode === "reset") && !licenseKey.trim()) {
-      setError(mode === "activate" ? "请输入投喂端卡密。" : "请输入小董AI卡密。");
+      setError("请输入用户端或投喂端卡密。");
       return;
     }
 
@@ -309,7 +329,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             ? "/api/ingest/auth/reset-password"
             : "/api/ingest/auth/activate-license";
       const body = mode === "activate"
-        ? { licenseKey, appType: "ingest_admin", app: "ingest_admin" }
+        ? { licenseKey }
         : mode === "reset"
           ? {
               phone: username,
@@ -341,11 +361,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       }
 
       const data = await unwrapApiResponse<IngestAuthResponse>(response, "请求失败，请稍后重试。");
-      const hasIngestAccess = data.hasIngestAccess
+      const hasIngestPortalAccess = data.hasIngestPortalAccess
+        ?? data.user.hasIngestPortalAccess
+        ?? data.hasIngestAccess
         ?? data.user.hasIngestAccess
         ?? (data.licenseActivated || data.user.licenseActivated);
 
-      goNext(hasIngestAccess);
+      goNext(hasIngestPortalAccess);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
     } finally {
@@ -534,7 +556,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               {mode === "activate" || mode === "register" || mode === "reset" ? (
                 <label className="block">
                   <span className="text-sm font-medium">
-                    {mode === "reset" ? "原小董AI卡密" : mode === "register" ? "小董AI卡密" : "投喂端卡密"}
+                    {mode === "reset" ? "原小董AI卡密" : "用户端／投喂端卡密"}
                   </span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <KeyRound className="h-4 w-4 text-slate-400" />
@@ -544,7 +566,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                       onChange={(event) => setLicenseKey(event.target.value)}
                       autoComplete="one-time-code"
                       className="h-auto border-0 bg-transparent p-0 font-mono shadow-none focus-visible:ring-0"
-                      placeholder="XT-INGEST-XXXX-XXXX-XXXX"
+                      placeholder="XT-USER / XT-INGEST"
                     />
                   </span>
                 </label>

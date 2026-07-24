@@ -15,10 +15,27 @@ import {
   startIngestLicenseStatusMonitor,
   type IngestLicenseInvalidCode
 } from "@/lib/enterprise/ingest-license-invalid";
+import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
 
 const useClientLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 const ACTIVATE_HREF = "/ingest/activate?next=%2Fadmin-ingest";
 const SWITCH_ACCOUNT_HREF = `/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`;
+
+function readAccessTier(payload: unknown): IngestAccessTier | null {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+
+  const root = payload as Record<string, unknown>;
+  const source = root.data && typeof root.data === "object"
+    ? root.data as Record<string, unknown>
+    : root;
+  const tier = source.accessTier;
+
+  return tier === "none" || tier === "chat_only" || tier === "full_ingest"
+    ? tier
+    : null;
+}
 
 export function IngestLicenseInvalidDialog({
   dialogRef,
@@ -78,13 +95,16 @@ export function IngestLicenseInvalidDialog({
 
 export function IngestLicenseInvalidGate({
   initialCode = null,
+  initialAccessTier = "full_ingest",
   children
 }: {
   initialCode?: IngestLicenseInvalidCode | null;
+  initialAccessTier?: IngestAccessTier;
   children: ReactNode;
 }) {
   const router = useRouter();
   const invalidCodeRef = useRef<IngestLicenseInvalidCode | null>(initialCode);
+  const accessTierRef = useRef<IngestAccessTier>(initialAccessTier);
   const dialogRef = useRef<HTMLElement>(null);
   const [invalidCode, setInvalidCode] = useState<IngestLicenseInvalidCode | null>(initialCode);
   const [switchingAccount, setSwitchingAccount] = useState(false);
@@ -129,12 +149,20 @@ export function IngestLicenseInvalidGate({
         monitorSignal.addEventListener("abort", abort, { once: true });
 
         try {
-          await window.fetch("/api/ingest/auth/me?licenseCheck=1", {
+          const response = await window.fetch("/api/ingest/auth/me?licenseCheck=1", {
             method: "GET",
             cache: "no-store",
             credentials: "include",
             signal: controller.signal
           });
+
+          if (response.ok) {
+            const nextTier = readAccessTier(await response.json());
+
+            if (nextTier && nextTier !== accessTierRef.current) {
+              router.refresh();
+            }
+          }
         } catch {
           // Network failures and aborted checks must not invalidate an otherwise usable session.
         } finally {
@@ -156,7 +184,11 @@ export function IngestLicenseInvalidGate({
       setIntervalFn: (handler, intervalMs) => window.setInterval(handler, intervalMs),
       clearIntervalFn: (intervalId) => window.clearInterval(intervalId)
     });
-  }, []);
+  }, [router]);
+
+  useEffect(() => {
+    accessTierRef.current = initialAccessTier;
+  }, [initialAccessTier]);
 
   useEffect(() => {
     if (!invalidCode) {

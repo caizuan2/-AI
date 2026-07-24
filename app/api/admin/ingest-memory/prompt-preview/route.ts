@@ -23,10 +23,7 @@ function jsonError(error: unknown) {
 
 export async function POST(request: Request) {
   try {
-    const actor = await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_ingest_memory_prompt_preview"
-    });
+    const actor = await requireAdminIngestActor(request);
 
     const body = await request.json() as Record<string, unknown>;
     const query = typeof body.query === "string" ? body.query : "";

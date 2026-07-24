@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { apiSuccess } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireUser } from "@/lib/auth";
-import { redeemLicenseKey } from "@/lib/auth/license";
+import {
+  getLicenseAppTypeFromKey,
+  isSupportedLicenseKeyInput,
+  normalizeLicenseKey,
+  redeemLicenseKey
+} from "@/lib/auth/license";
 import { AppError, toAppError, ValidationError } from "@/lib/errors";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 
@@ -24,7 +29,19 @@ function readActivationRequest(body: unknown) {
     throw new ValidationError("请输入卡密。");
   }
 
-  return { licenseKey };
+  const normalizedLicenseKey = normalizeLicenseKey(licenseKey);
+
+  if (!isSupportedLicenseKeyInput(normalizedLicenseKey)) {
+    throw new ValidationError("卡密格式无效。");
+  }
+
+  const appType = getLicenseAppTypeFromKey(normalizedLicenseKey);
+
+  if (appType !== "user_app" && appType !== "ingest_admin") {
+    throw new ValidationError("请使用用户端或投喂端卡密。");
+  }
+
+  return { licenseKey: normalizedLicenseKey, appType };
 }
 
 type IngestActivationErrorCode =
@@ -144,7 +161,7 @@ export async function POST(request: Request) {
 
   try {
     const activatedUser = await redeemLicenseKey(user.id, input.licenseKey, {
-      appType: "ingest_admin",
+      appType: input.appType,
       ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
       userAgent: request.headers.get("user-agent") ?? undefined
     });
@@ -155,10 +172,16 @@ export async function POST(request: Request) {
 
     await setIngestPortalCookie(nextUser, request);
 
+    const authUser = await toIngestAuthUser(nextUser);
+
     return apiSuccess({
       success: true,
-      licenseActivated: true,
-      user: await toIngestAuthUser(nextUser)
+      licenseActivated: authUser.licenseActivated,
+      hasIngestPortalAccess: authUser.hasIngestPortalAccess,
+      hasIngestAccess: authUser.hasIngestAccess,
+      accessTier: authUser.accessTier,
+      capabilities: authUser.capabilities,
+      user: authUser
     });
   } catch (error) {
     return activationErrorResponse(error);

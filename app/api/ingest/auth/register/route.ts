@@ -30,18 +30,20 @@ function getRequestIp(request: Request) {
   return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
 }
 
-function assertIngestLicenseKey(licenseKey: string) {
+function assertPortalLicenseKey(licenseKey: string) {
   const normalizedLicenseKey = normalizeLicenseKey(licenseKey);
 
   if (!isSupportedLicenseKeyInput(normalizedLicenseKey)) {
     throw new InvalidLicenseKeyError("卡密格式无效。");
   }
 
-  if (getLicenseAppTypeFromKey(normalizedLicenseKey) !== "ingest_admin") {
-    throw new LicenseAppTypeMismatchError("卡密不属于投喂版。");
+  const appType = getLicenseAppTypeFromKey(normalizedLicenseKey);
+
+  if (appType !== "user_app" && appType !== "ingest_admin") {
+    throw new LicenseAppTypeMismatchError("请使用用户端或投喂端卡密。");
   }
 
-  return normalizedLicenseKey;
+  return { normalizedLicenseKey, appType };
 }
 
 async function registrationActivationCompleted(userId: string, licenseKey: string) {
@@ -102,7 +104,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const normalizedLicenseKey = assertIngestLicenseKey(input.licenseKey);
+    const { normalizedLicenseKey, appType } = assertPortalLicenseKey(input.licenseKey);
     const schema = await ensureRegistrationSchema();
 
     if (!schema.ready) {
@@ -139,7 +141,7 @@ export async function POST(request: Request) {
 
     try {
       const activatedUser = await redeemLicenseKey(user.id, normalizedLicenseKey, {
-        appType: "ingest_admin",
+        appType,
         ip: getRequestIp(request),
         userAgent: request.headers.get("user-agent") ?? undefined
       });
@@ -180,11 +182,13 @@ export async function POST(request: Request) {
       success: true,
       sessionToken: session.token,
       licenseActivated: authUser.licenseActivated,
-      hasIngestAccess: authUser.licenseActivated,
+      hasIngestPortalAccess: authUser.hasIngestPortalAccess,
+      hasIngestAccess: authUser.hasIngestAccess,
+      accessTier: authUser.accessTier,
+      capabilities: authUser.capabilities,
       redirectTarget: "/admin-ingest?app=ingest-admin&platform=web",
       user: {
-        ...authUser,
-        hasIngestAccess: authUser.licenseActivated
+        ...authUser
       }
     }, { status: 201 });
   } catch (error) {

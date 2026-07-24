@@ -243,6 +243,8 @@ interface IngestChatGPTShellProps {
   onToast?: (toast: { title: string; description?: string; type?: "success" | "warning" | "info" }) => void;
   autonomousEnabled?: boolean;
   onAutonomousEnabledChange?: (enabled: boolean) => void;
+  canSaveKnowledge?: boolean;
+  showTrainingEntries?: boolean;
 }
 
 const uploadAcceptByTool: Record<string, string> = {
@@ -873,7 +875,9 @@ export function IngestChatGPTShell({
   onToolAction,
   onToast,
   autonomousEnabled: controlledAutonomousEnabled,
-  onAutonomousEnabledChange
+  onAutonomousEnabledChange,
+  canSaveKnowledge = true,
+  showTrainingEntries = true
 }: IngestChatGPTShellProps = {}) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingUploadRecognitionModeRef = useRef<"wechat_conversation" | undefined>(undefined);
@@ -1005,11 +1009,13 @@ export function IngestChatGPTShell({
   );
 
   const navItems = useMemo(
-    () => ingestPrimaryRailFeatures.map((item) => ({
-      ...item,
-      badge: item.key === "tasks" && records.length > 0 ? String(Math.min(records.length, 99)) : undefined
-    })),
-    [records.length]
+    () => ingestPrimaryRailFeatures
+      .filter((item) => showTrainingEntries || (item.key !== "tasks" && item.key !== "memory"))
+      .map((item) => ({
+        ...item,
+        badge: item.key === "tasks" && records.length > 0 ? String(Math.min(records.length, 99)) : undefined
+      })),
+    [records.length, showTrainingEntries]
   );
 
   const normalizedSearch = searchKeyword.trim().toLowerCase();
@@ -1781,6 +1787,12 @@ export function IngestChatGPTShell({
   }
 
   async function handleSaveDraft() {
+    if (!canSaveKnowledge) {
+      setErrorMessage("");
+      setNoticeMessage("当前账号为对话版，需要投喂端卡密才能保存知识库。");
+      return null;
+    }
+
     if (onSave) {
       const result = await onSave();
 
@@ -2589,6 +2601,7 @@ export function IngestChatGPTShell({
                       ) : null}
                       {isAssistantResult ? (
                         <IngestKnowledgeDraftActions
+                          canSaveKnowledge={canSaveKnowledge}
                           isSaving={isSaving}
                           isSaved={draft.saveStatus === "已保存"}
                           isError={draft.saveStatus === "保存失败"}
@@ -2856,7 +2869,7 @@ export function IngestChatGPTShell({
         </div>
         ) : null}
 
-        {drawerOpen ? (
+        {drawerOpen && showTrainingEntries ? (
           <div className="absolute inset-y-0 right-0 z-40 flex w-full justify-end bg-black/10" onClick={() => setDrawerOpen(false)}>
             <aside className="h-full w-full max-w-[390px] overflow-y-auto border-l border-[#ececea] bg-[#fbfbfa] p-4 shadow-[-18px_0_45px_rgba(15,23,42,0.08)]" onClick={(event) => event.stopPropagation()}>
               <div className="mb-4 flex items-center justify-between gap-3">

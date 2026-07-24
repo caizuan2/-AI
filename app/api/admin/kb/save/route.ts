@@ -4,6 +4,7 @@ import { isPlainObject } from "@/lib/api/responses";
 import { buildContentHash, cleanIngestText, splitAdminKbChunks } from "@/lib/admin-kb/ingestion";
 import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 import { requireKbAdmin } from "@/lib/auth/guards";
+import { requireFullAdminIngestAccess } from "@/lib/enterprise/admin-ingest-auth";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import { prisma } from "@/lib/prisma";
@@ -397,6 +398,7 @@ export async function POST(request: Request) {
   let actor: Awaited<ReturnType<typeof requireKbAdmin>>;
 
   try {
+    await requireFullAdminIngestAccess();
     actor = await requireKbAdmin(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_kb_enterprise_save"

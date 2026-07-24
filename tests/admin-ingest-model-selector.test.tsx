@@ -199,10 +199,9 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(modeToggleSource, /function handleCancelIngest\(\)/);
   assert.match(modeToggleSource, /输入内容和附件已保留/);
   assert.match(modeToggleSource, /onCancel:\s*handleCancelIngest/);
-  assert.match(healthRouteSource, /await requireAdminIngestActor\(request/);
+  assert.match(healthRouteSource, /await requireAdminIngestChatActor\(\)/);
   assert.match(healthRouteSource, /testRequest: url\.searchParams\.get\("testRequest"\) === "true"/);
   assert.match(healthRouteSource, /forceTestRequest: url\.searchParams\.get\("forceTestRequest"\) === "true"/);
-  assert.match(healthRouteSource, /targetType:\s*"admin_kb_ingest_model_health"/);
   assert.match(healthRouteSource, /return apiError\(error\)/);
 }
 

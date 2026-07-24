@@ -8,7 +8,7 @@ import {
   ADMIN_INGEST_MIN_PAGE_BATCH_SIZE,
   parseAdminIngestFile
 } from "@/lib/enterprise/ingest-file-parser";
-import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import {
   getIngestModelOptionByProvider,
   type IngestModelProvider
@@ -128,10 +128,7 @@ function readAdminIngestParseModelAffinity(formData: FormData): AdminIngestParse
 
 export async function POST(request: Request) {
   try {
-    await requireAdminIngestActor(request, {
-      deniedAction: "RBAC_ACCESS_DENIED",
-      targetType: "admin_kb_ingest_file_parse"
-    });
+    await requireAdminIngestChatActor();
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);

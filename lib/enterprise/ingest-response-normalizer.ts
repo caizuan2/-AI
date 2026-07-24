@@ -332,6 +332,9 @@ export function isAuthFailure(
   const raw = mergeIngestResponsePayload(data);
   const text = collectTextSignals(data, error);
   const authenticated = readAtPath(data, ["data", "authenticated"]) ?? readAtPath(data, ["authenticated"]) ?? raw?.authenticated;
+  const hasIngestPortalAccess = readAtPath(data, ["data", "hasIngestPortalAccess"])
+    ?? readAtPath(data, ["hasIngestPortalAccess"])
+    ?? raw?.hasIngestPortalAccess;
   const hasIngestAccess = readAtPath(data, ["data", "hasIngestAccess"]) ?? readAtPath(data, ["hasIngestAccess"]) ?? raw?.hasIngestAccess;
 
   return status === 401
@@ -348,7 +351,7 @@ export function isAuthFailure(
     || text.includes("没有权限")
     || text.includes("不能访问")
     || authenticated === false
-    || hasIngestAccess === false;
+    || (hasIngestPortalAccess !== true && hasIngestAccess === false);
 }
 
 export function isModelHealthFailure(

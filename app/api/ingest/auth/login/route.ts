@@ -88,28 +88,27 @@ export async function POST(request: Request) {
     const authUser = await toIngestAuthUser(appUser);
     const roles = authUser.roles as AppRole[];
     const role = roles.length > 0 ? getHighestRole(roles) : null;
-    const hasIngestAccess = authUser.licenseActivated === true
-      && roles.some((candidateRole) =>
-        candidateRole === "kb_admin" ||
-        candidateRole === "ingest_admin" ||
-        candidateRole === "enterprise_admin" ||
-        candidateRole === "super_admin"
-      );
+    const hasIngestPortalAccess = authUser.hasIngestPortalAccess;
+    const hasIngestAccess = authUser.hasIngestAccess;
 
     return apiSuccess({
       success: true,
       authenticated: true,
       sessionToken: session.token,
-      licenseActivated: hasIngestAccess,
+      licenseActivated: hasIngestPortalAccess,
+      hasIngestPortalAccess,
       hasIngestAccess,
+      accessTier: authUser.accessTier,
+      capabilities: authUser.capabilities,
       role,
       roles,
-      redirectTarget: hasIngestAccess
+      redirectTarget: hasIngestPortalAccess
         ? "/admin-ingest?app=ingest-admin&platform=web"
         : "/ingest/activate",
       user: {
         ...authUser,
-        licenseActivated: hasIngestAccess,
+        licenseActivated: hasIngestPortalAccess,
+        hasIngestPortalAccess,
         hasIngestAccess
       }
     });

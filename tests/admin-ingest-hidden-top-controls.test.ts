@@ -11,7 +11,7 @@ const shellSource = readFileSync(
 );
 
 const topModeNavigationStart = modeToggleSource.indexOf('activeRailKey !== "experts"');
-const topModeNavigationEnd = modeToggleSource.indexOf('{mode === "knowledge"');
+const topModeNavigationEnd = modeToggleSource.indexOf('{effectiveMode === "knowledge"');
 const chatHeaderStart = shellSource.indexOf(
   '<section className="relative flex min-w-0 flex-1 flex-col bg-white">'
 );

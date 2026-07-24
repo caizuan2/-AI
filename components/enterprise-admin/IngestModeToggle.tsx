@@ -123,6 +123,10 @@ import {
 } from "@/lib/enterprise/ingest-message-reducer";
 import { buildIngestContextPayload } from "@/lib/enterprise/ingest-context-builder";
 import { MAX_INGEST_CONTEXT_CHARS } from "@/lib/enterprise/ingest-context-compressor";
+import type {
+  IngestAccessTier,
+  IngestCapabilities
+} from "@/lib/enterprise/ingest-access-policy";
 import {
   createIngestRequestAttemptId,
   createIngestRequestId,
@@ -171,6 +175,19 @@ type IngestSendOptions = {
   preserveComposer?: boolean;
 };
 type OpenPanel = "notifications" | "settings" | null;
+
+type IngestModeToggleProps = {
+  accessTier?: IngestAccessTier;
+  capabilities?: IngestCapabilities;
+};
+
+const FULL_INGEST_CAPABILITIES: IngestCapabilities = {
+  enterPortal: true,
+  chat: true,
+  aiControl: true,
+  trainingMemory: true,
+  saveKnowledge: true
+};
 type GptFallbackToast = {
   id: string;
   title: string;
@@ -718,7 +735,10 @@ function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent 
   };
 }
 
-export function IngestModeToggle() {
+export function IngestModeToggle({
+  accessTier = "full_ingest",
+  capabilities = FULL_INGEST_CAPABILITIES
+}: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const restoredInitialConversationRef = useRef(false);
   const doubaoHealthRequestVersionRef = useRef(0);
@@ -726,6 +746,7 @@ export function IngestModeToggle() {
   const activeConversationIdRef = useRef("");
   const [platformContext, setPlatformContext] = useState<AdminIngestPlatformContext>(defaultAdminIngestPlatformContext);
   const [mode, setMode] = useState<IngestMode>("chat");
+  const effectiveMode = capabilities.aiControl || capabilities.trainingMemory ? mode : "chat";
   const [agents, setAgents] = useState<IngestChatAgent[]>(normalizeInitialAgents);
   const [activeAgentId, setActiveAgentId] = useState("");
   const [agentConversations, setAgentConversations] = useState<IngestAgentConversation[]>([]);
@@ -734,6 +755,10 @@ export function IngestModeToggle() {
   const [expandedConversationAgentIds, setExpandedConversationAgentIds] = useState<string[]>([]);
   const [pinnedAgentIds, setPinnedAgentIds] = useState<string[]>([]);
   const [activeRailKey, setActiveRailKey] = useState<IngestRailKey>("chat");
+  const effectiveRailKey = !capabilities.trainingMemory
+    && (activeRailKey === "tasks" || activeRailKey === "memory")
+    ? "chat"
+    : activeRailKey;
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [isAgentDetailOpen, setIsAgentDetailOpen] = useState(false);
   const [deleteCandidateAgent, setDeleteCandidateAgent] = useState<IngestChatAgent | null>(null);
@@ -1418,6 +1443,15 @@ export function IngestModeToggle() {
   }
 
   function handleRailChange(nextKey: IngestRailKey) {
+    if (!capabilities.trainingMemory && (nextKey === "tasks" || nextKey === "memory")) {
+      setMode("chat");
+      setActiveRailKey("chat");
+      setOpenPanel(null);
+      setErrorMessage("");
+      setNoticeMessage("");
+      return;
+    }
+
     if (nextKey === "settings" && openPanel === "settings") {
       setOpenPanel(null);
       setActiveRailKey("chat");
@@ -2519,13 +2553,18 @@ export function IngestModeToggle() {
             promptPreview: null,
             warnings: ["WECHAT_DIRECT_REPLY_SKIPPED_MEMORY_PREVIEW"]
           }
-        : await prepareMemoryV2Context({
-            query: effectiveInput,
-            conversationId,
-            agentId: activeAgent.id,
-            knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
-            messages: conversationState.messages
-          });
+        : !capabilities.trainingMemory
+          ? {
+              promptPreview: null,
+              warnings: ["CHAT_ONLY_SERVER_GROUNDING"]
+            }
+          : await prepareMemoryV2Context({
+              query: effectiveInput,
+              conversationId,
+              agentId: activeAgent.id,
+              knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+              messages: conversationState.messages
+            });
       const memoryV2Preview = memoryV2Trace.promptPreview;
       const contextPayload = buildIngestContextPayload({
         conversationId,
@@ -2885,11 +2924,15 @@ export function IngestModeToggle() {
           : fallbackDescription ? "备用模型已完成本次投喂" : "最近投喂完成",
         description: metadataInferencePaused
           ? metadataPausedNotice
-          : fallbackDescription || (outgoingAttachments.length > 0
-            ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
-            : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`)
+          : fallbackDescription || (capabilities.trainingMemory
+            ? outgoingAttachments.length > 0
+              ? `${outgoingAttachments.length} 个附件已加入投喂队列，结构化结果为「${result.draft.title}」。`
+              : `结构化结果「${result.draft.title}」已生成，训练记录已刷新。`
+            : outgoingAttachments.length > 0
+              ? `${outgoingAttachments.length} 个附件已完成解析，回答已生成。`
+              : "回答已生成。")
       });
-      if (metadataState !== "unavailable" && !isWechatConversationReply) {
+      if (capabilities.trainingMemory && metadataState !== "unavailable" && !isWechatConversationReply) {
         void triggerMemoryExtraction({
           conversationId,
           agentId: activeAgent.id,
@@ -4201,7 +4244,7 @@ export function IngestModeToggle() {
     onAgentConversationToggleArchived: handleToggleAgentConversationArchived,
     onAgentConversationDelete: handleDeleteAgentConversation,
     onAgentTogglePinned: handleToggleAgentPinned,
-    activeRailKey,
+    activeRailKey: effectiveRailKey,
     onRailChange: handleRailChange,
     searchKeyword,
     onSearchKeywordChange: setSearchKeyword,
@@ -4255,19 +4298,31 @@ export function IngestModeToggle() {
     onToolAction: handleToolAction,
     onToast: showActionToast,
     autonomousEnabled,
-    onAutonomousEnabledChange: setAutonomousEnabled
+    onAutonomousEnabledChange: setAutonomousEnabled,
+    canSaveKnowledge: capabilities.saveKnowledge,
+    showTrainingEntries: capabilities.trainingMemory
   };
+
+  useEffect(() => {
+    if (accessTier === "full_ingest") {
+      return;
+    }
+
+    setMode("chat");
+    setActiveRailKey("chat");
+    setOpenPanel(null);
+  }, [accessTier]);
 
   return (
     <div className="relative h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919]">
-      {activeRailKey !== "experts" ? (
+      {accessTier === "full_ingest" && activeRailKey !== "experts" ? (
         <div className="absolute left-[calc(68px+var(--admin-ingest-sidebar-width,300px)+24px)] top-5 z-50 flex rounded-full border border-[#ededeb] bg-[#f2f2f1]/95 p-1 text-sm font-semibold shadow-[0_10px_30px_rgba(15,23,42,0.04)] backdrop-blur max-md:left-1/2 max-md:-translate-x-1/2">
           <button
             type="button"
             onClick={() => setMode("chat")}
             className={[
               "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-              mode === "chat" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+              effectiveMode === "chat" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
             ].join(" ")}
           >
             <MessageSquareText className="h-4 w-4" aria-hidden="true" />
@@ -4278,7 +4333,7 @@ export function IngestModeToggle() {
             onClick={() => setMode("knowledge")}
             className={[
               "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-              mode === "knowledge" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+              effectiveMode === "knowledge" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
             ].join(" ")}
           >
             <GaugeCircle className="h-4 w-4" aria-hidden="true" />
@@ -4292,7 +4347,7 @@ export function IngestModeToggle() {
             }}
             className={[
               "flex h-7 items-center gap-1.5 rounded-full px-5 transition",
-              mode === "memory" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
+              effectiveMode === "memory" ? "bg-white text-[#202020] shadow-sm" : "text-[#666] hover:text-[#202020]"
             ].join(" ")}
           >
             <Brain className="h-4 w-4" aria-hidden="true" />
@@ -4301,11 +4356,11 @@ export function IngestModeToggle() {
         </div>
       ) : null}
 
-      {mode === "knowledge"
+      {effectiveMode === "knowledge"
         ? <IngestKnowledgeOSDashboard onBack={() => setMode("chat")} />
-        : mode === "release"
+        : effectiveMode === "release"
           ? <IngestReleaseConsole onBack={() => setMode("chat")} />
-        : mode === "memory"
+        : effectiveMode === "memory"
           ? (
             <IngestMemoryPanel
               activeAgent={activeAgent}
@@ -4319,7 +4374,7 @@ export function IngestModeToggle() {
               onToast={showActionToast}
             />
           )
-        : mode === "chat"
+        : effectiveMode === "chat"
           ? <IngestChatGPTShell {...sharedProps} />
           : <IngestEXEShell {...sharedProps} />}
       <IngestCreateAgentDialog
