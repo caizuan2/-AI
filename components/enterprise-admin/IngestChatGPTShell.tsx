@@ -2708,7 +2708,7 @@ export function IngestChatGPTShell({
                     })}
                     <span className="text-[11px] text-[#858580]">
                       {wechatOutputMode === "full_answer"
-                        ? "输出判断、可发送回复、推进节奏与注意事项"
+                        ? "根据对话智能组织正文结构、篇幅与重点"
                         : "只输出可直接发送给客户的一段话术"}
                     </span>
                   </fieldset>
