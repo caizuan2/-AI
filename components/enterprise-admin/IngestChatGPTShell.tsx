@@ -2273,11 +2273,7 @@ export function IngestChatGPTShell({
 
       <section className="relative flex min-w-0 flex-1 flex-col bg-white">
         {!isExpertMarketplace ? (
-          <div className="flex h-16 shrink-0 items-center justify-end gap-2 border-b border-[#f0f0ee] px-5">
-            <button type="button" onClick={() => openDrawer("records", { toggle: true })} className="hidden rounded-full bg-[#f3f3f1] px-3 py-2 text-xs font-semibold text-[#555] transition hover:bg-[#ededeb] sm:inline-flex">
-              训练记录
-            </button>
-          </div>
+          <div className="h-16 shrink-0 border-b border-[#f0f0ee]" />
         ) : null}
 
         <div
@@ -2678,7 +2674,13 @@ export function IngestChatGPTShell({
           <form onSubmit={handleSubmit} className={`${CHAT_CONTENT_WIDTH_CLASS} rounded-[28px] border border-neutral-200 bg-white/95 p-2 shadow-none`}>
             {uploadedFiles.length > 0 ? (
               <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
-                <IngestAttachmentPreview files={uploadedFiles} onRemove={onRemoveUpload} imageOnly />
+                <IngestAttachmentPreview
+                  files={uploadedFiles}
+                  onRemove={onRemoveUpload}
+                  imageOnly
+                  enableImagePreview
+                  composerThumbnailLayout
+                />
                 {wechatUpload ? (
                   <fieldset className="mt-2 flex flex-wrap items-center gap-2 border-t border-[#e8e8e5] px-1 pt-2">
                     <legend className="sr-only">微信截图输出方式</legend>

@@ -1,9 +1,22 @@
 "use client";
 
-import type { ComponentType } from "react";
-import { File, FileImage, FileText, Presentation, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { File, FileImage, FileText, Presentation, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import Image from "next/image";
 import type { IngestUploadState } from "@/lib/enterprise/ingest-client";
+
+const MIN_PREVIEW_SCALE = 0.5;
+const MAX_PREVIEW_SCALE = 3;
+const PREVIEW_SCALE_STEP = 0.25;
+
+type ImagePreviewState = {
+  fileName: string;
+  url: string;
+};
+
+function clampPreviewScale(value: number) {
+  return Math.min(MAX_PREVIEW_SCALE, Math.max(MIN_PREVIEW_SCALE, value));
+}
 
 const statusLabels: Record<IngestUploadState["status"], string> = {
   selected: "已选择",
@@ -110,13 +123,143 @@ export function IngestAttachmentPreview({
   files,
   onRemove,
   compact = false,
-  imageOnly = false
+  imageOnly = false,
+  enableImagePreview = false,
+  composerThumbnailLayout = false
 }: {
   files: IngestUploadState[];
   onRemove?: (fileId: string) => void;
   compact?: boolean;
   imageOnly?: boolean;
+  enableImagePreview?: boolean;
+  composerThumbnailLayout?: boolean;
 }) {
+  const [previewImage, setPreviewImage] = useState<ImagePreviewState | null>(null);
+  const [previewScale, setPreviewScale] = useState(1);
+  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  const previousPreviewScaleRef = useRef(1);
+  const previouslyFocusedElementRef = useRef<HTMLElement | null>(null);
+
+  const closeImagePreview = useCallback(() => {
+    previousPreviewScaleRef.current = 1;
+    setPreviewImage(null);
+    setPreviewScale(1);
+  }, []);
+
+  const openImagePreview = useCallback((file: IngestUploadState, imageUrl: string) => {
+    previouslyFocusedElementRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    previousPreviewScaleRef.current = 1;
+    setPreviewScale(1);
+    setPreviewImage({
+      fileName: file.fileName,
+      url: imageUrl
+    });
+  }, []);
+
+  const updatePreviewScale = useCallback((delta: number) => {
+    setPreviewScale((current) => clampPreviewScale(current + delta));
+  }, []);
+
+  useEffect(() => {
+    if (!previewImage) {
+      return;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusTimer = window.setTimeout(() => closeButtonRef.current?.focus(), 0);
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Tab") {
+        const focusableElements = Array.from(
+          toolbarRef.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? []
+        );
+        const firstElement = focusableElements[0];
+        const lastElement = focusableElements.at(-1);
+
+        if (!firstElement || !lastElement) {
+          return;
+        }
+
+        if (event.shiftKey && document.activeElement === firstElement) {
+          event.preventDefault();
+          lastElement.focus();
+          return;
+        }
+
+        if (!event.shiftKey && document.activeElement === lastElement) {
+          event.preventDefault();
+          firstElement.focus();
+          return;
+        }
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeImagePreview();
+        return;
+      }
+
+      if (event.key === "+" || event.key === "=") {
+        event.preventDefault();
+        updatePreviewScale(PREVIEW_SCALE_STEP);
+        return;
+      }
+
+      if (event.key === "-" || event.key === "_") {
+        event.preventDefault();
+        updatePreviewScale(-PREVIEW_SCALE_STEP);
+        return;
+      }
+
+      if (event.key === "0") {
+        event.preventDefault();
+        setPreviewScale(1);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", handleKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      previouslyFocusedElementRef.current?.focus();
+    };
+  }, [closeImagePreview, previewImage, updatePreviewScale]);
+
+  useEffect(() => {
+    if (!previewImage) {
+      return;
+    }
+
+    const scrollContainer = previewScrollRef.current;
+    const previousScale = previousPreviewScaleRef.current;
+    previousPreviewScaleRef.current = previewScale;
+
+    if (!scrollContainer || previousScale === previewScale) {
+      return;
+    }
+
+    const previousScrollLeft = scrollContainer.scrollLeft;
+    const previousScrollTop = scrollContainer.scrollTop;
+    const scaleRatio = previewScale / previousScale;
+    const animationFrame = window.requestAnimationFrame(() => {
+      scrollContainer.scrollLeft = Math.max(
+        0,
+        (previousScrollLeft + scrollContainer.clientWidth / 2) * scaleRatio
+          - scrollContainer.clientWidth / 2
+      );
+      scrollContainer.scrollTop = Math.max(0, previousScrollTop * scaleRatio);
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [previewImage, previewScale]);
+
   if (files.length === 0) {
     return null;
   }
@@ -126,8 +269,9 @@ export function IngestAttachmentPreview({
   const extraCount = Math.max(0, files.length - visibleFiles.length);
 
   return (
-    <div className={getWrapperClass(files.length, compact, imageOnly)}>
-      {visibleFiles.map((file) => {
+    <>
+      <div className={getWrapperClass(files.length, compact, imageOnly)}>
+        {visibleFiles.map((file) => {
         const kind = getAttachmentKind(file);
         const isImage = kind.label === "图片";
         const Icon = kind.Icon;
@@ -146,11 +290,43 @@ export function IngestAttachmentPreview({
             <div
               key={file.id}
               className={[
-                "relative shrink-0 overflow-hidden rounded-2xl bg-[#f6f6f3]",
-                compact ? "h-40 w-28" : "h-20 w-20"
+                "relative shrink-0 overflow-hidden bg-[#f3f3f1]",
+                composerThumbnailLayout
+                  ? "h-16 w-14 rounded-xl"
+                  : compact
+                    ? "h-40 w-28 rounded-2xl"
+                    : "h-20 w-20 rounded-2xl"
               ].join(" ")}
             >
-              {imageUrl ? (
+              {imageUrl && enableImagePreview ? (
+                <button
+                  type="button"
+                  aria-label={`放大查看 ${file.fileName}`}
+                  title="点击放大查看"
+                  onClick={() => openImagePreview(file, imageUrl)}
+                  className={[
+                    "group absolute inset-0 cursor-zoom-in overflow-hidden",
+                    composerThumbnailLayout ? "rounded-xl" : "rounded-2xl"
+                  ].join(" ")}
+                >
+                  <Image
+                    src={imageUrl}
+                    alt={file.fileName}
+                    fill
+                    sizes={compact ? "112px" : "80px"}
+                    unoptimized
+                    className={[
+                      "object-contain transition duration-200 group-hover:scale-[1.03]",
+                      composerThumbnailLayout ? "p-1.5" : ""
+                    ].join(" ")}
+                  />
+                  {!composerThumbnailLayout ? (
+                    <span className="absolute bottom-2 right-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white opacity-0 shadow-sm transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                      <ZoomIn className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                  ) : null}
+                </button>
+              ) : imageUrl ? (
                 <Image
                   src={imageUrl}
                   alt=""
@@ -168,10 +344,18 @@ export function IngestAttachmentPreview({
                 <button
                   type="button"
                   aria-label="移除图片"
-                  onClick={() => onRemove(file.id)}
-                  className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-white/95 text-[#777] shadow-sm transition hover:text-[#b93b4a]"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRemove(file.id);
+                  }}
+                  className={[
+                    "absolute z-10 flex items-center justify-center rounded-full shadow-sm transition",
+                    composerThumbnailLayout
+                      ? "right-0.5 top-0.5 h-5 w-5 bg-[#202020] text-white hover:bg-black"
+                      : "right-1.5 top-1.5 h-6 w-6 bg-white/95 text-[#777] hover:text-[#b93b4a]"
+                  ].join(" ")}
                 >
-                  <X className="h-3.5 w-3.5" aria-hidden="true" />
+                  <X className={composerThumbnailLayout ? "h-3 w-3" : "h-3.5 w-3.5"} aria-hidden="true" />
                 </button>
               ) : null}
             </div>
@@ -188,7 +372,27 @@ export function IngestAttachmentPreview({
           >
             <div className="flex h-full min-w-0 items-center gap-3">
               <div className={["relative flex shrink-0 items-center justify-center overflow-hidden rounded-xl", kind.tone, compact ? "h-11 w-11" : "h-12 w-12"].join(" ")}>
-                {isImage && imageUrl ? (
+                {isImage && imageUrl && enableImagePreview ? (
+                  <button
+                    type="button"
+                    aria-label={`放大查看 ${file.fileName}`}
+                    title="点击放大查看"
+                    onClick={() => openImagePreview(file, imageUrl)}
+                    className="group absolute inset-0 cursor-zoom-in overflow-hidden rounded-xl"
+                  >
+                    <Image
+                      src={imageUrl}
+                      alt={file.fileName}
+                      fill
+                      sizes={compact ? "44px" : "48px"}
+                      unoptimized
+                      className="object-cover transition duration-200 group-hover:scale-105"
+                    />
+                    <span className="absolute inset-0 flex items-center justify-center bg-black/35 text-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
+                      <ZoomIn className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                  </button>
+                ) : isImage && imageUrl ? (
                   <Image src={imageUrl} alt={file.fileName} fill sizes={compact ? "44px" : "48px"} unoptimized className="object-cover" />
                 ) : (
                   <Icon className="h-5 w-5 text-current" aria-hidden="true" />
@@ -230,20 +434,163 @@ export function IngestAttachmentPreview({
             </div>
           </div>
         );
-      })}
-      {extraCount > 0 ? (
-        <button
-          type="button"
-          className={[
-            "flex shrink-0 items-center justify-center rounded-2xl border border-dashed border-[#d9d9d4] bg-[#f3f3f1] text-sm font-bold text-[#555] shadow-sm",
-            compact ? "h-16 w-20" : "h-[74px] min-w-[86px]"
-          ].join(" ")}
-          title={`还有 ${extraCount} 个附件`}
-          aria-label={`还有 ${extraCount} 个附件`}
+        })}
+        {extraCount > 0 ? (
+          <button
+            type="button"
+            className={[
+              "flex shrink-0 items-center justify-center rounded-2xl border border-dashed border-[#d9d9d4] bg-[#f3f3f1] text-sm font-bold text-[#555] shadow-sm",
+              compact ? "h-16 w-20" : "h-[74px] min-w-[86px]"
+            ].join(" ")}
+            title={`还有 ${extraCount} 个附件`}
+            aria-label={`还有 ${extraCount} 个附件`}
+          >
+            +{extraCount}
+          </button>
+        ) : null}
+      </div>
+
+      {enableImagePreview && previewImage ? (
+        <div
+          className="fixed inset-0 z-[120] bg-black/90 p-4 pt-20 sm:p-8 sm:pt-20"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`图片预览：${previewImage.fileName}`}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              closeImagePreview();
+            }
+          }}
         >
-          +{extraCount}
-        </button>
+          <div
+            ref={toolbarRef}
+            className="absolute left-1/2 top-4 z-10 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1 rounded-full bg-black/75 p-1.5 text-white shadow-2xl backdrop-blur"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              aria-label="缩小图片"
+              title="缩小（-）"
+              disabled={previewScale <= MIN_PREVIEW_SCALE}
+              onClick={() => updatePreviewScale(-PREVIEW_SCALE_STEP)}
+              className="flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-35 sm:h-9 sm:w-9"
+            >
+              <ZoomOut className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <span className="min-w-14 px-1 text-center text-xs font-semibold tabular-nums" aria-live="polite">
+              {Math.round(previewScale * 100)}%
+            </span>
+            <button
+              type="button"
+              aria-label="放大图片"
+              title="放大（+）"
+              disabled={previewScale >= MAX_PREVIEW_SCALE}
+              onClick={() => updatePreviewScale(PREVIEW_SCALE_STEP)}
+              className="flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-35 sm:h-9 sm:w-9"
+            >
+              <ZoomIn className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="恢复图片原始缩放"
+              title="恢复 100%（0）"
+              disabled={previewScale === 1}
+              onClick={() => setPreviewScale(1)}
+              className="flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-35 sm:h-9 sm:w-9"
+            >
+              <RotateCcw className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <span className="mx-1 h-5 w-px bg-white/20" aria-hidden="true" />
+            <button
+              ref={closeButtonRef}
+              type="button"
+              aria-label="关闭图片预览"
+              title="关闭（Esc）"
+              onClick={closeImagePreview}
+              className="flex h-11 w-11 items-center justify-center rounded-full transition hover:bg-white/15 sm:h-9 sm:w-9"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
+
+          <div
+            ref={previewScrollRef}
+            className="h-full w-full overflow-auto"
+          >
+            <div
+              className="relative"
+              style={{
+                height: `${Math.max(1, previewScale) * 100}%`,
+                width: `${Math.max(1, previewScale) * 100}%`
+              }}
+              onClick={(event) => {
+                if (event.target === event.currentTarget) {
+                  closeImagePreview();
+                }
+              }}
+            >
+              <div
+                className="absolute"
+                style={previewScale >= 1
+                  ? { inset: 0 }
+                  : {
+                      height: `${previewScale * 100}%`,
+                      width: `${previewScale * 100}%`,
+                      left: "50%",
+                      top: "50%",
+                      transform: "translate(-50%, -50%)"
+                    }}
+                onClick={(event) => {
+                  const image = event.currentTarget.querySelector("img");
+                  const bounds = event.currentTarget.getBoundingClientRect();
+
+                  if (!image?.naturalWidth || !image.naturalHeight || bounds.width <= 0 || bounds.height <= 0) {
+                    event.stopPropagation();
+                    return;
+                  }
+
+                  const containScale = Math.min(
+                    bounds.width / image.naturalWidth,
+                    bounds.height / image.naturalHeight
+                  );
+                  const renderedWidth = image.naturalWidth * containScale;
+                  const renderedHeight = image.naturalHeight * containScale;
+                  const renderedLeft = (bounds.width - renderedWidth) / 2;
+                  const renderedTop = (bounds.height - renderedHeight) / 2;
+                  const clickX = event.clientX - bounds.left;
+                  const clickY = event.clientY - bounds.top;
+                  const clickedVisibleImage = (
+                    clickX >= renderedLeft
+                    && clickX <= renderedLeft + renderedWidth
+                    && clickY >= renderedTop
+                    && clickY <= renderedTop + renderedHeight
+                  );
+
+                  if (clickedVisibleImage) {
+                    event.stopPropagation();
+                    return;
+                  }
+
+                  closeImagePreview();
+                }}
+                onMouseDown={(event) => event.stopPropagation()}
+                onDoubleClick={() => setPreviewScale((current) => current === 1 ? 2 : 1)}
+              >
+                <Image
+                  src={previewImage.url}
+                  alt={previewImage.fileName}
+                  fill
+                  sizes="100vw"
+                  unoptimized
+                  priority
+                  className="select-none object-contain"
+                  draggable={false}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
-    </div>
+    </>
   );
 }

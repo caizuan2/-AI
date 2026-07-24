@@ -30,7 +30,7 @@ export function IngestChatGPTFileMessage({
     <div className="ml-auto flex w-full max-w-[860px] flex-col items-end gap-2">
       {message.attachments?.length ? (
         <div className="flex w-full justify-end">
-          <IngestAttachmentPreview files={message.attachments} imageOnly />
+          <IngestAttachmentPreview files={message.attachments} imageOnly enableImagePreview />
         </div>
       ) : null}
 
