@@ -156,6 +156,7 @@ const publicExactPaths = [
   "/ingest/login",
   "/ingest/register",
   "/ingest/activate",
+  "/ingest/forgot-password",
   "/api/health",
   "/api/user/expert-market",
   "/favicon.ico",
@@ -256,7 +257,8 @@ function isSafeNextPath(value: string) {
     "/register",
     "/ingest/login",
     "/ingest/register",
-    "/ingest/activate"
+    "/ingest/activate",
+    "/ingest/forgot-password"
   ]);
 }
 

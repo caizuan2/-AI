@@ -1,39 +1,73 @@
+import { LicenseKeyStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { apiError, apiSuccess, databaseConfigError, sessionConfigError } from "@/lib/api-response";
-import { isPlainObject } from "@/lib/api/responses";
 import { createSession, type AppUser } from "@/lib/auth";
-import { normalizePhone, validatePhone } from "@/lib/auth/phone";
+import {
+  getAcceptedLicenseHashes,
+  getLicenseAppTypeFromKey,
+  isSupportedLicenseKeyInput,
+  normalizeLicenseKey,
+  redeemLicenseKey
+} from "@/lib/auth/license";
 import { hashPassword } from "@/lib/auth/password";
 import { ensureRegistrationSchema } from "@/lib/db/registration-schema";
-import { AppError, ValidationError } from "@/lib/errors";
+import {
+  AppError,
+  InvalidLicenseKeyError,
+  LicenseAppTypeMismatchError,
+  RateLimitError,
+  ValidationError
+} from "@/lib/errors";
+import { parseIngestRegisterRequest } from "@/lib/enterprise/ingest-auth-credentials";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
+import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl, hasSessionSecret } from "@/lib/server-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function readString(value: unknown) {
-  return typeof value === "string" ? value.trim() : "";
+function getRequestIp(request: Request) {
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined;
 }
 
-function readRegisterRequest(body: unknown) {
-  if (!isPlainObject(body)) {
-    throw new ValidationError("请求体必须是 JSON 对象。");
+function assertIngestLicenseKey(licenseKey: string) {
+  const normalizedLicenseKey = normalizeLicenseKey(licenseKey);
+
+  if (!isSupportedLicenseKeyInput(normalizedLicenseKey)) {
+    throw new InvalidLicenseKeyError("卡密格式无效。");
   }
 
-  const phone = normalizePhone(readString(body.phone) || readString(body.username));
-  const password = typeof body.password === "string" ? body.password : "";
-  const name = readString(body.name) || phone;
-
-  if (!validatePhone(phone)) {
-    throw new ValidationError("请输入合法手机号。");
+  if (getLicenseAppTypeFromKey(normalizedLicenseKey) !== "ingest_admin") {
+    throw new LicenseAppTypeMismatchError("卡密不属于投喂版。");
   }
 
-  if (password.length < 8) {
-    throw new ValidationError("密码至少需要 8 位。");
-  }
+  return normalizedLicenseKey;
+}
 
-  return { phone, password, name };
+async function registrationActivationCompleted(userId: string, licenseKey: string) {
+  const [user, license] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        isActive: true,
+        licenseActivated: true
+      }
+    }),
+    prisma.licenseKey.findFirst({
+      where: {
+        keyHash: {
+          in: getAcceptedLicenseHashes(licenseKey)
+        },
+        status: LicenseKeyStatus.USED,
+        redeemedByUserId: userId
+      },
+      select: {
+        id: true
+      }
+    })
+  ]);
+
+  return Boolean(user?.isActive && user.licenseActivated && license);
 }
 
 export async function POST(request: Request) {
@@ -45,15 +79,30 @@ export async function POST(request: Request) {
     return apiError(sessionConfigError("注册投喂账号"));
   }
 
-  let input: ReturnType<typeof readRegisterRequest>;
+  let input: ReturnType<typeof parseIngestRegisterRequest>;
 
   try {
-    input = readRegisterRequest(await request.json());
+    input = parseIngestRegisterRequest(await request.json());
   } catch (error) {
     return apiError(error instanceof Error ? error : new ValidationError("请求体必须是合法 JSON。"));
   }
 
+  const rateLimit = await checkPersistentRateLimit(request, {
+    namespace: "ingest-auth-register-activation",
+    limit: 5,
+    windowMs: 15 * 60_000,
+    globalLimit: 200
+  });
+
+  if (!rateLimit.allowed) {
+    return apiError(
+      new RateLimitError(`注册激活尝试过于频繁，请 ${rateLimit.retryAfterSeconds} 秒后再试。`),
+      { headers: rateLimitHeaders(rateLimit) }
+    );
+  }
+
   try {
+    const normalizedLicenseKey = assertIngestLicenseKey(input.licenseKey);
     const schema = await ensureRegistrationSchema();
 
     if (!schema.ready) {
@@ -74,7 +123,7 @@ export async function POST(request: Request) {
         phone: input.phone,
         passwordHash: await hashPassword(input.password),
         name: input.name,
-        isActive: true,
+        isActive: false,
         licenseActivated: false
       },
       select: {
@@ -86,19 +135,57 @@ export async function POST(request: Request) {
         licenseActivated: true
       }
     });
+    let licenseActivated = false;
+
+    try {
+      const activatedUser = await redeemLicenseKey(user.id, normalizedLicenseKey, {
+        appType: "ingest_admin",
+        ip: getRequestIp(request),
+        userAgent: request.headers.get("user-agent") ?? undefined
+      });
+      licenseActivated = activatedUser.licenseActivated;
+    } catch (error) {
+      licenseActivated = await registrationActivationCompleted(user.id, normalizedLicenseKey);
+
+      if (!licenseActivated) {
+        await prisma.user.delete({
+          where: { id: user.id }
+        });
+        throw error;
+      }
+    }
+
+    const activatedAccount = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: {
+        id: true,
+        email: true,
+        phone: true,
+        name: true,
+        isActive: true,
+        licenseActivated: true
+      }
+    });
     const session = await createSession(user.id, request);
     const appUser: AppUser = {
-      ...user,
-      name: user.name?.trim() || user.phone
+      ...activatedAccount,
+      name: activatedAccount.name?.trim() || activatedAccount.phone,
+      licenseActivated
     };
 
     await setIngestPortalCookie(appUser, request);
+    const authUser = await toIngestAuthUser(appUser);
 
     return apiSuccess({
       success: true,
       sessionToken: session.token,
-      licenseActivated: appUser.licenseActivated,
-      user: await toIngestAuthUser(appUser)
+      licenseActivated: authUser.licenseActivated,
+      hasIngestAccess: authUser.licenseActivated,
+      redirectTarget: "/admin-ingest?app=ingest-admin&platform=web",
+      user: {
+        ...authUser,
+        hasIngestAccess: authUser.licenseActivated
+      }
     }, { status: 201 });
   } catch (error) {
     return apiError(error);
