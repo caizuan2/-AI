@@ -2676,7 +2676,7 @@ export function IngestChatGPTShell({
         <div className="shrink-0 bg-white/80 px-5 pb-4 pt-2">
           <form onSubmit={handleSubmit} className={`${CHAT_CONTENT_WIDTH_CLASS} rounded-[28px] border border-neutral-200 bg-white/95 p-2 shadow-none`}>
             {uploadedFiles.length > 0 ? (
-              <div className="mb-2 rounded-2xl bg-[#f8f8f7] p-2">
+              <div className="mb-2">
                 <IngestAttachmentPreview
                   files={uploadedFiles}
                   onRemove={onRemoveUpload}
@@ -2685,9 +2685,8 @@ export function IngestChatGPTShell({
                   composerThumbnailLayout
                 />
                 {wechatUpload ? (
-                  <fieldset className="mt-2 flex flex-wrap items-center gap-2 border-t border-[#e8e8e5] px-1 pt-2">
+                  <fieldset className="mt-2 flex flex-wrap items-center gap-2">
                     <legend className="sr-only">微信截图输出方式</legend>
-                    <span className="text-xs font-semibold text-[#555]">输出方式</span>
                     {([
                       { mode: "reply_script", label: "精准回复话术" },
                       { mode: "full_answer", label: "完整正文答案" }
@@ -2711,11 +2710,6 @@ export function IngestChatGPTShell({
                         </button>
                       );
                     })}
-                    <span className="text-[11px] text-[#858580]">
-                      {wechatOutputMode === "full_answer"
-                        ? "根据对话智能组织正文结构、篇幅与重点"
-                        : "只输出可直接发送给客户的一段话术"}
-                    </span>
                   </fieldset>
                 ) : null}
               </div>
@@ -2821,7 +2815,9 @@ export function IngestChatGPTShell({
                 onChange={(event) => setInput(event.target.value)}
                 rows={1}
                 disabled={!canIngest}
-                placeholder={canIngest ? "询问、投喂、整理知识..." : "请先到专家广场添加专家 Agent"}
+                placeholder={canIngest
+                  ? (canUseFullIngestTools ? "投喂 小董AI" : "问问 小董AI")
+                  : "请先到专家广场添加专家 Agent"}
                 className="max-h-[160px] min-h-11 min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]"
               />
               <div className="flex shrink-0 items-center justify-end gap-1.5">

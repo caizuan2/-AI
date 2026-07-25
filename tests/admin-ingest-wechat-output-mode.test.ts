@@ -129,7 +129,16 @@ async function main() {
   assert.match(shellSource, /wechatUpload\s*\?/);
   assert.match(shellSource, /精准回复话术/);
   assert.match(shellSource, /完整正文答案/);
-  assert.match(shellSource, /根据对话智能组织正文结构、篇幅与重点/);
+  assert.doesNotMatch(shellSource, /<span[^>]*>输出方式<\/span>/);
+  assert.doesNotMatch(shellSource, /根据对话智能组织正文结构、篇幅与重点/);
+  assert.doesNotMatch(shellSource, /只输出可直接发送给客户的一段话术/);
+  assert.doesNotMatch(
+    shellSource,
+    /mb-2 rounded-2xl bg-\[#f8f8f7\] p-2/,
+    "微信截图输入区不能恢复浅色卡片背景。"
+  );
+  assert.match(shellSource, /<div className="mb-2">/);
+  assert.match(shellSource, /<fieldset className="mt-2 flex flex-wrap items-center gap-2">/);
   assert.match(shellSource, /onWechatOutputModeChange\?\.\(option\.mode\)/);
   assert.match(modeToggleSource, /file\.recognitionMode === "wechat_conversation"/);
   assert.match(modeToggleSource, /wechatOutputMode:\s*mode/);
