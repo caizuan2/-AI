@@ -76,14 +76,19 @@ async function main() {
   assert.match(routeSource, /writeAdminIngestAccountName/);
   assert.match(clientSource, /\/api\/admin\/ingest-profile/);
   assert.match(clientSource, /legacyAdminIngestAvatarToFile/);
+  assert.match(clientSource, /readAdminIngestAvatarCache/);
+  assert.match(clientSource, /writeAdminIngestAvatarCache/);
+  assert.match(clientSource, /clearAdminIngestAvatarCache/);
   assert.match(modeSource, /loadAdminIngestAccountProfile/);
   assert.match(modeSource, /saveAdminIngestAccountAvatar/);
   assert.match(modeSource, /saveAdminIngestAccountName/);
   assert.match(modeSource, /legacyAdminIngestAvatarToFile/);
+  assert.doesNotMatch(modeSource, /localStorage\.setItem\(ADMIN_AVATAR_STORAGE_KEY/);
   assert.match(settingsSource, /await onAvatarChange\(file\)/);
   assert.match(settingsSource, /await onAppNameChange\(normalizedName\)/);
   assert.match(settingsSource, /头像已永久保存/);
   assert.match(settingsSource, /名称已永久保存/);
+  assert.doesNotMatch(settingsSource, /Failed to execute 'setItem'/);
 
   console.log("admin ingest account profile persistence tests passed");
 }

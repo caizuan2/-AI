@@ -11,6 +11,7 @@ import type {
 } from "@/lib/enterprise/ingest-client";
 import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
 import { DEFAULT_ADMIN_INGEST_ASSISTANT_NAME } from "@/lib/enterprise/admin-ingest-profile";
+import type { AdminIngestPasswordChangeInput } from "@/lib/enterprise/admin-ingest-account-security-client";
 import type { IngestChatAgent } from "@/lib/enterprise/mock-chat";
 
 export interface IngestSettingsState {
@@ -21,7 +22,7 @@ export interface IngestSettingsState {
   syncTarget: Array<"web" | "exe" | "apk">;
 }
 
-type IngestSettingsAccountAction = "password" | "switch" | "logout";
+type IngestSettingsAccountAction = "switch" | "logout";
 
 export function resolveIngestAccountIdentityLabel(accessTier: IngestAccessTier) {
   if (accessTier === "chat_only") {
@@ -57,9 +58,21 @@ export function normalizeIngestRegisteredAccount(value: string) {
 }
 
 function readPanelErrorMessage(error: unknown, fallback: string) {
-  return error instanceof Error && error.message.trim()
-    ? error.message
-    : fallback;
+  if (!(error instanceof Error) || !error.message.trim()) {
+    return fallback;
+  }
+
+  const normalizedMessage = `${error.name} ${error.message}`.toLowerCase();
+
+  if (
+    normalizedMessage.includes("quotaexceeded")
+    || normalizedMessage.includes("exceeded the quota")
+    || normalizedMessage.includes("setting the value of")
+  ) {
+    return "浏览器旧缓存空间不足，已自动忽略本地缓存；服务器永久数据不受影响。";
+  }
+
+  return error.message;
 }
 
 export function IngestSettingsPanel({
@@ -70,6 +83,7 @@ export function IngestSettingsPanel({
   registeredAccount,
   onAvatarChange,
   onAppNameChange,
+  onPasswordChange,
   onAccountAction,
   onClose
 }: {
@@ -89,6 +103,7 @@ export function IngestSettingsPanel({
   onSettingsChange: (nextState: IngestSettingsState) => void;
   onAvatarChange: (file: File) => Promise<void>;
   onAppNameChange: (nextName: string) => Promise<void>;
+  onPasswordChange: (input: AdminIngestPasswordChangeInput) => Promise<void>;
   onAccountAction: (action: IngestSettingsAccountAction) => void;
   onCheckGptStatus: () => void;
   onReconnectGpt: () => void;
@@ -99,6 +114,11 @@ export function IngestSettingsPanel({
   const [isEditingName, setIsEditingName] = useState(false);
   const [isSavingAvatar, setIsSavingAvatar] = useState(false);
   const [isSavingName, setIsSavingName] = useState(false);
+  const [isEditingPassword, setIsEditingPassword] = useState(false);
+  const [isSavingPassword, setIsSavingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [panelMessage, setPanelMessage] = useState("");
 
   useEffect(() => {
@@ -159,6 +179,49 @@ export function IngestSettingsPanel({
       setPanelMessage(readPanelErrorMessage(error, "名称保存失败，请重试。"));
     } finally {
       setIsSavingName(false);
+    }
+  }
+
+  async function savePassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPanelMessage("");
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      setPanelMessage("当前密码、新密码和确认密码不能为空。");
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setPanelMessage("新密码至少需要 8 位。");
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPanelMessage("两次输入的新密码不一致。");
+      return;
+    }
+
+    if (currentPassword === newPassword) {
+      setPanelMessage("新密码不能与当前密码相同。");
+      return;
+    }
+
+    setIsSavingPassword(true);
+
+    try {
+      await onPasswordChange({
+        currentPassword,
+        newPassword,
+        confirmPassword
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setPanelMessage("密码已修改，请使用新密码重新登录。");
+    } catch (error) {
+      setPanelMessage(readPanelErrorMessage(error, "密码修改失败，请重试。"));
+    } finally {
+      setIsSavingPassword(false);
     }
   }
 
@@ -273,12 +336,77 @@ export function IngestSettingsPanel({
           ) : null}
           <AccountMenuButton
             icon={<KeyRound className="h-4 w-4" aria-hidden="true" />}
-            label="修改密码"
+            label={isSavingPassword ? "正在修改密码" : "修改密码"}
+            disabled={isSavingPassword}
             onClick={() => {
-              setPanelMessage("密码修改功能将在账号中心接入后启用。");
-              onAccountAction("password");
+              setIsEditingPassword((next) => !next);
+              setPanelMessage("");
             }}
           />
+          {isEditingPassword ? (
+            <form className="space-y-2 rounded-xl bg-slate-50 p-2" onSubmit={savePassword}>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">当前密码</span>
+                <input
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  type="password"
+                  autoComplete="current-password"
+                  disabled={isSavingPassword}
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">新密码</span>
+                <input
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={128}
+                  disabled={isSavingPassword}
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">确认新密码</span>
+                <input
+                  value={confirmPassword}
+                  onChange={(event) => setConfirmPassword(event.target.value)}
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  maxLength={128}
+                  disabled={isSavingPassword}
+                  className="mt-1 h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
+                />
+              </label>
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={isSavingPassword}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100 disabled:opacity-50"
+                  onClick={() => {
+                    setCurrentPassword("");
+                    setNewPassword("");
+                    setConfirmPassword("");
+                    setIsEditingPassword(false);
+                    setPanelMessage("");
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingPassword}
+                  className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isSavingPassword ? "修改中" : "确认修改"}
+                </button>
+              </div>
+            </form>
+          ) : null}
           <AccountMenuButton
             icon={<RefreshCw className="h-4 w-4" aria-hidden="true" />}
             label="切换账号"

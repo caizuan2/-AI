@@ -105,3 +105,33 @@ export function parseIngestPasswordResetRequest(body: unknown) {
     newPassword
   };
 }
+
+export function parseIngestChangePasswordRequest(body: unknown) {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("请求体必须是 JSON 对象。");
+  }
+
+  const record = body as Record<string, unknown>;
+  const currentPassword = readString(record, "currentPassword", "current_password");
+  const newPassword = readString(record, "newPassword", "new_password");
+  const confirmPassword = readString(record, "confirmPassword", "confirm_password");
+
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    throw new ValidationError("当前密码、新密码和确认密码不能为空。");
+  }
+
+  validatePassword(newPassword, "新密码");
+
+  if (newPassword !== confirmPassword) {
+    throw new ValidationError("两次输入的新密码不一致。");
+  }
+
+  if (currentPassword === newPassword) {
+    throw new ValidationError("新密码不能与当前密码相同。");
+  }
+
+  return {
+    currentPassword,
+    newPassword
+  };
+}

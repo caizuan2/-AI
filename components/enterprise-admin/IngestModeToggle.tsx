@@ -89,11 +89,18 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import {
+  clearAdminIngestAvatarCache,
   legacyAdminIngestAvatarToFile,
   loadAdminIngestAccountProfile,
+  readAdminIngestAvatarCache,
   saveAdminIngestAccountAvatar,
-  saveAdminIngestAccountName
+  saveAdminIngestAccountName,
+  writeAdminIngestAvatarCache
 } from "@/lib/enterprise/admin-ingest-account-profile-client";
+import {
+  changeAdminIngestAccountPassword,
+  type AdminIngestPasswordChangeInput
+} from "@/lib/enterprise/admin-ingest-account-security-client";
 import {
   normalizeAdminIngestWechatOutputMode,
   type AdminIngestWechatOutputMode
@@ -303,7 +310,6 @@ const initialSettingsState: IngestSettingsState = {
   platform: "web",
   syncTarget: [...ingestSyncTarget]
 };
-const ADMIN_AVATAR_STORAGE_KEY = "admin-ingest-avatar";
 const DOUBAO_INFERENCE_PAUSED_STORAGE_KEY = "admin-ingest-doubao-inference-paused-v1";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
@@ -901,7 +907,7 @@ export function IngestModeToggle({
       syncTarget: [...nextContext.syncTarget]
     })));
 
-    setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
+    setAdminAvatar(readAdminIngestAvatarCache(window.localStorage));
     setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
     const storedModelValue = window.localStorage.getItem(ADMIN_INGEST_MODEL_STORAGE_KEY);
     const storedModel = normalizeIngestModelSelection({
@@ -931,7 +937,7 @@ export function IngestModeToggle({
 
   useEffect(() => {
     const abortController = new AbortController();
-    const legacyAvatar = window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY)?.trim() ?? "";
+    const legacyAvatar = readAdminIngestAvatarCache(window.localStorage);
     const legacyName = window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() ?? "";
 
     async function hydrateAdminIngestAccountProfile() {
@@ -952,16 +958,27 @@ export function IngestModeToggle({
 
         if (profile.hasCustomAvatar && profile.avatarUrl) {
           setAdminAvatar(profile.avatarUrl);
-          window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, profile.avatarUrl);
+          writeAdminIngestAvatarCache(window.localStorage, profile.avatarUrl);
         } else if (legacyAvatar) {
-          const legacyFile = await legacyAdminIngestAvatarToFile(legacyAvatar);
+          let legacyFile: File | null = null;
 
-          if (legacyFile) {
+          try {
+            legacyFile = await legacyAdminIngestAvatarToFile(legacyAvatar);
+          } catch (error) {
+            if (legacyAvatar.startsWith("blob:")) {
+              clearAdminIngestAvatarCache(window.localStorage);
+            }
+            throw error;
+          }
+
+          if (!legacyFile) {
+            clearAdminIngestAvatarCache(window.localStorage);
+          } else {
             const migratedProfile = await saveAdminIngestAccountAvatar(legacyFile);
 
             if (!abortController.signal.aborted && migratedProfile.avatarUrl) {
               setAdminAvatar(migratedProfile.avatarUrl);
-              window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, migratedProfile.avatarUrl);
+              writeAdminIngestAvatarCache(window.localStorage, migratedProfile.avatarUrl);
             }
           }
         }
@@ -1851,7 +1868,7 @@ export function IngestModeToggle({
     }
 
     setAdminAvatar(nextAvatar);
-    window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, nextAvatar);
+    writeAdminIngestAvatarCache(window.localStorage, nextAvatar);
     setNoticeMessage("头像已更新。");
     showActionToast({
       type: "success",
@@ -1889,18 +1906,21 @@ export function IngestModeToggle({
     window.location.assign("/ingest/login?app=ingest-admin&next=/admin-ingest");
   }
 
-  function handleAccountSettingAction(action: "password" | "switch" | "logout") {
-    if (action === "password") {
-      const message = "修改密码功能将在账号系统接入后启用。";
+  async function handleAdminPasswordChange(input: AdminIngestPasswordChangeInput) {
+    await changeAdminIngestAccountPassword(input);
+    const message = "密码已修改，旧登录会话已注销，正在返回登录页...";
 
-      setNoticeMessage(message);
-      showActionToast({
-        type: "info",
-        title: message
-      });
-      return;
-    }
+    setNoticeMessage(message);
+    showActionToast({
+      type: "success",
+      title: "密码已修改",
+      description: "请使用新密码重新登录。"
+    });
+    stopAccountHistoryActivity();
+    window.location.assign("/ingest/login?app=ingest-admin&next=/admin-ingest&passwordChanged=1");
+  }
 
+  function handleAccountSettingAction(action: "switch" | "logout") {
     const message = action === "switch" ? "正在切换账号..." : "正在退出登录...";
 
     setNoticeMessage(message);
@@ -5149,6 +5169,7 @@ export function IngestModeToggle({
         onSettingsChange={setSettingsState}
         onAvatarChange={handleAdminAvatarChange}
         onAppNameChange={handleAppNameChange}
+        onPasswordChange={handleAdminPasswordChange}
         onAccountAction={handleAccountSettingAction}
         onCheckGptStatus={() => void handleCheckGptStatus("check")}
         onReconnectGpt={() => void handleCheckGptStatus("reconnect")}
