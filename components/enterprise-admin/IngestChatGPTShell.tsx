@@ -7,27 +7,27 @@ import {
   useRef,
   useState,
   type ChangeEvent,
-  type ComponentType,
   type Dispatch,
   type FormEvent,
   type SetStateAction
 } from "react";
 import {
   Bell,
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
-  ImagePlus,
+  Image,
   Link2,
   Loader2,
   Mic,
+  Paperclip,
   Plus,
   Save,
   Search,
   SendHorizontal,
   Settings,
   Square,
-  UploadCloud,
   X
 } from "lucide-react";
 import { IngestAttachmentPreview } from "@/components/enterprise-admin/IngestAttachmentPreview";
@@ -152,11 +152,12 @@ const SHOW_STRUCTURED_RESULT_DRAWER = false;
 
 type LatestTurnSpacerMode = "active" | "settled";
 
-const moreToolActions: Array<{ label: string; icon: ComponentType<{ className?: string }> }> = [
-  { label: "文件上传", icon: UploadCloud },
-  { label: "图片识别·支持微信长截图", icon: ImagePlus },
-  { label: "网址投喂", icon: Link2 }
-];
+const moreToolActions = [
+  { key: "camera", label: "相机", icon: Camera, requiresFullIngestAccess: false },
+  { key: "image", label: "图片", icon: Image, requiresFullIngestAccess: false },
+  { key: "file", label: "文件", icon: Paperclip, requiresFullIngestAccess: true },
+  { key: "url", label: "网址", icon: Link2, requiresFullIngestAccess: true }
+] as const;
 
 const EMPTY_AGENTS: IngestChatAgent[] = [];
 const GPT_CLIENT_TIMEOUT_MS = 300000;
@@ -245,12 +246,10 @@ interface IngestChatGPTShellProps {
   onAutonomousEnabledChange?: (enabled: boolean) => void;
   canSaveKnowledge?: boolean;
   showTrainingEntries?: boolean;
+  canUseFullIngestTools?: boolean;
 }
 
-const uploadAcceptByTool: Record<string, string> = {
-  "文件上传": ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md",
-  "图片识别·支持微信长截图": "image/*"
-};
+type MoreToolKey = (typeof moreToolActions)[number]["key"];
 
 interface ApiEnvelope<T> {
   ok: boolean;
@@ -834,7 +833,6 @@ export function IngestChatGPTShell({
     knowledgeBase: "默认知识库",
     licenseStatus: "未检查"
   },
-  onCheckConnection,
   input: controlledInput,
   onInputChange,
   messages: controlledMessages,
@@ -877,10 +875,12 @@ export function IngestChatGPTShell({
   autonomousEnabled: controlledAutonomousEnabled,
   onAutonomousEnabledChange,
   canSaveKnowledge = true,
-  showTrainingEntries = true
+  showTrainingEntries = true,
+  canUseFullIngestTools = true
 }: IngestChatGPTShellProps = {}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const pendingUploadRecognitionModeRef = useRef<"wechat_conversation" | undefined>(undefined);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
   const wechatUpload = uploadedFiles.find((file) => file.recognitionMode === "wechat_conversation");
   const wechatOutputMode = normalizeAdminIngestWechatOutputMode(wechatUpload?.wechatOutputMode);
   const inputTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -913,7 +913,6 @@ export function IngestChatGPTShell({
   const [drawerView, setDrawerView] = useState<"draft" | "records">("records");
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
-  const [fileAccept, setFileAccept] = useState(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
   const [internalAutonomousEnabled, setInternalAutonomousEnabled] = useState(false);
   const [autonomousTask, setAutonomousTask] = useState<AutonomousTaskStateSnapshot | null>(null);
   const [taskChain, setTaskChain] = useState<TaskChainStateSnapshot | null>(null);
@@ -2018,10 +2017,11 @@ export function IngestChatGPTShell({
     showToast("已进入编辑", message.attachments?.length ? "附件已在消息中，编辑仅修改文本。" : undefined, "info");
   }
 
-  function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+  function handleFileChange(
+    event: ChangeEvent<HTMLInputElement>,
+    recognitionMode?: "wechat_conversation"
+  ) {
     const files = Array.from(event.target.files ?? []);
-    const recognitionMode = pendingUploadRecognitionModeRef.current;
-    pendingUploadRecognitionModeRef.current = undefined;
 
     if (files.length > 0) {
       onUpload?.(files, recognitionMode);
@@ -2032,7 +2032,7 @@ export function IngestChatGPTShell({
     event.target.value = "";
   }
 
-  function openTypedUpload(label: string) {
+  function openUploadPicker(tool: Exclude<MoreToolKey, "url">) {
     if (!canIngest) {
       setNoticeMessage("请先到专家广场添加专家 Agent。");
       setErrorMessage("");
@@ -2040,45 +2040,35 @@ export function IngestChatGPTShell({
       return;
     }
 
-    setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
-    pendingUploadRecognitionModeRef.current = label === "图片识别·支持微信长截图"
-      ? "wechat_conversation"
-      : undefined;
-    onToolAction?.(label);
-    setTimeout(() => fileInputRef.current?.click(), 0);
+    if (tool === "file" && !canUseFullIngestTools) {
+      setErrorMessage("当前账号需要投喂端卡密才能上传文件。");
+      return;
+    }
+
+    const inputRef = tool === "camera"
+      ? cameraInputRef
+      : tool === "image"
+        ? imageInputRef
+        : documentInputRef;
+
+    onToolAction?.(tool === "file" ? "文件上传" : "图片识别·支持微信长截图");
+    setTimeout(() => inputRef.current?.click(), 0);
   }
 
-  async function handleMoreTool(label: string) {
+  async function handleMoreTool(tool: MoreToolKey) {
     setIsMoreOpen(false);
 
-    if (label === "连接状态") {
-      setIsConnectionOpen(true);
-      void onCheckConnection?.();
-      setNoticeMessage(`连接状态：企业空间 ${connectionStatus.enterpriseSpace}，知识库 ${connectionStatus.knowledgeBase}，卡密 ${connectionStatus.licenseStatus}。`);
-      setErrorMessage("");
+    if (tool === "camera" || tool === "image" || tool === "file") {
+      openUploadPicker(tool);
       return;
     }
 
-    if (label in uploadAcceptByTool) {
-      openTypedUpload(label);
+    if (!canUseFullIngestTools) {
+      setErrorMessage("当前账号需要投喂端卡密才能使用网址投喂。");
       return;
     }
 
-    if (label === "网址投喂") {
-      onToolAction?.(label);
-      setErrorMessage("");
-      return;
-    }
-
-    if (label === "分类标签") {
-      onToolAction?.(label);
-      setNoticeMessage("分类标签入口已响应，可结合输入内容生成分类建议。");
-      setErrorMessage("");
-      return;
-    }
-
-    onToolAction?.(label);
-    setNoticeMessage(`${label}入口已打开，当前阶段保留为投喂工具快捷入口。`);
+    onToolAction?.("网址投喂");
     setErrorMessage("");
   }
 
@@ -2731,12 +2721,28 @@ export function IngestChatGPTShell({
               </div>
             ) : null}
             <input
-              ref={fileInputRef}
+              ref={cameraInputRef}
               type="file"
               className="hidden"
-              accept={fileAccept}
+              accept="image/*"
+              capture="environment"
+              onChange={(event) => handleFileChange(event, "wechat_conversation")}
+            />
+            <input
+              ref={imageInputRef}
+              type="file"
+              className="hidden"
+              accept="image/*"
               multiple
-              onChange={handleFileChange}
+              onChange={(event) => handleFileChange(event, "wechat_conversation")}
+            />
+            <input
+              ref={documentInputRef}
+              type="file"
+              className="hidden"
+              accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md"
+              multiple
+              onChange={(event) => handleFileChange(event)}
             />
             <div className="flex items-end gap-2">
               <div className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#555]">
@@ -2770,19 +2776,25 @@ export function IngestChatGPTShell({
                     <Plus className="h-4 w-4" aria-hidden="true" />
                   </button>
                   {isMoreOpen ? (
-                    <div className="absolute bottom-11 left-0 z-30 w-56 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
-                      {moreToolActions.map((action) => {
+                    <div className="absolute bottom-14 left-0 z-30 w-56 rounded-[28px] border border-slate-100 bg-white p-3 shadow-2xl shadow-slate-200/80">
+                      {moreToolActions.filter((action) => (
+                        canUseFullIngestTools || !action.requiresFullIngestAccess
+                      )).map((action) => {
                         const Icon = action.icon;
 
                         return (
                           <button
-                            key={action.label}
+                            key={action.key}
                             type="button"
-                            onClick={() => void handleMoreTool(action.label)}
-                            className="flex h-9 w-full items-center gap-2 rounded-xl px-3 text-left text-xs font-semibold text-[#444] transition hover:bg-[#f5f5f3]"
+                            onClick={() => void handleMoreTool(action.key)}
+                            className="focus-ring flex w-full items-center gap-4 rounded-2xl px-2.5 py-3 text-left transition hover:bg-slate-50"
                           >
-                            <Icon className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
-                            {action.label}
+                            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-950">
+                              <Icon className="h-5 w-5" aria-hidden="true" />
+                            </span>
+                            <span className="text-base font-semibold text-slate-950">
+                              {action.label}
+                            </span>
                           </button>
                         );
                       })}

@@ -4300,7 +4300,8 @@ export function IngestModeToggle({
     autonomousEnabled,
     onAutonomousEnabledChange: setAutonomousEnabled,
     canSaveKnowledge: capabilities.saveKnowledge,
-    showTrainingEntries: capabilities.trainingMemory
+    showTrainingEntries: capabilities.trainingMemory,
+    canUseFullIngestTools: accessTier === "full_ingest"
   };
 
   useEffect(() => {
