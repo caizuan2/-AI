@@ -21,6 +21,7 @@ export default async function AdminIngestPage() {
     <IngestModeToggle
       accessTier={access.accessTier}
       capabilities={access.capabilities}
+      userName={user.name}
     />
   );
 }

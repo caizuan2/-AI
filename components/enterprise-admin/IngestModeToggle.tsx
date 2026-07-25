@@ -203,6 +203,7 @@ type OpenPanel = "notifications" | "settings" | null;
 type IngestModeToggleProps = {
   accessTier?: IngestAccessTier;
   capabilities?: IngestCapabilities;
+  userName?: string | null;
 };
 
 const FULL_INGEST_CAPABILITIES: IngestCapabilities = {
@@ -682,7 +683,8 @@ function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent 
 
 export function IngestModeToggle({
   accessTier = "full_ingest",
-  capabilities = FULL_INGEST_CAPABILITIES
+  capabilities = FULL_INGEST_CAPABILITIES,
+  userName
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const restoredInitialConversationRef = useRef(false);
@@ -5006,7 +5008,13 @@ export function IngestModeToggle({
             />
           )
         : effectiveMode === "chat"
-          ? <IngestChatGPTShell {...sharedProps} />
+          ? (
+            <IngestChatGPTShell
+              {...sharedProps}
+              userName={userName}
+              welcomeVariant={accessTier === "chat_only" ? "chat_only" : "full_ingest"}
+            />
+          )
           : <IngestEXEShell {...sharedProps} />}
       <IngestCreateAgentDialog
         open={isCreateAgentOpen}

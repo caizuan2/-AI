@@ -42,6 +42,7 @@ import {
   IngestBehaviorTracker,
   trackIngestBehaviorEvent
 } from "@/components/enterprise-admin/IngestBehaviorTracker";
+import { IngestChatOnlyWelcome } from "@/components/enterprise-admin/IngestChatOnlyWelcome";
 import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
 import { IngestGPTMessageRenderer } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
 import {
@@ -248,6 +249,8 @@ interface IngestChatGPTShellProps {
   canSaveKnowledge?: boolean;
   showTrainingEntries?: boolean;
   canUseFullIngestTools?: boolean;
+  userName?: string | null;
+  welcomeVariant?: "chat_only" | "full_ingest";
 }
 
 type MoreToolKey = (typeof moreToolActions)[number]["key"];
@@ -877,7 +880,9 @@ export function IngestChatGPTShell({
   onAutonomousEnabledChange,
   canSaveKnowledge = true,
   showTrainingEntries = true,
-  canUseFullIngestTools = true
+  canUseFullIngestTools = true,
+  userName,
+  welcomeVariant = "full_ingest"
 }: IngestChatGPTShellProps = {}) {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
@@ -2308,30 +2313,34 @@ export function IngestChatGPTShell({
               />
             ) : null}
             {!hasMessages ? (
-              <div className={`${CHAT_CONTENT_WIDTH_CLASS} flex flex-col items-center text-center`}>
-                <IngestWelcomeHero
-                  profile={activeDisplayProfile}
-                  canIngest={canIngest}
-                  onOpenExperts={() => onRailChange?.("experts")}
-                />
-                <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
-                  {quickPrompts.map((prompt) => (
-                    <button
-                      key={prompt}
-                      type="button"
-                      disabled={!canIngest}
-                      onClick={() => {
-                        if (canIngest) {
-                          setInput(prompt);
-                        }
-                      }}
-                      className="rounded-full bg-[#f6f6f5] px-4 py-3 text-left text-sm text-[#303030] transition hover:bg-[#ededeb] disabled:cursor-not-allowed disabled:text-[#b6b6b2] disabled:hover:bg-[#f6f6f5]"
-                    >
-                      {prompt}
-                    </button>
-                  ))}
+              welcomeVariant === "chat_only" && canIngest ? (
+                <IngestChatOnlyWelcome userName={userName} />
+              ) : (
+                <div className={`${CHAT_CONTENT_WIDTH_CLASS} flex flex-col items-center text-center`}>
+                  <IngestWelcomeHero
+                    profile={activeDisplayProfile}
+                    canIngest={canIngest}
+                    onOpenExperts={() => onRailChange?.("experts")}
+                  />
+                  <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
+                    {quickPrompts.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        disabled={!canIngest}
+                        onClick={() => {
+                          if (canIngest) {
+                            setInput(prompt);
+                          }
+                        }}
+                        className="rounded-full bg-[#f6f6f5] px-4 py-3 text-left text-sm text-[#303030] transition hover:bg-[#ededeb] disabled:cursor-not-allowed disabled:text-[#b6b6b2] disabled:hover:bg-[#f6f6f5]"
+                      >
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )
             ) : (
               <div className={`${CHAT_CONTENT_WIDTH_CLASS} space-y-5 pt-8`}>
                 {messages.map((message, messageIndex) => {
