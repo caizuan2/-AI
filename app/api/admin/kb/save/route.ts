@@ -5,6 +5,7 @@ import { buildContentHash, cleanIngestText, splitAdminKbChunks } from "@/lib/adm
 import { normalizeKnowledgeSourceType } from "@/lib/admin-ingest/source-type";
 import { requireKbAdmin } from "@/lib/auth/guards";
 import { requireFullAdminIngestAccess } from "@/lib/enterprise/admin-ingest-auth";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import { prisma } from "@/lib/prisma";
@@ -405,6 +406,26 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     return apiError(error);
+  }
+
+  if (
+    !matchesAdminIngestHistoryScope(
+      actor.id,
+      request.headers.get("x-admin-ingest-history-scope")
+    )
+  ) {
+    return NextResponse.json({
+      ok: false,
+      success: false,
+      code: "INGEST_HISTORY_SCOPE_MISMATCH",
+      errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+      message: "账号已切换，旧页面不能继续使用当前账号。"
+    }, {
+      status: 409,
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
   }
 
   if (!hasDatabaseUrl()) {

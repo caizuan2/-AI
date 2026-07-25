@@ -344,6 +344,7 @@ async function testFinalSelectedModelCompletionKeepsRawMarkdown(input: {
   try {
     const result = await sendCoreIngest({
       text: `验证${input.label}完成态原文`,
+      historyScope: "test-history-scope-model-selector",
       category: "测试",
       model: input.label,
       modelProvider: input.modelProvider,

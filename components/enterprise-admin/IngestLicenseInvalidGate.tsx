@@ -16,6 +16,11 @@ import {
   type IngestLicenseInvalidCode
 } from "@/lib/enterprise/ingest-license-invalid";
 import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
+import {
+  hasAdminIngestHistoryScopeChanged,
+  normalizeAdminIngestHistoryScope,
+  readAdminIngestHistoryScopeFromApiResponse
+} from "@/lib/enterprise/admin-ingest-history-sync";
 
 const useClientLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 const ACTIVATE_HREF = "/ingest/activate?next=%2Fadmin-ingest";
@@ -96,15 +101,20 @@ export function IngestLicenseInvalidDialog({
 export function IngestLicenseInvalidGate({
   initialCode = null,
   initialAccessTier = "full_ingest",
+  initialHistoryScope = "",
   children
 }: {
   initialCode?: IngestLicenseInvalidCode | null;
   initialAccessTier?: IngestAccessTier;
+  initialHistoryScope?: string;
   children: ReactNode;
 }) {
   const router = useRouter();
   const invalidCodeRef = useRef<IngestLicenseInvalidCode | null>(initialCode);
   const accessTierRef = useRef<IngestAccessTier>(initialAccessTier);
+  const historyScopeRef = useRef(
+    normalizeAdminIngestHistoryScope(initialHistoryScope)
+  );
   const dialogRef = useRef<HTMLElement>(null);
   const [invalidCode, setInvalidCode] = useState<IngestLicenseInvalidCode | null>(initialCode);
   const [switchingAccount, setSwitchingAccount] = useState(false);
@@ -157,7 +167,18 @@ export function IngestLicenseInvalidGate({
           });
 
           if (response.ok) {
-            const nextTier = readAccessTier(await response.json());
+            const payload = await response.json();
+            const nextTier = readAccessTier(payload);
+            const nextHistoryScope =
+              readAdminIngestHistoryScopeFromApiResponse(payload);
+
+            if (hasAdminIngestHistoryScopeChanged(
+              historyScopeRef.current,
+              nextHistoryScope
+            )) {
+              window.location.reload();
+              return;
+            }
 
             if (nextTier && nextTier !== accessTierRef.current) {
               router.refresh();
@@ -189,6 +210,12 @@ export function IngestLicenseInvalidGate({
   useEffect(() => {
     accessTierRef.current = initialAccessTier;
   }, [initialAccessTier]);
+
+  useEffect(() => {
+    historyScopeRef.current = normalizeAdminIngestHistoryScope(
+      initialHistoryScope
+    );
+  }, [initialHistoryScope]);
 
   useEffect(() => {
     if (!invalidCode) {

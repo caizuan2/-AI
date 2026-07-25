@@ -359,6 +359,10 @@ interface AdminSavedKnowledgeResponse extends SavedKnowledgeLike {
 }
 
 export function getFriendlyIngestError(response: Pick<Response, "status">, payload: ApiEnvelope<unknown> | null) {
+  if (payload?.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH") {
+    return "INGEST_HISTORY_SCOPE_MISMATCH: 账号已切换，正在重新加载当前账号的独立历史。";
+  }
+
   if (payload?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
     return payload.userMessage || payload.message || "当前模型暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试。";
   }
@@ -1320,6 +1324,7 @@ function gptResponseToDraft(data: GptIngestResponse, originalInput: string, agen
 export async function sendCoreIngest(input: {
   text: string;
   agent: IngestChatAgent;
+  historyScope: string;
   category: string;
   model: string;
   modelProvider?: IngestModelProvider;
@@ -1436,7 +1441,8 @@ export async function sendCoreIngest(input: {
       headers: {
         "Content-Type": "application/json",
         Accept: useDoubaoBrowserSse ? "text/event-stream, application/json" : "application/json",
-        "x-request-id": requestId
+        "x-request-id": requestId,
+        "x-admin-ingest-history-scope": input.historyScope
       },
       body: JSON.stringify({
         input: input.text,
@@ -1720,6 +1726,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
   messageId: string;
   draft: IngestKnowledgeDraft;
   agent: IngestChatAgent;
+  historyScope: string;
   tenantId?: string | null;
   userId?: string | null;
   platform?: IngestPlatform;
@@ -1754,7 +1761,8 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
     headers: {
       "Content-Type": "application/json",
       Accept: "application/json",
-      "x-request-id": requestId
+      "x-request-id": requestId,
+      "x-admin-ingest-history-scope": input.historyScope
     },
     body: JSON.stringify({
       operation: "retry_doubao_metadata",
@@ -1927,10 +1935,12 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
 export async function saveKnowledgeDraft(input: {
   draft: IngestKnowledgeDraft;
   agent: IngestChatAgent;
+  historyScope: string;
   originalInput: string;
   tenantId?: string | null;
   userId?: string | null;
   platform?: IngestPlatform;
+  signal?: AbortSignal;
 }) {
   const platform = input.platform ?? "web";
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
@@ -1997,7 +2007,10 @@ export async function saveKnowledgeDraft(input: {
     const response = await fetch("/api/admin/kb/save", {
       method: "POST",
       credentials: "include",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-ingest-history-scope": input.historyScope
+      },
       body: JSON.stringify({
         jobId: input.draft.jobId ?? null,
         draftId: input.draft.id,
@@ -2025,7 +2038,8 @@ export async function saveKnowledgeDraft(input: {
         sourceApp: "admin_ingest",
         platform,
         syncTarget: [...ingestSyncTarget]
-      })
+      }),
+      signal: input.signal
     });
     const data = await readApiData<{
       records?: AdminTrainingRecordResponse[];
@@ -2262,6 +2276,7 @@ export function stripUploadRuntimeFields(file: IngestUploadState): Omit<IngestUp
 
 export async function persistAdminIngestUploadImages(
   files: IngestUploadState[],
+  historyScope: string,
   signal?: AbortSignal
 ): Promise<IngestUploadState[]> {
   const persistedFiles = await Promise.all(files.map(async (file) => {
@@ -2274,7 +2289,10 @@ export async function persistAdminIngestUploadImages(
     const response = await fetch("/api/admin/ingest-images", {
       method: "POST",
       body: formData,
-      signal
+      signal,
+      headers: {
+        "x-admin-ingest-history-scope": historyScope
+      }
     });
     const data = await response.json() as ApiEnvelope<{
       imageId: string;
@@ -2285,7 +2303,7 @@ export async function persistAdminIngestUploadImages(
     const persistentUrl = data.data?.imageUrl?.trim() ?? "";
 
     if (!response.ok || !data.ok || !persistentUrl.startsWith("/api/admin/ingest-images?id=")) {
-      throw new Error(data.userMessage || data.message || "图片永久保存失败，请稍后重试。");
+      throw new Error(getFriendlyIngestError(response, data));
     }
 
     return {
@@ -2670,6 +2688,7 @@ export async function parseUploadedFilesForGpt(
 export async function sendUrlIngestPreview(input: {
   url: string;
   agent: IngestChatAgent;
+  historyScope: string;
   category: string;
   model: string;
   modelProvider?: IngestModelProvider;
@@ -2680,6 +2699,7 @@ export async function sendUrlIngestPreview(input: {
   tenantId?: string | null;
   userId?: string | null;
   platform?: IngestPlatform;
+  signal?: AbortSignal;
 }) {
   const platform = input.platform ?? "web";
   const normalizedModelSelection = normalizeIngestModelSelection({
@@ -2696,7 +2716,10 @@ export async function sendUrlIngestPreview(input: {
   const response = await fetch("/api/admin/kb/ingest/url", {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-admin-ingest-history-scope": input.historyScope
+    },
     body: JSON.stringify({
       input: input.url,
       sourceUrl: input.url,
@@ -2723,7 +2746,8 @@ export async function sendUrlIngestPreview(input: {
       selectedModelLabel,
       modelDisplayName: selectedModelLabel,
       autoSave: false
-    })
+    }),
+    signal: input.signal
   });
   const data = await readApiData<UrlIngestPreviewResponse>(response);
   const styledReplyMarkdown = data.replyMarkdown

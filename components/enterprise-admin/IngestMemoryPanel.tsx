@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, Copy, RefreshCcw, Sparkles } from "lucide-react";
 import { IngestAgentLearningPanel } from "@/components/enterprise-admin/IngestAgentLearningPanel";
 import { IngestMemoryConflictPanel } from "@/components/enterprise-admin/IngestMemoryConflictPanel";
@@ -22,6 +22,7 @@ import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 type IngestMemoryPanelProps = {
   activeAgent: IngestChatAgent;
   activeConversationId: string;
+  historyScope: string;
   messages: IngestChatMessage[];
   refreshKey?: number;
   onBack: () => void;
@@ -125,9 +126,16 @@ async function readJson<T>(response: Response): Promise<T> {
   return data;
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
+}
+
 export function IngestMemoryPanel({
   activeAgent,
   activeConversationId,
+  historyScope,
   messages,
   refreshKey = 0,
   onBack,
@@ -150,6 +158,9 @@ export function IngestMemoryPanel({
   const [indexStatus, setIndexStatus] = useState<MemoryIndexStatus | null>(null);
   const [publishResult, setPublishResult] = useState<MemoryPublishResult | null>(null);
   const [runtimeTestResult, setRuntimeTestResult] = useState<RuntimeMemoryTestResult | null>(null);
+  const historyScopeRef = useRef(historyScope);
+  const mutationAbortControllersRef = useRef<Set<AbortController>>(new Set());
+  historyScopeRef.current = historyScope;
   const knowledgeBaseId = activeAgent.knowledgeBaseId ?? undefined;
   const runtimeScope = useMemo(() => resolvePublicExpertScope({
     agentId: activeAgent.id,
@@ -160,7 +171,60 @@ export function IngestMemoryPanel({
     ...(knowledgeBaseId ? { knowledgeBaseId } : {})
   }).toString(), [activeAgent.id, knowledgeBaseId]);
 
+  const beginHistoryScopedMutation = useCallback(() => {
+    const scopedHistoryScope = historyScopeRef.current.trim();
+
+    if (!scopedHistoryScope) {
+      return null;
+    }
+
+    const controller = new AbortController();
+    mutationAbortControllersRef.current.add(controller);
+
+    return {
+      controller,
+      historyScope: scopedHistoryScope
+    };
+  }, []);
+
+  const finishHistoryScopedMutation = useCallback((controller: AbortController) => {
+    mutationAbortControllersRef.current.delete(controller);
+  }, []);
+
+  useEffect(() => {
+    setIsLoading(false);
+    setIsExtracting(false);
+    setIsRecalling(false);
+    setIsDetectingConflict(false);
+    setIsPublishing(false);
+    setIsRebuildingIndex(false);
+    setIsTestingRuntime(false);
+    setSummary(emptySummary);
+    setExtraction(null);
+    setMergePlan(null);
+    setPromptPreview(null);
+    setConflictResult(null);
+    setIndexStatus(null);
+    setPublishResult(null);
+    setRuntimeTestResult(null);
+    setError("");
+
+    const controllers = mutationAbortControllersRef.current;
+
+    return () => {
+      controllers.forEach((controller) => controller.abort());
+      controllers.clear();
+    };
+  }, [historyScope]);
+
   const loadSummary = useCallback(async () => {
+    const requestHistoryScope = historyScope;
+
+    if (!requestHistoryScope) {
+      setSummary(emptySummary);
+      return;
+    }
+
     setIsLoading(true);
     setError("");
 
@@ -169,25 +233,42 @@ export function IngestMemoryPanel({
         credentials: "include"
       }));
 
-      setSummary(data);
+      if (historyScopeRef.current === requestHistoryScope) {
+        setSummary(data);
+      }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "训练记忆摘要加载失败。");
+      if (historyScopeRef.current === requestHistoryScope) {
+        setError(nextError instanceof Error ? nextError.message : "训练记忆摘要加载失败。");
+      }
     } finally {
-      setIsLoading(false);
+      if (historyScopeRef.current === requestHistoryScope) {
+        setIsLoading(false);
+      }
     }
-  }, [query]);
+  }, [historyScope, query]);
 
   const loadIndexStatus = useCallback(async () => {
+    const requestHistoryScope = historyScope;
+
+    if (!requestHistoryScope) {
+      setIndexStatus(null);
+      return;
+    }
+
     try {
       const data = await readJson<MemoryIndexStatus>(await fetch(`/api/admin/ingest-memory/index/status?${query}`, {
         credentials: "include"
       }));
 
-      setIndexStatus(data);
+      if (historyScopeRef.current === requestHistoryScope) {
+        setIndexStatus(data);
+      }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : "训练记忆索引状态加载失败。");
+      if (historyScopeRef.current === requestHistoryScope) {
+        setError(nextError instanceof Error ? nextError.message : "训练记忆索引状态加载失败。");
+      }
     }
-  }, [query]);
+  }, [historyScope, query]);
 
   useEffect(() => {
     void loadSummary();
@@ -200,6 +281,13 @@ export function IngestMemoryPanel({
       return;
     }
 
+    const mutation = beginHistoryScopedMutation();
+
+    if (!mutation) {
+      setError("账号状态尚未加载，请刷新后再试。");
+      return;
+    }
+
     setIsExtracting(true);
     setError("");
 
@@ -209,8 +297,10 @@ export function IngestMemoryPanel({
       const data = await readJson<IngestMemoryExtractionResult>(await fetch("/api/admin/ingest-memory/extract", {
         method: "POST",
         credentials: "include",
+        signal: mutation.controller.signal,
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-admin-ingest-history-scope": mutation.historyScope
         },
         body: JSON.stringify({
           conversationId: activeConversationId,
@@ -226,6 +316,10 @@ export function IngestMemoryPanel({
         })
       }));
 
+      if (historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       setExtraction(data);
       onToast?.({
         type: "success",
@@ -234,12 +328,19 @@ export function IngestMemoryPanel({
       });
       await loadSummary();
     } catch (nextError) {
+      if (isAbortError(nextError) || historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       const message = nextError instanceof Error ? nextError.message : "训练记忆提取失败。";
 
       setError(message);
       onToast?.({ type: "warning", title: message });
     } finally {
-      setIsExtracting(false);
+      finishHistoryScopedMutation(mutation.controller);
+      if (historyScopeRef.current === mutation.historyScope) {
+        setIsExtracting(false);
+      }
     }
   }
 
@@ -359,23 +460,50 @@ export function IngestMemoryPanel({
   }
 
   async function handleConfirmDraft(id: string) {
+    const mutation = beginHistoryScopedMutation();
+
+    if (!mutation) {
+      setError("账号状态尚未加载，请刷新后再试。");
+      return;
+    }
+
     try {
       await readJson(await fetch("/api/admin/ingest-memory/drafts", {
         method: "PATCH",
         credentials: "include",
+        signal: mutation.controller.signal,
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-admin-ingest-history-scope": mutation.historyScope
         },
         body: JSON.stringify({ id, status: "confirmed" })
       }));
+
+      if (historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       await loadSummary();
       onToast?.({ type: "success", title: "训练记忆已标记为确认" });
     } catch (nextError) {
+      if (isAbortError(nextError) || historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       setError(nextError instanceof Error ? nextError.message : "标记确认失败。");
+    } finally {
+      finishHistoryScopedMutation(mutation.controller);
     }
   }
 
   async function handlePublishSavedMemories() {
+    const mutation = beginHistoryScopedMutation();
+
+    if (!mutation) {
+      setError("账号状态尚未加载，请刷新后再试。");
+      return;
+    }
+
     setIsPublishing(true);
     setError("");
 
@@ -383,11 +511,17 @@ export function IngestMemoryPanel({
       const data = await readJson<MemoryPublishResult>(await fetch("/api/admin/ingest-memory/publish", {
         method: "POST",
         credentials: "include",
+        signal: mutation.controller.signal,
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-admin-ingest-history-scope": mutation.historyScope
         },
         body: JSON.stringify({ publishAllSaved: true })
       }));
+
+      if (historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
 
       setPublishResult(data);
       await loadIndexStatus();
@@ -399,21 +533,43 @@ export function IngestMemoryPanel({
           : data.warnings?.[0] ?? `跳过 ${data.skippedCount} 条。`
       });
     } catch (nextError) {
+      if (isAbortError(nextError) || historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       setError(nextError instanceof Error ? nextError.message : "发布训练记忆失败。");
     } finally {
-      setIsPublishing(false);
+      finishHistoryScopedMutation(mutation.controller);
+      if (historyScopeRef.current === mutation.historyScope) {
+        setIsPublishing(false);
+      }
     }
   }
 
   async function handleRebuildMemoryIndex() {
+    const mutation = beginHistoryScopedMutation();
+
+    if (!mutation) {
+      setError("账号状态尚未加载，请刷新后再试。");
+      return;
+    }
+
     setIsRebuildingIndex(true);
     setError("");
 
     try {
       const data = await readJson<MemoryIndexStatus>(await fetch("/api/admin/ingest-memory/index/rebuild", {
         method: "POST",
-        credentials: "include"
+        credentials: "include",
+        signal: mutation.controller.signal,
+        headers: {
+          "x-admin-ingest-history-scope": mutation.historyScope
+        }
       }));
+
+      if (historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
 
       setIndexStatus(data);
       onToast?.({
@@ -422,9 +578,16 @@ export function IngestMemoryPanel({
         description: `当前可检索索引 ${data.indexedCount ?? 0} 条。`
       });
     } catch (nextError) {
+      if (isAbortError(nextError) || historyScopeRef.current !== mutation.historyScope) {
+        return;
+      }
+
       setError(nextError instanceof Error ? nextError.message : "重建训练记忆索引失败。");
     } finally {
-      setIsRebuildingIndex(false);
+      finishHistoryScopedMutation(mutation.controller);
+      if (historyScopeRef.current === mutation.historyScope) {
+        setIsRebuildingIndex(false);
+      }
     }
   }
 

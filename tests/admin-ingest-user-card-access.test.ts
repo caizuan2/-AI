@@ -176,10 +176,19 @@ test("server gates prevent chat-only writes and internal prompt preview exposure
 
 test("license monitor refreshes server-rendered capabilities without downgrading on network errors", () => {
   const gate = readFileSync("components/enterprise-admin/IngestLicenseInvalidGate.tsx", "utf8");
+  const layout = readFileSync("app/admin-ingest/layout.tsx", "utf8");
 
-  assert.match(gate, /const nextTier = readAccessTier\(await response\.json\(\)\)/);
+  assert.match(gate, /const payload = await response\.json\(\)/);
+  assert.match(gate, /const nextTier = readAccessTier\(payload\)/);
+  assert.match(gate, /readAdminIngestHistoryScopeFromApiResponse\(payload\)/);
+  assert.match(
+    gate,
+    /hasAdminIngestHistoryScopeChanged\([\s\S]*historyScopeRef\.current,[\s\S]*nextHistoryScope[\s\S]*window\.location\.reload\(\)/
+  );
   assert.match(gate, /nextTier !== accessTierRef\.current/);
   assert.match(gate, /router\.refresh\(\)/);
   assert.doesNotMatch(gate, /accessTierRef\.current = nextTier/);
   assert.match(gate, /Network failures and aborted checks must not invalidate/);
+  assert.match(layout, /initialHistoryScope = access\.capabilities\.enterPortal[\s\S]*createAdminIngestHistoryScope\(user\.id\)/);
+  assert.match(layout, /initialHistoryScope=\{initialHistoryScope\}/);
 });

@@ -5,7 +5,11 @@ import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
-import { requireFullAdminIngestAccess } from "@/lib/enterprise/admin-ingest-auth";
+import {
+  requireAdminIngestChatAccess,
+  requireFullAdminIngestAccess
+} from "@/lib/enterprise/admin-ingest-auth";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
@@ -92,6 +96,28 @@ function readRequest(body: unknown) {
 export async function POST(request: Request) {
   try {
     await requireFullAdminIngestAccess();
+    const { actor } = await requireAdminIngestChatAccess();
+
+    if (
+      !matchesAdminIngestHistoryScope(
+        actor.id,
+        request.headers.get("x-admin-ingest-history-scope")
+      )
+    ) {
+      return new Response(JSON.stringify({
+        ok: false,
+        success: false,
+        code: "INGEST_HISTORY_SCOPE_MISMATCH",
+        errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+        message: "账号已切换，旧页面不能继续使用当前账号。"
+      }), {
+        status: 409,
+        headers: {
+          "Content-Type": "application/json; charset=utf-8",
+          "Cache-Control": "no-store"
+        }
+      });
+    }
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);

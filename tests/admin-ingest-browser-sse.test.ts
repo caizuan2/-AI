@@ -294,6 +294,7 @@ async function main() {
     let visibleReply = "";
     const success = await sendCoreIngest({
       text: "豆包浏览器 SSE 成功测试",
+      historyScope: "test-history-scope-browser-sse",
       category: "测试",
       model: "Doubao-Seed-2.1-pro",
       modelProvider: "doubao-pro",
@@ -327,6 +328,7 @@ async function main() {
     mode = "legacy_json";
     const legacy = await sendCoreIngest({
       text: "旧 JSON 兼容测试",
+      historyScope: "test-history-scope-browser-sse",
       category: "测试",
       model: "Doubao-Seed-2.1-pro",
       modelProvider: "doubao-pro",
@@ -340,6 +342,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包浏览器 SSE 错误测试",
+        historyScope: "test-history-scope-browser-sse",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",
@@ -365,6 +368,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包浏览器 SSE 限流测试",
+        historyScope: "test-history-scope-browser-sse",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",
@@ -397,6 +401,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包浏览器 SSE 推理限额暂停测试",
+        historyScope: "test-history-scope-browser-sse",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",
@@ -421,6 +426,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包浏览器 SSE 断流测试",
+        historyScope: "test-history-scope-browser-sse",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",

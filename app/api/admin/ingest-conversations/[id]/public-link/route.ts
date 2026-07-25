@@ -5,6 +5,7 @@ import {
   revokeAdminIngestPublicConversation
 } from "@/lib/enterprise/admin-ingest-public-conversation-store";
 import type { AdminIngestPublicLinkKind } from "@/lib/enterprise/admin-ingest-public-conversation-data";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { AppError } from "@/lib/errors";
 
 export const runtime = "nodejs";
@@ -59,9 +60,39 @@ function jsonError(error: unknown) {
   }, { status: 500 });
 }
 
+function rejectMismatchedHistoryScope(request: Request, ownerUserId: string) {
+  if (
+    matchesAdminIngestHistoryScope(
+      ownerUserId,
+      request.headers.get("x-admin-ingest-history-scope")
+    )
+  ) {
+    return null;
+  }
+
+  return NextResponse.json({
+    ok: false,
+    success: false,
+    code: "INGEST_HISTORY_SCOPE_MISMATCH",
+    errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+    message: "账号已切换，旧页面不能继续使用当前账号。"
+  }, {
+    status: 409,
+    headers: {
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
 export async function POST(request: Request, context: RouteContext) {
   try {
     const actor = await requireAdminIngestChatActor();
+    const scopeError = rejectMismatchedHistoryScope(request, actor.id);
+
+    if (scopeError) {
+      return scopeError;
+    }
+
     const conversationId = await readConversationId(context);
 
     if (!conversationId) {
@@ -98,6 +129,12 @@ export async function POST(request: Request, context: RouteContext) {
 export async function DELETE(request: Request, context: RouteContext) {
   try {
     const actor = await requireAdminIngestChatActor();
+    const scopeError = rejectMismatchedHistoryScope(request, actor.id);
+
+    if (scopeError) {
+      return scopeError;
+    }
+
     const conversationId = await readConversationId(context);
     const body = await request.json() as Record<string, unknown>;
     const record = await revokeAdminIngestPublicConversation({

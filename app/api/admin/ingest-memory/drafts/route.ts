@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { listMemoryDrafts, updateMemoryDraftStatus } from "@/lib/enterprise/ingest-memory-store";
 import { AppError, ValidationError } from "@/lib/errors";
 import type { IngestMemoryStatus } from "@/lib/enterprise/ingest-memory-types";
@@ -55,6 +56,27 @@ export async function PATCH(request: Request) {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_draft_status"
     });
+
+    if (
+      !matchesAdminIngestHistoryScope(
+        actor.id,
+        request.headers.get("x-admin-ingest-history-scope")
+      )
+    ) {
+      return NextResponse.json({
+        ok: false,
+        success: false,
+        code: "INGEST_HISTORY_SCOPE_MISMATCH",
+        errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+        message: "账号已切换，旧页面不能继续使用当前账号。"
+      }, {
+        status: 409,
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
     const body = await request.json() as Record<string, unknown>;
     const id = typeof body.id === "string" ? body.id : "";
     const status = typeof body.status === "string" && statuses.has(body.status as IngestMemoryStatus)

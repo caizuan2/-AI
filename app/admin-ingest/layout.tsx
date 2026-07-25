@@ -8,18 +8,23 @@ import {
 } from "@/lib/errors";
 import type { IngestLicenseInvalidCode } from "@/lib/enterprise/ingest-license-invalid";
 import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
+import { createAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminIngestLayout({ children }: { children: ReactNode }) {
   let initialLicenseCode: IngestLicenseInvalidCode | null = null;
   let initialAccessTier: IngestAccessTier = "none";
+  let initialHistoryScope = "";
   let shouldActivate = false;
 
   try {
     const user = await requireUser();
     const access = await resolveIngestAccessTier(user);
     initialAccessTier = access.accessTier;
+    initialHistoryScope = access.capabilities.enterPortal
+      ? createAdminIngestHistoryScope(user.id)
+      : "";
 
     if (access.accessTier === "none") {
       if (access.invalidLicenseCode) {
@@ -44,6 +49,7 @@ export default async function AdminIngestLayout({ children }: { children: ReactN
     <IngestLicenseInvalidGate
       initialCode={initialLicenseCode}
       initialAccessTier={initialAccessTier}
+      initialHistoryScope={initialHistoryScope}
     >
       <div className="flex h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919] antialiased">
         {children}

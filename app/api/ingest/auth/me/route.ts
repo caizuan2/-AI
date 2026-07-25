@@ -3,6 +3,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { SESSION_COOKIE_NAME } from "@/lib/auth/constants";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 import { resolveIngestAccessTier } from "@/lib/enterprise/ingest-access-tier";
+import { createAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { toAppError } from "@/lib/errors";
 import { getHighestRole, type AppRole } from "@/lib/rbac/roles";
 import { cookies } from "next/headers";
@@ -22,6 +23,9 @@ export async function GET(request: Request) {
       : null;
     const hasIngestPortalAccess = access.capabilities.enterPortal;
     const hasIngestAccess = access.accessTier === "full_ingest";
+    const historyScope = hasIngestPortalAccess
+      ? createAdminIngestHistoryScope(user.id)
+      : null;
     const licenseErrorCode = access.invalidLicenseCode ?? undefined;
     const responseUser = {
       ...authUser,
@@ -44,6 +48,7 @@ export async function GET(request: Request) {
       hasIngestPortalAccess,
       hasIngestAccess,
       accessTier: access.accessTier,
+      historyScope,
       capabilities: access.capabilities,
       redirectTarget: hasIngestPortalAccess ? "/admin-ingest?app=ingest-admin&platform=web" : "/ingest/activate",
       role,
@@ -68,6 +73,7 @@ export async function GET(request: Request) {
         hasIngestPortalAccess: false,
         hasIngestAccess: false,
         accessTier: "none",
+        historyScope: null,
         capabilities: {
           enterPortal: false,
           chat: false,

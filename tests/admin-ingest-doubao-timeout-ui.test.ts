@@ -438,6 +438,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包结构化超时穿透测试",
+        historyScope: "test-history-scope-doubao-timeout",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",
@@ -472,6 +473,7 @@ async function main() {
     await assert.rejects(
       () => sendCoreIngest({
         text: "豆包模型密钥错误分类测试",
+        historyScope: "test-history-scope-doubao-timeout",
         category: "测试",
         model: "Doubao-Seed-2.1-pro",
         modelProvider: "doubao-pro",

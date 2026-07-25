@@ -251,6 +251,7 @@ async function testClientMetadataBinding() {
     try {
       return await retryDoubaoKnowledgeDraftMetadata({
         originalInput: "刚加上客户是宝妈，怎么破冰呢",
+        historyScope: "test-history-scope-metadata-recovery",
         replyMarkdown: exactReply,
         sourceResponseId: "visible-response-original",
         messageId: "assistant-result-current",

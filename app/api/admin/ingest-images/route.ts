@@ -6,6 +6,7 @@ import {
   readAdminIngestImage,
   saveAdminIngestImage
 } from "@/lib/enterprise/admin-ingest-image-store";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -25,6 +26,22 @@ function jsonUtf8(data: unknown, status = 200) {
 export async function POST(request: Request) {
   try {
     const actor = await requireAdminIngestChatActor();
+
+    if (
+      !matchesAdminIngestHistoryScope(
+        actor.id,
+        request.headers.get("x-admin-ingest-history-scope")
+      )
+    ) {
+      return jsonUtf8({
+        ok: false,
+        success: false,
+        code: "INGEST_HISTORY_SCOPE_MISMATCH",
+        errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+        message: "账号已切换，旧页面不能继续使用当前账号。"
+      }, 409);
+    }
+
     const formData = await request.formData();
     const file = formData.get("file");
 

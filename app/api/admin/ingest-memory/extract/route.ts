@@ -6,6 +6,7 @@ import {
   canonicalizeCareerMemoryExtractionResult
 } from "@/lib/enterprise/ingest-memory-career-scope";
 import { persistMemoryExtraction } from "@/lib/enterprise/ingest-memory-panel-service";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { AppError, ValidationError } from "@/lib/errors";
 import type { IngestMemoryConversationMessage } from "@/lib/enterprise/ingest-memory-types";
 
@@ -61,6 +62,26 @@ export async function POST(request: Request) {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "admin_ingest_memory_extract"
     });
+
+    if (
+      !matchesAdminIngestHistoryScope(
+        actor.id,
+        request.headers.get("x-admin-ingest-history-scope")
+      )
+    ) {
+      return NextResponse.json({
+        ok: false,
+        success: false,
+        code: "INGEST_HISTORY_SCOPE_MISMATCH",
+        errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+        message: "账号已切换，旧页面不能继续使用当前账号。"
+      }, {
+        status: 409,
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
 
     const rawSource = {
       ...readBody(await request.json()),

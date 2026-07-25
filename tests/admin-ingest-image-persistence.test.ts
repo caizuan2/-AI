@@ -66,6 +66,10 @@ async function main() {
     assert.equal(String(input), "/api/admin/ingest-images");
     assert.equal(init?.method, "POST");
     assert.ok(init?.body instanceof FormData);
+    assert.equal(
+      new Headers(init?.headers).get("x-admin-ingest-history-scope"),
+      "history-scope-test"
+    );
 
     return new Response(JSON.stringify({
       ok: true,
@@ -82,7 +86,7 @@ async function main() {
   }) as typeof fetch;
 
   try {
-    const [persisted] = await persistAdminIngestUploadImages([upload]);
+    const [persisted] = await persistAdminIngestUploadImages([upload], "history-scope-test");
     const historyAttachment = stripUploadRuntimeFields(persisted);
 
     assert.equal(uploadCalls, 1);
@@ -90,7 +94,7 @@ async function main() {
     assert.equal(historyAttachment.previewUrl, historyAttachment.persistentUrl);
     assert.equal("rawFile" in historyAttachment, false);
 
-    await persistAdminIngestUploadImages([persisted]);
+    await persistAdminIngestUploadImages([persisted], "history-scope-test");
     assert.equal(uploadCalls, 1, "已经永久保存的图片不能重复上传。");
   } finally {
     globalThis.fetch = originalFetch;
@@ -140,9 +144,12 @@ async function main() {
     /files=\{uploadedFiles\}[\s\S]*?onRemove=\{onRemoveUpload\}[\s\S]*?imageOnly[\s\S]*?enableImagePreview[\s\S]*?composerThumbnailLayout/
   );
   assert.match(modeToggleSource, /platformContext\.platform === "web"/);
-  assert.match(modeToggleSource, /await persistAdminIngestUploadImages\(composerUploads\)/);
+  assert.match(
+    modeToggleSource,
+    /await persistAdminIngestUploadImages\([\s\S]*?composerUploads,[\s\S]*?requestHistoryScope,[\s\S]*?imagePersistenceController\.signal/
+  );
   assert.ok(
-    modeToggleSource.indexOf("await persistAdminIngestUploadImages(composerUploads)")
+    modeToggleSource.indexOf("await persistAdminIngestUploadImages(")
       < modeToggleSource.indexOf("attachments: draftAttachments"),
     "图片永久地址必须在消息写入历史前生成。"
   );

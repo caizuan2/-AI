@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, GaugeCircle, MessageSquareText } from "lucide-react";
 import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
@@ -128,6 +128,19 @@ import type {
   IngestCapabilities
 } from "@/lib/enterprise/ingest-access-policy";
 import {
+  createEmptyAdminIngestConversationSyncSnapshot,
+  createAdminIngestHistoryStorageKeys,
+  normalizeAdminIngestConversationSyncSnapshot,
+  normalizeAdminIngestHistoryScope,
+  readAdminIngestHistoryScopeFromApiResponse,
+  readAdminIngestScopedLocalSnapshot,
+  writeAdminIngestScopedLocalSnapshot,
+  type AdminIngestConversationSyncResponse,
+  type AdminIngestConversationSyncSnapshot,
+  type AdminIngestConversationSyncWriteRequest,
+  type AdminIngestHistoryStorageKeys
+} from "@/lib/enterprise/admin-ingest-history-sync";
+import {
   createIngestRequestAttemptId,
   createIngestRequestId,
   getRetryDelayMs,
@@ -173,6 +186,13 @@ type IngestSendOptions = {
   retryAttachments?: IngestUploadState[];
   modelLabel?: string;
   preserveComposer?: boolean;
+};
+type PendingAdminIngestConversationSync = {
+  historyScope: string;
+  storageKeys: AdminIngestHistoryStorageKeys;
+  serialized: string;
+  state: AdminIngestConversationSyncSnapshot;
+  retryCount: number;
 };
 type OpenPanel = "notifications" | "settings" | null;
 
@@ -248,17 +268,6 @@ type SpeechWindow = Window & {
   SpeechRecognition?: SpeechRecognitionConstructor;
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
 };
-type AdminIngestConversationSyncSnapshot = {
-  agents?: IngestChatAgent[];
-  agentConversations?: IngestAgentConversation[];
-  activeAgentId?: string;
-  activeConversationId?: string;
-  conversationMessagesById?: Record<string, IngestChatMessage[]>;
-  conversationDraftsById?: Record<string, IngestKnowledgeDraft>;
-  pinnedAgentIds?: string[];
-  expandedAgentIds?: string[];
-  expandedConversationAgentIds?: string[];
-};
 
 const tenantId: string | null = null;
 const userId: string | null = null;
@@ -283,35 +292,18 @@ const initialSettingsState: IngestSettingsState = {
   syncTarget: [...ingestSyncTarget]
 };
 const ADMIN_AVATAR_STORAGE_KEY = "admin-ingest-avatar";
-const INGEST_AGENTS_STORAGE_KEY = "ai-kb-ingest-agents";
-const INGEST_CONVERSATIONS_STORAGE_KEY = "ai-kb-ingest-conversations";
-const INGEST_ACTIVE_AGENT_STORAGE_KEY = "ai-kb-ingest-active-agent";
-const INGEST_ACTIVE_CONVERSATION_STORAGE_KEY = "ai-kb-ingest-active-conversation";
-const INGEST_CONVERSATION_MESSAGES_STORAGE_KEY = "ai-kb-ingest-conversation-messages";
-const INGEST_CONVERSATION_DRAFTS_STORAGE_KEY = "ai-kb-ingest-conversation-drafts";
-const INGEST_PINNED_AGENTS_STORAGE_KEY = "ai-kb-ingest-pinned-agents";
-const INGEST_EXPANDED_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-agents";
-const INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY = "ai-kb-ingest-expanded-conversation-agents";
 const DOUBAO_INFERENCE_PAUSED_STORAGE_KEY = "admin-ingest-doubao-inference-paused-v1";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
 const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
 const INGEST_REMOTE_SYNC_DEBOUNCE_MS = 800;
 
-function readLocalArray<T>(key: string): T[] {
-  try {
-    const rawValue = window.localStorage.getItem(key);
-
-    if (!rawValue) {
-      return [];
-    }
-
-    const parsed = JSON.parse(rawValue) as unknown;
-
-    return Array.isArray(parsed) ? parsed as T[] : [];
-  } catch {
-    return [];
-  }
+function isAdminIngestHistoryScopeMismatch(error: unknown) {
+  return readAdminIngestRequestError(error)?.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+    || (
+      error instanceof Error
+      && error.message.includes("INGEST_HISTORY_SCOPE_MISMATCH")
+    );
 }
 
 function getAuthAccessErrorMessage(error: unknown) {
@@ -374,22 +366,6 @@ function getModelHealthWarningMessage(error: unknown) {
   return "";
 }
 
-function readLocalRecord<T>(key: string): Record<string, T> {
-  try {
-    const rawValue = window.localStorage.getItem(key);
-
-    if (!rawValue) {
-      return {};
-    }
-
-    const parsed = JSON.parse(rawValue) as unknown;
-
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, T> : {};
-  } catch {
-    return {};
-  }
-}
-
 function readLocalString(key: string) {
   try {
     return window.localStorage.getItem(key) ?? "";
@@ -412,24 +388,6 @@ function removeLocalValue(key: string) {
   } catch {
     // localStorage can be unavailable in hardened browsers; UI should keep running.
   }
-}
-
-function mergeById<T extends { id: string }>(remoteItems: T[] = [], localItems: T[] = []) {
-  const merged = new Map<string, T>();
-
-  for (const item of remoteItems) {
-    merged.set(item.id, item);
-  }
-
-  for (const item of localItems) {
-    merged.set(item.id, item);
-  }
-
-  return Array.from(merged.values());
-}
-
-function mergeStringIds(remoteItems: string[] = [], localItems: string[] = []) {
-  return Array.from(new Set([...remoteItems, ...localItems]));
 }
 
 function mergeMessageList(remoteMessages: IngestChatMessage[] = [], localMessages: IngestChatMessage[] = []) {
@@ -462,23 +420,6 @@ function mergeMessageRecords(
   });
 
   return next;
-}
-
-function hasRemoteConversationSyncState(
-  state: AdminIngestConversationSyncSnapshot | null | undefined
-): state is AdminIngestConversationSyncSnapshot {
-  return Boolean(
-    state
-    && (
-      state.agents?.length
-      || state.agentConversations?.length
-      || state.pinnedAgentIds?.length
-      || state.expandedAgentIds?.length
-      || state.expandedConversationAgentIds?.length
-      || Object.keys(state.conversationMessagesById ?? {}).length
-      || Object.keys(state.conversationDraftsById ?? {}).length
-    )
-  );
 }
 
 function createNotification(input: Pick<IngestNotification, "type" | "title" | "description"> & {
@@ -825,7 +766,21 @@ export function IngestModeToggle({
   const [autonomousEnabled, setAutonomousEnabled] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [conversationSyncLoaded, setConversationSyncLoaded] = useState(false);
+  const [historyScope, setHistoryScope] = useState("");
   const lastConversationSyncPayloadRef = useRef("");
+  const historyScopeRef = useRef("");
+  const conversationSyncRevisionRef = useRef(0);
+  const conversationSyncTimeoutRef = useRef<number | null>(null);
+  const conversationHydrationAbortControllerRef = useRef<AbortController | null>(null);
+  const conversationSyncAbortControllersRef = useRef<Set<AbortController>>(new Set());
+  const accountScopedMutationAbortControllersRef = useRef<Set<AbortController>>(new Set());
+  const conversationSyncInFlightRef = useRef(false);
+  const pendingConversationSyncRef = useRef<PendingAdminIngestConversationSync | null>(null);
+  const isAccountTransitioningRef = useRef(false);
+  const historyStorageKeys = useMemo(
+    () => createAdminIngestHistoryStorageKeys(historyScope),
+    [historyScope]
+  );
   const uploadState = uploadedFiles[0] ?? null;
   const modelOptions = INGEST_MODEL_DISPLAY_NAMES;
   const selectedModelLabel = selectedModel;
@@ -885,26 +840,8 @@ export function IngestModeToggle({
       search: window.location.search,
       userAgent: navigator.userAgent
     });
-    const storedAgents = readLocalArray<IngestChatAgent>(INGEST_AGENTS_STORAGE_KEY);
-    const storedConversations = readLocalArray<IngestAgentConversation>(INGEST_CONVERSATIONS_STORAGE_KEY);
-    const storedPinnedAgentIds = readLocalArray<string>(INGEST_PINNED_AGENTS_STORAGE_KEY);
-    const storedExpandedAgentIds = readLocalArray<string>(INGEST_EXPANDED_AGENTS_STORAGE_KEY);
-    const storedExpandedConversationAgentIds = readLocalArray<string>(INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY);
-    const storedActiveAgentId = readLocalString(INGEST_ACTIVE_AGENT_STORAGE_KEY);
-    const storedActiveConversationId = readLocalString(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY);
-    const storedConversationMessages = readLocalRecord<IngestChatMessage[]>(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY);
-    const storedConversationDrafts = readLocalRecord<IngestKnowledgeDraft>(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY);
 
     setPlatformContext(nextContext);
-    setAgents((current) => {
-      const baseAgents = storedAgents.length ? storedAgents : current;
-
-      return baseAgents.map((agent) => ({
-        ...agent,
-        platform: nextContext.platform,
-        syncTarget: [...nextContext.syncTarget]
-      }));
-    });
     setVoiceState((current) => ({
       ...current,
       platform: nextContext.platform,
@@ -920,22 +857,6 @@ export function IngestModeToggle({
       platform: nextContext.platform,
       syncTarget: [...nextContext.syncTarget]
     })));
-    setAgentConversations((current) => {
-      const baseConversations = storedConversations.length ? storedConversations : current;
-
-      return baseConversations.map((conversation) => ({
-        ...conversation,
-        platform: nextContext.platform,
-        syncTarget: [...nextContext.syncTarget]
-      }));
-    });
-    setPinnedAgentIds(storedPinnedAgentIds);
-    setExpandedAgentIds(storedExpandedAgentIds);
-    setExpandedConversationAgentIds(storedExpandedConversationAgentIds);
-    setActiveAgentId((current) => storedActiveAgentId || current);
-    setConversationMessagesById(storedConversationMessages);
-    setConversationDraftsById(storedConversationDrafts);
-    setActiveConversationId((current) => storedActiveConversationId || current);
 
     setAdminAvatar(window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY) ?? "");
     setAppName(window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
@@ -946,15 +867,14 @@ export function IngestModeToggle({
     const storedModelPreferences = parseAdminIngestModelPreferences(
       window.localStorage.getItem(ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY)
     );
-    const preferenceAgentId = storedActiveAgentId || storedAgents[0]?.id || "";
     const migratedModelPreferences = migrateLegacyAdminIngestModelPreference({
       preferences: storedModelPreferences,
-      activeAgentId: preferenceAgentId,
+      activeAgentId: "",
       legacyModelLabel: storedModel.label
     });
     const initialModelLabel = resolveAdminIngestAgentModel({
       preferences: migratedModelPreferences,
-      agentId: preferenceAgentId
+      agentId: ""
     });
 
     setModelPreferencesByAgent(migratedModelPreferences);
@@ -964,8 +884,213 @@ export function IngestModeToggle({
     if (storedModelValue !== storedModel.label) {
       window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, storedModel.label);
     }
-    setHistoryLoaded(true);
   }, []);
+
+  useEffect(() => {
+    const hydrationContext = resolveAdminIngestPlatformContext({
+      search: window.location.search,
+      userAgent: navigator.userAgent
+    });
+    const abortController = new AbortController();
+    let cancelled = false;
+
+    isAccountTransitioningRef.current = true;
+    conversationHydrationAbortControllerRef.current?.abort();
+    conversationHydrationAbortControllerRef.current = abortController;
+    if (conversationSyncTimeoutRef.current !== null) {
+      window.clearTimeout(conversationSyncTimeoutRef.current);
+      conversationSyncTimeoutRef.current = null;
+    }
+    conversationSyncAbortControllersRef.current.forEach((controller) => controller.abort());
+    conversationSyncAbortControllersRef.current.clear();
+    pendingConversationSyncRef.current = null;
+    historyScopeRef.current = "";
+    conversationSyncRevisionRef.current = 0;
+    lastConversationSyncPayloadRef.current = "";
+    restoredInitialConversationRef.current = false;
+    setHistoryScope("");
+    setHistoryLoaded(false);
+    setConversationSyncLoaded(false);
+    setAgents([]);
+    setAgentConversations([]);
+    setActiveAgentId("");
+    setActiveConversationId("");
+    setConversationMessagesById({});
+    setConversationDraftsById({});
+    setPinnedAgentIds([]);
+    setExpandedAgentIds([]);
+    setExpandedConversationAgentIds([]);
+    setMessages([]);
+    setDraft(ingestChatInitialDraft);
+
+    async function hydrateAccountHistory() {
+      try {
+        const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          signal: abortController.signal
+        });
+        const payload = await response.json() as AdminIngestConversationSyncResponse;
+
+        if (!response.ok) {
+          throw new Error(
+            `${payload.errorCode ?? "INGEST_HISTORY_LOAD_FAILED"}: ${payload.message ?? "历史记录加载失败。"}`
+          );
+        }
+
+        const nextHistoryScope = normalizeAdminIngestHistoryScope(
+          payload.historyScope
+        );
+        const nextRevision = typeof payload.revision === "number"
+          && Number.isSafeInteger(payload.revision)
+          && payload.revision >= 0
+          ? payload.revision
+          : null;
+        const storageKeys = createAdminIngestHistoryStorageKeys(
+          nextHistoryScope
+        );
+
+        if (!nextHistoryScope || nextRevision === null || !storageKeys) {
+          throw new Error(
+            "INGEST_HISTORY_SCOPE_INVALID: 历史记录账号作用域无效。"
+          );
+        }
+
+        const remoteState = normalizeAdminIngestConversationSyncSnapshot(
+          payload.state,
+          {
+            includeDrafts: capabilities.saveKnowledge
+          }
+        );
+        const localSnapshot = readAdminIngestScopedLocalSnapshot({
+          historyScope: nextHistoryScope,
+          remoteRevision: nextRevision,
+          includeDrafts: capabilities.saveKnowledge,
+          storage: window.localStorage
+        });
+        const shouldRestoreLocal = Boolean(
+          localSnapshot?.revisionMatches
+          && localSnapshot.hasUnsyncedChanges
+        );
+        const selectedState = shouldRestoreLocal
+          ? localSnapshot?.state
+            ?? createEmptyAdminIngestConversationSyncSnapshot()
+          : remoteState;
+        const hydratedAgents = selectedState.agents.map((agent) => ({
+          ...agent,
+          platform: hydrationContext.platform,
+          syncTarget: [...hydrationContext.syncTarget]
+        }));
+        const hydratedConversations = selectedState.agentConversations.map(
+          (conversation) => ({
+          ...conversation,
+          platform: hydrationContext.platform,
+          syncTarget: [...hydrationContext.syncTarget]
+          })
+        );
+        const hydratedMessages = mergeMessageRecords(
+          selectedState.conversationMessagesById,
+          {}
+        );
+        const hydratedDrafts = capabilities.saveKnowledge
+          ? selectedState.conversationDraftsById
+          : {};
+        const requestedActiveAgentId = selectedState.activeAgentId;
+        const nextActiveAgentId = hydratedAgents.some(
+          (agent) => agent.id === requestedActiveAgentId
+        )
+          ? requestedActiveAgentId
+          : hydratedAgents[0]?.id ?? "";
+        const requestedActiveConversationId =
+          selectedState.activeConversationId;
+        const nextActiveConversationId = hydratedConversations.some(
+          (conversation) => (
+            conversation.id === requestedActiveConversationId
+            && conversation.status !== "archived"
+          )
+        )
+          ? requestedActiveConversationId
+          : hydratedConversations.find((conversation) => (
+              conversation.agentId === nextActiveAgentId
+              && conversation.status !== "archived"
+            ))?.id ?? "";
+        const hydratedState: AdminIngestConversationSyncSnapshot = {
+          agents: hydratedAgents,
+          agentConversations: hydratedConversations,
+          activeAgentId: nextActiveAgentId,
+          activeConversationId: nextActiveConversationId,
+          conversationMessagesById: hydratedMessages,
+          conversationDraftsById: hydratedDrafts,
+          pinnedAgentIds: selectedState.pinnedAgentIds,
+          expandedAgentIds: selectedState.expandedAgentIds,
+          expandedConversationAgentIds:
+            selectedState.expandedConversationAgentIds
+        };
+
+        if (cancelled || abortController.signal.aborted) {
+          return;
+        }
+
+        historyScopeRef.current = nextHistoryScope;
+        conversationSyncRevisionRef.current = nextRevision;
+        setHistoryScope(nextHistoryScope);
+        setAgents(hydratedState.agents);
+        setAgentConversations(hydratedState.agentConversations);
+        setActiveAgentId(hydratedState.activeAgentId);
+        setActiveConversationId(hydratedState.activeConversationId);
+        setConversationMessagesById(
+          hydratedState.conversationMessagesById
+        );
+        setConversationDraftsById(
+          hydratedState.conversationDraftsById
+        );
+        setPinnedAgentIds(hydratedState.pinnedAgentIds);
+        setExpandedAgentIds(hydratedState.expandedAgentIds);
+        setExpandedConversationAgentIds(
+          hydratedState.expandedConversationAgentIds
+        );
+        try {
+          writeAdminIngestScopedLocalSnapshot({
+            storage: window.localStorage,
+            historyScope: nextHistoryScope,
+            keys: storageKeys,
+            revision: nextRevision,
+            state: hydratedState,
+            markSynced: !shouldRestoreLocal
+          });
+        } catch {
+          // Scoped browser caching is optional; the server remains authoritative.
+        }
+        lastConversationSyncPayloadRef.current = shouldRestoreLocal
+          ? ""
+          : JSON.stringify(hydratedState);
+        isAccountTransitioningRef.current = false;
+        setHistoryLoaded(true);
+        setConversationSyncLoaded(true);
+        setErrorMessage("");
+      } catch (error) {
+        if (cancelled || abortController.signal.aborted) {
+          return;
+        }
+
+        console.warn("[admin-ingest:conversation-sync:load]", error);
+        setNoticeMessage("");
+        setErrorMessage("当前账号的历史记录加载失败，请刷新页面后重试。");
+      }
+    }
+
+    void hydrateAccountHistory();
+
+    return () => {
+      cancelled = true;
+      abortController.abort();
+
+      if (conversationHydrationAbortControllerRef.current === abortController) {
+        conversationHydrationAbortControllerRef.current = null;
+      }
+    };
+  }, [accessTier, capabilities.saveKnowledge]);
 
   useEffect(() => {
     if (!historyLoaded || !hasActiveAgent) {
@@ -1061,145 +1186,89 @@ export function IngestModeToggle({
   }, []);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
-    let cancelled = false;
-
-    async function loadRemoteConversationState() {
-      try {
-        const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
-          method: "GET",
-          credentials: "include",
-          cache: "no-store"
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const payload = await response.json() as {
-          state?: AdminIngestConversationSyncSnapshot;
-        };
-        const remoteState = payload.state;
-
-        if (cancelled || !hasRemoteConversationSyncState(remoteState)) {
-          return;
-        }
-
-        restoredInitialConversationRef.current = false;
-        const remoteAgents = (remoteState.agents ?? []).map((agent) => ({
-          ...agent,
-          platform: platformContext.platform,
-          syncTarget: [...platformContext.syncTarget]
-        }));
-        const remoteConversations = (remoteState.agentConversations ?? []).map((conversation) => ({
-          ...conversation,
-          platform: platformContext.platform,
-          syncTarget: [...platformContext.syncTarget]
-        }));
-
-        setAgents((current) => mergeById(remoteAgents, current));
-        setAgentConversations((current) => mergeById(remoteConversations, current));
-        setConversationMessagesById((current) => mergeMessageRecords(remoteState.conversationMessagesById, current));
-        setConversationDraftsById((current) => ({
-          ...(remoteState.conversationDraftsById ?? {}),
-          ...current
-        }));
-        setPinnedAgentIds((current) => mergeStringIds(remoteState.pinnedAgentIds, current));
-        setExpandedAgentIds((current) => mergeStringIds(remoteState.expandedAgentIds, current));
-        setExpandedConversationAgentIds((current) => mergeStringIds(remoteState.expandedConversationAgentIds, current));
-        setActiveAgentId((current) => current || remoteState.activeAgentId || "");
-        setActiveConversationId((current) => current || remoteState.activeConversationId || "");
-      } catch (error) {
-        console.warn("[admin-ingest:conversation-sync:load]", error);
-      } finally {
-        if (!cancelled) {
-          setConversationSyncLoaded(true);
-        }
-      }
-    }
-
-    void loadRemoteConversationState();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [historyLoaded, platformContext.platform, platformContext.syncTarget]);
+    writeLocalJson(historyStorageKeys.agents, agents);
+  }, [agents, historyLoaded, historyStorageKeys]);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
-    writeLocalJson(INGEST_AGENTS_STORAGE_KEY, agents);
-  }, [agents, historyLoaded]);
+    writeLocalJson(historyStorageKeys.conversations, agentConversations);
+  }, [agentConversations, historyLoaded, historyStorageKeys]);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
-    writeLocalJson(INGEST_CONVERSATIONS_STORAGE_KEY, agentConversations);
-  }, [agentConversations, historyLoaded]);
+    writeLocalJson(historyStorageKeys.pinnedAgents, pinnedAgentIds);
+  }, [historyLoaded, historyStorageKeys, pinnedAgentIds]);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
-    writeLocalJson(INGEST_PINNED_AGENTS_STORAGE_KEY, pinnedAgentIds);
-  }, [historyLoaded, pinnedAgentIds]);
+    writeLocalJson(historyStorageKeys.expandedAgents, expandedAgentIds);
+  }, [expandedAgentIds, historyLoaded, historyStorageKeys]);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
-    writeLocalJson(INGEST_EXPANDED_AGENTS_STORAGE_KEY, expandedAgentIds);
-  }, [expandedAgentIds, historyLoaded]);
+    writeLocalJson(
+      historyStorageKeys.expandedConversationAgents,
+      expandedConversationAgentIds
+    );
+  }, [
+    expandedConversationAgentIds,
+    historyLoaded,
+    historyStorageKeys
+  ]);
 
   useEffect(() => {
-    if (!historyLoaded) {
-      return;
-    }
-
-    writeLocalJson(INGEST_EXPANDED_CONVERSATION_AGENTS_STORAGE_KEY, expandedConversationAgentIds);
-  }, [expandedConversationAgentIds, historyLoaded]);
-
-  useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
     try {
       if (activeAgentId) {
-        window.localStorage.setItem(INGEST_ACTIVE_AGENT_STORAGE_KEY, activeAgentId);
+        window.localStorage.setItem(
+          historyStorageKeys.activeAgent,
+          activeAgentId
+        );
       } else {
-        window.localStorage.removeItem(INGEST_ACTIVE_AGENT_STORAGE_KEY);
+        window.localStorage.removeItem(historyStorageKeys.activeAgent);
       }
     } catch {
       // Ignore storage failures; active Agent still works for the current session.
     }
-  }, [activeAgentId, historyLoaded]);
+  }, [activeAgentId, historyLoaded, historyStorageKeys]);
 
   useEffect(() => {
-    if (!historyLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
       return;
     }
 
     try {
       if (activeConversationId) {
-        window.localStorage.setItem(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY, activeConversationId);
+        window.localStorage.setItem(
+          historyStorageKeys.activeConversation,
+          activeConversationId
+        );
       } else {
-        window.localStorage.removeItem(INGEST_ACTIVE_CONVERSATION_STORAGE_KEY);
+        window.localStorage.removeItem(historyStorageKeys.activeConversation);
       }
     } catch {
       // Ignore storage failures; active conversation still works for the current session.
     }
-  }, [activeConversationId, historyLoaded]);
-
+  }, [activeConversationId, historyLoaded, historyStorageKeys]);
 
   useEffect(() => {
     if (!historyLoaded || !activeConversationId) {
@@ -1220,13 +1289,17 @@ export function IngestModeToggle({
         [activeConversationId]: persistableMessages
       };
 
-      writeLocalJson(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY, next);
       return next;
     });
   }, [activeConversationId, historyLoaded, messages]);
 
   useEffect(() => {
-    if (!historyLoaded || !activeConversationId || !hasConversationDraft(draft)) {
+    if (
+      !historyLoaded
+      || !capabilities.saveKnowledge
+      || !activeConversationId
+      || !hasConversationDraft(draft)
+    ) {
       return;
     }
 
@@ -1236,13 +1309,280 @@ export function IngestModeToggle({
         [activeConversationId]: draft
       };
 
-      writeLocalJson(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY, next);
       return next;
     });
-  }, [activeConversationId, draft, historyLoaded]);
+  }, [
+    activeConversationId,
+    capabilities.saveKnowledge,
+    draft,
+    historyLoaded
+  ]);
 
   useEffect(() => {
-    if (!historyLoaded || !conversationSyncLoaded) {
+    if (!historyLoaded || !historyStorageKeys) {
+      return;
+    }
+
+    writeLocalJson(
+      historyStorageKeys.messages,
+      conversationMessagesById
+    );
+  }, [
+    conversationMessagesById,
+    historyLoaded,
+    historyStorageKeys
+  ]);
+
+  useEffect(() => {
+    if (
+      !historyLoaded
+      || !historyStorageKeys
+      || !capabilities.saveKnowledge
+    ) {
+      return;
+    }
+
+    writeLocalJson(
+      historyStorageKeys.drafts,
+      conversationDraftsById
+    );
+  }, [
+    capabilities.saveKnowledge,
+    conversationDraftsById,
+    historyLoaded,
+    historyStorageKeys
+  ]);
+
+  const stopAccountHistoryActivity = useCallback(() => {
+    isAccountTransitioningRef.current = true;
+    conversationHydrationAbortControllerRef.current?.abort();
+    conversationHydrationAbortControllerRef.current = null;
+
+    if (conversationSyncTimeoutRef.current !== null) {
+      window.clearTimeout(conversationSyncTimeoutRef.current);
+      conversationSyncTimeoutRef.current = null;
+    }
+
+    conversationSyncAbortControllersRef.current.forEach((controller) => {
+      controller.abort();
+    });
+    conversationSyncAbortControllersRef.current.clear();
+    conversationSyncInFlightRef.current = false;
+    pendingConversationSyncRef.current = null;
+    accountScopedMutationAbortControllersRef.current.forEach((controller) => {
+      controller.abort();
+    });
+    accountScopedMutationAbortControllersRef.current.clear();
+
+    Object.values(abortControllerByConversationRef.current).forEach(
+      (controller) => controller.abort()
+    );
+    abortControllerByConversationRef.current = {};
+    activeIngestRequestIdRef.current = "";
+    requestQueueRef.current = createIngestQueueState();
+    historyScopeRef.current = "";
+    conversationSyncRevisionRef.current = 0;
+    lastConversationSyncPayloadRef.current = "";
+    restoredInitialConversationRef.current = false;
+    activeAgentIdRef.current = "";
+    activeConversationIdRef.current = "";
+
+    setHistoryScope("");
+    setHistoryLoaded(false);
+    setConversationSyncLoaded(false);
+    setAgents([]);
+    setAgentConversations([]);
+    setActiveAgentId("");
+    setActiveConversationId("");
+    setConversationMessagesById({});
+    setConversationDraftsById({});
+    setPinnedAgentIds([]);
+    setExpandedAgentIds([]);
+    setExpandedConversationAgentIds([]);
+    setMessages([]);
+    setDraft(ingestChatInitialDraft);
+    setRecords([]);
+    setInput("");
+    setUploadedFiles([]);
+    setLastInput("");
+    setIsParsing(false);
+  }, []);
+
+  const reloadForAccountHistoryChange = useCallback(() => {
+    /*
+     * Keep the old account's scoped recovery envelope intact. The next account
+     * uses different keys, while the original account can still recover
+     * unsynced edits after signing back in.
+     */
+    stopAccountHistoryActivity();
+    window.location.reload();
+  }, [stopAccountHistoryActivity]);
+
+  const flushConversationSync = useCallback(
+    async function flushConversationSyncRequest() {
+    if (
+      conversationSyncInFlightRef.current
+      || isAccountTransitioningRef.current
+    ) {
+      return;
+    }
+
+    const pending = pendingConversationSyncRef.current;
+
+    if (
+      !pending
+      || historyScopeRef.current !== pending.historyScope
+    ) {
+      return;
+    }
+
+    pendingConversationSyncRef.current = null;
+    conversationSyncInFlightRef.current = true;
+    const abortController = new AbortController();
+    let nextSyncDelayMs = INGEST_REMOTE_SYNC_DEBOUNCE_MS;
+    conversationSyncAbortControllersRef.current.add(abortController);
+
+    try {
+      const baseRevision = conversationSyncRevisionRef.current;
+      const requestBody:
+        AdminIngestConversationSyncWriteRequest
+        & AdminIngestConversationSyncSnapshot = {
+        /*
+         * Keep the snapshot fields at the top level during the v1/v2
+         * compatibility window. A directly rolled-back v1 server can still
+         * persist the same account history instead of interpreting the v2
+         * wrapper as an empty snapshot.
+         */
+        ...pending.state,
+        historyScope: pending.historyScope,
+        baseRevision,
+        state: pending.state
+      };
+      const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+        method: "PUT",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal
+      });
+      const payload = await response.json() as AdminIngestConversationSyncResponse;
+
+      if (
+        abortController.signal.aborted
+        || historyScopeRef.current !== pending.historyScope
+      ) {
+        return;
+      }
+
+      if (!response.ok) {
+        if (
+          response.status === 409
+          || payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+          || payload.errorCode === "INGEST_HISTORY_REVISION_CONFLICT"
+        ) {
+          reloadForAccountHistoryChange();
+          return;
+        }
+
+        console.warn("[admin-ingest:conversation-sync:save]", {
+          errorCode: payload.errorCode ?? "INGEST_HISTORY_SAVE_FAILED",
+          status: response.status
+        });
+
+        if (response.status === 429 || response.status >= 500) {
+          const retryCount = pending.retryCount + 1;
+          nextSyncDelayMs = Math.min(30_000, 1_000 * (2 ** Math.min(retryCount, 5)));
+          pendingConversationSyncRef.current ??= {
+            ...pending,
+            retryCount
+          };
+        }
+        return;
+      }
+
+      const nextHistoryScope = normalizeAdminIngestHistoryScope(
+        payload.historyScope
+      );
+      const nextRevision = typeof payload.revision === "number"
+        && Number.isSafeInteger(payload.revision)
+        && payload.revision > baseRevision
+        ? payload.revision
+        : null;
+
+      if (
+        nextHistoryScope !== pending.historyScope
+        || nextRevision === null
+      ) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
+      conversationSyncRevisionRef.current = nextRevision;
+      try {
+        writeAdminIngestScopedLocalSnapshot({
+          storage: window.localStorage,
+          historyScope: pending.historyScope,
+          keys: pending.storageKeys,
+          revision: nextRevision,
+          state: pending.state,
+          markSynced: true
+        });
+      } catch {
+        // Cloud history is already saved; local cache failure must not undo it.
+      }
+      lastConversationSyncPayloadRef.current = pending.serialized;
+      const queuedAfterRequest = pendingConversationSyncRef.current as
+        PendingAdminIngestConversationSync | null;
+
+      if (
+        queuedAfterRequest?.historyScope === pending.historyScope
+        && queuedAfterRequest.serialized === pending.serialized
+      ) {
+        pendingConversationSyncRef.current = null;
+      }
+    } catch (error) {
+      if (!abortController.signal.aborted) {
+        console.warn("[admin-ingest:conversation-sync:save]", error);
+        const retryCount = pending.retryCount + 1;
+        nextSyncDelayMs = Math.min(30_000, 1_000 * (2 ** Math.min(retryCount, 5)));
+        pendingConversationSyncRef.current ??= {
+          ...pending,
+          retryCount
+        };
+      }
+    } finally {
+      conversationSyncAbortControllersRef.current.delete(abortController);
+      conversationSyncInFlightRef.current = false;
+
+      if (
+        pendingConversationSyncRef.current
+        && !isAccountTransitioningRef.current
+      ) {
+        if (conversationSyncTimeoutRef.current !== null) {
+          window.clearTimeout(conversationSyncTimeoutRef.current);
+        }
+
+        conversationSyncTimeoutRef.current = window.setTimeout(() => {
+          conversationSyncTimeoutRef.current = null;
+          void flushConversationSyncRequest();
+        }, nextSyncDelayMs);
+      }
+    }
+    },
+    [reloadForAccountHistoryChange]
+  );
+
+  useEffect(() => {
+    if (
+      !historyLoaded
+      || !conversationSyncLoaded
+      || !historyStorageKeys
+      || !historyScope
+      || isAccountTransitioningRef.current
+    ) {
       return;
     }
 
@@ -1252,7 +1592,9 @@ export function IngestModeToggle({
       activeAgentId,
       activeConversationId,
       conversationMessagesById,
-      conversationDraftsById,
+      conversationDraftsById: capabilities.saveKnowledge
+        ? conversationDraftsById
+        : {},
       pinnedAgentIds,
       expandedAgentIds,
       expandedConversationAgentIds
@@ -1263,38 +1605,59 @@ export function IngestModeToggle({
       return;
     }
 
-    const timeout = window.setTimeout(() => {
-      fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
-        method: "PUT",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: serialized
-      })
-        .then((response) => {
-          if (response.ok) {
-            lastConversationSyncPayloadRef.current = serialized;
-          }
-        })
-        .catch((error) => {
-          console.warn("[admin-ingest:conversation-sync:save]", error);
-        });
-    }, INGEST_REMOTE_SYNC_DEBOUNCE_MS);
+    try {
+      writeAdminIngestScopedLocalSnapshot({
+        storage: window.localStorage,
+        historyScope,
+        keys: historyStorageKeys,
+        revision: conversationSyncRevisionRef.current,
+        state: syncPayload,
+        markSynced: false
+      });
+    } catch {
+      // Cloud sync can continue even when the scoped local recovery cache is unavailable.
+    }
 
-    return () => window.clearTimeout(timeout);
+    pendingConversationSyncRef.current = {
+      historyScope,
+      storageKeys: historyStorageKeys,
+      serialized,
+      state: syncPayload,
+      retryCount: 0
+    };
+
+    if (conversationSyncTimeoutRef.current !== null) {
+      window.clearTimeout(conversationSyncTimeoutRef.current);
+    }
+
+    const timeout = window.setTimeout(() => {
+      conversationSyncTimeoutRef.current = null;
+      void flushConversationSync();
+    }, INGEST_REMOTE_SYNC_DEBOUNCE_MS);
+    conversationSyncTimeoutRef.current = timeout;
+
+    return () => {
+      if (conversationSyncTimeoutRef.current === timeout) {
+        window.clearTimeout(timeout);
+        conversationSyncTimeoutRef.current = null;
+      }
+    };
   }, [
     activeAgentId,
     activeConversationId,
     agentConversations,
     agents,
+    capabilities.saveKnowledge,
     conversationDraftsById,
     conversationMessagesById,
     conversationSyncLoaded,
     expandedAgentIds,
     expandedConversationAgentIds,
     historyLoaded,
-    pinnedAgentIds
+    historyScope,
+    historyStorageKeys,
+    pinnedAgentIds,
+    flushConversationSync
   ]);
 
   useEffect(() => {
@@ -1408,6 +1771,8 @@ export function IngestModeToggle({
   }
 
   async function redirectToIngestLogin() {
+    stopAccountHistoryActivity();
+
     try {
       await fetch("/api/auth/logout", {
         method: "POST",
@@ -1890,6 +2255,7 @@ export function IngestModeToggle({
     conversationId: string,
     kind: "share" | "group"
   ) {
+    const expectedHistoryScope = historyScopeRef.current;
     const target = agentConversations.find((conversation) => (
       conversation.agentId === agentId
       && conversation.id === conversationId
@@ -1914,6 +2280,8 @@ export function IngestModeToggle({
 
     setIsConversationLinkBusy(true);
     setNoticeMessage(kind === "share" ? "正在创建安全分享链接..." : "正在创建群聊邀请链接...");
+    const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
 
     try {
       const response = await fetch(
@@ -1921,7 +2289,11 @@ export function IngestModeToggle({
         {
           method: "POST",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-ingest-history-scope": expectedHistoryScope
+          },
           body: JSON.stringify({
             kind,
             title: target.title,
@@ -1938,10 +2310,21 @@ export function IngestModeToggle({
           updatedAt: string;
         };
         message?: string;
+        errorCode?: string;
       };
 
       if (!response.ok || !payload.data?.url) {
-        throw new Error(payload.message || "公开链接创建失败。");
+        throw new Error(payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+          ? `INGEST_HISTORY_SCOPE_MISMATCH: ${payload.message || "账号已切换。"}`
+          : payload.message || "公开链接创建失败。");
+      }
+
+      if (
+        !expectedHistoryScope
+        || historyScopeRef.current !== expectedHistoryScope
+      ) {
+        reloadForAccountHistoryChange();
+        return;
       }
 
       const nextAccess = {
@@ -1970,6 +2353,15 @@ export function IngestModeToggle({
       });
       setNoticeMessage(kind === "share" ? "安全分享链接已创建。" : "群聊邀请链接已创建。");
     } catch (error) {
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
       const message = error instanceof Error ? error.message : "公开链接创建失败。";
 
       setNoticeMessage(message);
@@ -1978,11 +2370,13 @@ export function IngestModeToggle({
         title: message
       });
     } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
       setIsConversationLinkBusy(false);
     }
   }
 
   async function handleRevokeAgentConversationPublicLink(state: IngestConversationLinkDialogState) {
+    const expectedHistoryScope = historyScopeRef.current;
     const target = agentConversations.find((conversation) => conversation.id === state.conversationId);
     const accessKey = state.kind === "share" ? "share" : "groupChat";
     const access = target?.publicAccess?.[accessKey];
@@ -1992,6 +2386,8 @@ export function IngestModeToggle({
     }
 
     setIsConversationLinkBusy(true);
+    const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
 
     try {
       const response = await fetch(
@@ -1999,14 +2395,28 @@ export function IngestModeToggle({
         {
           method: "DELETE",
           credentials: "include",
-          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-ingest-history-scope": expectedHistoryScope
+          },
           body: JSON.stringify({ token: access.token })
         }
       );
-      const payload = await response.json() as { message?: string };
+      const payload = await response.json() as { message?: string; errorCode?: string };
 
       if (!response.ok) {
-        throw new Error(payload.message || "关闭公开链接失败。");
+        throw new Error(payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+          ? `INGEST_HISTORY_SCOPE_MISMATCH: ${payload.message || "账号已切换。"}`
+          : payload.message || "关闭公开链接失败。");
+      }
+
+      if (
+        !expectedHistoryScope
+        || historyScopeRef.current !== expectedHistoryScope
+      ) {
+        reloadForAccountHistoryChange();
+        return;
       }
 
       setAgentConversations((current) => current.map((conversation) => (
@@ -2031,11 +2441,21 @@ export function IngestModeToggle({
         title: state.kind === "share" ? "已停止分享" : "群聊已关闭"
       });
     } catch (error) {
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
+      if (controller.signal.aborted) {
+        return;
+      }
+
       showActionToast({
         type: "warning",
         title: error instanceof Error ? error.message : "关闭公开链接失败。"
       });
     } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
       setIsConversationLinkBusy(false);
     }
   }
@@ -2070,13 +2490,11 @@ export function IngestModeToggle({
     setConversationMessagesById((current) => {
       const next = { ...current };
       delete next[conversationId];
-      writeLocalJson(INGEST_CONVERSATION_MESSAGES_STORAGE_KEY, next);
       return next;
     });
     setConversationDraftsById((current) => {
       const next = { ...current };
       delete next[conversationId];
-      writeLocalJson(INGEST_CONVERSATION_DRAFTS_STORAGE_KEY, next);
       return next;
     });
 
@@ -2146,13 +2564,19 @@ export function IngestModeToggle({
     latestAssistantReply: string;
     userInstruction: string;
     saveIntent?: boolean;
+    historyScope: string;
   }) {
+    const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
+
     try {
       const response = await fetch("/api/admin/ingest-memory/extract", {
         method: "POST",
         credentials: "include",
+        signal: controller.signal,
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "x-admin-ingest-history-scope": input.historyScope
         },
         body: JSON.stringify({
           conversationId: input.conversationId,
@@ -2170,6 +2594,16 @@ export function IngestModeToggle({
       });
 
       if (!response.ok) {
+        const payload = await response.json().catch(() => null) as {
+          errorCode?: string;
+          message?: string;
+        } | null;
+
+        if (payload?.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH") {
+          reloadForAccountHistoryChange();
+          return;
+        }
+
         console.warn("[admin-ingest-memory:extract:ignored]", {
           status: response.status,
           conversationId: input.conversationId
@@ -2177,12 +2611,23 @@ export function IngestModeToggle({
         return;
       }
 
+      if (historyScopeRef.current !== input.historyScope) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
       setMemoryRefreshKey((current) => current + 1);
     } catch (error) {
+      if (controller.signal.aborted) {
+        return;
+      }
+
       console.warn("[admin-ingest-memory:extract:ignored]", {
         message: error instanceof Error ? error.message : String(error ?? ""),
         conversationId: input.conversationId
       });
+    } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
     }
   }
 
@@ -2242,10 +2687,79 @@ export function IngestModeToggle({
     }
   }
 
+  async function verifyCurrentAccountHistoryScope() {
+    const expectedHistoryScope = historyScopeRef.current;
+
+    if (!expectedHistoryScope) {
+      return false;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 8_000);
+
+    try {
+      const response = await fetch("/api/ingest/auth/me?historyCheck=1", {
+        method: "GET",
+        cache: "no-store",
+        credentials: "include",
+        signal: controller.signal
+      });
+      const payload = await response.json() as unknown;
+      const currentHistoryScope =
+        readAdminIngestHistoryScopeFromApiResponse(payload);
+
+      if (
+        !response.ok
+        || !currentHistoryScope
+        || currentHistoryScope !== expectedHistoryScope
+        || historyScopeRef.current !== expectedHistoryScope
+      ) {
+        reloadForAccountHistoryChange();
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        console.warn("[admin-ingest:account:history-scope-check]", error);
+      }
+
+      setNoticeMessage("");
+      setErrorMessage(
+        "暂时无法确认当前账号，已停止发送以保护历史隐私，请检查网络后重试。"
+      );
+      return false;
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
+
   async function handleSend(textOverride?: string, options?: IngestSendOptions): Promise<IngestActionResult | null> {
     const value = (textOverride ?? input).trim();
     const currentModelLabel = options?.modelLabel ?? selectedModelLabel;
     const requestModelOption = getIngestModelOptionByLabel(currentModelLabel) ?? selectedModelOption;
+    const requestHistoryScope = historyScopeRef.current;
+
+    if (
+      isAccountTransitioningRef.current
+      || !requestHistoryScope
+      || !historyLoaded
+      || !conversationSyncLoaded
+    ) {
+      const message = "正在加载当前账号的独立历史记录，请稍后再试。";
+
+      setNoticeMessage(message);
+      setErrorMessage("");
+      showActionToast({
+        type: "info",
+        title: message
+      });
+      return null;
+    }
+
+    if (!await verifyCurrentAccountHistoryScope()) {
+      return null;
+    }
 
     if (!hasActiveAgent) {
       const message = "请先到专家广场添加专家 Agent。";
@@ -2347,7 +2861,24 @@ export function IngestModeToggle({
       setErrorMessage("");
 
       try {
-        composerUploads = await persistAdminIngestUploadImages(composerUploads);
+        const imagePersistenceController = new AbortController();
+        accountScopedMutationAbortControllersRef.current.add(imagePersistenceController);
+
+        try {
+          composerUploads = await persistAdminIngestUploadImages(
+            composerUploads,
+            requestHistoryScope,
+            imagePersistenceController.signal
+          );
+        } finally {
+          accountScopedMutationAbortControllersRef.current.delete(imagePersistenceController);
+        }
+
+        if (historyScopeRef.current !== requestHistoryScope) {
+          reloadForAccountHistoryChange();
+          return null;
+        }
+
         draftAttachments = composerUploads.map((file) => ({
           ...stripUploadRuntimeFields(file),
           status: "attached" as const,
@@ -2363,6 +2894,19 @@ export function IngestModeToggle({
         );
         effectiveInput = buildEffectiveInput(isWechatConversationReply);
       } catch (error) {
+        if (isAdminIngestHistoryScopeMismatch(error)) {
+          reloadForAccountHistoryChange();
+          return null;
+        }
+
+        if (
+          error instanceof DOMException
+          && error.name === "AbortError"
+          && historyScopeRef.current !== requestHistoryScope
+        ) {
+          return null;
+        }
+
         const message = error instanceof Error ? error.message : "图片永久保存失败，请稍后重试。";
 
         setIsParsing(false);
@@ -2595,6 +3139,7 @@ export function IngestModeToggle({
           result = await sendCoreIngest({
             text: effectiveInput,
             agent: activeAgent,
+            historyScope: requestHistoryScope,
             category: activeAgent.role,
             model: requestModelOption.label,
             modelProvider: requestModelOption.provider,
@@ -2939,7 +3484,8 @@ export function IngestModeToggle({
           knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
           messages: nextConversationState.messages,
           latestAssistantReply: assistantContent,
-          userInstruction: effectiveInput
+          userInstruction: effectiveInput,
+          historyScope: requestHistoryScope
         });
       }
 
@@ -2959,6 +3505,12 @@ export function IngestModeToggle({
       const responseStatus = requestError?.status;
       const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
       const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(error);
+
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
       if (causeCode?.trim().toUpperCase() === "DOUBAO_INFERENCE_LIMIT_PAUSED") {
         doubaoHealthRequestVersionRef.current += 1;
         setDoubaoInferencePaused(true);
@@ -3297,9 +3849,11 @@ export function IngestModeToggle({
     const sourceResponseId = targetMessage?.gptProof?.responseId?.trim() ?? "";
     const provider = targetMessage?.provider?.trim().toLowerCase();
     const conversationId = activeConversationIdRef.current;
+    const expectedHistoryScope = historyScopeRef.current;
 
     if (
       !targetMessage
+      || !expectedHistoryScope
       || latestAssistantResult?.id !== messageId
       || targetMessage.role !== "assistant"
       || !targetMessage.id.startsWith("assistant-result")
@@ -3324,6 +3878,7 @@ export function IngestModeToggle({
     const expectedReply = targetMessage.content;
     const expectedResponseId = currentDraft.responseId;
     const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
 
     setRecoveringMetadataMessageId(messageId);
     setErrorMessage("");
@@ -3337,11 +3892,17 @@ export function IngestModeToggle({
         messageId,
         draft: currentDraft,
         agent: activeAgent,
+        historyScope: expectedHistoryScope,
         tenantId,
         userId,
         platform: platformContext.platform,
         signal: controller.signal
       });
+
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
 
       if (
         activeAgentIdRef.current !== expectedAgentId
@@ -3414,6 +3975,16 @@ export function IngestModeToggle({
 
       return result;
     } catch (error) {
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
       const requestError = readAdminIngestRequestError(error);
       const message = sanitizeGptOSUserMessage(
         error instanceof Error
@@ -3437,6 +4008,7 @@ export function IngestModeToggle({
       });
       return null;
     } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
       setRecoveringMetadataMessageId((current) => current === messageId ? null : current);
     }
   }
@@ -3477,6 +4049,10 @@ export function IngestModeToggle({
       return null;
     }
 
+    const expectedHistoryScope = historyScopeRef.current;
+    const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
+
     setIsSaving(true);
     setNoticeMessage("正在保存知识入库并更新训练记录...");
     setErrorMessage("");
@@ -3485,11 +4061,19 @@ export function IngestModeToggle({
       const result = await saveKnowledgeDraft({
         draft,
         agent: activeAgent,
+        historyScope: expectedHistoryScope,
         originalInput: lastInput || draft.summary || draft.standardQuestion,
         tenantId,
         userId,
-        platform: platformContext.platform
+        platform: platformContext.platform,
+        signal: controller.signal
       });
+
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
       const mergedRecords = mergeTrainingRecords(result.records, records);
       const nextRecords = syncSavedRecordState(mergedRecords, result.draft);
       const matchedRecord = nextRecords.some((record) => isTrainingRecordLinkedToDraft(record, result.draft));
@@ -3514,6 +4098,16 @@ export function IngestModeToggle({
         records: nextRecords
       };
     } catch (error) {
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return null;
+      }
+
       const message = error instanceof Error ? error.message : "保存知识入库失败，请稍后重试。";
 
       setDraft((current) => ({
@@ -3536,6 +4130,7 @@ export function IngestModeToggle({
       setErrorMessage(message);
       return null;
     } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
       setIsSaving(false);
     }
   }
@@ -4050,6 +4645,9 @@ export function IngestModeToggle({
       return;
     }
 
+    const expectedHistoryScope = historyScopeRef.current;
+    const controller = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(controller);
     const conversationId = ensureConversationForSend(activeAgent);
 
     markConversationUsed(conversationId, `网址投喂：${url}`);
@@ -4062,6 +4660,7 @@ export function IngestModeToggle({
       const result = await sendUrlIngestPreview({
         url,
         agent: activeAgent,
+        historyScope: expectedHistoryScope,
         category: activeAgent.role,
         model: selectedModelOption.label,
         modelProvider: selectedModelOption.provider,
@@ -4071,8 +4670,15 @@ export function IngestModeToggle({
         selectedModelLabel: selectedModelOption.label,
         tenantId,
         userId,
-        platform: platformContext.platform
+        platform: platformContext.platform,
+        signal: controller.signal
       });
+
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
       const nextRecords = mergeTrainingRecords(result.records, records);
       const now = new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
@@ -4134,9 +4740,20 @@ export function IngestModeToggle({
       setUrlInput("");
       setIsUrlDialogOpen(false);
     } catch (error) {
+      if (historyScopeRef.current !== expectedHistoryScope) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
+      if (isAdminIngestHistoryScopeMismatch(error)) {
+        reloadForAccountHistoryChange();
+        return;
+      }
+
       setUrlError(error instanceof Error ? error.message : "网页投喂接口暂不可用，请稍后重试。");
       setNoticeMessage("网页投喂接口待接入真实抓取，当前为本地预览。");
     } finally {
+      accountScopedMutationAbortControllersRef.current.delete(controller);
       setIsUrlIngesting(false);
     }
   }
@@ -4366,6 +4983,7 @@ export function IngestModeToggle({
             <IngestMemoryPanel
               activeAgent={activeAgent}
               activeConversationId={activeConversationId}
+              historyScope={historyScope}
               messages={messages}
               refreshKey={memoryRefreshKey}
               onBack={() => {

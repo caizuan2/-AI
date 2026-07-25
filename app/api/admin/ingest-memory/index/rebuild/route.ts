@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { rebuildMemoryIndex } from "@/lib/enterprise/ingest-memory-index-builder";
 import { listPublishedMemories } from "@/lib/enterprise/ingest-memory-publisher";
 import { requireAdminIngestActor } from "@/lib/enterprise/admin-ingest-auth";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import { AppError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
@@ -27,10 +28,30 @@ function jsonError(error: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    await requireAdminIngestActor(request, {
+    const actor = await requireAdminIngestActor(request, {
       deniedAction: "RBAC_ACCESS_DENIED",
       targetType: "ingest-memory-index",
     });
+
+    if (
+      !matchesAdminIngestHistoryScope(
+        actor.id,
+        request.headers.get("x-admin-ingest-history-scope")
+      )
+    ) {
+      return NextResponse.json({
+        ok: false,
+        success: false,
+        code: "INGEST_HISTORY_SCOPE_MISMATCH",
+        errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+        message: "账号已切换，旧页面不能继续使用当前账号。"
+      }, {
+        status: 409,
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
 
     const [index, published] = await Promise.all([
       rebuildMemoryIndex(),

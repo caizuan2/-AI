@@ -35,6 +35,7 @@ import {
   requireAdminIngestChatAccess,
   requireFullAdminIngestAccess
 } from "@/lib/enterprise/admin-ingest-auth";
+import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import {
   hasCanonicalAdminIngestGroundingScope,
   retrieveAdminIngestGrounding,
@@ -1117,6 +1118,25 @@ export async function POST(request: Request) {
     }
 
     hasFullIngestAccess = true;
+  }
+
+  if (
+    actor
+    && !matchesAdminIngestHistoryScope(
+      actor.id,
+      request.headers.get("x-admin-ingest-history-scope")
+    )
+  ) {
+    return jsonUtf8({
+      ok: false,
+      success: false,
+      code: "INGEST_HISTORY_SCOPE_MISMATCH",
+      errorCode: "INGEST_HISTORY_SCOPE_MISMATCH",
+      message: "账号已切换，旧页面不能继续使用当前账号。",
+      userMessage: "账号已切换，旧页面不能继续使用当前账号。",
+      retryable: false,
+      fallbackUsed: false
+    }, 409);
   }
 
   let input: ReturnType<typeof readRequest>;
