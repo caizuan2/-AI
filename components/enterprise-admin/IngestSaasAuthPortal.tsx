@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import { INGEST_LICENSE_REACTIVATION_EVENT_KEY } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
 
 type IngestAuthMode = "login" | "register" | "activate" | "reset";
 
@@ -38,6 +39,12 @@ type IngestAuthUser = {
 
 type IngestAuthResponse = {
   success: true;
+  message?: string;
+  reactivated?: boolean;
+  userId?: string;
+  historyScope?: string;
+  permission?: "none" | "chat_only" | "full_ingest";
+  accessTier?: "none" | "chat_only" | "full_ingest";
   sessionToken?: string;
   licenseActivated: boolean;
   hasIngestPortalAccess?: boolean;
@@ -129,6 +136,18 @@ function getNextWithFallback(searchParams: ReturnType<typeof useSearchParams>) {
   return safeNextPath(searchParams.get("next") || searchParams.get("redirectTo")) || "/admin-ingest?app=ingest-admin&platform=web";
 }
 
+function maskAccountPhone(phone: string) {
+  const normalized = phone.trim();
+
+  if (normalized.length >= 7) {
+    return `${normalized.slice(0, 3)}****${normalized.slice(-4)}`;
+  }
+
+  return normalized.length > 2
+    ? `${normalized.slice(0, 1)}***${normalized.slice(-1)}`
+    : normalized;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object";
 }
@@ -204,6 +223,43 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const searchParams = useSearchParams();
   const copy = modeCopy[mode];
   const nextPath = useMemo(() => getNextWithFallback(searchParams), [searchParams]);
+  const reactivationRequested = searchParams.get("reactivate") === "1";
+  const reactivationReason = searchParams.get("reason") === "expired"
+    ? "expired"
+    : searchParams.get("reason") === "disabled"
+      ? "disabled"
+      : "invalid";
+  const requiresFullIngest = searchParams.get("required") === "ingest_admin";
+  const activationHref = useMemo(() => {
+    const params = new URLSearchParams({
+      next: nextPath
+    });
+
+    if (reactivationRequested) {
+      params.set("reactivate", "1");
+      params.set("reason", reactivationReason);
+      if (requiresFullIngest) {
+        params.set("required", "ingest_admin");
+      }
+    }
+
+    return `/ingest/activate?${params.toString()}`;
+  }, [nextPath, reactivationReason, reactivationRequested, requiresFullIngest]);
+  const loginHref = useMemo(() => {
+    const params = new URLSearchParams({
+      next: nextPath
+    });
+
+    if (reactivationRequested) {
+      params.set("reactivate", "1");
+      params.set("reason", reactivationReason);
+      if (requiresFullIngest) {
+        params.set("required", "ingest_admin");
+      }
+    }
+
+    return `/ingest/login?${params.toString()}`;
+  }, [nextPath, reactivationReason, reactivationRequested, requiresFullIngest]);
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -213,12 +269,14 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
   const [checkError, setCheckError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [currentAccount, setCurrentAccount] = useState<IngestAuthUser | null>(null);
   const passwordReset = mode === "login" && searchParams.get("passwordReset") === "1";
 
   const goNext = useCallback((hasIngestPortalAccess: boolean) => {
-    router.replace(hasIngestPortalAccess ? nextPath : `/ingest/activate?next=${encodeURIComponent(nextPath)}`);
+    router.replace(hasIngestPortalAccess ? nextPath : activationHref);
     router.refresh();
-  }, [nextPath, router]);
+  }, [activationHref, nextPath, router]);
 
   useEffect(() => {
     let active = true;
@@ -228,7 +286,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       }
 
       if (mode === "activate") {
-        router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+        router.replace(loginHref);
         return;
       }
 
@@ -255,7 +313,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
         if (!authState.authenticated) {
           if (mode === "activate") {
-            router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+            router.replace(loginHref);
             return;
           }
 
@@ -264,6 +322,8 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         }
 
         if (mode === "activate") {
+          setCurrentAccount(authState.user);
+
           if (authState.hasIngestAccess || authState.accessTier === "full_ingest") {
             goNext(true);
             return;
@@ -282,7 +342,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
         window.clearTimeout(checkTimeoutId);
         if (mode === "activate") {
-          router.replace(`/ingest/login?next=${encodeURIComponent(nextPath)}`);
+          router.replace(loginHref);
           return;
         }
 
@@ -297,7 +357,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       active = false;
       window.clearTimeout(checkTimeoutId);
     };
-  }, [goNext, mode, nextPath, router]);
+  }, [goNext, loginHref, mode, router]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -319,6 +379,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
     setLoading(true);
     setError("");
+    setSuccess("");
 
     try {
       const endpoint = mode === "login"
@@ -367,6 +428,37 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         ?? data.user.hasIngestAccess
         ?? (data.licenseActivated || data.user.licenseActivated);
 
+      if (mode === "activate") {
+        if (currentAccount && data.userId && data.userId !== currentAccount.id) {
+          throw new Error("激活账号校验失败，请重新登录原账号后再试。");
+        }
+
+        const permission = data.permission ?? data.accessTier ?? data.user.accessTier;
+        if (!data.historyScope || !permission || permission === "none") {
+          throw new Error("激活后的账号、历史空间或权限复核失败，请稍后重试。");
+        }
+
+        try {
+          window.localStorage.setItem(
+            INGEST_LICENSE_REACTIVATION_EVENT_KEY,
+            JSON.stringify({
+              userId: data.userId ?? data.user.id,
+              historyScope: data.historyScope,
+              accessTier: permission,
+              at: Date.now()
+            })
+          );
+        } catch {
+          // The status monitor remains the fallback when browser storage is unavailable.
+        }
+
+        setSuccess(
+          data.message
+          || "原账号已恢复，历史记录与知识资料保持不变。"
+        );
+        await new Promise((resolve) => window.setTimeout(resolve, 700));
+      }
+
       goNext(hasIngestPortalAccess);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
@@ -385,7 +477,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       // Still let the user leave the activation gate if logout fails.
     }
 
-    router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent(nextPath)}`);
+    router.replace(loginHref);
     router.refresh();
   }
 
@@ -450,7 +542,11 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             <div>
               <p className="text-sm font-medium text-emerald-700">{copy.eyebrow}</p>
               <h2 className="mt-2 text-3xl font-semibold">{copy.title}</h2>
-              <p className="mt-2 text-sm leading-6 text-slate-500">{copy.description}</p>
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                {mode === "activate" && reactivationRequested
+                  ? "更换卡密不会创建新账号，也不会清除原账号的历史记录和知识资料。"
+                  : copy.description}
+              </p>
             </div>
           ) : null}
 
@@ -467,7 +563,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               </div>
               <Button
                 type="button"
-                onClick={() => router.replace(`/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`)}
+                onClick={() => router.replace(loginHref)}
                 className="h-11 w-full rounded-2xl bg-[#111816] hover:bg-[#1d2a26]"
               >
                 返回登录
@@ -476,6 +572,16 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             </div>
           ) : (
             <form onSubmit={submit} className={mode === "register" ? "space-y-4" : "mt-8 space-y-4"}>
+              {mode === "login" && reactivationRequested ? (
+                <div role="status" className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-3 text-sm leading-6 text-amber-900">
+                  请登录原手机号账号后更换卡密，不要重新注册；只有原账号才能恢复原历史和知识资料。
+                </div>
+              ) : null}
+              {mode === "activate" && reactivationRequested && currentAccount ? (
+                <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-6 text-emerald-900">
+                  当前原账号：{maskAccountPhone(currentAccount.phone)}。如需恢复完整投喂端，请使用 XT-INGEST 卡密。
+                </div>
+              ) : null}
               {passwordReset ? (
                 <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
                   密码已重置，请使用新密码登录。
@@ -556,7 +662,11 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               {mode === "activate" || mode === "register" || mode === "reset" ? (
                 <label className="block">
                   <span className="text-sm font-medium">
-                    {mode === "reset" ? "原小董AI卡密" : "用户端／投喂端卡密"}
+                    {mode === "reset"
+                      ? "原小董AI卡密"
+                      : mode === "activate" && reactivationRequested && requiresFullIngest
+                        ? "新卡密（完整投喂端请使用 XT-INGEST）"
+                        : "用户端／投喂端卡密"}
                   </span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
                     <KeyRound className="h-4 w-4 text-slate-400" />
@@ -579,7 +689,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                 </div>
               ) : null}
 
-              <Button type="submit" disabled={loading} className="h-11 w-full rounded-2xl bg-[#111816] hover:bg-[#1d2a26]">
+              {success ? (
+                <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {success}
+                </div>
+              ) : null}
+
+              <Button type="submit" disabled={loading || Boolean(success)} className="h-11 w-full rounded-2xl bg-[#111816] hover:bg-[#1d2a26]">
                 {loading ? "处理中..." : copy.cta}
                 {mode === "activate" ? <BadgeCheck className="h-4 w-4" /> : <ArrowRight className="h-4 w-4" />}
               </Button>
@@ -591,12 +707,14 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                       忘记密码？
                     </Link>
                   </p>
-                  <p>
-                    没有账号？
-                    <Link href={`/ingest/register?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
-                      去注册
-                    </Link>
-                  </p>
+                  {!reactivationRequested ? (
+                    <p>
+                      没有账号？
+                      <Link href={`/ingest/register?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                        去注册
+                      </Link>
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
 
