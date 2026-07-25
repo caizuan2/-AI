@@ -369,7 +369,7 @@ function testDialogAndLifecycleWiring() {
   assert.match(markup, /知识投喂、上传和资料管理功能已暂停/);
   assert.match(markup, /重新激活/);
   assert.match(markup, /切换账号/);
-  assert.match(markup, /href="\/ingest\/activate\?next=%2Fadmin-ingest"/);
+  assert.match(markup, /href="\/ingest\/activate\?reactivate=1&amp;reason=invalid&amp;required=ingest_admin&amp;next=%2Fadmin-ingest"/);
   assert.doesNotMatch(markup, /关闭|XT-INGEST-|token|userId/);
   assert.equal((markup.match(/卡密已失效/g) ?? []).length, 1);
   assert.equal(INGEST_LICENSE_CHECK_INTERVAL_MS, 60_000);

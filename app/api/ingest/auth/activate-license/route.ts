@@ -4,11 +4,14 @@ import { isPlainObject } from "@/lib/api/responses";
 import { requireUser } from "@/lib/auth";
 import {
   getLicenseAppTypeFromKey,
+  hasUserRedeemedLicenseHistory,
   isSupportedLicenseKeyInput,
   normalizeLicenseKey,
   redeemLicenseKey
 } from "@/lib/auth/license";
 import { AppError, toAppError, ValidationError } from "@/lib/errors";
+import { createAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
+import { resolveIngestAccessTier } from "@/lib/enterprise/ingest-access-tier";
 import { setIngestPortalCookie, toIngestAuthUser } from "@/lib/enterprise/ingest-auth-session";
 
 export const runtime = "nodejs";
@@ -51,6 +54,7 @@ type IngestActivationErrorCode =
   | "LICENSE_EXPIRED"
   | "LICENSE_APP_MISMATCH"
   | "USER_NOT_AUTHENTICATED"
+  | "ACCOUNT_DISABLED"
   | "DATABASE_ROLE_ENUM_UNSUPPORTED"
   | "DATABASE_ERROR"
   | "REDEEM_FAILED";
@@ -83,6 +87,14 @@ function toActivationError(error: unknown): {
 
   if (appError.code === "UNAUTHORIZED") {
     return { code: "USER_NOT_AUTHENTICATED", message: "当前账号未登录，请先登录。", status: 401 };
+  }
+
+  if (appError.code === "FORBIDDEN") {
+    return {
+      code: "ACCOUNT_DISABLED",
+      message: appError.message || "账号已禁用，不能通过更换卡密恢复。",
+      status: 403
+    };
   }
 
   if (appError.code === "LICENSE_NOT_FOUND" || appError.code === "INVALID_LICENSE_KEY") {
@@ -160,22 +172,54 @@ export async function POST(request: Request) {
   }
 
   try {
+    const originalUserId = user.id;
+    const originalHistoryScope = createAdminIngestHistoryScope(originalUserId);
+    const reactivation = user.licenseActivated
+      || await hasUserRedeemedLicenseHistory(originalUserId);
     const activatedUser = await redeemLicenseKey(user.id, input.licenseKey, {
       appType: input.appType,
       ip: request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || undefined,
       userAgent: request.headers.get("user-agent") ?? undefined
     });
+
+    if (activatedUser.id !== originalUserId) {
+      throw new AppError("REDEEM_FAILED", "激活账号校验失败，请重新登录原账号后再试。", 409);
+    }
+
     const nextUser = {
       ...user,
       licenseActivated: activatedUser.licenseActivated
     };
+    const access = await resolveIngestAccessTier(nextUser);
+    const nextHistoryScope = createAdminIngestHistoryScope(activatedUser.id);
 
-    await setIngestPortalCookie(nextUser, request);
+    if (nextHistoryScope !== originalHistoryScope) {
+      throw new AppError("REDEEM_FAILED", "历史空间校验失败，已停止进入工作台。", 409);
+    }
 
-    const authUser = await toIngestAuthUser(nextUser);
+    if (access.accessTier === "none") {
+      throw new AppError("REDEEM_FAILED", "新卡已绑定，但权限复核失败，请联系管理员。", 409);
+    }
+
+    await setIngestPortalCookie(nextUser, request, access);
+
+    const authUser = await toIngestAuthUser(nextUser, access);
+    const message = reactivation
+      ? access.accessTier === "full_ingest"
+        ? "原账号已恢复，历史记录与知识资料保持不变。"
+        : "原账号已恢复为聊天版，历史记录与知识资料保持不变；完整投喂功能需使用 XT-INGEST 卡密。"
+      : access.accessTier === "full_ingest"
+        ? "投喂版权限激活成功。"
+        : "聊天版权限激活成功；完整投喂功能需使用 XT-INGEST 卡密。";
 
     return apiSuccess({
       success: true,
+      message,
+      reactivated: reactivation,
+      userId: activatedUser.id,
+      historyScope: nextHistoryScope,
+      permission: access.accessTier,
+      appType: input.appType,
       licenseActivated: authUser.licenseActivated,
       hasIngestPortalAccess: authUser.hasIngestPortalAccess,
       hasIngestAccess: authUser.hasIngestAccess,

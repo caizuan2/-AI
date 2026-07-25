@@ -23,8 +23,14 @@ import {
 } from "@/lib/enterprise/admin-ingest-history-sync";
 
 const useClientLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
-const ACTIVATE_HREF = "/ingest/activate?next=%2Fadmin-ingest";
+export const INGEST_LICENSE_REACTIVATION_EVENT_KEY = "xt:ingest-license-reactivated";
 const SWITCH_ACCOUNT_HREF = `/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`;
+
+function getActivateHref(code: IngestLicenseInvalidCode | null) {
+  const reason = code === "LICENSE_EXPIRED" ? "expired" : code === "LICENSE_DISABLED" ? "disabled" : "invalid";
+
+  return `/ingest/activate?reactivate=1&reason=${reason}&required=ingest_admin&next=${encodeURIComponent("/admin-ingest")}`;
+}
 
 function readAccessTier(payload: unknown): IngestAccessTier | null {
   if (!payload || typeof payload !== "object") {
@@ -44,13 +50,21 @@ function readAccessTier(payload: unknown): IngestAccessTier | null {
 
 export function IngestLicenseInvalidDialog({
   dialogRef,
+  invalidCode = null,
   switchingAccount = false,
   onSwitchAccount
 }: {
   dialogRef?: RefObject<HTMLElement>;
+  invalidCode?: IngestLicenseInvalidCode | null;
   switchingAccount?: boolean;
   onSwitchAccount: () => void;
 }) {
+  const title = invalidCode === "LICENSE_EXPIRED"
+    ? "卡密已过期"
+    : invalidCode === "LICENSE_DISABLED"
+      ? "卡密已禁用"
+      : "卡密已失效";
+
   return (
     <div
       data-ui-health="ingest-license-invalid-overlay"
@@ -69,19 +83,22 @@ export function IngestLicenseInvalidDialog({
         </span>
 
         <h2 id="ingest-license-invalid-title" className="mt-5 text-2xl font-semibold text-slate-950">
-          卡密已失效
+          {title}
         </h2>
         <p id="ingest-license-invalid-description" className="mt-3 text-sm leading-6 text-slate-600">
-          知识投喂、上传和资料管理功能已暂停。请重新激活有效卡密，或切换到其他已授权账号后继续使用。
+          知识投喂、上传和资料管理功能已暂停，但原账号的历史记录与知识资料不会被清除。请使用新的未使用卡密重新激活。
+        </p>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          如需恢复完整投喂端，请使用 XT-INGEST 卡密；XT-USER 只恢复聊天版权限。
         </p>
 
         <div className="mt-7 grid gap-3 sm:grid-cols-2">
           <a
-            href={ACTIVATE_HREF}
+            href={getActivateHref(invalidCode)}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl bg-[#111816] px-4 text-sm font-semibold text-white transition hover:bg-[#1d2a26] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2"
           >
             <KeyRound className="h-4 w-4" aria-hidden="true" />
-            重新激活
+            使用新卡重新激活
           </a>
           <button
             type="button"
@@ -181,7 +198,7 @@ export function IngestLicenseInvalidGate({
             }
 
             if (nextTier && nextTier !== accessTierRef.current) {
-              router.refresh();
+              window.location.reload();
             }
           }
         } catch {
@@ -208,6 +225,11 @@ export function IngestLicenseInvalidGate({
   }, [router]);
 
   useEffect(() => {
+    invalidCodeRef.current = initialCode;
+    setInvalidCode(initialCode);
+  }, [initialCode]);
+
+  useEffect(() => {
     accessTierRef.current = initialAccessTier;
   }, [initialAccessTier]);
 
@@ -216,6 +238,20 @@ export function IngestLicenseInvalidGate({
       initialHistoryScope
     );
   }, [initialHistoryScope]);
+
+  useEffect(() => {
+    const handleReactivation = (event: StorageEvent) => {
+      if (event.key === INGEST_LICENSE_REACTIVATION_EVENT_KEY && event.newValue) {
+        window.location.reload();
+      }
+    };
+
+    window.addEventListener("storage", handleReactivation);
+
+    return () => {
+      window.removeEventListener("storage", handleReactivation);
+    };
+  }, []);
 
   useEffect(() => {
     if (!invalidCode) {
@@ -296,6 +332,7 @@ export function IngestLicenseInvalidGate({
       {invalidCode ? (
         <IngestLicenseInvalidDialog
           dialogRef={dialogRef}
+          invalidCode={invalidCode}
           switchingAccount={switchingAccount}
           onSwitchAccount={() => {
             void switchAccount();
