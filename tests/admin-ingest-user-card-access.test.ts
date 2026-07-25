@@ -131,10 +131,18 @@ test("chat-only UI hides advanced navigation and knowledge save without removing
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(actions, /title="复制"/);
   assert.match(actions, /title=\{isParsing \? "生成中" : "重新生成"\}/);
+  assert.match(modeToggle, /canUseFullIngestTools: accessTier === "full_ingest"/);
+  assert.match(
+    shell,
+    /canUseFullIngestTools \|\| !action\.requiresFullIngestAccess/,
+    "user cards must see camera and image while file and URL remain hidden"
+  );
 });
 
 test("server gates prevent chat-only writes and internal prompt preview exposure", () => {
   const gptRoute = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
+  const parseRoute = readFileSync("app/api/admin/kb/ingest/files/parse/route.ts", "utf8");
+  const urlRoute = readFileSync("app/api/admin/kb/ingest/url/route.ts", "utf8");
   const saveRoute = readFileSync("app/api/admin/kb/save/route.ts", "utf8");
   const authGuard = readFileSync("lib/enterprise/admin-ingest-auth.ts", "utf8");
   const promptPreview = readFileSync("app/api/admin/ingest-memory/prompt-preview/route.ts", "utf8");
@@ -142,6 +150,9 @@ test("server gates prevent chat-only writes and internal prompt preview exposure
 
   assert.match(gptRoute, /hasFullIngestAccess && enterpriseActor && hasDatabaseUrl\(\) && structuredForTrainingLog/);
   assert.match(gptRoute, /input\.operation === "retry_doubao_metadata"[\s\S]*requireFullAdminIngestAccess/);
+  assert.match(gptRoute, /!hasFullIngestAccess[\s\S]*input\.attachments\.some/);
+  assert.match(parseRoute, /accessTier !== "full_ingest"[\s\S]*isAdminIngestImageAttachment/);
+  assert.match(urlRoute, /await requireFullAdminIngestAccess\(\)/);
   assert.ok(
     savePost.indexOf("await requireFullAdminIngestAccess()")
       < savePost.indexOf("await saveDraftOnlyKnowledge"),

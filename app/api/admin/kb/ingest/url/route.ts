@@ -5,12 +5,24 @@ import {
   normalizeAdminIngestPlatform,
   type AdminIngestPlatform
 } from "@/lib/enterprise/admin-ingest-platform";
+import { requireFullAdminIngestAccess } from "@/lib/enterprise/admin-ingest-auth";
+import { hasDatabaseUrl } from "@/lib/server-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function readString(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isLocalDevWithoutDatabase(request: Request) {
+  if (process.env.NODE_ENV === "production" || hasDatabaseUrl()) {
+    return false;
+  }
+
+  const hostname = new URL(request.url).hostname;
+
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function readSyncTarget(value: unknown): Array<"web" | "exe" | "apk"> {
@@ -78,6 +90,14 @@ function readRequest(body: unknown) {
 }
 
 export async function POST(request: Request) {
+  try {
+    await requireFullAdminIngestAccess();
+  } catch (error) {
+    if (!isLocalDevWithoutDatabase(request)) {
+      return apiError(error);
+    }
+  }
+
   let input: ReturnType<typeof readRequest>;
 
   try {

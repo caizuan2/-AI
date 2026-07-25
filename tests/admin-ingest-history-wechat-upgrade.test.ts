@@ -196,9 +196,11 @@ async function main() {
   );
   const modeToggleSource = await readFile("components/enterprise-admin/IngestModeToggle.tsx", "utf8");
 
-  assert.match(moreActionsSource, /文件上传/);
-  assert.match(moreActionsSource, /图片识别·支持微信长截图/);
-  assert.match(moreActionsSource, /网址投喂/);
+  assert.match(moreActionsSource, /label: "相机"/);
+  assert.match(moreActionsSource, /label: "图片"/);
+  assert.match(moreActionsSource, /label: "文件"/);
+  assert.match(moreActionsSource, /label: "网址"/);
+  assert.match(moreActionsSource, /requiresFullIngestAccess: true/);
   assert.doesNotMatch(moreActionsSource, /分类标签|连接状态/);
   assert.match(conversationMenuSource, /分享/);
   assert.match(conversationMenuSource, /开始群聊/);

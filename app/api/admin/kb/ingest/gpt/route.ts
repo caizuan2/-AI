@@ -1,7 +1,7 @@
 import { apiError } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import type { RbacUser } from "@/lib/auth/rbac";
-import { ValidationError } from "@/lib/errors";
+import { IngestFullAccessRequiredError, ValidationError } from "@/lib/errors";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import {
   type OpenAIAdminIngestAttachment
@@ -47,6 +47,7 @@ import {
 import type {
   AdminIngestWechatOutputMode
 } from "@/lib/enterprise/admin-ingest-wechat-output-mode";
+import { isAdminIngestImageAttachment } from "@/lib/enterprise/admin-ingest-attachment-access";
 import { readAdminIngestContextRequestFields } from "@/lib/enterprise/admin-ingest-context-boundary";
 import { isRetryableDoubaoStrictModelFailure } from "@/lib/enterprise/admin-ingest-request-error";
 import { buildAdminIngestPublishedMemoryContext } from "@/lib/enterprise/admin-ingest-published-memory-context";
@@ -1114,6 +1115,8 @@ export async function POST(request: Request) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);
     }
+
+    hasFullIngestAccess = true;
   }
 
   let input: ReturnType<typeof readRequest>;
@@ -1122,6 +1125,18 @@ export async function POST(request: Request) {
     input = readRequest(await request.json());
   } catch (error) {
     return apiError(error instanceof Error ? error : new ValidationError("请求体必须是合法 JSON。"));
+  }
+
+  if (
+    !hasFullIngestAccess
+    && input.attachments.some((attachment) => !isAdminIngestImageAttachment({
+      fileName: attachment.fileName,
+      mimeType: attachment.mimeType || attachment.fileType
+    }))
+  ) {
+    return apiError(new IngestFullAccessRequiredError(
+      "当前账号需要投喂端卡密才能使用文件附件。相机和图片识别仍可正常使用。"
+    ));
   }
 
   if (input.modelMode !== "highest") {

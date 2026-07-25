@@ -1,5 +1,5 @@
 import { apiError } from "@/lib/api-response";
-import { ValidationError } from "@/lib/errors";
+import { IngestFullAccessRequiredError, ValidationError } from "@/lib/errors";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
   ADMIN_INGEST_DEFAULT_PAGE_BATCH_SIZE,
@@ -8,7 +8,9 @@ import {
   ADMIN_INGEST_MIN_PAGE_BATCH_SIZE,
   parseAdminIngestFile
 } from "@/lib/enterprise/ingest-file-parser";
-import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
+import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth";
+import { isAdminIngestImageAttachment } from "@/lib/enterprise/admin-ingest-attachment-access";
+import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
 import {
   getIngestModelOptionByProvider,
   type IngestModelProvider
@@ -127,8 +129,11 @@ function readAdminIngestParseModelAffinity(formData: FormData): AdminIngestParse
 }
 
 export async function POST(request: Request) {
+  let accessTier: IngestAccessTier = "full_ingest";
+
   try {
-    await requireAdminIngestChatActor();
+    const chatAccess = await requireAdminIngestChatAccess();
+    accessTier = chatAccess.access.accessTier;
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);
@@ -197,6 +202,16 @@ export async function POST(request: Request) {
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+
+  if (
+    accessTier !== "full_ingest"
+    && !isAdminIngestImageAttachment({ fileName, mimeType, bytes: buffer })
+  ) {
+    return apiError(new IngestFullAccessRequiredError(
+      "当前账号需要投喂端卡密才能上传文件。相机和图片识别仍可正常使用。"
+    ));
+  }
+
   const parsed = await parseAdminIngestFile({
     fileName,
     mimeType,
