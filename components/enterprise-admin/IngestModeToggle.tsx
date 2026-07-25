@@ -545,6 +545,35 @@ function createEmptyHistoryMessages({
   }];
 }
 
+function resolveRestoredConversationMessages({
+  restoredMessages,
+  accessTier,
+  conversation,
+  agent,
+  context
+}: {
+  restoredMessages: IngestChatMessage[] | undefined;
+  accessTier: IngestAccessTier;
+  conversation: IngestAgentConversation;
+  agent: IngestChatAgent;
+  context: AdminIngestPlatformContext;
+}): IngestChatMessage[] {
+  const shouldShowChatOnlyWelcome = accessTier === "chat_only"
+    && conversation.messageCount === 0;
+
+  if (restoredMessages?.length) {
+    const normalizedMessages = normalizeRestoredMessages(restoredMessages);
+
+    return shouldShowChatOnlyWelcome
+      ? normalizedMessages.filter((message) => !isEmptyHistoryMessage(message))
+      : normalizedMessages;
+  }
+
+  return shouldShowChatOnlyWelcome
+    ? []
+    : createEmptyHistoryMessages({ conversation, agent, context });
+}
+
 function hasConversationDraft(draft: IngestKnowledgeDraft) {
   return Boolean(
     draft.jobId
@@ -1693,12 +1722,16 @@ export function IngestModeToggle({
 
     const restoredMessages = conversationMessagesById[activeConversation.id];
 
-    setMessages(restoredMessages?.length
-      ? normalizeRestoredMessages(restoredMessages)
-      : createEmptyHistoryMessages({ conversation: activeConversation, agent: conversationAgent, context: platformContext }));
+    setMessages(resolveRestoredConversationMessages({
+      restoredMessages,
+      accessTier,
+      conversation: activeConversation,
+      agent: conversationAgent,
+      context: platformContext
+    }));
     setDraft(conversationDraftsById[activeConversation.id] ?? ingestChatInitialDraft);
     restoredInitialConversationRef.current = true;
-  }, [activeConversationId, agentConversations, conversationDraftsById, conversationMessagesById, historyLoaded, platformContext, visibleAgents]);
+  }, [accessTier, activeConversationId, agentConversations, conversationDraftsById, conversationMessagesById, historyLoaded, platformContext, visibleAgents]);
   useEffect(() => {
     const speechWindow = window as SpeechWindow;
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
@@ -1870,9 +1903,13 @@ export function IngestModeToggle({
       setGptFallbackToast(null);
       setErrorMessage("");
     }
-    setMessages(restoredMessages?.length
-      ? normalizeRestoredMessages(restoredMessages)
-      : createEmptyHistoryMessages({ conversation, agent, context: platformContext }));
+    setMessages(resolveRestoredConversationMessages({
+      restoredMessages,
+      accessTier,
+      conversation,
+      agent,
+      context: platformContext
+    }));
     setDraft(conversationDraftsById[conversation.id] ?? ingestChatInitialDraft);
   }
 

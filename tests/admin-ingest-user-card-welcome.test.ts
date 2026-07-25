@@ -27,6 +27,31 @@ test("chat-only empty conversations use the Xiaodong welcome while full ingest s
     /<IngestWelcomeHero[\s\S]*?quickPrompts\.map/,
     "full-ingest and no-agent empty states must retain the existing welcome and prompt buttons"
   );
+  assert.match(
+    modeToggle,
+    /const shouldShowChatOnlyWelcome = accessTier === "chat_only"\s*&& conversation\.messageCount === 0/,
+    "only genuinely empty chat-only conversations should use the welcome state"
+  );
+  assert.match(
+    modeToggle,
+    /return shouldShowChatOnlyWelcome\s*\?\s*normalizedMessages\.filter\(\(message\) => !isEmptyHistoryMessage\(message\)\)/,
+    "chat-only history restore must discard legacy synthetic empty-history messages"
+  );
+  assert.match(
+    modeToggle,
+    /return shouldShowChatOnlyWelcome\s*\?\s*\[\]\s*:\s*createEmptyHistoryMessages/,
+    "chat-only empty conversations must stay empty so the welcome remains visible after switching back"
+  );
+  assert.equal(
+    modeToggle.match(/setMessages\(resolveRestoredConversationMessages\(\{/g)?.length,
+    2,
+    "initial hydration and later conversation switching must share the same empty-state resolver"
+  );
+  assert.match(
+    modeToggle,
+    /\}, \[accessTier, activeConversationId,/,
+    "initial restore must react to the resolved access tier"
+  );
   assert.match(chatOnlyWelcome, /src="\/brand\/xiaodong-ai-logo\.png"/);
   assert.match(chatOnlyWelcome, /小董AI/);
   assert.match(chatOnlyWelcome, /AI大脑🧠 \+ AI思考/);
