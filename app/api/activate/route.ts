@@ -1,15 +1,26 @@
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { isPlainObject } from "@/lib/api/responses";
 import { requireUser } from "@/lib/auth";
-import { normalizeLicenseAppType, redeemLicenseKey } from "@/lib/auth/license";
+import {
+  checkUserLicense,
+  hasUserRedeemedLicenseHistory,
+  normalizeLicenseAppType,
+  redeemLicenseKey,
+  type LicenseAppType
+} from "@/lib/auth/license";
+import { getHistoryScopeForUser } from "@/lib/auth/license-reactivation";
 import { LicenseAppTypeMismatchError, ValidationError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
 interface ActivateResponse {
   ok: true;
-  message: "激活成功。";
+  message: string;
   licenseActivated: true;
+  reactivated: boolean;
+  userId: string;
+  historyScope: string;
+  permission: Exclude<LicenseAppType, "super_admin">;
 }
 
 function parseActivateRequest(body: unknown, request: Request) {
@@ -32,11 +43,15 @@ function parseActivateRequest(body: unknown, request: Request) {
     throw new ValidationError("请输入卡密。");
   }
 
-  if (appType !== "user_app") {
-    throw new LicenseAppTypeMismatchError("用户端激活接口只能使用 XT-USER 卡密。");
+  if (appType === "super_admin") {
+    throw new LicenseAppTypeMismatchError("超级管理员账号不通过普通卡密激活。");
   }
 
-  return { code, userId, appType };
+  return {
+    code,
+    userId,
+    appType: appType as Exclude<LicenseAppType, "super_admin">
+  };
 }
 
 function getRequestIp(request: Request) {
@@ -53,16 +68,29 @@ export async function POST(request: Request) {
       throw new ValidationError("用户身份与当前登录账号不一致。");
     }
 
-    await redeemLicenseKey(user.id, input.code, {
+    const originalUserId = user.id;
+    const originalHistoryScope = getHistoryScopeForUser(originalUserId);
+    const reactivated = user.licenseActivated || await hasUserRedeemedLicenseHistory(originalUserId);
+    const redeemedUser = await redeemLicenseKey(originalUserId, input.code, {
       appType: input.appType,
       ip: getRequestIp(request),
       userAgent: request.headers.get("user-agent") ?? undefined
     });
 
+    if (redeemedUser.id !== originalUserId) {
+      throw new ValidationError("激活后的账号身份发生变化，请重新登录原账号后再试。");
+    }
+
+    await checkUserLicense(originalUserId, input.appType);
+
     return apiSuccess<ActivateResponse>({
       ok: true,
-      message: "激活成功。",
-      licenseActivated: true
+      message: reactivated ? "原账号已恢复，历史记录与知识资料保持不变。" : "激活成功。",
+      licenseActivated: true,
+      reactivated,
+      userId: originalUserId,
+      historyScope: originalHistoryScope,
+      permission: input.appType
     });
   } catch (error) {
     return apiError(error);

@@ -7,6 +7,7 @@ import { ArrowRight, Database, LockKeyhole, Phone, Sparkles, TriangleAlert } fro
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import { getPostLoginDestination } from "@/lib/auth/license-reactivation";
 
 interface LoginResponse {
   success: true;
@@ -21,18 +22,6 @@ interface MeResponse {
   };
 }
 
-function getPostLoginPath(input: { nextPath?: string; licenseActivated?: boolean; isSuperAdmin?: boolean }) {
-  if (input.nextPath) {
-    return input.nextPath;
-  }
-
-  if (input.isSuperAdmin) {
-    return "/super-admin";
-  }
-
-  return input.licenseActivated ? "/ingest" : "/unlock";
-}
-
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -41,6 +30,7 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState("");
+  const isReactivating = searchParams.get("reactivate") === "1";
 
   const getSafeNextPath = useCallback(() => {
     const candidate = searchParams.get("next") || searchParams.get("redirectTo") || "";
@@ -78,7 +68,7 @@ function LoginForm() {
           } | null;
           const nextPath = getSafeNextPath();
 
-          router.replace(getPostLoginPath({
+          router.replace(getPostLoginDestination({
             nextPath,
             licenseActivated: payload?.data?.user.licenseActivated,
             isSuperAdmin: payload?.data?.user.isSuperAdmin
@@ -126,7 +116,7 @@ function LoginForm() {
       const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
       const nextPath = getSafeNextPath();
 
-      router.replace(getPostLoginPath({
+      router.replace(getPostLoginDestination({
         nextPath,
         licenseActivated: data.licenseActivated,
         isSuperAdmin: data.isSuperAdmin
@@ -192,12 +182,18 @@ function LoginForm() {
         <ArrowRight className="h-4 w-4" />
       </Button>
 
-      <p className="text-center text-sm text-muted">
-        没有账号？
-        <Link href="/register" className="font-medium text-teal-700 hover:text-teal-800">
-          去注册
-        </Link>
-      </p>
+      {isReactivating ? (
+        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-sm leading-6 text-amber-800">
+          请登录原手机号账号后更换卡密，不要重新注册；新账号无法继承原历史和知识资料。
+        </p>
+      ) : (
+        <p className="text-center text-sm text-muted">
+          没有账号？
+          <Link href="/register" className="font-medium text-teal-700 hover:text-teal-800">
+            去注册
+          </Link>
+        </p>
+      )}
     </form>
   );
 }

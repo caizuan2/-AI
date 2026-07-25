@@ -33,7 +33,7 @@ function getReactivationReason(error: unknown): LicenseReactivationReason | null
   return null;
 }
 
-export default async function AdminIngestLayout({ children }: { children: ReactNode }) {
+export default async function IngestLicenseLayout({ children }: { children: ReactNode }) {
   try {
     const user = await requireIngestAdminAccess();
 
@@ -45,13 +45,13 @@ export default async function AdminIngestLayout({ children }: { children: ReactN
     );
   } catch (error) {
     if (error instanceof UnauthorizedError) {
-      redirect("/login?app=admin&next=/admin-ingest&reactivate=1");
+      redirect("/login?app=admin&next=/ingest&reactivate=1");
     }
 
     const reason = getReactivationReason(error);
 
     if (reason) {
-      redirect(getLicenseReactivationUrl("ingest_admin", "/admin-ingest", reason));
+      redirect(getLicenseReactivationUrl("ingest_admin", "/ingest", reason));
     }
 
     redirect("/no-access");
