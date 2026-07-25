@@ -128,6 +128,11 @@ test("chat-only UI hides advanced navigation and knowledge save without removing
   assert.match(modeToggle, /: "回答已生成。"/);
   assert.match(shell, /item\.key !== "tasks" && item\.key !== "memory"/);
   assert.match(shell, /if \(!canSaveKnowledge\)/);
+  assert.match(
+    shell,
+    /placeholder=\{canIngest[\s\S]*?\? \(canUseFullIngestTools \? "投喂 小董AI" : "问问 小董AI"\)[\s\S]*?: "请先到专家广场添加专家 Agent"\}/,
+    "输入框必须根据投喂端卡密与用户端卡密显示对应的小董AI文案"
+  );
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(actions, /title="复制"/);
   assert.match(actions, /title=\{isParsing \? "生成中" : "重新生成"\}/);
