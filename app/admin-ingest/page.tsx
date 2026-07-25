@@ -22,6 +22,7 @@ export default async function AdminIngestPage() {
       accessTier={access.accessTier}
       capabilities={access.capabilities}
       userName={user.name}
+      registeredAccount={user.phone}
     />
   );
 }

@@ -9,6 +9,7 @@ import type {
   IngestUploadState,
   IngestVoiceState
 } from "@/lib/enterprise/ingest-client";
+import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
 import { DEFAULT_ADMIN_INGEST_ASSISTANT_NAME } from "@/lib/enterprise/admin-ingest-profile";
 import type { IngestChatAgent } from "@/lib/enterprise/mock-chat";
 
@@ -22,10 +23,24 @@ export interface IngestSettingsState {
 
 type IngestSettingsAccountAction = "password" | "switch" | "logout";
 
+export function resolveIngestAccountIdentityLabel(accessTier: IngestAccessTier) {
+  if (accessTier === "chat_only") {
+    return "VIP会员";
+  }
+
+  if (accessTier === "full_ingest") {
+    return "投喂GLY";
+  }
+
+  return "未激活";
+}
+
 export function IngestSettingsPanel({
   open,
   adminAvatar,
   appName,
+  accessTier,
+  registeredAccount,
   onAvatarChange,
   onAppNameChange,
   onAccountAction,
@@ -40,6 +55,8 @@ export function IngestSettingsPanel({
   settingsState: IngestSettingsState;
   adminAvatar: string;
   appName: string;
+  accessTier: IngestAccessTier;
+  registeredAccount: string;
   gptHealthStatus: IngestGptHealthStatus | null;
   isCheckingGptStatus: boolean;
   onSettingsChange: (nextState: IngestSettingsState) => void;
@@ -106,6 +123,8 @@ export function IngestSettingsPanel({
   }
 
   const displayName = draftAppName.trim() || appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME;
+  const normalizedRegisteredAccount = registeredAccount.trim() || "未获取注册账号";
+  const identityLabel = resolveIngestAccountIdentityLabel(accessTier);
 
   return (
     <div className="pointer-events-none absolute inset-0 z-[70]">
@@ -149,9 +168,14 @@ export function IngestSettingsPanel({
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-slate-950">{displayName}</p>
-              <p className="mt-0.5 truncate text-xs text-slate-500">当前投喂端账号</p>
+              <p
+                className="mt-0.5 truncate text-xs text-slate-500"
+                title={`注册账号：${normalizedRegisteredAccount}`}
+              >
+                注册账号：{normalizedRegisteredAccount}
+              </p>
               <p className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                投喂管理员
+                {identityLabel}
               </p>
             </div>
           </div>

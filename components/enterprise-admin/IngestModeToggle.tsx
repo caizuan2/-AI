@@ -204,6 +204,7 @@ type IngestModeToggleProps = {
   accessTier?: IngestAccessTier;
   capabilities?: IngestCapabilities;
   userName?: string | null;
+  registeredAccount?: string;
 };
 
 const FULL_INGEST_CAPABILITIES: IngestCapabilities = {
@@ -684,7 +685,8 @@ function createEmptyAgent(context: AdminIngestPlatformContext): IngestChatAgent 
 export function IngestModeToggle({
   accessTier = "full_ingest",
   capabilities = FULL_INGEST_CAPABILITIES,
-  userName
+  userName,
+  registeredAccount = ""
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const restoredInitialConversationRef = useRef(false);
@@ -5040,6 +5042,8 @@ export function IngestModeToggle({
         settingsState={settingsState}
         adminAvatar={adminAvatar}
         appName={appName}
+        accessTier={accessTier}
+        registeredAccount={registeredAccount}
         gptHealthStatus={gptHealthStatus}
         isCheckingGptStatus={isCheckingGptHealth}
         onSettingsChange={setSettingsState}
