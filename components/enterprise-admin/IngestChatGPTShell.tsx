@@ -68,6 +68,7 @@ import {
   normalizeAdminIngestWechatOutputMode,
   type AdminIngestWechatOutputMode
 } from "@/lib/enterprise/admin-ingest-wechat-output-mode";
+import { shouldShowAdminIngestAnswerActions } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import type {
   IngestConnectionStatus,
   IngestVoiceState,
@@ -2390,9 +2391,13 @@ export function IngestChatGPTShell({
                   const highlightClass = highlightedPromptMessageId === message.id
                     ? "scroll-mt-24 rounded-[28px] ring-2 ring-[#10a37f]/35 ring-offset-4 ring-offset-white"
                     : "scroll-mt-24";
-                  const isAssistantResult = message.role === "assistant"
-                    && message.id.startsWith("assistant-result")
-                    && metadataReadyForActions;
+                  const isAssistantResult = shouldShowAdminIngestAnswerActions({
+                    hasFullIngestAccess: canUseFullIngestTools,
+                    role: message.role,
+                    messageId: message.id,
+                    content: message.content,
+                    metadataState: message.metadataState
+                  });
                   const retrySecondsRemaining = typeof message.failureMeta?.retryAt === "number"
                     ? Math.max(0, Math.ceil((message.failureMeta.retryAt - retryClockMs) / 1000))
                     : 0;
@@ -2530,29 +2535,31 @@ export function IngestChatGPTShell({
                         metadata={{ role: message.role, provider: message.provider ?? null }}
                       />
                       <IngestGPTMessageRenderer content={message.content} message={message} />
-                      {message.metadataState === "pending" ? (
-                        <p className="mt-3 text-xs text-[#8a7a5c]">正文已生成，正在用同一个豆包模型整理知识草稿...</p>
-                      ) : message.metadataState === "unavailable" ? (
-                        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#9b5b56]">
-                          <span>正文与待确认状态已保留，尚未正式入库。</span>
-                          {canRetryDoubaoMetadata ? (
-                            <button
-                              type="button"
-                              disabled={isRecoveringMetadata || isParsing}
-                              onClick={() => void onRetryDoubaoMetadata?.(
-                                message.id,
-                                messageQuestion ?? "",
-                                message.content
-                              )}
-                              className="inline-flex items-center gap-1 rounded-full border border-[#dfb9b5] bg-white px-3 py-1 font-semibold text-[#7d332d] transition hover:bg-[#fff8f7] disabled:cursor-not-allowed disabled:opacity-55"
-                            >
-                              {isRecoveringMetadata ? (
-                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-                              ) : null}
-                              {isRecoveringMetadata ? "正在重新整理..." : "重新整理知识草稿"}
-                            </button>
-                          ) : null}
-                        </div>
+                      {canUseFullIngestTools ? (
+                        message.metadataState === "pending" ? (
+                          <p className="mt-3 text-xs text-[#8a7a5c]">正文已生成，正在用同一个豆包模型整理知识草稿...</p>
+                        ) : message.metadataState === "unavailable" ? (
+                          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#9b5b56]">
+                            <span>正文与待确认状态已保留，尚未正式入库。</span>
+                            {canRetryDoubaoMetadata ? (
+                              <button
+                                type="button"
+                                disabled={isRecoveringMetadata || isParsing}
+                                onClick={() => void onRetryDoubaoMetadata?.(
+                                  message.id,
+                                  messageQuestion ?? "",
+                                  message.content
+                                )}
+                                className="inline-flex items-center gap-1 rounded-full border border-[#dfb9b5] bg-white px-3 py-1 font-semibold text-[#7d332d] transition hover:bg-[#fff8f7] disabled:cursor-not-allowed disabled:opacity-55"
+                              >
+                                {isRecoveringMetadata ? (
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                ) : null}
+                                {isRecoveringMetadata ? "正在重新整理..." : "重新整理知识草稿"}
+                              </button>
+                            ) : null}
+                          </div>
+                        ) : null
                       ) : null}
                       {SHOW_INTERNAL_OS_UI ? (
                         <IngestGPTOSPanel gptOS={message.gptOS} />

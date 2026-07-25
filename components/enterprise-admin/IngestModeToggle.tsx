@@ -115,6 +115,10 @@ import {
   type IngestConversationState
 } from "@/lib/enterprise/ingest-conversation-state";
 import {
+  hasVisibleReplyForActiveIngestRequest,
+  shouldShowAdminIngestParsingProgress
+} from "@/lib/enterprise/admin-ingest-visible-answer-state";
+import {
   appendAssistantPlaceholder,
   appendUserMessage,
   completeAssistantMessage,
@@ -4832,6 +4836,11 @@ export function IngestModeToggle({
     setNoticeMessage(`${label}入口已响应，当前阶段预留解析状态和三端同步字段。`);
   }
 
+  const activeConversationRequestState = conversationStateByIdRef.current[activeConversationId];
+  const hasVisibleReplyForActiveRequest = hasVisibleReplyForActiveIngestRequest(
+    activeConversationRequestState
+  );
+  const hasFullIngestAccess = accessTier === "full_ingest";
   const sharedProps = {
     agents: visibleAgents,
     activeAgent,
@@ -4887,9 +4896,12 @@ export function IngestModeToggle({
     notifications,
     settingsState,
     isParsing,
-    showParsingProgress: isParsing && isIngestConversationRequestActive(
-      conversationStateByIdRef.current[activeConversationId]
-    ),
+    showParsingProgress: shouldShowAdminIngestParsingProgress({
+      isParsing,
+      isRequestActive: isIngestConversationRequestActive(activeConversationRequestState),
+      hasFullIngestAccess,
+      hasVisibleReply: hasVisibleReplyForActiveRequest
+    }),
     isSaving,
     onOpenCreateAgent: () => handleRailChange("experts"),
     onAddExpertToAgent: handleAddExpertToAgent,

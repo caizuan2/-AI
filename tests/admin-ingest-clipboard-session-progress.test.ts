@@ -109,7 +109,11 @@ async function main() {
   assert.match(shellSource, /showParsingProgress \? \(/);
   assert.match(
     modeToggleSource,
-    /showParsingProgress:\s*isParsing\s*&&\s*isIngestConversationRequestActive/
+    /showParsingProgress:\s*shouldShowAdminIngestParsingProgress\(\{/
+  );
+  assert.match(
+    modeToggleSource,
+    /isRequestActive:\s*isIngestConversationRequestActive\(activeConversationRequestState\)/
   );
   assert.match(
     modeToggleSource,
