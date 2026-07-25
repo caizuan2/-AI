@@ -2792,7 +2792,7 @@ export function IngestChatGPTShell({
                             <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-950">
                               <Icon className="h-5 w-5" aria-hidden="true" />
                             </span>
-                            <span className="text-base font-semibold text-slate-950">
+                            <span className="text-base font-normal text-slate-950">
                               {action.label}
                             </span>
                           </button>

@@ -43,7 +43,7 @@ assert.match(
 );
 assert.match(shell, /rounded-\[28px\][\s\S]*shadow-2xl shadow-slate-200\/80/);
 assert.match(shell, /h-11 w-11[\s\S]*rounded-full bg-slate-100 text-slate-950/);
-assert.match(shell, /text-base font-semibold text-slate-950/);
+assert.match(shell, /text-base font-normal text-slate-950/);
 assert.match(modeToggle, /canUseFullIngestTools: accessTier === "full_ingest"/);
 
 assert.match(shell, /ref=\{cameraInputRef\}[\s\S]*accept="image\/\*"[\s\S]*capture="environment"/);
