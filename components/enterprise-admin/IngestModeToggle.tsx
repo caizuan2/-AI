@@ -89,6 +89,12 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import {
+  legacyAdminIngestAvatarToFile,
+  loadAdminIngestAccountProfile,
+  saveAdminIngestAccountAvatar,
+  saveAdminIngestAccountName
+} from "@/lib/enterprise/admin-ingest-account-profile-client";
+import {
   normalizeAdminIngestWechatOutputMode,
   type AdminIngestWechatOutputMode
 } from "@/lib/enterprise/admin-ingest-wechat-output-mode";
@@ -921,6 +927,54 @@ export function IngestModeToggle({
     if (storedModelValue !== storedModel.label) {
       window.localStorage.setItem(ADMIN_INGEST_MODEL_STORAGE_KEY, storedModel.label);
     }
+  }, []);
+
+  useEffect(() => {
+    const abortController = new AbortController();
+    const legacyAvatar = window.localStorage.getItem(ADMIN_AVATAR_STORAGE_KEY)?.trim() ?? "";
+    const legacyName = window.localStorage.getItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY)?.trim() ?? "";
+
+    async function hydrateAdminIngestAccountProfile() {
+      try {
+        const profile = await loadAdminIngestAccountProfile(abortController.signal);
+
+        if (profile.hasCustomName && profile.name) {
+          setAppName(profile.name);
+          window.localStorage.setItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY, profile.name);
+        } else if (legacyName && legacyName !== DEFAULT_ADMIN_INGEST_ASSISTANT_NAME) {
+          const migratedProfile = await saveAdminIngestAccountName(legacyName);
+
+          if (!abortController.signal.aborted && migratedProfile.name) {
+            setAppName(migratedProfile.name);
+            window.localStorage.setItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY, migratedProfile.name);
+          }
+        }
+
+        if (profile.hasCustomAvatar && profile.avatarUrl) {
+          setAdminAvatar(profile.avatarUrl);
+          window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, profile.avatarUrl);
+        } else if (legacyAvatar) {
+          const legacyFile = await legacyAdminIngestAvatarToFile(legacyAvatar);
+
+          if (legacyFile) {
+            const migratedProfile = await saveAdminIngestAccountAvatar(legacyFile);
+
+            if (!abortController.signal.aborted && migratedProfile.avatarUrl) {
+              setAdminAvatar(migratedProfile.avatarUrl);
+              window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, migratedProfile.avatarUrl);
+            }
+          }
+        }
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          console.warn("[admin-ingest:account-profile:hydrate]", error);
+        }
+      }
+    }
+
+    void hydrateAdminIngestAccountProfile();
+
+    return () => abortController.abort();
   }, []);
 
   useEffect(() => {
@@ -1788,7 +1842,14 @@ export function IngestModeToggle({
     });
   }
 
-  function handleAdminAvatarChange(nextAvatar: string) {
+  async function handleAdminAvatarChange(file: File) {
+    const profile = await saveAdminIngestAccountAvatar(file);
+    const nextAvatar = profile.avatarUrl;
+
+    if (!nextAvatar) {
+      throw new Error("头像永久地址生成失败，请重试。");
+    }
+
     setAdminAvatar(nextAvatar);
     window.localStorage.setItem(ADMIN_AVATAR_STORAGE_KEY, nextAvatar);
     setNoticeMessage("头像已更新。");
@@ -1798,16 +1859,18 @@ export function IngestModeToggle({
     });
   }
 
-  function handleAppNameChange(nextName: string) {
+  async function handleAppNameChange(nextName: string) {
     const normalizedName = nextName.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME;
+    const profile = await saveAdminIngestAccountName(normalizedName);
+    const persistedName = profile.name || normalizedName;
 
-    setAppName(normalizedName);
-    window.localStorage.setItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY, normalizedName);
-    setNoticeMessage(`应用名称已更新为 ${normalizedName}。`);
+    setAppName(persistedName);
+    window.localStorage.setItem(ADMIN_INGEST_APP_NAME_STORAGE_KEY, persistedName);
+    setNoticeMessage(`应用名称已更新为 ${persistedName}。`);
     showActionToast({
       type: "success",
       title: "应用名称已更新",
-      description: normalizedName
+      description: persistedName
     });
   }
 

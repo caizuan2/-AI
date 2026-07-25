@@ -35,6 +35,33 @@ export function resolveIngestAccountIdentityLabel(accessTier: IngestAccessTier) 
   return "未激活";
 }
 
+export function normalizeIngestRegisteredAccount(value: string) {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return "未获取注册账号";
+  }
+
+  const compact = trimmed.replace(/[\s()-]/g, "");
+  const countryCodeMatch = compact.match(/^(?:\+86|0086)(\d{11})$/);
+
+  if (countryCodeMatch) {
+    return countryCodeMatch[1];
+  }
+
+  if (/^86\d{11}$/.test(compact)) {
+    return compact.slice(2);
+  }
+
+  return /^\d+$/.test(compact) ? compact : trimmed;
+}
+
+function readPanelErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message.trim()
+    ? error.message
+    : fallback;
+}
+
 export function IngestSettingsPanel({
   open,
   adminAvatar,
@@ -60,8 +87,8 @@ export function IngestSettingsPanel({
   gptHealthStatus: IngestGptHealthStatus | null;
   isCheckingGptStatus: boolean;
   onSettingsChange: (nextState: IngestSettingsState) => void;
-  onAvatarChange: (nextAvatar: string) => void;
-  onAppNameChange: (nextName: string) => void;
+  onAvatarChange: (file: File) => Promise<void>;
+  onAppNameChange: (nextName: string) => Promise<void>;
   onAccountAction: (action: IngestSettingsAccountAction) => void;
   onCheckGptStatus: () => void;
   onReconnectGpt: () => void;
@@ -70,6 +97,8 @@ export function IngestSettingsPanel({
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const [draftAppName, setDraftAppName] = useState(appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
   const [isEditingName, setIsEditingName] = useState(false);
+  const [isSavingAvatar, setIsSavingAvatar] = useState(false);
+  const [isSavingName, setIsSavingName] = useState(false);
   const [panelMessage, setPanelMessage] = useState("");
 
   useEffect(() => {
@@ -93,37 +122,48 @@ export function IngestSettingsPanel({
     return null;
   }
 
-  function handleAvatarFileChange(event: ChangeEvent<HTMLInputElement>) {
+  async function handleAvatarFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
+    event.target.value = "";
 
     if (!file || !file.type.startsWith("image/")) {
       return;
     }
 
-    const reader = new FileReader();
+    setIsSavingAvatar(true);
+    setPanelMessage("");
 
-    reader.onload = () => {
-      if (typeof reader.result === "string") {
-        onAvatarChange(reader.result);
-        setPanelMessage("头像已更新。");
-      }
-    };
-    reader.readAsDataURL(file);
-    event.target.value = "";
+    try {
+      await onAvatarChange(file);
+      setPanelMessage("头像已永久保存。");
+    } catch (error) {
+      setPanelMessage(readPanelErrorMessage(error, "头像保存失败，请重试。"));
+    } finally {
+      setIsSavingAvatar(false);
+    }
   }
 
-  function saveAppName(event?: FormEvent<HTMLFormElement>) {
+  async function saveAppName(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     const normalizedName = draftAppName.trim() || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME;
 
-    setDraftAppName(normalizedName);
-    setIsEditingName(false);
-    setPanelMessage("名称已更新。");
-    onAppNameChange(normalizedName);
+    setIsSavingName(true);
+    setPanelMessage("");
+
+    try {
+      await onAppNameChange(normalizedName);
+      setDraftAppName(normalizedName);
+      setIsEditingName(false);
+      setPanelMessage("名称已永久保存。");
+    } catch (error) {
+      setPanelMessage(readPanelErrorMessage(error, "名称保存失败，请重试。"));
+    } finally {
+      setIsSavingName(false);
+    }
   }
 
   const displayName = draftAppName.trim() || appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME;
-  const normalizedRegisteredAccount = registeredAccount.trim() || "未获取注册账号";
+  const normalizedRegisteredAccount = normalizeIngestRegisteredAccount(registeredAccount);
   const identityLabel = resolveIngestAccountIdentityLabel(accessTier);
 
   return (
@@ -143,7 +183,6 @@ export function IngestSettingsPanel({
             </span>
             <div>
               <h2 className="text-sm font-semibold text-slate-950">账号信息</h2>
-              <p className="text-xs text-slate-500">投喂端账号设置</p>
             </div>
           </div>
           <button
@@ -170,9 +209,9 @@ export function IngestSettingsPanel({
               <p className="truncate text-sm font-semibold text-slate-950">{displayName}</p>
               <p
                 className="mt-0.5 truncate text-xs text-slate-500"
-                title={`注册账号：${normalizedRegisteredAccount}`}
+                title={normalizedRegisteredAccount}
               >
-                注册账号：{normalizedRegisteredAccount}
+                {normalizedRegisteredAccount}
               </p>
               <p className="mt-1 inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                 {identityLabel}
@@ -184,7 +223,8 @@ export function IngestSettingsPanel({
         <div className="mt-2 space-y-1">
           <AccountMenuButton
             icon={<ImagePlus className="h-4 w-4" aria-hidden="true" />}
-            label="修改头像"
+            label={isSavingAvatar ? "正在保存头像" : "修改头像"}
+            disabled={isSavingAvatar}
             onClick={() => avatarInputRef.current?.click()}
           />
           <AccountMenuButton
@@ -204,6 +244,8 @@ export function IngestSettingsPanel({
                 id="ingest-admin-account-name"
                 value={draftAppName}
                 onChange={(event) => setDraftAppName(event.target.value)}
+                maxLength={20}
+                disabled={isSavingName}
                 className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition focus:border-slate-400"
                 placeholder="输入投喂端名称"
               />
@@ -211,6 +253,7 @@ export function IngestSettingsPanel({
                 <button
                   type="button"
                   className="rounded-lg px-3 py-1.5 text-xs font-medium text-slate-500 transition hover:bg-slate-100"
+                  disabled={isSavingName}
                   onClick={() => {
                     setDraftAppName(appName || DEFAULT_ADMIN_INGEST_ASSISTANT_NAME);
                     setIsEditingName(false);
@@ -220,9 +263,10 @@ export function IngestSettingsPanel({
                 </button>
                 <button
                   type="submit"
-                  className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800"
+                  disabled={isSavingName}
+                  className="rounded-lg bg-slate-950 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  保存
+                  {isSavingName ? "保存中" : "保存"}
                 </button>
               </div>
             </form>
@@ -268,20 +312,23 @@ function AccountMenuButton({
   icon,
   label,
   danger = false,
+  disabled = false,
   onClick
 }: {
   icon: ReactNode;
   label: string;
   danger?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       className={[
-        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition",
+        "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-50",
         danger ? "text-red-600 hover:bg-red-50" : "text-slate-700 hover:bg-slate-100 hover:text-slate-950"
       ].join(" ")}
+      disabled={disabled}
       onClick={onClick}
     >
       <span
