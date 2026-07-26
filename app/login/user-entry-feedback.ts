@@ -1,6 +1,7 @@
 export type UserEntryErrorFeedback = {
   message: string;
   nameError?: string;
+  passwordError?: string;
   revealLicenseEntry?: boolean;
 };
 
@@ -52,6 +53,18 @@ export function getUserEntryErrorFeedback(input: UserEntryErrorInput): UserEntry
     return {
       message,
       nameError: message,
+      revealLicenseEntry: true
+    };
+  }
+
+  if (code === "VALIDATION_ERROR" && backendMessage.includes("密码")) {
+    const message = backendMessage.includes("首次使用")
+      ? "这是新手机号，首次开户请设置至少 8 位密码。"
+      : publicBackendMessage || "请检查密码后重新输入。";
+
+    return {
+      message,
+      passwordError: message,
       revealLicenseEntry: true
     };
   }

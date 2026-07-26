@@ -117,10 +117,14 @@ function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(false);
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [nameError, setNameError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [technicalError, setTechnicalError] = useState<LoginTechnicalError | null>(null);
   const nameFieldRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  const passwordFieldRef = useRef<HTMLDivElement>(null);
+  const passwordInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
 
   const getSafeNextPath = useCallback(() => {
@@ -218,6 +222,19 @@ function LoginForm() {
     return () => window.cancelAnimationFrame(frame);
   }, [nameError, showLicenseEntry]);
 
+  useEffect(() => {
+    if (!passwordError || !showLicenseEntry) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      passwordFieldRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      passwordInputRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [passwordError, showLicenseEntry]);
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -226,10 +243,14 @@ function LoginForm() {
     }
 
     setNameError("");
+    setPasswordError("");
     setTechnicalError(null);
+    setSuccessMessage("");
 
-    if (!phone.trim() || !password) {
-      setError("请输入手机号和密码。");
+    const allowsEmptyPassword = !isAdminEntry && showLicenseEntry;
+
+    if (!phone.trim() || (!allowsEmptyPassword && !password)) {
+      setError(allowsEmptyPassword ? "请输入手机号。" : "请输入手机号和密码。");
       return;
     }
 
@@ -252,6 +273,11 @@ function LoginForm() {
       });
       const data = await unwrapApiResponse<LoginResponse>(response, "手机号或密码错误。");
       const nextPath = getSafeNextPath();
+
+      if (!isAdminEntry && data.entryMode === "reactivated") {
+        setSuccessMessage("新卡已绑定原账号，历史记录和账号资料已保留。");
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 600));
+      }
 
       router.replace(getPostLoginPath({
         nextPath,
@@ -278,6 +304,7 @@ function LoginForm() {
         }
 
         setNameError(feedback.nameError ?? "");
+        setPasswordError(feedback.passwordError ?? "");
         setTechnicalError({
           code: caughtError.details.code,
           requestId: caughtError.details.requestId
@@ -327,6 +354,16 @@ function LoginForm() {
         </div>
       ) : null}
 
+      {successMessage ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+        >
+          {successMessage}
+        </div>
+      ) : null}
+
       {passwordReset && !isAdminEntry ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
           密码重置成功，请使用新密码登录。
@@ -335,13 +372,13 @@ function LoginForm() {
 
       {firstUse && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
-          首次使用请输入手机号、密码和用户端卡密，系统会自动判断是否为新账号；新账号还需填写网名。
+          首次开户请输入手机号、至少 8 位密码、网名和用户端卡密；原账号换卡恢复时无需原密码。
         </div>
       ) : null}
 
       {continuingActivation && !isAdminEntry ? (
         <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2 text-sm leading-6 text-teal-800">
-          请输入原账号的手机号和密码，并填写新的有效用户端卡密重新激活。
+          输入原账号手机号和新的有效用户端卡密即可恢复；无需原密码，设置新密码可选。
         </div>
       ) : null}
 
@@ -405,27 +442,59 @@ function LoginForm() {
         </span>
       </label>
 
-      <div className="block">
+      <div ref={passwordFieldRef} className="block">
         <span className="flex items-center justify-between gap-3">
-          <label htmlFor="login-password" className="text-sm font-medium text-ink">密码</label>
-          {!isAdminEntry ? (
+          <label htmlFor="login-password" className="text-sm font-medium text-ink">
+            {showLicenseEntry && !isAdminEntry ? "设置新密码（换卡恢复可不填）" : "密码"}
+          </label>
+          {!isAdminEntry && !showLicenseEntry ? (
             <Link href={forgotPasswordHref} className="inline-flex min-h-11 items-center text-sm font-medium text-teal-700 hover:text-teal-800">
               忘记密码？
             </Link>
           ) : null}
         </span>
-        <span className="mt-2 flex h-11 items-center gap-2 rounded-lg border border-line bg-white px-3">
+        <span
+          className={`mt-2 flex h-11 items-center gap-2 rounded-lg border bg-white px-3 ${
+            passwordError ? "border-rose-300" : "border-line"
+          }`}
+        >
           <LockKeyhole className="h-4 w-4 text-muted" />
           <Input
+            ref={passwordInputRef}
             id="login-password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              setPassword(event.target.value);
+
+              if (passwordError) {
+                setPasswordError("");
+                setError("");
+                setTechnicalError(null);
+              }
+            }}
             type="password"
-            autoComplete="current-password"
+            autoComplete={showLicenseEntry && !isAdminEntry ? "new-password" : "current-password"}
+            aria-invalid={Boolean(passwordError)}
+            aria-describedby={
+              passwordError
+                ? "login-password-error"
+                : showLicenseEntry && !isAdminEntry
+                  ? "login-password-help"
+                  : undefined
+            }
             className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-            placeholder={showLicenseEntry && !isAdminEntry ? "请输入密码（首次使用至少 8 位）" : "请输入密码"}
+            placeholder={showLicenseEntry && !isAdminEntry ? "首次开户至少 8 位；换卡恢复可留空" : "请输入密码"}
           />
         </span>
+        {passwordError ? (
+          <p id="login-password-error" className="mt-1.5 text-xs leading-5 text-rose-700">
+            {passwordError}
+          </p>
+        ) : showLicenseEntry && !isAdminEntry ? (
+          <p id="login-password-help" className="mt-1.5 text-xs leading-5 text-muted">
+            旧卡已禁用或过期：无需原密码；填写后将作为新密码，留空则保留原密码。首次开户请设置至少 8 位密码。
+          </p>
+        ) : null}
       </div>
 
       {!isAdminEntry && !showLicenseEntry ? (
@@ -435,6 +504,7 @@ function LoginForm() {
             setShowLicenseEntry(true);
             setError("");
             setNameError("");
+            setPasswordError("");
             setTechnicalError(null);
           }}
           className="flex min-h-11 w-full items-center justify-center text-sm font-medium text-teal-700 hover:text-teal-800"
@@ -455,6 +525,7 @@ function LoginForm() {
                   setLicenseKey("");
                   setError("");
                   setNameError("");
+                  setPasswordError("");
                   setTechnicalError(null);
                 }}
                 className="inline-flex min-h-11 items-center text-sm font-medium text-teal-700 hover:text-teal-800"
@@ -477,7 +548,7 @@ function LoginForm() {
             />
           </span>
           <span className="mt-1.5 block text-xs leading-5 text-muted">
-            首次开户填写网名和卡密；原账号换卡恢复时网名可留空，并保留聊天记录。
+            首次开户填写网名、密码和卡密；旧卡已禁用或过期的原账号可使用新卡恢复，保留原网名和聊天记录。
           </span>
         </div>
       ) : null}
