@@ -37,7 +37,10 @@ assert.match(builderConfig, /allowToChangeInstallationDirectory:\s*true/);
 assert.match(builderConfig, /createDesktopShortcut:\s*always/);
 assert.match(builderConfig, /createStartMenuShortcut:\s*true/);
 
-assert.match(packageJson.scripts["admin-ingest:desktop:build"], /--win nsis$/);
+assert.match(
+  packageJson.scripts["admin-ingest:desktop:build"],
+  /--win nsis --publish never$/
+);
 assert.doesNotMatch(packageJson.scripts["admin-ingest:desktop:build"], /portable/);
 
 assert.match(buildScript, /--win nsis/);
