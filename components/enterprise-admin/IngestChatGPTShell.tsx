@@ -66,6 +66,7 @@ import {
   resolveAdminIngestDisplayProfile,
   type AdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
+import { searchIngestAgentSidebar } from "@/lib/enterprise/admin-ingest-agent-sidebar-search";
 import {
   normalizeAdminIngestWechatOutputMode,
   type AdminIngestWechatOutputMode
@@ -1049,14 +1050,11 @@ export function IngestChatGPTShell({
     [records.length, showTrainingEntries]
   );
 
-  const normalizedSearch = searchKeyword.trim().toLowerCase();
-  const filteredAgents = useMemo(
-    () => normalizedSearch
-      ? agents.filter((agent) => [agent.name, agent.role, agent.description, agent.category].join(" ").toLowerCase().includes(normalizedSearch))
-      : agents,
-    [agents, normalizedSearch]
+  const filteredAgentResults = useMemo(
+    () => searchIngestAgentSidebar(agents, agentConversations, searchKeyword),
+    [agentConversations, agents, searchKeyword]
   );
-  const hasSearchResults = filteredAgents.length > 0;
+  const hasSearchResults = filteredAgentResults.length > 0;
   const agentLabelById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, `${agent.name} · ${agent.role}`])),
     [agents]
@@ -2052,7 +2050,6 @@ export function IngestChatGPTShell({
 
   function handleAgentCardSelect(agentId: string) {
     setActiveAgentId(agentId);
-    closeMobileNavigation();
   }
 
   function handleSearchConfirm() {
@@ -2296,7 +2293,7 @@ export function IngestChatGPTShell({
                     handleSearchConfirm();
                   }
                 }}
-                placeholder="搜索"
+                placeholder="搜索 Agent / 对话"
                 className="min-w-0 flex-1 bg-transparent text-sm text-[#333] outline-none placeholder:text-[#8a8a86]"
               />
             </div>
@@ -2338,23 +2335,23 @@ export function IngestChatGPTShell({
               </div>
             ) : !hasSearchResults ? (
               <div className="mx-2 rounded-2xl bg-[#f6f6f5] px-3 py-4 text-center text-xs leading-5 text-[#8a8a86]">
-                没有找到相关 Agent 或知识库
+                没有找到相关 Agent 或对话
               </div>
             ) : null}
-            {filteredAgents.map((agent) => {
+            {filteredAgentResults.map(({ agent, conversations, hasConversationMatches }) => {
               const isActive = activeAgent.id === agent.id;
               const isExpanded = expandedAgentIds.includes(agent.id);
               const isPinned = pinnedAgentIds.includes(agent.id);
-              const conversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
-              const hasGeneratingConversation = isAdminApk && conversations.some((conversation) => (
+              const allAgentConversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
+              const hasGeneratingConversation = isAdminApk && allAgentConversations.some((conversation) => (
                 conversation.status !== "archived"
                 && conversationRuntimeStatusById[conversation.id]?.state === "generating"
               ));
-              const hasUnreadConversation = isAdminApk && conversations.some((conversation) => (
+              const hasUnreadConversation = isAdminApk && allAgentConversations.some((conversation) => (
                 conversation.status !== "archived"
                 && conversationRuntimeStatusById[conversation.id]?.state === "completed_unread"
               ));
-              const isConversationListVisible = isExpanded || hasGeneratingConversation;
+              const isConversationListVisible = isExpanded || hasGeneratingConversation || hasConversationMatches;
               const agentProfile = resolveAdminIngestDisplayProfile({
                 currentAgent: agent,
                 appName,
@@ -2410,17 +2407,26 @@ export function IngestChatGPTShell({
                                 }}
                                 onDelete={(agentId) => onAgentDelete?.(agentId)}
                               />
-                              <button
-                                type="button"
-                                aria-label={isConversationListVisible ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  onAgentToggleExpanded?.(agent.id);
-                                }}
-                                className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86] transition hover:bg-white hover:text-[#202020]"
-                              >
-                                {isConversationListVisible ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
-                              </button>
+                              {hasConversationMatches ? (
+                                <span
+                                  aria-label="对话搜索结果已展开"
+                                  className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86]"
+                                >
+                                  <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  aria-label={isConversationListVisible ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    onAgentToggleExpanded?.(agent.id);
+                                  }}
+                                  className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86] transition hover:bg-white hover:text-[#202020]"
+                                >
+                                  {isConversationListVisible ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                                </button>
+                              )}
                             </span>
                           </span>
                         </span>

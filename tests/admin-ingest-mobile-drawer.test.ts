@@ -50,6 +50,29 @@ assert.match(
   shellSource,
   /onSelectConversation=\{\(agentId, conversationId\) => \{[\s\S]*closeMobileNavigation\(\)/
 );
+const agentCardSelectSource = shellSource.match(
+  /function handleAgentCardSelect\(agentId: string\) \{[\s\S]*?\n  \}/
+)?.[0];
+
+assert.ok(agentCardSelectSource);
+assert.match(agentCardSelectSource, /setActiveAgentId\(agentId\)/);
+assert.doesNotMatch(agentCardSelectSource, /closeMobileNavigation\(\)/);
+assert.match(
+  shellSource,
+  /searchIngestAgentSidebar\(agents, agentConversations, searchKeyword\)/
+);
+assert.match(
+  shellSource,
+  /const isConversationListVisible = isExpanded \|\| hasGeneratingConversation \|\| hasConversationMatches/
+);
+assert.match(
+  shellSource,
+  /placeholder="搜索 Agent \/ 对话"/
+);
+assert.match(
+  shellSource,
+  /没有找到相关 Agent 或对话/
+);
 assert.match(
   shellSource,
   /const activeConversation = useMemo\([\s\S]*conversation\.id === activeConversationId[\s\S]*conversation\.agentId === activeAgent\.id[\s\S]*conversation\.status !== "archived"/
