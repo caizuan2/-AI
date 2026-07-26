@@ -13,6 +13,9 @@ const androidActivitySource = readFileSync(
   "android/app/src/main/java/com/aiknowledge/chat/MainActivity.java",
   "utf8"
 );
+const mobileHeaderCardSource = shellSource.match(
+  /isAdminApk && canIngest && welcomeVariant === "chat_only" \? \([\s\S]*?\) : null\}\s*<IngestGPTModelPicker/
+)?.[0] ?? "";
 
 assert.match(
   shellSource,
@@ -85,17 +88,18 @@ assert.match(
   shellSource,
   /left-\[72px\] right-\[72px\][\s\S]*max-w-\[180px\]/
 );
+assert.ok(mobileHeaderCardSource, "管理员 APK 顶部 Agent 卡片应存在");
 assert.match(
-  shellSource,
-  /border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white[\s\S]*bg-gradient-to-b from-orange-400 to-amber-400/
+  mobileHeaderCardSource,
+  /rounded-xl border border-\[#e8e5df\] bg-\[#fffdfa\][\s\S]*shadow-\[0_2px_10px_rgba\(55,45,35,0\.06\)\]/
+);
+assert.doesNotMatch(
+  mobileHeaderCardSource,
+  /IngestAgentAvatar|bg-gradient-to-b|left-0 w-\[3px\]/
 );
 assert.match(
-  shellSource,
-  /<IngestAgentAvatar profile=\{activeAgentHeaderProfile\} size="xs" \/>/
-);
-assert.match(
-  shellSource,
-  /truncate text-center text-sm[\s\S]*\{activeAgent\.name\}[\s\S]*truncate text-center text-xs[\s\S]*\{activeConversation\.title\}/
+  mobileHeaderCardSource,
+  /truncate text-center text-\[14px\] font-semibold[\s\S]*\{activeAgent\.name\}[\s\S]*truncate text-center text-\[11px\] font-normal[\s\S]*\{activeConversation\.title\}/
 );
 assert.match(
   shellSource,
