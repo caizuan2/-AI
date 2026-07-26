@@ -4,6 +4,7 @@ type VoiceTranscriptionEnvelope = {
   ok?: boolean;
   data?: {
     transcript?: string;
+    refinedText?: string;
   };
   message?: string;
   error?: {
@@ -18,7 +19,9 @@ export type AdminIngestNativeVoiceAudio = {
 };
 
 const ADMIN_INGEST_VOICE_TRANSCRIPTION_ENDPOINT = "/api/admin/ingest-voice/transcribe";
+const ADMIN_INGEST_VOICE_REFINEMENT_ENDPOINT = "/api/admin/ingest-voice/refine";
 const ADMIN_INGEST_VOICE_TRANSCRIPTION_TIMEOUT_MS = 45_000;
+const ADMIN_INGEST_VOICE_REFINEMENT_TIMEOUT_MS = 30_000;
 const MAX_NATIVE_VOICE_BASE64_CHARS = 4 * 1024 * 1024;
 
 function decodeNativeVoiceAudio(audioBase64: string) {
@@ -128,6 +131,70 @@ export async function transcribeAdminIngestNativeVoice(
   } catch (error) {
     if (controller.signal.aborted && !parentSignal?.aborted) {
       throw new Error("语音转写等待超时，请检查网络后重试。");
+    }
+
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
+export async function refineAdminIngestNativeVoice(
+  transcript: string,
+  historyScope: string,
+  parentSignal?: AbortSignal
+) {
+  const normalizedTranscript = transcript.trim();
+  const normalizedHistoryScope = historyScope.trim();
+
+  if (!normalizedTranscript) {
+    throw new Error("没有可整理的语音文字。");
+  }
+
+  if (!normalizedHistoryScope) {
+    throw new Error("账号状态尚未加载，请稍后再试。");
+  }
+
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  const timeoutId = window.setTimeout(
+    () => controller.abort(new DOMException("Voice refinement timed out.", "TimeoutError")),
+    ADMIN_INGEST_VOICE_REFINEMENT_TIMEOUT_MS
+  );
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  try {
+    const response = await fetch(ADMIN_INGEST_VOICE_REFINEMENT_ENDPOINT, {
+      method: "POST",
+      credentials: "same-origin",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "x-admin-ingest-history-scope": normalizedHistoryScope
+      },
+      body: JSON.stringify({ transcript: normalizedTranscript })
+    });
+    const payload = await response.json().catch(() => null) as VoiceTranscriptionEnvelope | null;
+    const refinedText = payload?.data?.refinedText?.trim() ?? "";
+
+    if (!response.ok || !payload?.ok) {
+      throw new Error(readVoiceTranscriptionError(response, payload));
+    }
+
+    if (!refinedText) {
+      throw new Error("口语整理没有返回有效文字。");
+    }
+
+    return refinedText;
+  } catch (error) {
+    if (controller.signal.aborted && !parentSignal?.aborted) {
+      throw new Error("口语整理等待超时，已保留原始语音文字。");
     }
 
     throw error;
