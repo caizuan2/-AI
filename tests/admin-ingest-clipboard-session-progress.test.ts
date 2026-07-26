@@ -108,6 +108,11 @@ async function main() {
 
   assert.match(shellSource, /showParsingProgress \? \(/);
   assert.match(
+    shellSource,
+    /inline-flex items-center gap-3 rounded-2xl[\s\S]*已思考 \{formatThinkingDuration\(thinkingElapsedSeconds\)\}[\s\S]*<Loader2/
+  );
+  assert.doesNotMatch(shellSource, /AI 正在解析并生成知识结构/);
+  assert.match(
     modeToggleSource,
     /showParsingProgress:\s*shouldShowAdminIngestParsingProgress\(\{/
   );

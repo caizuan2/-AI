@@ -2831,11 +2831,10 @@ export function IngestChatGPTShell({
 
                 {showParsingProgress ? (
                   <div className="flex w-full justify-start">
-                    <div className="inline-flex w-full items-center gap-3 rounded-2xl border border-neutral-100 bg-[#f7f7f8] px-4 py-2.5 text-sm text-[#303030]">
+                    <div className="inline-flex items-center gap-3 rounded-2xl border border-neutral-100 bg-[#f7f7f8] px-4 py-2.5 text-sm text-[#303030]">
                       <span className="shrink-0 text-xs font-semibold text-[#777]">已思考 {formatThinkingDuration(thinkingElapsedSeconds)} &gt;</span>
                       <span className="h-1 w-1 rounded-full bg-[#c7c7c1]" aria-hidden="true" />
                       <Loader2 className="h-4 w-4 animate-spin text-[#666]" aria-hidden="true" />
-                      <span>AI 正在解析并生成知识结构...</span>
                     </div>
                   </div>
                 ) : null}
