@@ -2460,7 +2460,7 @@ export function IngestChatGPTShell({
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </button>
             ) : null}
-            {isAdminApk && welcomeVariant === "chat_only" && canIngest ? (
+            {isAdminApk && canIngest && welcomeVariant === "chat_only" ? (
               <div className="pointer-events-none absolute inset-y-0 left-[72px] right-[72px] flex items-center justify-center">
                 <div
                   aria-label={activeConversation
