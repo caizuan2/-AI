@@ -50,6 +50,8 @@ assert.match(buildScript, /admin-ingest-setup-\$Version\.exe/);
 assert.match(buildScript, /installerType = if \(\$Available\) \{ "nsis" \}/);
 assert.match(buildScript, /EXE_NSIS_INSTALLER_NOT_FOUND/);
 assert.match(buildScript, /pnpm install --frozen-lockfile/);
+assert.match(buildScript, /pnpm exec electron-builder/);
+assert.doesNotMatch(buildScript, /npx electron-builder/);
 assert.doesNotMatch(buildScript, /npm install --include=dev/);
 
 assert.match(manifestWriter, /installerType:\s*manifest\.installerType \|\| null/);
