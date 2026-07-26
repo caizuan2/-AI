@@ -35,6 +35,14 @@ assert.match(mainActivity, /localStorage\.setItem\('ai_knowledge_shell_version',
 assert.match(mainActivity, /localStorage\.setItem\('ai_knowledge_shell_build',String\(build\)\)/);
 assert.match(mainActivity, /sessionStorage\.getItem\(/);
 assert.match(mainActivity, /injectAdminShellVersion\(view\)/);
+assert.match(
+  mainActivity,
+  /if \(adminShell\) \{[\s\S]*path\.equals\("\/admin-ingest"\)[\s\S]*path\.startsWith\("\/admin-ingest\/"\)/
+);
+assert.match(
+  mainActivity,
+  /private static boolean isForbiddenUserRoute[\s\S]*path\.equals\("\/admin-ingest"\)[\s\S]*path\.startsWith\("\/admin-ingest\/"\)/
+);
 
 const adminUnknownTotalBlock = mainActivity.slice(
   mainActivity.indexOf("if (isAdminShell() && total <= 0L)"),
