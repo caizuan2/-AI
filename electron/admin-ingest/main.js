@@ -1,4 +1,4 @@
-const { app, BrowserView, BrowserWindow, Menu, shell } = require("electron");
+const { app, BrowserView, BrowserWindow, Menu, ipcMain, shell } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
@@ -13,6 +13,26 @@ const READY_CHECK_RETRIES = Number.parseInt(process.env.ADMIN_INGEST_READY_RETRI
 const READY_CHECK_INTERVAL_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_INTERVAL_MS || "1000", 10);
 const READY_CHECK_TIMEOUT_MS = Number.parseInt(process.env.ADMIN_INGEST_READY_TIMEOUT_MS || "1800", 10);
 const LOG_FILE = path.join(os.tmpdir(), "admin-ingest-desktop.log");
+const BUILD_METADATA_PATH = path.join(__dirname, "build-metadata.json");
+
+function readBuildMetadata() {
+  try {
+    const value = JSON.parse(fs.readFileSync(BUILD_METADATA_PATH, "utf8"));
+    return {
+      version: typeof value.version === "string" ? value.version : "0.0.0",
+      build: Number.isInteger(value.build) ? value.build : 0,
+      webReleaseSha: typeof value.webReleaseSha === "string" ? value.webReleaseSha : ""
+    };
+  } catch {
+    return {
+      version: "0.0.0",
+      build: 0,
+      webReleaseSha: ""
+    };
+  }
+}
+
+const BUILD_METADATA = readBuildMetadata();
 
 let mainWindow = null;
 let ingestView = null;
@@ -61,6 +81,11 @@ function normalizeTargetUrl(candidate) {
 
     url.searchParams.set("app", "ingest-admin");
     url.searchParams.set("platform", "exe");
+    url.searchParams.set("shellVersion", BUILD_METADATA.version);
+    url.searchParams.set("shellBuild", String(BUILD_METADATA.build));
+    if (BUILD_METADATA.webReleaseSha) {
+      url.searchParams.set("shellWebReleaseSha", BUILD_METADATA.webReleaseSha);
+    }
 
     return url.toString();
   } catch {
@@ -104,6 +129,155 @@ function sleep(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function isHttpUrl(targetUrl) {
+  try {
+    const url = new URL(targetUrl);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function isTrustedAdminSender(event) {
+  try {
+    const senderUrl = event.senderFrame?.url || event.sender?.getURL?.() || "";
+    const expected = new URL(getAppUrl());
+    const actual = new URL(senderUrl);
+    return actual.origin === expected.origin && actual.pathname.startsWith("/admin-ingest");
+  } catch {
+    return false;
+  }
+}
+
+function sendUpdateProgress(webContents, detail) {
+  if (!webContents || webContents.isDestroyed()) {
+    return;
+  }
+
+  webContents.send("admin-ingest:update-download-progress", detail);
+}
+
+function getInstallerFileName(fileName, targetUrl) {
+  const inputName = typeof fileName === "string" ? fileName.trim() : "";
+  if (/^[^<>:"/\\|?*]+\.exe$/i.test(inputName)) {
+    return inputName;
+  }
+
+  try {
+    const urlName = decodeURIComponent(new URL(targetUrl).pathname.split("/").filter(Boolean).pop() || "");
+    if (/^[^<>:"/\\|?*]+\.exe$/i.test(urlName)) {
+      return urlName;
+    }
+  } catch {
+    // Fall through to the branded fallback.
+  }
+
+  return "小董AI投喂端.exe";
+}
+
+function downloadHttpFile(targetUrl, destinationPath, onProgress, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) {
+      reject(new Error("下载地址重定向次数过多。"));
+      return;
+    }
+
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(targetUrl);
+    } catch {
+      reject(new Error("下载地址格式不正确。"));
+      return;
+    }
+
+    const client = parsedUrl.protocol === "https:" ? https : http;
+    const request = client.get(parsedUrl, (response) => {
+      const statusCode = response.statusCode || 0;
+      const redirectUrl = response.headers.location;
+
+      if (statusCode >= 300 && statusCode < 400 && redirectUrl) {
+        response.resume();
+        resolve(downloadHttpFile(new URL(redirectUrl, parsedUrl).toString(), destinationPath, onProgress, redirectCount + 1));
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        response.resume();
+        reject(new Error(`下载地址不可用（HTTP ${statusCode}）。`));
+        return;
+      }
+
+      const total = Number(response.headers["content-length"]) || 0;
+      let loaded = 0;
+      const file = fs.createWriteStream(destinationPath);
+
+      response.on("data", (chunk) => {
+        loaded += chunk.length;
+        if (total > 0) {
+          onProgress(Math.min(95, Math.round((loaded / total) * 90) + 5));
+        }
+      });
+
+      response.pipe(file);
+      file.on("finish", () => file.close(resolve));
+      file.on("error", reject);
+    });
+
+    request.on("error", reject);
+  });
+}
+
+async function downloadDesktopUpdate(targetUrl, fileName, webContents) {
+  if (!isHttpUrl(targetUrl)) {
+    throw new Error("下载地址格式不正确。");
+  }
+
+  const installerFileName = getInstallerFileName(fileName, targetUrl);
+  const downloadDir = path.join(app.getPath("userData"), "updates");
+  const destinationPath = path.join(downloadDir, installerFileName);
+  const temporaryPath = `${destinationPath}.download`;
+
+  sendUpdateProgress(webContents, {
+    phase: "preparing",
+    progress: 5,
+    message: "正在准备下载投喂端更新包..."
+  });
+
+  await fs.promises.mkdir(downloadDir, { recursive: true });
+  await fs.promises.rm(temporaryPath, { force: true });
+  await downloadHttpFile(targetUrl, temporaryPath, (progress) => {
+    sendUpdateProgress(webContents, {
+      phase: "downloading",
+      progress,
+      message: "正在当前应用内下载投喂端更新包..."
+    });
+  });
+  await fs.promises.rm(destinationPath, { force: true });
+  await fs.promises.rename(temporaryPath, destinationPath);
+
+  sendUpdateProgress(webContents, {
+    phase: "installing",
+    progress: 96,
+    message: "更新包已下载完成，正在打开安装程序..."
+  });
+
+  const openError = await shell.openPath(destinationPath);
+  if (openError) {
+    throw new Error(openError);
+  }
+
+  sendUpdateProgress(webContents, {
+    phase: "ready",
+    progress: 100,
+    message: "更新进度已完成，正在进入安装流程。"
+  });
+
+  return {
+    ok: true,
+    filePath: destinationPath
+  };
 }
 
 function htmlEscape(value) {
@@ -317,7 +491,8 @@ function loadAdminIngestView(targetUrl) {
         partition: SESSION_PARTITION,
         contextIsolation: true,
         nodeIntegration: false,
-        sandbox: false
+        sandbox: false,
+        preload: path.join(__dirname, "preload.js")
       }
     });
     attachWebContentsDiagnostics(ingestView.webContents, "ingest-view");
@@ -724,6 +899,35 @@ function createWindow() {
 
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
+
+ipcMain.handle("admin-ingest:download-update", async (event, payload) => {
+  if (!isTrustedAdminSender(event)) {
+    return {
+      ok: false,
+      error: "更新请求来源无效。"
+    };
+  }
+
+  const targetUrl = typeof payload?.url === "string" ? payload.url : "";
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : "";
+
+  try {
+    return await downloadDesktopUpdate(targetUrl, fileName, event.sender);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "请稍后再试，或联系管理员检查安装包地址。";
+    sendUpdateProgress(event.sender, {
+      phase: "error",
+      progress: 0,
+      message: "更新包下载失败。",
+      error: message
+    });
+
+    return {
+      ok: false,
+      error: message
+    };
+  }
+});
 
 app.whenReady().then(() => {
   createWindow();

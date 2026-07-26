@@ -4,7 +4,7 @@ import {
   type AppPlatform,
   type AppUpdateResult
 } from "./app-update";
-import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA, type AppKind } from "./app-version";
+import { ADMIN_APP_KIND, APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA, type AppKind } from "./app-version";
 
 interface CheckCurrentAppUpdateOptions {
   appKind: AppKind;
@@ -45,6 +45,7 @@ interface RuntimeWindowLike {
   aiKnowledge?: {
     appVersion?: string;
     appBuild?: number | string;
+    webReleaseSha?: string;
     version?: string;
     build?: number | string;
   };
@@ -197,7 +198,9 @@ export function getCurrentAppVersion(options: GetCurrentAppVersionOptions = {}):
     toPositiveBuild(readFirstParam(search, BUILD_PARAM_KEYS)) ??
     toPositiveBuild(readFirstStorage(storage, BUILD_STORAGE_KEYS));
   const explicitWebReleaseSha =
-    toVersionString(injected?.webReleaseSha) ?? readFirstParam(search, WEB_SHA_PARAM_KEYS);
+    toVersionString(injected?.webReleaseSha)
+    ?? toVersionString(aiKnowledge?.webReleaseSha)
+    ?? readFirstParam(search, WEB_SHA_PARAM_KEYS);
   const nativeShell = detectNativeShell(runtimeWindow, userAgent);
   const legacyNativeShell = nativeShell && !explicitBuild && !explicitVersion;
   const staleNativeVersion = nativeShell && !explicitBuild && explicitVersion && explicitVersion !== APP_VERSION;
@@ -216,6 +219,7 @@ export function getCurrentAppPlatform(userAgent?: string): AppPlatform {
 export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOptions): Promise<AppUpdateResult> {
   const runtimeWindow = options.runtimeWindow ?? getBrowserWindow();
   const userAgent = options.userAgent ?? runtimeWindow?.navigator?.userAgent ?? "";
+  const nativeShell = detectNativeShell(runtimeWindow, userAgent);
   const current = getCurrentAppVersion({
     runtimeWindow,
     search: options.search,
@@ -223,15 +227,32 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
     userAgent
   });
 
-  return checkAppUpdate({
+  const result = await checkAppUpdate({
     appKind: options.appKind,
     currentVersion: options.currentVersion ?? current.version,
     currentBuild: options.currentBuild ?? current.build,
     currentWebReleaseSha: options.currentWebReleaseSha ?? current.webReleaseSha,
-    preferWebContentUpdate: options.appKind === "user" && detectNativeShell(runtimeWindow, userAgent),
+    preferWebContentUpdate: options.appKind === "user" && nativeShell,
     userId: options.userId,
     platform: options.platform,
     manifestUrl: options.manifestUrl,
     fetcher: options.fetcher
   });
+
+  const currentBuild = options.currentBuild ?? current.build;
+  if (
+    options.appKind === ADMIN_APP_KIND
+    && nativeShell
+    && result.hasUpdate
+    && result.latest
+    && currentBuild < result.latest.build
+  ) {
+    return {
+      ...result,
+      forceUpdate: result.latest.force_update || currentBuild < result.latest.minimum_build,
+      updateKind: "package"
+    };
+  }
+
+  return result;
 }

@@ -66,9 +66,9 @@ const notes = [
   "",
   "## Verification",
   "",
-  "- Available artifacts must match the release head.",
-  "- APK/EXE download buttons should only be shown when the artifact is available.",
-  "- Unavailable APK/EXE artifacts are valid only with an explicit reason.",
+  "- Web, APK and EXE must all be available before production deployment.",
+  "- Web, APK and EXE must match the same release head, version and build number.",
+  "- APK and EXE hashes, sizes and fixed-tag download URLs must pass verification before Web deployment.",
   ""
 ].join("\n");
 

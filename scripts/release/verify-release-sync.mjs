@@ -34,21 +34,38 @@ function readManifest(dryRun) {
   return JSON.parse(raw.slice(jsonStart, jsonEnd + 1));
 }
 
-function checkHead(name, artifact, releaseHead, errors) {
+function checkArtifact(name, artifact, manifest, errors) {
   if (!artifact) {
     errors.push(`${name} manifest is required`);
     return;
   }
 
   if (!artifact.available) {
-    if (!artifact.reason) {
-      errors.push(`${name}.reason is required when ${name}.available=false`);
+    if (!dryRun) {
+      errors.push(`${name}.available must be true`);
     }
     return;
   }
 
-  if (artifact.head !== releaseHead) {
-    errors.push(`${name}.head mismatch expected=${releaseHead} actual=${artifact.head}`);
+  if (artifact.head !== manifest.releaseHead) {
+    errors.push(`${name}.head mismatch expected=${manifest.releaseHead} actual=${artifact.head}`);
+  }
+
+  if (artifact.version !== manifest.version) {
+    errors.push(`${name}.version mismatch expected=${manifest.version} actual=${artifact.version}`);
+  }
+
+  if (Number(artifact.build) !== Number(manifest.build)) {
+    errors.push(`${name}.build mismatch expected=${manifest.build} actual=${artifact.build}`);
+  }
+
+  if (!dryRun && name !== "web") {
+    if (!artifact.path || !artifact.assetName || !artifact.downloadUrl || !artifact.latestDownloadUrl) {
+      errors.push(`${name} package metadata is incomplete`);
+    }
+    if (!artifact.sha256 || !artifact.size) {
+      errors.push(`${name} package hash and size are required`);
+    }
   }
 }
 
@@ -60,14 +77,9 @@ if (!manifest.releaseHead) {
   errors.push("releaseHead is required");
 }
 
-if (!manifest.web?.available) {
-  errors.push("web.available must be true");
-} else if (manifest.web.head !== manifest.releaseHead) {
-  errors.push(`web.head mismatch expected=${manifest.releaseHead} actual=${manifest.web.head}`);
-}
-
-checkHead("apk", manifest.apk, manifest.releaseHead, errors);
-checkHead("exe", manifest.exe, manifest.releaseHead, errors);
+checkArtifact("web", manifest.web, manifest, errors);
+checkArtifact("apk", manifest.apk, manifest, errors);
+checkArtifact("exe", manifest.exe, manifest, errors);
 
 if (errors.length > 0) {
   console.error("WEB_APK_EXE_SYNC=false");

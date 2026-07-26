@@ -13,16 +13,31 @@ const manifestPath = resolve(readArg("--manifest") || "artifacts/admin-ingest/re
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 const errors = [];
 
-function requireHead(name, artifact) {
+function requireArtifact(name, artifact) {
   if (!artifact.available) {
-    if (!artifact.reason) {
-      errors.push(`${name}.reason is required when ${name}.available=false`);
-    }
+    errors.push(`${name}.available must be true`);
     return;
   }
 
   if (artifact.head !== manifest.releaseHead) {
     errors.push(`${name}.head mismatch expected=${manifest.releaseHead} actual=${artifact.head}`);
+  }
+
+  if (artifact.version !== manifest.version) {
+    errors.push(`${name}.version mismatch expected=${manifest.version} actual=${artifact.version}`);
+  }
+
+  if (Number(artifact.build) !== Number(manifest.build)) {
+    errors.push(`${name}.build mismatch expected=${manifest.build} actual=${artifact.build}`);
+  }
+
+  if (name !== "web") {
+    if (!artifact.path || !artifact.assetName || !artifact.downloadUrl || !artifact.latestDownloadUrl) {
+      errors.push(`${name} package metadata is incomplete`);
+    }
+    if (!artifact.sha256 || !artifact.size) {
+      errors.push(`${name} package hash and size are required`);
+    }
   }
 }
 
@@ -30,14 +45,9 @@ if (!manifest.releaseHead) {
   errors.push("releaseHead is required");
 }
 
-if (!manifest.web?.available) {
-  errors.push("web.available must be true");
-} else if (manifest.web.head !== manifest.releaseHead) {
-  errors.push(`web.head mismatch expected=${manifest.releaseHead} actual=${manifest.web.head}`);
-}
-
-requireHead("apk", manifest.apk || {});
-requireHead("exe", manifest.exe || {});
+requireArtifact("web", manifest.web || {});
+requireArtifact("apk", manifest.apk || {});
+requireArtifact("exe", manifest.exe || {});
 
 if (errors.length > 0) {
   console.error("WEB_APK_EXE_SYNC=false");

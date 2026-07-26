@@ -6,8 +6,12 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const versionPath = path.join(rootDir, "version.json");
 const versionInfo = JSON.parse(fs.readFileSync(versionPath, "utf8"));
+const adminReleaseConfig = JSON.parse(
+  fs.readFileSync(path.join(rootDir, "config", "admin-ingest", "release.json"), "utf8")
+);
 const outputPath = path.join(rootDir, "public", "releases", "latest.json");
 const isRelease = process.argv.includes("--release");
+const isAdminReleaseBuild = process.env.ADMIN_INGEST_RELEASE_BUILD === "1";
 
 function readExistingManifest() {
   try {
@@ -96,26 +100,46 @@ function hasCurrentVersion(existing) {
   return userVersion.version === versionInfo.version && userVersion.build === versionInfo.build;
 }
 
-function buildVersion(appKey, existingApp, urls, updatedAt) {
+function buildVersion(appKey, existingApp, urls, updatedAt, releaseConfig = null) {
   const previous = getCurrentVersion(existingApp);
-  const preserveExistingVersion = appKey === "admin"
+  const preserveExistingVersion = appKey === "admin" && !releaseConfig
     && typeof previous.version === "string"
     && Number.isInteger(previous.build);
+  const configuredVersion = releaseConfig?.version;
+  const configuredBuild = releaseConfig?.build;
+  const configuredMinimumBuild = releaseConfig?.minimum_build;
+  const configuredForceUpdate = releaseConfig?.force_update;
 
   return {
-    version: preserveExistingVersion ? previous.version : versionInfo.version,
-    build: preserveExistingVersion ? previous.build : versionInfo.build,
+    version: configuredVersion || (preserveExistingVersion ? previous.version : versionInfo.version),
+    build: Number.isInteger(configuredBuild)
+      ? configuredBuild
+      : preserveExistingVersion
+        ? previous.build
+        : versionInfo.build,
     channel: "stable",
     rollout: 100,
-    minimum_build: Number(previous.minimum_build) || 100,
-    force_update: previous.force_update === true,
+    minimum_build: Number.isInteger(configuredMinimumBuild)
+      ? configuredMinimumBuild
+      : Number(previous.minimum_build) || 100,
+    force_update: typeof configuredForceUpdate === "boolean"
+      ? configuredForceUpdate
+      : previous.force_update === true,
     web_release_sha: pickValue(urls.web_release_sha, previous.web_release_sha),
     web_url: pickValue(urls.web_url, previous.web_url),
     apk_url: pickValue(urls.apk_url, previous.apk_url),
     exe_url: pickValue(urls.exe_url, previous.exe_url),
     download_page: pickValue(urls.download_page, previous.download_page),
-    changelog: Array.isArray(previous.changelog) ? previous.changelog : [],
-    created_at: preserveExistingVersion && previous.created_at ? previous.created_at : updatedAt
+    changelog: Array.isArray(releaseConfig?.changelog)
+      ? releaseConfig.changelog
+      : Array.isArray(previous.changelog)
+        ? previous.changelog
+        : [],
+    created_at: releaseConfig
+      ? updatedAt
+      : preserveExistingVersion && previous.created_at
+        ? previous.created_at
+        : updatedAt
   };
 }
 
@@ -180,6 +204,9 @@ const exeAsset = process.env.EXE_ASSET || "ai-knowledge-chat-latest.exe";
 const userExisting = existing.apps?.user;
 const adminExisting = existing.apps?.admin;
 const webReleaseSha = pickValue(
+  isAdminReleaseBuild ? getCurrentVersion(userExisting).web_release_sha : "",
+  isAdminReleaseBuild ? existing.web_release_sha : "",
+  isAdminReleaseBuild ? versionInfo.web_release_sha : "",
   process.env.WEB_RELEASE_SHA,
   process.env.NEXT_PUBLIC_WEB_RELEASE_SHA,
   process.env.NEXT_PUBLIC_RELEASE_SHA,
@@ -200,23 +227,27 @@ if (
   updatedAt = new Date().toISOString();
 }
 
-writeVersionReleaseSha(webReleaseSha);
+if (!isAdminReleaseBuild) {
+  writeVersionReleaseSha(webReleaseSha);
+}
 
-const userVersion = buildVersion("user", userExisting, {
-  web_release_sha: webReleaseSha,
-  web_url: process.env.USER_WEB_URL || "http://47.238.0.23/app/chat",
-  apk_url: getAssetUrl(apkAsset, getCurrentVersion(userExisting).apk_url),
-  exe_url: getAssetUrl(exeAsset, getCurrentVersion(userExisting).exe_url),
-  download_page: process.env.USER_DOWNLOAD_PAGE || "http://47.238.0.23/download"
-}, updatedAt);
+const userVersion = isAdminReleaseBuild
+  ? getCurrentVersion(userExisting)
+  : buildVersion("user", userExisting, {
+      web_release_sha: webReleaseSha,
+      web_url: process.env.USER_WEB_URL || "http://47.238.0.23/app/chat",
+      apk_url: getAssetUrl(apkAsset, getCurrentVersion(userExisting).apk_url),
+      exe_url: getAssetUrl(exeAsset, getCurrentVersion(userExisting).exe_url),
+      download_page: process.env.USER_DOWNLOAD_PAGE || "http://47.238.0.23/download"
+    }, updatedAt);
 
 const adminVersion = buildVersion("admin", adminExisting, {
   web_release_sha: adminWebReleaseSha,
-  web_url: process.env.ADMIN_WEB_URL || "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-  apk_url: getCurrentVersion(adminExisting).apk_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-  exe_url: getCurrentVersion(adminExisting).exe_url || "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-  download_page: "https://stately-sawine-1efd4d.netlify.app/admin-download"
-}, updatedAt);
+  web_url: process.env.ADMIN_WEB_URL || adminReleaseConfig.web_url,
+  apk_url: process.env.ADMIN_APK_URL || adminReleaseConfig.apk_url,
+  exe_url: process.env.ADMIN_EXE_URL || adminReleaseConfig.exe_url,
+  download_page: process.env.ADMIN_DOWNLOAD_PAGE || adminReleaseConfig.download_page
+}, updatedAt, adminReleaseConfig);
 
 const apps = {
   user: buildApp("user", {
@@ -226,7 +257,7 @@ const apps = {
   }, userVersion),
   admin: buildApp("admin", {
     id: "ai.chat.admin",
-    name: "AI知识库管理后台",
+    name: "小董AI投喂端",
     existing: adminExisting
   }, adminVersion)
 };

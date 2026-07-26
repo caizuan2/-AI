@@ -62,9 +62,15 @@ assert.equal(releaseInfo.download.android, manifest.user.apk_url);
 assert.equal(releaseInfo.download.windows, manifest.user.exe_url);
 assert.equal(releaseInfo.download.web, manifest.user.web_url);
 assert.match(manifest.user.apk_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.apk$/);
-assert.match(manifest.admin.apk_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.apk$/);
+assert.match(
+  manifest.admin.apk_url,
+  /github\.com\/caizuan2\/-AI\/releases\/download\/release%2Fadmin-ingest-1\.0\.11-build\.111\/admin-ingest\.apk$/
+);
 assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.exe$/);
-assert.match(manifest.admin.exe_url, /github\.com\/caizuan2\/-AI\/releases\/latest\/download\/ai-knowledge-admin-latest\.exe$/);
+assert.match(
+  manifest.admin.exe_url,
+  /github\.com\/caizuan2\/-AI\/releases\/download\/release%2Fadmin-ingest-1\.0\.11-build\.111\/admin-ingest\.exe$/
+);
 assert.doesNotMatch(JSON.stringify(manifest), /\.(ipa|dmg)"/i);
 
 const singleSourceManifest = normalizeLatestReleaseManifest({
@@ -221,13 +227,19 @@ async function main() {
   assert.equal(announcedWebContent.forceUpdate, false);
   assert.equal(announcedWebContent.updateKind, "web");
 
-  const unchangedAdminContent = promoteUnappliedWebReleaseUpdate(
-    currentWebContent,
+  const adminCurrentWebContent = {
+    ...currentWebContent,
+    appKind: "admin" as const,
+    latest: manifest.admin
+  };
+  const announcedAdminContent = promoteUnappliedWebReleaseUpdate(
+    adminCurrentWebContent,
     "admin",
     appliedWebReleaseStorage
   );
-  assert.equal(unchangedAdminContent.hasUpdate, false);
-  assert.equal(unchangedAdminContent.updateKind, "none");
+  assert.equal(announcedAdminContent.hasUpdate, true);
+  assert.equal(announcedAdminContent.forceUpdate, true);
+  assert.equal(announcedAdminContent.updateKind, "web");
 
   appliedWebRelease.set(
     "xiaodongai.appliedWebRelease.user",

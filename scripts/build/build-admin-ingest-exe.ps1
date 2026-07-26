@@ -10,6 +10,7 @@ $ManifestPath = Join-Path $ManifestDir "manifest.json"
 $ReleaseAssetName = "admin-ingest.exe"
 $ReleaseAssetPath = Join-Path $ManifestDir $ReleaseAssetName
 $ElectronIngestConfig = Join-Path $Root "electron/admin-ingest/electron-builder.yml"
+$ElectronBuildMetadata = Join-Path $Root "electron/admin-ingest/build-metadata.json"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $TauriConfig = Join-Path $Root "src-tauri/tauri.conf.json"
 
@@ -75,6 +76,8 @@ function Write-ExeManifest {
     commit = $ReleaseHead
     branch = $ReleaseInfo.branch
     tag = $ReleaseTag
+    version = $ReleaseInfo.version
+    build = [int]$ReleaseInfo.buildNumber
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
     assetName = $ReleaseAssetName
@@ -136,10 +139,16 @@ try {
     Write-Host "BUILD_COMMIT=$ReleaseHead"
     Write-Host "BUILD_TAG=$ReleaseTag"
     Write-Host "BUILD_ENV=$($ReleaseInfo.environment)"
+    Write-Host "APP_VERSION=$($ReleaseInfo.version)"
+    Write-Host "APP_BUILD=$($ReleaseInfo.buildNumber)"
     exit 0
   }
 
   node scripts/ci/verify-release-head.mjs --expected $ReleaseHead --label exe
+  $DirtyEntries = @(git status --porcelain --untracked-files=all)
+  if ($DirtyEntries.Count -gt 0) {
+    throw "RELEASE_WORKTREE_NOT_CLEAN: refusing to package admin-ingest.exe from uncommitted source."
+  }
   $BuildStartedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-5)
 
   if (-not $UsesElectron -and -not $UsesFlutterWindows -and -not $UsesTauri) {
@@ -159,10 +168,25 @@ try {
   $env:BUILD_COMMIT = $ReleaseHead
   $env:BUILD_TAG = $ReleaseTag
   $env:BUILD_ENV = $ReleaseInfo.environment
+  $env:ADMIN_INGEST_APP_VERSION = $ReleaseInfo.version
+  $env:ADMIN_INGEST_APP_BUILD = $ReleaseInfo.buildNumber
+  $env:ADMIN_WEB_RELEASE_SHA = $ReleaseHead
 
   if ($UsesElectron) {
-    Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
-    Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command { npm run admin-ingest:desktop:build }
+    $BuildMetadata = [ordered]@{
+      version = $ReleaseInfo.version
+      build = [int]$ReleaseInfo.buildNumber
+      webReleaseSha = $ReleaseHead
+    }
+    $BuildMetadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ElectronBuildMetadata -Encoding UTF8
+    try {
+      Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
+      Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command {
+        npx electron-builder --config electron/admin-ingest/electron-builder.yml --win portable "--config.extraMetadata.version=$($ReleaseInfo.version)"
+      }
+    } finally {
+      Remove-Item -LiteralPath $ElectronBuildMetadata -Force -ErrorAction SilentlyContinue
+    }
   } elseif ($UsesFlutterWindows) {
     Push-Location (Join-Path $Root "flutter_app")
     try {

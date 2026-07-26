@@ -62,6 +62,16 @@ function readJson(path, fallback) {
   return JSON.parse(readFileSync(target, "utf8").replace(/^\uFEFF/, ""));
 }
 
+function readReleaseInfo() {
+  const raw = execFileSync("node", ["scripts/release/resolve-version.mjs"], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"]
+  });
+  return JSON.parse(raw);
+}
+
+const releaseInfo = readReleaseInfo();
 const releaseHead = process.env.RELEASE_HEAD || git(["rev-parse", "HEAD"]);
 const releaseTag = process.env.RELEASE_TAG || git(["describe", "--tags", "--exact-match", releaseHead], `manual-${releaseHead.slice(0, 8)}`);
 const buildTime = new Date().toISOString();
@@ -84,6 +94,8 @@ const exeManifest = readJson(readArg("--exe") || DEFAULT_EXE, {
 
 const releaseManifest = {
   app: "admin-ingest",
+  version: releaseInfo.version,
+  build: Number(releaseInfo.buildNumber),
   releaseHead,
   releaseTag,
   buildTime,
@@ -92,6 +104,8 @@ const releaseManifest = {
         available: true,
         head: webManifest.head || webManifest.commit,
         buildId: webManifest.buildId,
+        version: webManifest.version || releaseInfo.version,
+        build: Number(webManifest.build || releaseInfo.buildNumber),
         url: webManifest.webUrl,
         path: webManifest.path || ".next",
         buildTime: webManifest.buildTime
@@ -104,7 +118,12 @@ const releaseManifest = {
   apk: {
     available: Boolean(apkManifest.available),
     head: apkManifest.head || apkManifest.commit || releaseHead,
+    version: apkManifest.version || releaseInfo.version,
+    build: Number(apkManifest.build || releaseInfo.buildNumber),
     path: apkManifest.path || null,
+    assetName: apkManifest.assetName || releaseInfo.apkAssetName,
+    downloadUrl: apkManifest.downloadUrl || releaseInfo.apkDownloadUrl,
+    latestDownloadUrl: apkManifest.latestDownloadUrl || releaseInfo.latestApkUrl,
     size: apkManifest.size || null,
     sha256: apkManifest.sha256 || null,
     reason: apkManifest.reason || null,
@@ -113,7 +132,12 @@ const releaseManifest = {
   exe: {
     available: Boolean(exeManifest.available),
     head: exeManifest.head || exeManifest.commit || releaseHead,
+    version: exeManifest.version || releaseInfo.version,
+    build: Number(exeManifest.build || releaseInfo.buildNumber),
     path: exeManifest.path || null,
+    assetName: exeManifest.assetName || releaseInfo.exeAssetName,
+    downloadUrl: exeManifest.downloadUrl || releaseInfo.exeDownloadUrl,
+    latestDownloadUrl: exeManifest.latestDownloadUrl || releaseInfo.latestExeUrl,
     size: exeManifest.size || null,
     sha256: exeManifest.sha256 || null,
     reason: exeManifest.reason || null,

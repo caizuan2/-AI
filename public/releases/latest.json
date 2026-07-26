@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-18T10:34:24.139Z",
+  "updated_at": "2026-07-26T03:44:52.629Z",
   "version": "1.0.18",
   "build": 143,
   "minimum_build": 100,
@@ -56,7 +56,7 @@
     },
     "admin": {
       "id": "ai.chat.admin",
-      "name": "AI知识库管理后台",
+      "name": "小董AI投喂端",
       "platforms": [
         "android",
         "windows",
@@ -65,26 +65,26 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.10",
+      "active_version": "1.0.11",
       "versions": [
         {
-          "version": "1.0.10",
-          "build": 110,
+          "version": "1.0.11",
+          "build": 111,
           "channel": "stable",
           "rollout": 100,
-          "minimum_build": 100,
-          "force_update": false,
-          "web_release_sha": "85b694ddf30d9520acd9563dae7400e59a2aefb1",
-          "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-          "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-          "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
+          "minimum_build": 111,
+          "force_update": true,
+          "web_release_sha": "c48d3df371b7a5d40e8023801a3981fec578a5fc",
+          "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
+          "apk_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.apk",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.exe",
+          "download_page": "http://47.238.0.23/admin-download",
           "changelog": [
-            "Updated admin app",
-            "Improved packaging workflow",
-            "Updated installer links"
+            "投喂端 Web、Windows EXE 与 Android APK 统一版本",
+            "投喂端强制更新与应用内安装",
+            "投喂端最新功能与线上 Web 保持一致"
           ],
-          "created_at": "2026-06-14T09:30:00.000Z"
+          "created_at": "2026-07-26T03:44:52.629Z"
         }
       ]
     }
@@ -109,20 +109,20 @@
     ]
   },
   "admin": {
-    "app_name": "AI知识库管理后台",
-    "version": "1.0.10",
-    "build": 110,
-    "minimum_build": 100,
-    "force_update": false,
-    "web_release_sha": "85b694ddf30d9520acd9563dae7400e59a2aefb1",
-    "web_url": "https://stately-sawine-1efd4d.netlify.app/login?app=admin&next=/ingest",
-    "apk_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/latest/download/ai-knowledge-admin-latest.exe",
-    "download_page": "https://stately-sawine-1efd4d.netlify.app/admin-download",
+    "app_name": "小董AI投喂端",
+    "version": "1.0.11",
+    "build": 111,
+    "minimum_build": 111,
+    "force_update": true,
+    "web_release_sha": "c48d3df371b7a5d40e8023801a3981fec578a5fc",
+    "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
+    "apk_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.apk",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.exe",
+    "download_page": "http://47.238.0.23/admin-download",
     "changelog": [
-      "Updated admin app",
-      "Improved packaging workflow",
-      "Updated installer links"
+      "投喂端 Web、Windows EXE 与 Android APK 统一版本",
+      "投喂端强制更新与应用内安装",
+      "投喂端最新功能与线上 Web 保持一致"
     ]
   }
 }
