@@ -56,7 +56,7 @@ assert.match(
 );
 assert.match(
   shellSource,
-  /isAdminApk && welcomeVariant === "chat_only" && canIngest/
+  /isAdminApk && canIngest && welcomeVariant === "chat_only"/
 );
 assert.match(
   shellSource,
