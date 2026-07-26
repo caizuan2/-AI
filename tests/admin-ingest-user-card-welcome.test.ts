@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("chat-only empty conversations use the Xiaodong welcome while full ingest stays unchanged", () => {
+test("chat-only empty conversations always use the Xiaodong welcome even without an expert", () => {
   const page = readFileSync("app/admin-ingest/page.tsx", "utf8");
   const modeToggle = readFileSync("components/enterprise-admin/IngestModeToggle.tsx", "utf8");
   const shell = readFileSync("components/enterprise-admin/IngestChatGPTShell.tsx", "utf8");
@@ -20,7 +20,13 @@ test("chat-only empty conversations use the Xiaodong welcome while full ingest s
   );
   assert.match(
     shell,
-    /welcomeVariant === "chat_only" && canIngest \? \([\s\S]*?<IngestChatOnlyWelcome userName=\{userName\} \/>/
+    /welcomeVariant === "chat_only" \? \([\s\S]*?<IngestChatOnlyWelcome userName=\{userName\} \/>/,
+    "chat-only users must see the welcome before they have an expert"
+  );
+  assert.doesNotMatch(
+    shell,
+    /welcomeVariant === "chat_only" && canIngest/,
+    "the user-card welcome must not depend on an existing expert"
   );
   assert.match(
     shell,
