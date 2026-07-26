@@ -5,6 +5,7 @@ $AndroidDir = Join-Path $Root "android"
 $AdminConfig = Join-Path $Root "capacitor.admin.config.ts"
 $UserConfig = Join-Path $Root "capacitor.config.ts"
 $BuildGradle = Join-Path $AndroidDir "app/build.gradle"
+$AndroidManifest = Join-Path $AndroidDir "app/src/main/AndroidManifest.xml"
 $OutputDir = Join-Path $Root "dist-app/admin-android"
 $PublicAdminDir = Join-Path $Root "public/downloads/admin"
 $OutputApk = Join-Path $OutputDir "ai-knowledge-admin.apk"
@@ -58,6 +59,7 @@ Remove-Item -LiteralPath (Join-Path $PublicAdminDir "ai-knowledge-admin.apk") -F
 Remove-Item -LiteralPath (Join-Path $PublicAdminDir "ai-knowledge-admin-latest.apk") -Force -ErrorAction SilentlyContinue
 
 $OriginalBuildGradleBytes = if (Test-Path $BuildGradle) { [System.IO.File]::ReadAllBytes($BuildGradle) } else { $null }
+$OriginalAndroidManifestBytes = if (Test-Path $AndroidManifest) { [System.IO.File]::ReadAllBytes($AndroidManifest) } else { $null }
 $OriginalUserConfigBytes = [System.IO.File]::ReadAllBytes($UserConfig)
 $OriginalLauncherIconBytes = @{}
 $usedTemporaryConfig = $false
@@ -101,6 +103,21 @@ function Copy-AdminLauncherIcons {
     }
 }
 
+function Enable-AdminMicrophonePermission {
+  if (-not (Test-Path $AndroidManifest)) {
+    throw "Android manifest was not found: $AndroidManifest"
+  }
+
+  $manifestContent = Get-Content -LiteralPath $AndroidManifest -Raw
+  if ($manifestContent -match 'android\.permission\.RECORD_AUDIO') {
+    return
+  }
+
+  $permissionLine = '    <uses-permission android:name="android.permission.RECORD_AUDIO" />'
+  $manifestContent = $manifestContent -replace '</manifest>', "$permissionLine`r`n</manifest>"
+  [System.IO.File]::WriteAllText($AndroidManifest, $manifestContent, $utf8NoBom)
+}
+
 try {
   try {
     Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "sync", "android", "--config", "capacitor.admin.config.ts")
@@ -122,6 +139,7 @@ try {
 
   $adminBuildGradle = [regex]::Replace($adminBuildGradle, 'applicationId\s+"[^"]+"', 'applicationId "com.aiknowledge.admin"', 1)
   [System.IO.File]::WriteAllText($BuildGradle, $adminBuildGradle, $utf8NoBom)
+  Enable-AdminMicrophonePermission
 
   Backup-AndroidLauncherIcons
   Copy-AdminLauncherIcons
@@ -172,6 +190,10 @@ try {
     Invoke-ProjectCommand -FilePath "npx" -Arguments @("cap", "sync", "android")
   } catch {
     Write-Warning "Failed to resync user Android config after admin build. Please run npx cap sync android manually."
+  }
+
+  if ($null -ne $OriginalAndroidManifestBytes) {
+    [System.IO.File]::WriteAllBytes($AndroidManifest, $OriginalAndroidManifestBytes)
   }
 
   Restore-AndroidLauncherIcons

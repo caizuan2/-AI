@@ -193,6 +193,7 @@ import {
   hasAdminIngestWechatConversationAttachment,
   shouldRetryAdminIngestWechatModelTimeout
 } from "@/lib/enterprise/admin-ingest-wechat-request";
+import { transcribeAdminIngestNativeVoice } from "@/lib/enterprise/admin-ingest-voice-client";
 
 type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -283,11 +284,25 @@ type SpeechRecognitionLike = {
   }) => void) | null;
 };
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type AndroidSpeechBridge = {
+  startSpeechRecognition?: () => void;
+  stopSpeechRecognition?: () => void;
+};
 type SpeechWindow = Window & {
   SpeechRecognition?: SpeechRecognitionConstructor;
   webkitSpeechRecognition?: SpeechRecognitionConstructor;
+  AndroidBridge?: AndroidSpeechBridge;
+};
+type NativeSpeechEventDetail = {
+  state?: "started" | "audio" | "result" | "cancelled" | "error";
+  transcript?: string;
+  error?: string;
+  audioBase64?: string;
+  mimeType?: string;
+  fileName?: string;
 };
 
+const ADMIN_INGEST_NATIVE_SPEECH_EVENT = "admin-ingest-native-speech";
 const tenantId: string | null = null;
 const userId: string | null = null;
 const initialConnectionStatus: IngestConnectionStatus = {
@@ -730,6 +745,7 @@ export function IngestModeToggle({
   registeredAccount = ""
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const nativeVoiceTranscriptionAbortControllerRef = useRef<AbortController | null>(null);
   const restoredInitialConversationRef = useRef(false);
   const doubaoHealthRequestVersionRef = useRef(0);
   const activeAgentIdRef = useRef("");
@@ -1806,17 +1822,155 @@ export function IngestModeToggle({
   useEffect(() => {
     const speechWindow = window as SpeechWindow;
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    const hasNativeSpeech = typeof speechWindow.AndroidBridge?.startSpeechRecognition === "function";
+    const showNativeVoiceError = (message: string) => {
+      setVoiceState((current) => ({
+        ...current,
+        isVoiceSupported: true,
+        isRecording: false,
+        error: message
+      }));
+      setErrorMessage(message);
+      setNoticeMessage(message);
+      setActionToast({
+        id: `voice-error-${Date.now()}`,
+        type: "warning",
+        title: "语音输入不可用",
+        description: message
+      });
+    };
+    const applyNativeVoiceTranscript = (transcript: string) => {
+      setInput((current) => current.trim()
+        ? `${current.trim()} ${transcript}`
+        : transcript);
+      setVoiceState((current) => ({
+        ...current,
+        isVoiceSupported: true,
+        isRecording: false,
+        transcript,
+        error: ""
+      }));
+      setErrorMessage("");
+      setNoticeMessage("语音内容已填入输入框。");
+      setActionToast({
+        id: `voice-success-${Date.now()}`,
+        type: "success",
+        title: "语音内容已填入输入框。"
+      });
+    };
+    const transcribeNativeAudio = async (detail: NativeSpeechEventDetail) => {
+      const audioBase64 = detail.audioBase64?.trim() ?? "";
+      const expectedHistoryScope = historyScopeRef.current;
+
+      if (!audioBase64) {
+        showNativeVoiceError("没有收到有效录音，请重新录制。");
+        return;
+      }
+
+      nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      nativeVoiceTranscriptionAbortControllerRef.current = controller;
+      setVoiceState((current) => ({
+        ...current,
+        isVoiceSupported: true,
+        isRecording: false,
+        error: ""
+      }));
+      setErrorMessage("");
+      setNoticeMessage("录音完成，正在转写为文字...");
+
+      try {
+        const transcript = await transcribeAdminIngestNativeVoice({
+          audioBase64,
+          mimeType: detail.mimeType,
+          fileName: detail.fileName
+        }, expectedHistoryScope, controller.signal);
+
+        if (
+          controller.signal.aborted
+          || historyScopeRef.current !== expectedHistoryScope
+        ) {
+          return;
+        }
+
+        applyNativeVoiceTranscript(transcript);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        const message = error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : "语音转文字失败，请检查网络后重试。";
+        showNativeVoiceError(message);
+      } finally {
+        if (nativeVoiceTranscriptionAbortControllerRef.current === controller) {
+          nativeVoiceTranscriptionAbortControllerRef.current = null;
+        }
+      }
+    };
+    const handleNativeSpeechEvent = (event: Event) => {
+      const detail = (event as CustomEvent<NativeSpeechEventDetail>).detail ?? {};
+      const transcript = detail.transcript?.trim() ?? "";
+
+      if (detail.state === "started") {
+        setErrorMessage("");
+        setVoiceState((current) => ({
+          ...current,
+          isVoiceSupported: true,
+          isRecording: true,
+          error: ""
+        }));
+        setNoticeMessage("正在录音，点击麦克风可停止；最长 15 秒。");
+        return;
+      }
+
+      if (detail.state === "audio") {
+        void transcribeNativeAudio(detail);
+        return;
+      }
+
+      if (detail.state === "result" && transcript) {
+        applyNativeVoiceTranscript(transcript);
+        return;
+      }
+
+      if (detail.state === "cancelled") {
+        setVoiceState((current) => ({
+          ...current,
+          isVoiceSupported: true,
+          isRecording: false,
+          error: ""
+        }));
+        setNoticeMessage("已取消语音输入。");
+        return;
+      }
+
+      if (detail.state === "error") {
+        const message = detail.error?.trim() || "手机语音识别失败，请检查麦克风权限后重试。";
+        showNativeVoiceError(message);
+      }
+    };
 
     setVoiceState((current) => ({
       ...current,
-      isVoiceSupported: Boolean(SpeechRecognition)
+      isVoiceSupported: Boolean(SpeechRecognition) || hasNativeSpeech
     }));
+    window.addEventListener(ADMIN_INGEST_NATIVE_SPEECH_EVENT, handleNativeSpeechEvent);
 
     return () => {
+      window.removeEventListener(ADMIN_INGEST_NATIVE_SPEECH_EVENT, handleNativeSpeechEvent);
       recognitionRef.current?.abort?.();
       recognitionRef.current = null;
+      nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+      nativeVoiceTranscriptionAbortControllerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+    nativeVoiceTranscriptionAbortControllerRef.current = null;
+  }, [historyScope]);
 
   useEffect(() => {
     if (!actionToast) {
@@ -4502,9 +4656,67 @@ export function IngestModeToggle({
   async function handleVoiceToggle() {
     const speechWindow = window as SpeechWindow;
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
+    const nativeSpeech = speechWindow.AndroidBridge?.startSpeechRecognition;
+    const stopNativeSpeech = speechWindow.AndroidBridge?.stopSpeechRecognition;
+
+    if (platformContext.platform === "apk" && typeof nativeSpeech === "function") {
+      try {
+        if (voiceState.isRecording && typeof stopNativeSpeech === "function") {
+          setNoticeMessage("正在结束录音并准备转写...");
+          stopNativeSpeech.call(speechWindow.AndroidBridge);
+          return;
+        }
+
+        setErrorMessage("");
+        setVoiceState((current) => ({
+          ...current,
+          isVoiceSupported: true,
+          isRecording: true,
+          error: ""
+        }));
+        setNoticeMessage("正在打开麦克风...");
+        nativeSpeech.call(speechWindow.AndroidBridge);
+      } catch {
+        const message = "无法启动手机麦克风，请检查麦克风权限后重试。";
+
+        setVoiceState((current) => ({
+          ...current,
+          isVoiceSupported: true,
+          isRecording: false,
+          error: message
+        }));
+        setErrorMessage(message);
+        setNoticeMessage(message);
+        showActionToast({
+          type: "warning",
+          title: "语音输入不可用",
+          description: message
+        });
+      }
+      return;
+    }
+
+    if (!window.isSecureContext) {
+      const message = "当前 Web 地址使用 HTTP，浏览器安全策略禁止麦克风。请使用管理员 APK，或通过 HTTPS 地址访问投喂端。";
+
+      setVoiceState((current) => ({
+        ...current,
+        isVoiceSupported: false,
+        isRecording: false,
+        error: message
+      }));
+      setErrorMessage("");
+      setNoticeMessage(message);
+      showActionToast({
+        type: "warning",
+        title: "当前地址无法使用麦克风",
+        description: message
+      });
+      return;
+    }
 
     if (!SpeechRecognition) {
-      const message = "当前环境暂不支持网页语音识别。EXE / APK 端后续将接入系统级语音输入。";
+      const message = "当前浏览器暂不支持语音转文字，请改用最新版 Chrome 或管理员 APK。";
       setVoiceState((current) => ({ ...current, isVoiceSupported: false, isRecording: false, error: message }));
       setErrorMessage("");
       setNoticeMessage(message);
@@ -4528,10 +4740,12 @@ export function IngestModeToggle({
     }
 
     try {
-      if (navigator.mediaDevices?.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((track) => track.stop());
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error("MICROPHONE_API_UNAVAILABLE");
       }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
 
       const recognition = new SpeechRecognition();
       let latestTranscript = "";
@@ -4590,8 +4804,10 @@ export function IngestModeToggle({
         }
       };
       recognition.start();
-    } catch {
-      const message = "麦克风权限被拒绝，请在浏览器或系统设置中允许麦克风。";
+    } catch (error) {
+      const message = error instanceof Error && error.message === "MICROPHONE_API_UNAVAILABLE"
+        ? "当前浏览器没有提供麦克风接口，请使用最新版 Chrome 或管理员 APK。"
+        : "麦克风权限被拒绝，请在浏览器或系统设置中允许麦克风。";
 
       setVoiceState((current) => ({ ...current, isVoiceSupported: true, isRecording: false, error: message }));
       setErrorMessage(message);

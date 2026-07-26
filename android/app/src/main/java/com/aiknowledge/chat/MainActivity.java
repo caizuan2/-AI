@@ -1,5 +1,6 @@
 package com.aiknowledge.chat;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
@@ -13,6 +14,7 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -22,6 +24,7 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.util.Base64;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -38,7 +41,9 @@ import com.getcapacitor.Bridge;
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.BridgeWebChromeClient;
 import com.getcapacitor.BridgeWebViewClient;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
@@ -54,6 +59,8 @@ public class MainActivity extends BridgeActivity {
     private static final int FILE_CHOOSER_REQUEST_CODE = 6205;
     private static final long ADMIN_UPDATE_STALL_TIMEOUT_MS = 45_000L;
     private static final long ADMIN_UPDATE_MINIMUM_APK_BYTES = 1_048_576L;
+    private static final int RECORD_AUDIO_PERMISSION_REQUEST_CODE = 6207;
+    private static final long MAX_ADMIN_INGEST_VOICE_RECORDING_MS = 15000L;
     private ValueCallback<Uri[]> fileChooserCallback;
     private long updateDownloadId = -1L;
     private long updateDownloadLastBytes = 0L;
@@ -70,6 +77,12 @@ public class MainActivity extends BridgeActivity {
     private boolean showingNetworkError;
     private boolean userBootstrapCacheBypass;
     private boolean staleUserAssetsRecoveryAttempted;
+    private boolean pendingVoiceRecording;
+    private boolean voiceRecordingActive;
+    private MediaRecorder voiceRecorder;
+    private File voiceRecordingFile;
+    private final Handler voiceRecordingHandler = new Handler(Looper.getMainLooper());
+    private Runnable voiceRecordingStopRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -109,6 +122,35 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onRequestPermissionsResult(
+        int requestCode,
+        String[] permissions,
+        int[] grantResults
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode != RECORD_AUDIO_PERMISSION_REQUEST_CODE) {
+            return;
+        }
+
+        boolean granted = grantResults.length > 0
+            && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+
+        if (granted && pendingVoiceRecording) {
+            pendingVoiceRecording = false;
+            startAdminIngestVoiceRecording();
+            return;
+        }
+
+        pendingVoiceRecording = false;
+        postAdminIngestSpeechEvent(
+            "error",
+            "",
+            "麦克风权限未开启，请在手机设置中允许小董AI使用麦克风。"
+        );
+    }
+
+    @Override
     public void onBackPressed() {
         if (getBridge() != null && getBridge().getWebView() != null && getBridge().getWebView().canGoBack()) {
             getBridge().getWebView().goBack();
@@ -123,6 +165,7 @@ public class MainActivity extends BridgeActivity {
         cancelNetworkRetry();
         stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
+        releaseAdminIngestVoiceRecorder(true);
         super.onDestroy();
     }
 
@@ -141,6 +184,244 @@ public class MainActivity extends BridgeActivity {
 
     private boolean isAdminShell() {
         return ADMIN_APP_PACKAGE.equals(getPackageName());
+    }
+
+    private void requestAdminIngestVoiceRecording() {
+        if (!isAdminShell()) {
+            postAdminIngestSpeechEvent("error", "", "当前应用不支持管理员语音输入。");
+            return;
+        }
+
+        if (pendingVoiceRecording || voiceRecordingActive) {
+            return;
+        }
+
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
+            && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingVoiceRecording = true;
+            requestPermissions(
+                new String[] { Manifest.permission.RECORD_AUDIO },
+                RECORD_AUDIO_PERMISSION_REQUEST_CODE
+            );
+            return;
+        }
+
+        startAdminIngestVoiceRecording();
+    }
+
+    @SuppressWarnings("deprecation")
+    private void startAdminIngestVoiceRecording() {
+        releaseAdminIngestVoiceRecorder(true);
+        File recordingFile = new File(
+            getCacheDir(),
+            "admin-ingest-voice-" + System.currentTimeMillis() + ".m4a"
+        );
+        MediaRecorder recorder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            ? new MediaRecorder(this)
+            : new MediaRecorder();
+
+        try {
+            recorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+            recorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+            recorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+            recorder.setAudioEncodingBitRate(64000);
+            recorder.setAudioSamplingRate(16000);
+            recorder.setOutputFile(recordingFile.getAbsolutePath());
+            recorder.prepare();
+            recorder.start();
+            voiceRecorder = recorder;
+            voiceRecordingFile = recordingFile;
+            voiceRecordingActive = true;
+            postAdminIngestSpeechEvent("started", "", "");
+            scheduleAdminIngestVoiceRecordingStop();
+        } catch (Exception error) {
+            try {
+                recorder.reset();
+            } catch (Exception ignored) {}
+            recorder.release();
+            deleteVoiceRecordingFile(recordingFile);
+            postAdminIngestSpeechEvent(
+                "error",
+                "",
+                "无法启动麦克风录音，请检查麦克风权限后重试。"
+            );
+        }
+    }
+
+    private void stopAdminIngestVoiceRecording(boolean shouldDispatchAudio) {
+        if (!voiceRecordingActive || voiceRecorder == null) {
+            return;
+        }
+
+        cancelAdminIngestVoiceRecordingStop();
+        MediaRecorder activeRecorder = voiceRecorder;
+        File recordingFile = voiceRecordingFile;
+        voiceRecorder = null;
+        voiceRecordingFile = null;
+        voiceRecordingActive = false;
+        boolean stoppedCleanly = false;
+
+        try {
+            activeRecorder.stop();
+            stoppedCleanly = true;
+        } catch (RuntimeException ignored) {
+            // Android throws when the recording is too short or the audio device stopped.
+        } finally {
+            try {
+                activeRecorder.reset();
+            } catch (Exception ignored) {}
+            activeRecorder.release();
+        }
+
+        if (!shouldDispatchAudio) {
+            deleteVoiceRecordingFile(recordingFile);
+            return;
+        }
+
+        if (!stoppedCleanly || recordingFile == null || recordingFile.length() <= 0) {
+            deleteVoiceRecordingFile(recordingFile);
+            postAdminIngestSpeechEvent(
+                "error",
+                "",
+                "录音时间太短或没有录到声音，请重新录制。"
+            );
+            return;
+        }
+
+        try {
+            byte[] bytes = readVoiceRecordingBytes(recordingFile);
+            String audioBase64 = Base64.encodeToString(bytes, Base64.NO_WRAP);
+            postAdminIngestVoiceAudioEvent(
+                audioBase64,
+                "audio/mp4",
+                "admin-ingest-voice.m4a"
+            );
+        } catch (Exception error) {
+            postAdminIngestSpeechEvent(
+                "error",
+                "",
+                "录音读取失败，请重新录制。"
+            );
+        } finally {
+            deleteVoiceRecordingFile(recordingFile);
+        }
+    }
+
+    private byte[] readVoiceRecordingBytes(File recordingFile) throws Exception {
+        try (
+            FileInputStream input = new FileInputStream(recordingFile);
+            ByteArrayOutputStream output = new ByteArrayOutputStream()
+        ) {
+            byte[] buffer = new byte[8192];
+            int bytesRead;
+
+            while ((bytesRead = input.read(buffer)) != -1) {
+                output.write(buffer, 0, bytesRead);
+            }
+
+            return output.toByteArray();
+        }
+    }
+
+    private void scheduleAdminIngestVoiceRecordingStop() {
+        cancelAdminIngestVoiceRecordingStop();
+        voiceRecordingStopRunnable = () -> {
+            voiceRecordingStopRunnable = null;
+            if (voiceRecordingActive) {
+                stopAdminIngestVoiceRecording(true);
+            }
+        };
+        voiceRecordingHandler.postDelayed(
+            voiceRecordingStopRunnable,
+            MAX_ADMIN_INGEST_VOICE_RECORDING_MS
+        );
+    }
+
+    private void cancelAdminIngestVoiceRecordingStop() {
+        if (voiceRecordingStopRunnable == null) {
+            return;
+        }
+
+        voiceRecordingHandler.removeCallbacks(voiceRecordingStopRunnable);
+        voiceRecordingStopRunnable = null;
+    }
+
+    private void releaseAdminIngestVoiceRecorder(boolean shouldDeleteRecording) {
+        cancelAdminIngestVoiceRecordingStop();
+        MediaRecorder activeRecorder = voiceRecorder;
+        File recordingFile = voiceRecordingFile;
+        voiceRecorder = null;
+        voiceRecordingFile = null;
+        voiceRecordingActive = false;
+
+        if (activeRecorder != null) {
+            try {
+                activeRecorder.reset();
+            } catch (Exception ignored) {}
+            activeRecorder.release();
+        }
+
+        if (shouldDeleteRecording) {
+            deleteVoiceRecordingFile(recordingFile);
+        }
+    }
+
+    private void deleteVoiceRecordingFile(File recordingFile) {
+        if (recordingFile == null || !recordingFile.exists()) {
+            return;
+        }
+
+        if (!recordingFile.delete()) {
+            recordingFile.deleteOnExit();
+        }
+    }
+
+    private void postAdminIngestSpeechEvent(String state, String transcript, String error) {
+        postAdminIngestSpeechEvent(state, transcript, error, "", "", "");
+    }
+
+    private void postAdminIngestVoiceAudioEvent(
+        String audioBase64,
+        String mimeType,
+        String fileName
+    ) {
+        postAdminIngestSpeechEvent("audio", "", "", audioBase64, mimeType, fileName);
+    }
+
+    private void postAdminIngestSpeechEvent(
+        String state,
+        String transcript,
+        String error,
+        String audioBase64,
+        String mimeType,
+        String fileName
+    ) {
+        if (!isAdminShell()) {
+            return;
+        }
+
+        WebView webView = getBridge() == null ? null : getBridge().getWebView();
+        if (webView == null) {
+            return;
+        }
+
+        try {
+            JSONObject detail = new JSONObject();
+            detail.put("state", state);
+            detail.put("transcript", transcript);
+            detail.put("error", error);
+            detail.put("audioBase64", audioBase64);
+            detail.put("mimeType", mimeType);
+            detail.put("fileName", fileName);
+            String script = "window.dispatchEvent(new CustomEvent('admin-ingest-native-speech',{detail:"
+                + detail.toString()
+                + "}));";
+            webView.post(() -> webView.evaluateJavascript(script, null));
+        } catch (Exception ignored) {
+            Toast.makeText(this, "语音识别结果传递失败，请重试。", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void clearStaleWebViewState(WebView webView) {
@@ -817,6 +1098,16 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void downloadUpdate(String url, String fileName) {
             runOnUiThread(() -> downloadUpdatePackage(url, fileName));
+        }
+
+        @JavascriptInterface
+        public void startSpeechRecognition() {
+            runOnUiThread(() -> requestAdminIngestVoiceRecording());
+        }
+
+        @JavascriptInterface
+        public void stopSpeechRecognition() {
+            runOnUiThread(() -> stopAdminIngestVoiceRecording(true));
         }
     }
 
