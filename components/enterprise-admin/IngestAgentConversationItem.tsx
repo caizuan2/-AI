@@ -1,12 +1,16 @@
 "use client";
 
-import { MessageSquareText, Pin } from "lucide-react";
+import { LoaderCircle, MessageSquareText, Pin } from "lucide-react";
 import { IngestConversationActionMenu } from "@/components/enterprise-admin/IngestConversationActionMenu";
+import type {
+  AdminIngestConversationRuntimeStatus
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import type { KeyboardEvent } from "react";
 
 export function IngestAgentConversationItem({
   conversation,
+  runtimeStatus,
   active,
   onSelect,
   onShare,
@@ -17,6 +21,7 @@ export function IngestAgentConversationItem({
   onDelete
 }: {
   conversation: IngestAgentConversation;
+  runtimeStatus?: AdminIngestConversationRuntimeStatus;
   active: boolean;
   onSelect: (conversationId: string) => void;
   onShare?: (conversation: IngestAgentConversation) => void;
@@ -49,10 +54,23 @@ export function IngestAgentConversationItem({
         : <MessageSquareText className="h-3.5 w-3.5 shrink-0 text-[#8a8a86]" aria-hidden="true" />}
       <span className="min-w-0 flex-1">
         <span className="block truncate text-xs font-semibold">{conversation.title}</span>
-        <span className="mt-0.5 block truncate text-[10px] text-[#999]">
-          {conversation.updatedLabel} · {conversation.messageCount} 条
-        </span>
+        {runtimeStatus?.state === "generating" ? (
+          <span className="mt-0.5 flex items-center gap-1 text-[10px] font-normal text-[#3b8df5]">
+            <LoaderCircle className="h-3 w-3 animate-spin" aria-hidden="true" />
+            生成中
+          </span>
+        ) : (
+          <span className="mt-0.5 block truncate text-[10px] text-[#999]">
+            {conversation.updatedLabel} · {conversation.messageCount} 条
+          </span>
+        )}
       </span>
+      {runtimeStatus?.state === "completed_unread" ? (
+        <span
+          aria-label="生成完成，尚未查看"
+          className="h-2 w-2 shrink-0 rounded-full bg-[#3b8df5] shadow-[0_0_0_3px_rgba(59,141,245,0.12)]"
+        />
+      ) : null}
       <IngestConversationActionMenu
         isPinned={conversation.pinned === true}
         isArchived={conversation.status === "archived"}

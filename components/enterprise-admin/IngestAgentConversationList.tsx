@@ -3,12 +3,16 @@
 import { IngestAgentConversationItem } from "@/components/enterprise-admin/IngestAgentConversationItem";
 import { IngestConversationDeleteDialog } from "@/components/enterprise-admin/IngestConversationDeleteDialog";
 import { IngestConversationRenameDialog } from "@/components/enterprise-admin/IngestConversationRenameDialog";
+import type {
+  AdminIngestConversationRuntimeStatusMap
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import { useState } from "react";
 
 export function IngestAgentConversationList({
   agentId,
   conversations,
+  conversationRuntimeStatusById = {},
   activeConversationId,
   expandedAll,
   onSelectConversation,
@@ -22,6 +26,7 @@ export function IngestAgentConversationList({
 }: {
   agentId: string;
   conversations: IngestAgentConversation[];
+  conversationRuntimeStatusById?: AdminIngestConversationRuntimeStatusMap;
   activeConversationId?: string;
   expandedAll: boolean;
   onSelectConversation: (agentId: string, conversationId: string) => void;
@@ -52,8 +57,21 @@ export function IngestAgentConversationList({
   const archivedConversations = supportsConversationState
     ? conversations.filter((conversation) => conversation.status === "archived")
     : [];
-  const visibleConversations = expandedAll ? activeConversations : activeConversations.slice(0, 3);
-  const hasMore = activeConversations.length > 3;
+  const compactConversations = activeConversations.slice(0, 3);
+  const highlightedConversations = activeConversations.filter((conversation) => (
+    conversationRuntimeStatusById[conversation.id]
+    && !compactConversations.some((visibleConversation) => visibleConversation.id === conversation.id)
+  ));
+  const visibleConversations = expandedAll
+    ? activeConversations
+    : [...compactConversations, ...highlightedConversations];
+  const hiddenConversationCount = Math.max(
+    activeConversations.length - visibleConversations.length,
+    0
+  );
+  const hasMore = expandedAll
+    ? activeConversations.length > 3
+    : hiddenConversationCount > 0;
 
   return (
     <div className="mb-1 mt-1 rounded-2xl border border-orange-100 bg-gradient-to-b from-[#fffaf3] via-[#fffdf9] to-[#f7f4ef] p-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.75)]">
@@ -65,6 +83,7 @@ export function IngestAgentConversationList({
             <IngestAgentConversationItem
               key={conversation.id}
               conversation={conversation}
+              runtimeStatus={conversationRuntimeStatusById[conversation.id]}
               active={conversation.id === activeConversationId}
               onSelect={(conversationId) => onSelectConversation(agentId, conversationId)}
               onShare={onShareConversation ? (target) => onShareConversation(agentId, target.id) : undefined}
@@ -84,7 +103,7 @@ export function IngestAgentConversationList({
           onClick={() => onToggleExpandedAll(agentId)}
           className="mt-1 flex h-7 w-full items-center justify-center rounded-xl text-[11px] font-semibold text-[#777] transition hover:bg-white hover:text-[#202020]"
         >
-          {expandedAll ? "收起" : `展开更多 ${activeConversations.length - 3} 条`}
+          {expandedAll ? "收起" : `展开更多 ${hiddenConversationCount} 条`}
         </button>
       ) : null}
 
@@ -103,6 +122,7 @@ export function IngestAgentConversationList({
                 <IngestAgentConversationItem
                   key={conversation.id}
                   conversation={conversation}
+                  runtimeStatus={conversationRuntimeStatusById[conversation.id]}
                   active={false}
                   onSelect={() => undefined}
                   onShare={onShareConversation ? (target) => onShareConversation(agentId, target.id) : undefined}

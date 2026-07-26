@@ -70,6 +70,9 @@ import {
   normalizeAdminIngestWechatOutputMode,
   type AdminIngestWechatOutputMode
 } from "@/lib/enterprise/admin-ingest-wechat-output-mode";
+import type {
+  AdminIngestConversationRuntimeStatusMap
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import { shouldShowAdminIngestAnswerActions } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import type {
   IngestConnectionStatus,
@@ -184,6 +187,7 @@ interface IngestChatGPTShellProps {
   displayProfile?: AdminIngestDisplayProfile;
   onAgentChange?: (agentId: string) => void;
   agentConversations?: IngestAgentConversation[];
+  conversationRuntimeStatusById?: AdminIngestConversationRuntimeStatusMap;
   activeConversationId?: string;
   expandedAgentIds?: string[];
   expandedConversationAgentIds?: string[];
@@ -811,6 +815,7 @@ export function IngestChatGPTShell({
   displayProfile,
   onAgentChange,
   agentConversations = [],
+  conversationRuntimeStatusById = {},
   activeConversationId = "",
   expandedAgentIds = [],
   expandedConversationAgentIds = [],
@@ -2341,6 +2346,15 @@ export function IngestChatGPTShell({
               const isExpanded = expandedAgentIds.includes(agent.id);
               const isPinned = pinnedAgentIds.includes(agent.id);
               const conversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
+              const hasGeneratingConversation = isAdminApk && conversations.some((conversation) => (
+                conversation.status !== "archived"
+                && conversationRuntimeStatusById[conversation.id]?.state === "generating"
+              ));
+              const hasUnreadConversation = isAdminApk && conversations.some((conversation) => (
+                conversation.status !== "archived"
+                && conversationRuntimeStatusById[conversation.id]?.state === "completed_unread"
+              ));
+              const isConversationListVisible = isExpanded || hasGeneratingConversation;
               const agentProfile = resolveAdminIngestDisplayProfile({
                 currentAgent: agent,
                 appName,
@@ -2374,6 +2388,12 @@ export function IngestChatGPTShell({
                           <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#202020]"].join(" ")}>{agent.name}</span>
                           <span className="flex shrink-0 items-center gap-1.5">
                             {isPinned ? <span className="rounded-full bg-white px-1.5 py-0.5 text-[10px] font-semibold text-[#9a6500]">置顶</span> : null}
+                            {hasUnreadConversation && !isConversationListVisible ? (
+                              <span
+                                aria-label={`${agent.name} 有生成完成的新回答`}
+                                className="h-2 w-2 rounded-full bg-[#3b8df5] shadow-[0_0_0_3px_rgba(59,141,245,0.12)]"
+                              />
+                            ) : null}
                             <span className="flex items-center gap-1 transition">
                               <IngestAgentMoreMenu
                                 agent={agent}
@@ -2392,14 +2412,14 @@ export function IngestChatGPTShell({
                               />
                               <button
                                 type="button"
-                                aria-label={isExpanded ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
+                                aria-label={isConversationListVisible ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   onAgentToggleExpanded?.(agent.id);
                                 }}
                                 className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86] transition hover:bg-white hover:text-[#202020]"
                               >
-                                {isExpanded ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
+                                {isConversationListVisible ? <ChevronDown className="h-4 w-4" aria-hidden="true" /> : <ChevronRight className="h-4 w-4" aria-hidden="true" />}
                               </button>
                             </span>
                           </span>
@@ -2408,10 +2428,11 @@ export function IngestChatGPTShell({
                       </span>
                     </div>
                   </div>
-                  {isExpanded ? (
+                  {isConversationListVisible ? (
                     <IngestAgentConversationList
                       agentId={agent.id}
                       conversations={conversations}
+                      conversationRuntimeStatusById={isAdminApk ? conversationRuntimeStatusById : {}}
                       activeConversationId={activeConversationId}
                       expandedAll={expandedConversationAgentIds.includes(agent.id)}
                       onSelectConversation={(agentId, conversationId) => {
