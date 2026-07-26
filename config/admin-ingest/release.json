@@ -1,18 +1,18 @@
 {
-  "version": "1.0.16",
-  "build": 116,
-  "minimum_build": 116,
+  "version": "1.0.17",
+  "build": 117,
+  "minimum_build": 117,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.16-build.116",
+  "release_tag": "release/admin-ingest-1.0.17-build.117",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.16-build.116/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.17-build.117/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 APK 支持讲话时实时显示识别文字",
-    "投喂端 APK 左侧功能改为按需滑出抽屉",
-    "实时识别不可用时保留原录音转写兜底，Web、EXE、APK 保持同一版本"
+    "投喂端 APK 改用云端增量语音识别，讲话时同步显示文字",
+    "停止录音后智能整理口语表达，结果只进入输入框并等待用户确认",
+    "识别或整理失败时保留原始语音文字，Web、EXE、APK 保持同一版本"
   ]
 }
