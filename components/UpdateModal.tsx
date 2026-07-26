@@ -61,8 +61,8 @@ export function UpdateModal({
   const latest = update.latest;
   const isWebContentUpdate = update.updateKind === "web";
   const shouldSimplifyWebUpdate = appKind === "user" && isWebContentUpdate;
-  const shouldHideAdminWebUpdateContent = appKind === "admin" && isWebContentUpdate;
-  const shouldHideWebUpdateDetails = shouldSimplifyWebUpdate || shouldHideAdminWebUpdateContent;
+  const shouldSimplifyAdminUpdate = appKind === "admin" && (platform === "android" || isWebContentUpdate);
+  const shouldHideUpdateDetails = shouldSimplifyWebUpdate || shouldSimplifyAdminUpdate;
   const activeInstallState = installState ?? idleInstallState;
   const busy = isInstallBusy(activeInstallState.phase);
   const hasInstallFeedback = activeInstallState.phase !== "idle";
@@ -76,6 +76,12 @@ export function UpdateModal({
   const updateActionDisabled = busy || activeInstallState.phase === "ready";
   const updateActionText = activeInstallState.phase === "ready"
     ? "更新完成"
+    : shouldSimplifyAdminUpdate && activeInstallState.phase === "error"
+      ? "更新失败，点击重试"
+      : shouldSimplifyAdminUpdate && busy && activeInstallState.phase === "downloading" && !installIndeterminate && installProgress > 0
+        ? `正在更新 ${installProgress}%`
+        : shouldSimplifyAdminUpdate && busy && installIndeterminate
+          ? "正在连接更新服务器"
     : busy
       ? "正在更新"
       : "立即更新";
@@ -99,10 +105,10 @@ export function UpdateModal({
             <h2 id={`${appKind}-app-update-title`} className="text-lg font-bold text-slate-950">
               {updateTitle}
             </h2>
-            {!shouldHideAdminWebUpdateContent ? (
+            {!shouldSimplifyAdminUpdate ? (
               <p className="mt-1 text-sm font-semibold text-blue-700">{displayAppName}</p>
             ) : null}
-            {!shouldHideWebUpdateDetails ? (
+            {!shouldHideUpdateDetails ? (
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 {isWebContentUpdate ? (
                   <>
@@ -138,7 +144,7 @@ export function UpdateModal({
           </div>
         ) : null}
 
-        {!shouldHideWebUpdateDetails ? (
+        {!shouldHideUpdateDetails ? (
           <>
             <div className="mt-5 rounded-xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-sm font-semibold text-slate-900">更新内容：</p>
@@ -157,7 +163,7 @@ export function UpdateModal({
           </>
         ) : null}
 
-        {hasInstallFeedback ? (
+        {hasInstallFeedback && !shouldSimplifyAdminUpdate ? (
           <div
             className={
               activeInstallState.phase === "error"
@@ -196,7 +202,7 @@ export function UpdateModal({
             onClick={onUpdateNow}
             disabled={updateActionDisabled}
             className="focus-ring inline-flex h-14 min-h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-blue-600 px-6 text-base font-bold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-default disabled:bg-blue-500"
-            aria-label={`${updateActionText} ${displayAppName}`}
+            aria-label={shouldSimplifyAdminUpdate ? updateActionText : `${updateActionText} ${displayAppName}`}
           >
             <ActionIcon className={busy ? "h-5 w-5 animate-spin" : "h-5 w-5"} aria-hidden="true" />
             {updateActionText}
