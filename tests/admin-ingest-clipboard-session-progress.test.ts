@@ -118,7 +118,15 @@ async function main() {
   );
   assert.match(
     modeToggleSource,
-    /isRequestActive:\s*isIngestConversationRequestActive\(activeConversationRequestState\)/
+    /const activeConversationIsParsing = isIngestConversationRequestActive\(\s*activeConversationRequestState\s*\)\s*\|\|\s*Boolean\(preparingConversationIds\[activeConversationId\]\)/
+  );
+  assert.match(
+    modeToggleSource,
+    /isParsing:\s*activeConversationIsParsing/
+  );
+  assert.match(
+    modeToggleSource,
+    /isRequestActive:\s*activeConversationIsParsing/
   );
   assert.match(
     modeToggleSource,

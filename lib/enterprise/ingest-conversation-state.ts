@@ -28,6 +28,8 @@ export type IngestConversationState = {
   updatedAt: number;
 };
 
+export const MAX_CONCURRENT_INGEST_CONVERSATIONS = 2;
+
 function makeId(prefix: string) {
   try {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -161,4 +163,23 @@ export function isIngestConversationRequestActive(
   state: IngestConversationState | null | undefined
 ) {
   return Boolean(state?.isGenerating && state.activeRequestId);
+}
+
+export function isCurrentIngestConversationRequest(
+  states: Record<string, IngestConversationState>,
+  conversationId: string,
+  requestId: string
+) {
+  const state = states[conversationId];
+
+  return Boolean(
+    state?.isGenerating
+    && state.activeRequestId === requestId
+  );
+}
+
+export function countActiveIngestConversationRequests(
+  states: Record<string, IngestConversationState>
+) {
+  return Object.values(states).filter(isIngestConversationRequestActive).length;
 }

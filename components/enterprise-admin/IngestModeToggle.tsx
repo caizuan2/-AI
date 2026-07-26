@@ -125,8 +125,11 @@ import {
   shouldSuppressFallbackToast
 } from "@/lib/enterprise/ingest-ui-state";
 import {
+  countActiveIngestConversationRequests,
   ensureConversationState,
+  isCurrentIngestConversationRequest,
   isIngestConversationRequestActive,
+  MAX_CONCURRENT_INGEST_CONVERSATIONS,
   markRequestActive,
   type IngestConversationMessage,
   type IngestConversationState
@@ -167,11 +170,11 @@ import {
   getRetryDelayMs,
   isRetryableIngestError,
   shouldIgnoreRequestError,
-  shouldIgnoreRequestResult,
-  shouldResetLoading
+  shouldIgnoreRequestResult
 } from "@/lib/enterprise/ingest-request-controller";
 import {
   canStartRequest,
+  cancelRequest,
   completeRequest,
   createIngestQueueState,
   enqueueRequest,
@@ -824,6 +827,7 @@ export function IngestModeToggle({
   const [noticeMessage, setNoticeMessage] = useState("管理员投喂端已就绪，登录后将同步企业知识库。");
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
+  const [preparingConversationIds, setPreparingConversationIds] = useState<Record<string, true>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [recoveringMetadataMessageId, setRecoveringMetadataMessageId] = useState<string | null>(null);
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
@@ -832,15 +836,18 @@ export function IngestModeToggle({
   const [conversationLinkDialog, setConversationLinkDialog] = useState<IngestConversationLinkDialogState | null>(null);
   const [isConversationLinkBusy, setIsConversationLinkBusy] = useState(false);
   const conversationStateByIdRef = useRef<Record<string, IngestConversationState>>({});
+  const conversationMessagesByIdRef = useRef<Record<string, IngestChatMessage[]>>({});
+  const conversationDraftsByIdRef = useRef<Record<string, IngestKnowledgeDraft>>({});
+  const conversationLastInputByIdRef = useRef<Record<string, string>>({});
   const draftRef = useRef<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const messagesRef = useRef<IngestChatMessage[]>([]);
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
   const abortControllerByConversationRef = useRef<Record<string, AbortController>>({});
-  const activeIngestRequestIdRef = useRef("");
-  const ingestSuccessLockRef = useRef(false);
-  const lastSuccessfulIngestAtRef = useRef(0);
-  const lastSuccessfulIngestRequestIdRef = useRef("");
-  const suppressFallbackToastUntilRef = useRef(0);
+  const activeIngestRequestIdByConversationRef = useRef<Record<string, string>>({});
+  const preparingConversationIdsRef = useRef<Record<string, true>>({});
+  const ingestSuccessLockByConversationRef = useRef<Record<string, boolean>>({});
+  const lastSuccessfulIngestAtByConversationRef = useRef<Record<string, number>>({});
+  const suppressFallbackToastUntilByConversationRef = useRef<Record<string, number>>({});
   const [isUrlDialogOpen, setIsUrlDialogOpen] = useState(false);
   const [urlInput, setUrlInput] = useState("");
   const [urlError, setUrlError] = useState("");
@@ -908,6 +915,14 @@ export function IngestModeToggle({
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    conversationMessagesByIdRef.current = conversationMessagesById;
+  }, [conversationMessagesById]);
+
+  useEffect(() => {
+    conversationDraftsByIdRef.current = conversationDraftsById;
+  }, [conversationDraftsById]);
   const displayProfile = useMemo(
     () => resolveAdminIngestDisplayProfile({
       currentAgent: hasActiveAgent ? activeAgent : null,
@@ -1055,9 +1070,12 @@ export function IngestModeToggle({
     setAgents([]);
     setAgentConversations([]);
     setActiveAgentId("");
-    setActiveConversationId("");
+    setActiveConversationScope("");
     setConversationMessagesById({});
+    conversationMessagesByIdRef.current = {};
     setConversationDraftsById({});
+    conversationDraftsByIdRef.current = {};
+    conversationLastInputByIdRef.current = {};
     setPinnedAgentIds([]);
     setExpandedAgentIds([]);
     setExpandedConversationAgentIds([]);
@@ -1175,11 +1193,14 @@ export function IngestModeToggle({
 
         historyScopeRef.current = nextHistoryScope;
         conversationSyncRevisionRef.current = nextRevision;
+        activeConversationIdRef.current = hydratedState.activeConversationId;
+        conversationMessagesByIdRef.current = hydratedState.conversationMessagesById;
+        conversationDraftsByIdRef.current = hydratedState.conversationDraftsById;
         setHistoryScope(nextHistoryScope);
         setAgents(hydratedState.agents);
         setAgentConversations(hydratedState.agentConversations);
         setActiveAgentId(hydratedState.activeAgentId);
-        setActiveConversationId(hydratedState.activeConversationId);
+        setActiveConversationScope(hydratedState.activeConversationId);
         setConversationMessagesById(
           hydratedState.conversationMessagesById
         );
@@ -1430,6 +1451,7 @@ export function IngestModeToggle({
         [activeConversationId]: persistableMessages
       };
 
+      conversationMessagesByIdRef.current = next;
       return next;
     });
   }, [activeConversationId, historyLoaded, messages]);
@@ -1450,6 +1472,7 @@ export function IngestModeToggle({
         [activeConversationId]: draft
       };
 
+      conversationDraftsByIdRef.current = next;
       return next;
     });
   }, [
@@ -1519,7 +1542,13 @@ export function IngestModeToggle({
       (controller) => controller.abort()
     );
     abortControllerByConversationRef.current = {};
-    activeIngestRequestIdRef.current = "";
+    activeIngestRequestIdByConversationRef.current = {};
+    preparingConversationIdsRef.current = {};
+    setPreparingConversationIds({});
+    ingestSuccessLockByConversationRef.current = {};
+    lastSuccessfulIngestAtByConversationRef.current = {};
+    suppressFallbackToastUntilByConversationRef.current = {};
+    conversationStateByIdRef.current = {};
     requestQueueRef.current = createIngestQueueState();
     historyScopeRef.current = "";
     conversationSyncRevisionRef.current = 0;
@@ -1534,9 +1563,12 @@ export function IngestModeToggle({
     setAgents([]);
     setAgentConversations([]);
     setActiveAgentId("");
-    setActiveConversationId("");
+    setActiveConversationScope("");
     setConversationMessagesById({});
+    conversationMessagesByIdRef.current = {};
     setConversationDraftsById({});
+    conversationDraftsByIdRef.current = {};
+    conversationLastInputByIdRef.current = {};
     setPinnedAgentIds([]);
     setExpandedAgentIds([]);
     setExpandedConversationAgentIds([]);
@@ -1813,7 +1845,7 @@ export function IngestModeToggle({
         && conversation.status !== "archived"
       ));
 
-      setActiveConversationId(fallback?.id ?? "");
+      setActiveConversationScope(fallback?.id ?? "");
       return;
     }
     const conversationAgent = activeConversation
@@ -1824,7 +1856,8 @@ export function IngestModeToggle({
       return;
     }
 
-    const restoredMessages = conversationMessagesById[activeConversation.id];
+    const restoredMessages = conversationMessagesByIdRef.current[activeConversation.id]
+      ?? conversationMessagesById[activeConversation.id];
 
     setMessages(resolveRestoredConversationMessages({
       restoredMessages,
@@ -1833,7 +1866,11 @@ export function IngestModeToggle({
       agent: conversationAgent,
       context: platformContext
     }));
-    setDraft(conversationDraftsById[activeConversation.id] ?? ingestChatInitialDraft);
+    setDraft(
+      conversationDraftsByIdRef.current[activeConversation.id]
+      ?? conversationDraftsById[activeConversation.id]
+      ?? ingestChatInitialDraft
+    );
     restoredInitialConversationRef.current = true;
   }, [accessTier, activeConversationId, agentConversations, conversationDraftsById, conversationMessagesById, historyLoaded, platformContext, visibleAgents]);
   useEffect(() => {
@@ -2375,8 +2412,20 @@ export function IngestModeToggle({
   }
 
 
+  function setActiveConversationScope(conversationId: string) {
+    activeConversationIdRef.current = conversationId;
+    setActiveConversationId(conversationId);
+  }
+
   function restoreConversationState(conversation: IngestAgentConversation, agent: IngestChatAgent) {
-    const restoredMessages = conversationMessagesById[conversation.id];
+    const restoredMessages = conversationMessagesByIdRef.current[conversation.id]
+      ?? conversationMessagesById[conversation.id];
+    const restoredLastInput = conversationLastInputByIdRef.current[conversation.id]
+      ?? [...(restoredMessages ?? [])]
+        .reverse()
+        .find((message) => message.role === "user")
+        ?.content
+      ?? "";
 
     if (!shouldRestoreToastFromHistory()) {
       setGptFallbackToast(null);
@@ -2389,7 +2438,8 @@ export function IngestModeToggle({
       agent,
       context: platformContext
     }));
-    setDraft(conversationDraftsById[conversation.id] ?? ingestChatInitialDraft);
+    setDraft(conversationDraftsByIdRef.current[conversation.id] ?? ingestChatInitialDraft);
+    setLastInput(restoredLastInput);
   }
 
   function clearConversationState() {
@@ -2399,6 +2449,7 @@ export function IngestModeToggle({
     }
     setMessages([]);
     setDraft(ingestChatInitialDraft);
+    setLastInput("");
   }
   function handleAgentSelect(agentId: string) {
     const nextAgent = visibleAgents.find((agent) => agent.id === agentId);
@@ -2419,7 +2470,7 @@ export function IngestModeToggle({
     setCurrentAgent(nextAgent);
     setActiveRailKey("chat");
     setMode("chat");
-    setActiveConversationId(nextConversation?.id ?? "");
+    setActiveConversationScope(nextConversation?.id ?? "");
     if (nextConversation) {
       restoreConversationState(nextConversation, nextAgent);
     } else {
@@ -2514,7 +2565,7 @@ export function IngestModeToggle({
 
     if (activeAgentId === target.id) {
       setActiveAgentId("");
-      setActiveConversationId("");
+      setActiveConversationScope("");
       setIsAgentDetailOpen(false);
     }
 
@@ -2567,7 +2618,7 @@ export function IngestModeToggle({
 
     if (activeAgentId === target.id) {
       setActiveAgentId("");
-      setActiveConversationId("");
+      setActiveConversationScope("");
       setMessages([]);
     }
 
@@ -2616,7 +2667,7 @@ export function IngestModeToggle({
     }
 
     setCurrentAgent(targetAgent);
-    setActiveConversationId(targetConversation.id);
+    setActiveConversationScope(targetConversation.id);
     restoreConversationState(targetConversation, targetAgent);
     setActiveRailKey("chat");
     setMode("chat");
@@ -2638,7 +2689,7 @@ export function IngestModeToggle({
 
     setAgentConversations((current) => [nextConversation, ...current]);
     setCurrentAgent(targetAgent);
-    setActiveConversationId(nextConversation.id);
+    setActiveConversationScope(nextConversation.id);
     setDraft(ingestChatInitialDraft);
     setMessages([]);
     setActiveRailKey("chat");
@@ -2739,7 +2790,7 @@ export function IngestModeToggle({
 
     if (nextArchived && activeConversationId === conversationId) {
       setCurrentAgent(targetAgent);
-      setActiveConversationId(nextActiveConversation?.id ?? "");
+      setActiveConversationScope(nextActiveConversation?.id ?? "");
       if (nextActiveConversation) {
         restoreConversationState(nextActiveConversation, targetAgent);
       } else {
@@ -3014,17 +3065,24 @@ export function IngestModeToggle({
     setConversationMessagesById((current) => {
       const next = { ...current };
       delete next[conversationId];
+      conversationMessagesByIdRef.current = next;
       return next;
     });
     setConversationDraftsById((current) => {
       const next = { ...current };
       delete next[conversationId];
+      conversationDraftsByIdRef.current = next;
       return next;
     });
+    const nextConversationLastInputs = {
+      ...conversationLastInputByIdRef.current
+    };
+    delete nextConversationLastInputs[conversationId];
+    conversationLastInputByIdRef.current = nextConversationLastInputs;
 
     if (activeConversationId === conversationId) {
       setCurrentAgent(targetAgent);
-      setActiveConversationId(nextConversation?.id ?? "");
+      setActiveConversationScope(nextConversation?.id ?? "");
       if (nextConversation) {
         restoreConversationState(nextConversation, targetAgent);
       } else {
@@ -3060,7 +3118,7 @@ export function IngestModeToggle({
     });
 
     setAgentConversations((current) => [nextConversation, ...current]);
-    setActiveConversationId(nextConversation.id);
+    setActiveConversationScope(nextConversation.id);
 
     return nextConversation.id;
   }
@@ -3354,6 +3412,7 @@ export function IngestModeToggle({
     const conversationId = ensureConversationForSend(activeAgent);
     const sendAttemptAt = Date.now();
     const hasActiveConversationRequest = Boolean(conversationStateByIdRef.current[conversationId]?.activeRequestId)
+      || Boolean(preparingConversationIdsRef.current[conversationId])
       || !canStartRequest(requestQueueRef.current, conversationId);
 
     if (hasActiveConversationRequest) {
@@ -3377,10 +3436,28 @@ export function IngestModeToggle({
     }
 
     if (
+      countActiveIngestConversationRequests(conversationStateByIdRef.current)
+      + Object.keys(preparingConversationIdsRef.current).length
+      >= MAX_CONCURRENT_INGEST_CONVERSATIONS
+    ) {
+      if (!options?.preserveComposer) {
+        setInput(effectiveInput);
+      }
+      setNoticeMessage(`当前已有 ${MAX_CONCURRENT_INGEST_CONVERSATIONS} 个对话在生成，请等待任一对话完成后再发送。`);
+      setErrorMessage("");
+      return null;
+    }
+
+    if (
       platformContext.platform === "web"
       && composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl)
     ) {
       setIsParsing(true);
+      preparingConversationIdsRef.current = {
+        ...preparingConversationIdsRef.current,
+        [conversationId]: true
+      };
+      setPreparingConversationIds(preparingConversationIdsRef.current);
       setNoticeMessage("正在永久保存图片...");
       setErrorMessage("");
 
@@ -3433,7 +3510,9 @@ export function IngestModeToggle({
 
         const message = error instanceof Error ? error.message : "图片永久保存失败，请稍后重试。";
 
-        setIsParsing(false);
+        setIsParsing(
+          countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+        );
         setNoticeMessage("");
         setErrorMessage(message);
         showActionToast({
@@ -3442,12 +3521,24 @@ export function IngestModeToggle({
           description: message
         });
         return null;
+      } finally {
+        const nextPreparingConversationIds = {
+          ...preparingConversationIdsRef.current
+        };
+        delete nextPreparingConversationIds[conversationId];
+        preparingConversationIdsRef.current = nextPreparingConversationIds;
+        setPreparingConversationIds(nextPreparingConversationIds);
       }
     }
 
     requestQueueRef.current = recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt);
+    let requestMessagesSnapshot = messages.length > 0
+      ? messages
+      : conversationMessagesByIdRef.current[conversationId]
+        ?? conversationMessagesById[conversationId]
+        ?? [];
     const contextSourceMessages = excludeFailedIngestMessages(
-      messages.length > 0 ? messages : conversationMessagesById[conversationId] ?? []
+      requestMessagesSnapshot
     );
     const requestId = createIngestRequestId();
     const assistantMessageId = `assistant-result-${requestId}`;
@@ -3491,13 +3582,64 @@ export function IngestModeToggle({
     });
     conversationState = markRequestActive(conversationState, requestId);
     conversationStateByIdRef.current[conversationId] = conversationState;
-    const isCurrentRequest = () => activeIngestRequestIdRef.current === requestId
-      && !shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId);
+    const isRequestConversationVisible = () => activeConversationIdRef.current === conversationId;
+    const commitRequestMessages = (
+      updater: (current: IngestChatMessage[]) => IngestChatMessage[]
+    ) => {
+      const nextMessages = updater(requestMessagesSnapshot);
 
-    activeIngestRequestIdRef.current = requestId;
+      requestMessagesSnapshot = nextMessages;
+      conversationMessagesByIdRef.current = {
+        ...conversationMessagesByIdRef.current,
+        [conversationId]: nextMessages
+      };
+      setConversationMessagesById((current) => ({
+        ...current,
+        [conversationId]: nextMessages
+      }));
+
+      if (isRequestConversationVisible()) {
+        messagesRef.current = nextMessages;
+        setMessages(nextMessages);
+      }
+
+      return nextMessages;
+    };
+    const setRequestNoticeMessage = (message: string) => {
+      if (isRequestConversationVisible()) {
+        setNoticeMessage(message);
+      }
+    };
+    const setRequestErrorMessage = (message: string) => {
+      if (isRequestConversationVisible()) {
+        setErrorMessage(message);
+      }
+    };
+    const setRequestFallbackToast = (toast: GptFallbackToast | null) => {
+      if (isRequestConversationVisible()) {
+        setGptFallbackToast(toast);
+      }
+    };
+    const showRequestActionToast = (toast: Omit<IngestActionToast, "id">) => {
+      if (isRequestConversationVisible()) {
+        showActionToast(toast);
+      }
+    };
+    const isCurrentRequest = () => (
+      activeIngestRequestIdByConversationRef.current[conversationId] === requestId
+      && isCurrentIngestConversationRequest(
+        conversationStateByIdRef.current,
+        conversationId,
+        requestId
+      )
+      && !shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId)
+    );
+
+    activeIngestRequestIdByConversationRef.current[conversationId] = requestId;
+    conversationLastInputByIdRef.current[conversationId] = effectiveInput;
     requestQueueRef.current = startRequest(requestQueueRef.current, conversationId, requestId);
     abortControllerByConversationRef.current[conversationId] = abortController;
-    ingestSuccessLockRef.current = false;
+    ingestSuccessLockByConversationRef.current[conversationId] = false;
     markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(`${requestModelOption.label} 正在深度分析资料...`);
@@ -3505,7 +3647,7 @@ export function IngestModeToggle({
     setGptFallbackToast(null);
     setActionToast(null);
     if (!options?.reuseUserMessageId) {
-      setMessages((current) => [
+      commitRequestMessages((current) => [
         ...current.map(markMessageCompleted),
         {
           id: userMessageId,
@@ -3573,7 +3715,7 @@ export function IngestModeToggle({
               ? `，失败 ${progress.failedPages.length} 页、低置信度 ${progress.lowConfidencePages.length} 页`
               : "";
 
-            setNoticeMessage(
+            setRequestNoticeMessage(
               progress.complete
                 ? `「${progress.fileName}」已完成 ${currentPage}/${totalLabel} 页本地识别${qualityHint}，${requestModelOption.label} 正在整理正文...`
                 : `正在本地识别「${progress.fileName}」：${currentPage}/${totalLabel} 页（${progress.coveragePercent.toFixed(1)}%）${qualityHint}`
@@ -3605,7 +3747,7 @@ export function IngestModeToggle({
           return null;
         }
 
-        setMessages((current) => current.map((message) => message.id === userMessageId
+        commitRequestMessages((current) => current.map((message) => message.id === userMessageId
           ? { ...message, attachments: outgoingAttachments }
           : message));
       }
@@ -3720,7 +3862,7 @@ export function IngestModeToggle({
                     }
                   }
                 );
-                setMessages((current) => replaceIngestRetryOutcome(
+                commitRequestMessages((current) => replaceIngestRetryOutcome(
                   current.map(markMessageCompleted),
                   options?.failedMessageId,
                   {
@@ -3749,8 +3891,8 @@ export function IngestModeToggle({
                     status: "streaming"
                   }
                 ));
-                setNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
-                setErrorMessage("");
+                setRequestNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
+                setRequestErrorMessage("");
               },
               onStatus: (event) => {
                 if (!isCurrentRequest()) {
@@ -3759,12 +3901,12 @@ export function IngestModeToggle({
 
                 if (event.type === "rate_limit_wait") {
                   const waitSeconds = Math.max(1, Math.ceil((event.retryAfterMs ?? 0) / 1000));
-                  setNoticeMessage(`豆包限流排队中，预计 ${waitSeconds} 秒后使用同模型重试...`);
+                  setRequestNoticeMessage(`豆包限流排队中，预计 ${waitSeconds} 秒后使用同模型重试...`);
                   return;
                 }
 
                 if (event.type === "queue_wait") {
-                  setNoticeMessage(`豆包请求正在排队（前方 ${event.queueDepth ?? 0} 个任务）...`);
+                  setRequestNoticeMessage(`豆包请求正在排队（前方 ${event.queueDepth ?? 0} 个任务）...`);
                   return;
                 }
 
@@ -3777,14 +3919,14 @@ export function IngestModeToggle({
                   setDoubaoInferencePaused(true);
                   writeLocalJson(DOUBAO_INFERENCE_PAUSED_STORAGE_KEY, true);
                   setUnavailableModelProviders((current) => Array.from(new Set([...current, "doubao-pro"])));
-                  setNoticeMessage("正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。");
+                  setRequestNoticeMessage("正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。");
                   return;
                 }
 
                 if (event.state === "pending" && visibleReplyRendered) {
-                  setNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
+                  setRequestNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
                 } else if (event.state === "deferred" && visibleReplyRendered) {
-                  setNoticeMessage("正文已生成，后台知识草稿暂缓入库。");
+                  setRequestNoticeMessage("正文已生成，后台知识草稿暂缓入库。");
                 }
               }
             },
@@ -3821,7 +3963,7 @@ export function IngestModeToggle({
           const retryDelayMs = getRetryDelayMs(attempt);
 
           if (canRetryWechatTimeout) {
-            setNoticeMessage(`${requestModelOption.label} 首次等待超时，正在使用同一个模型自动重试...`);
+            setRequestNoticeMessage(`${requestModelOption.label} 首次等待超时，正在使用同一个模型自动重试...`);
           }
 
           console.warn("[admin-ingest:gpt:retry]", {
@@ -3912,25 +4054,35 @@ export function IngestModeToggle({
       });
       conversationStateByIdRef.current[conversationId] = nextConversationState;
 
-      ingestSuccessLockRef.current = true;
-      lastSuccessfulIngestAtRef.current = successAt;
-      lastSuccessfulIngestRequestIdRef.current = requestId;
-      suppressFallbackToastUntilRef.current = successAt + INGEST_SUCCESS_TOAST_SUPPRESS_MS;
+      ingestSuccessLockByConversationRef.current[conversationId] = true;
+      lastSuccessfulIngestAtByConversationRef.current[conversationId] = successAt;
+      suppressFallbackToastUntilByConversationRef.current[conversationId] = successAt + INGEST_SUCCESS_TOAST_SUPPRESS_MS;
 
-      setDraft(result.draft);
-      setRecords(nextRecords);
-      setResolvedModel(result.model ?? currentModelLabel);
-      setLastInput(effectiveInput);
-      setGptFallbackToast(fallbackDescription ? {
+      conversationDraftsByIdRef.current = {
+        ...conversationDraftsByIdRef.current,
+        [conversationId]: result.draft
+      };
+      setConversationDraftsById((current) => ({
+        ...current,
+        [conversationId]: result.draft
+      }));
+      setRecords((current) => mergeTrainingRecords(result.records, current));
+      if (isRequestConversationVisible()) {
+        draftRef.current = result.draft;
+        setDraft(result.draft);
+        setResolvedModel(result.model ?? currentModelLabel);
+        setLastInput(effectiveInput);
+      }
+      setRequestFallbackToast(fallbackDescription ? {
         id: `model-fallback-${Date.now()}`,
         title: "已切换备用模型完成本次生成",
         description: fallbackDescription
       } : null);
-      setErrorMessage("");
-      setNoticeMessage(metadataInferencePaused
+      setRequestErrorMessage("");
+      setRequestNoticeMessage(metadataInferencePaused
         ? metadataPausedNotice
         : fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
-      setMessages((current) => replaceIngestRetryOutcome(
+      commitRequestMessages((current) => replaceIngestRetryOutcome(
         current.map(markMessageCompleted),
         options?.failedMessageId,
         {
@@ -4049,7 +4201,7 @@ export function IngestModeToggle({
         ? error.files
         : resumableUploads;
 
-      if (!options?.preserveComposer) {
+      if (!options?.preserveComposer && isRequestConversationVisible()) {
         setInput((current) => current || value);
         setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
       }
@@ -4069,7 +4221,7 @@ export function IngestModeToggle({
             }
           }
         );
-        setMessages((current) => replaceIngestRetryOutcome(
+        commitRequestMessages((current) => replaceIngestRetryOutcome(
           current,
           options?.failedMessageId,
           {
@@ -4100,17 +4252,17 @@ export function IngestModeToggle({
           }
         ));
         successRendered = true;
-        setGptFallbackToast(null);
-        setNoticeMessage("豆包正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。");
-        setErrorMessage("");
+        setRequestFallbackToast(null);
+        setRequestNoticeMessage("豆包正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。");
+        setRequestErrorMessage("");
         return null;
       }
 
       if (abortController.signal.aborted) {
-        setGptFallbackToast(null);
-        setNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
-        setErrorMessage("");
-        showActionToast({
+        setRequestFallbackToast(null);
+        setRequestNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
+        setRequestErrorMessage("");
+        showRequestActionToast({
           type: "info",
           title: "本轮投喂已停止，内容已保留。"
         });
@@ -4122,10 +4274,10 @@ export function IngestModeToggle({
           requestId,
           attachmentCount: draftAttachments.length
         });
-        setGptFallbackToast(null);
-        setNoticeMessage(attachmentEvidenceMessage);
-        setErrorMessage(attachmentEvidenceMessage);
-        showActionToast({
+        setRequestFallbackToast(null);
+        setRequestNoticeMessage(attachmentEvidenceMessage);
+        setRequestErrorMessage(attachmentEvidenceMessage);
+        showRequestActionToast({
           type: "warning",
           title: "附件证据不足，已停止本轮分析。"
         });
@@ -4136,10 +4288,10 @@ export function IngestModeToggle({
         reason: rawErrorMessage,
         stateDomain,
         requestId,
-        activeRequestId: activeIngestRequestIdRef.current,
-        hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
-        lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
-        suppressUntil: suppressFallbackToastUntilRef.current,
+        activeRequestId: activeIngestRequestIdByConversationRef.current[conversationId],
+        hasCurrentSuccess: successRendered || Boolean(ingestSuccessLockByConversationRef.current[conversationId]),
+        lastSuccessfulAt: lastSuccessfulIngestAtByConversationRef.current[conversationId] ?? 0,
+        suppressUntil: suppressFallbackToastUntilByConversationRef.current[conversationId] ?? 0,
         status: responseStatus,
         errorCode,
         causeCode,
@@ -4153,11 +4305,11 @@ export function IngestModeToggle({
           errorCode,
           causeCode,
           requestId,
-          hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
+          hasCurrentSuccess: successRendered || Boolean(ingestSuccessLockByConversationRef.current[conversationId]),
           stateDomain
         });
-        setGptFallbackToast(null);
-        setErrorMessage("");
+        setRequestFallbackToast(null);
+        setRequestErrorMessage("");
         return null;
       }
 
@@ -4169,10 +4321,10 @@ export function IngestModeToggle({
           rawMessage: error instanceof Error ? error.message : String(error ?? ""),
           requestId
         });
-        setGptFallbackToast(null);
-        setNoticeMessage(authAccessMessage);
-        setErrorMessage(authAccessMessage);
-        showActionToast({
+        setRequestFallbackToast(null);
+        setRequestNoticeMessage(authAccessMessage);
+        setRequestErrorMessage(authAccessMessage);
+        showRequestActionToast({
           type: "warning",
           title: authAccessMessage
         });
@@ -4187,10 +4339,10 @@ export function IngestModeToggle({
           rawMessage: error instanceof Error ? error.message : String(error ?? ""),
           requestId
         });
-        setGptFallbackToast(null);
-        setNoticeMessage(modelHealthMessage);
-        setErrorMessage("");
-        showActionToast({
+        setRequestFallbackToast(null);
+        setRequestNoticeMessage(modelHealthMessage);
+        setRequestErrorMessage("");
+        showRequestActionToast({
           type: "info",
           title: modelHealthMessage
         });
@@ -4215,10 +4367,10 @@ export function IngestModeToggle({
         reason: error instanceof Error ? error.message : String(error ?? ""),
         stateDomain,
         requestId,
-        activeRequestId: activeIngestRequestIdRef.current,
-        hasCurrentSuccess: successRendered || ingestSuccessLockRef.current,
-        lastSuccessfulAt: lastSuccessfulIngestAtRef.current,
-        suppressUntil: suppressFallbackToastUntilRef.current,
+        activeRequestId: activeIngestRequestIdByConversationRef.current[conversationId],
+        hasCurrentSuccess: successRendered || Boolean(ingestSuccessLockByConversationRef.current[conversationId]),
+        lastSuccessfulAt: lastSuccessfulIngestAtByConversationRef.current[conversationId] ?? 0,
+        suppressUntil: suppressFallbackToastUntilByConversationRef.current[conversationId] ?? 0,
         status: responseStatus,
         errorCode,
         causeCode,
@@ -4234,15 +4386,15 @@ export function IngestModeToggle({
           requestId,
           stateDomain
         });
-        setGptFallbackToast(null);
-        setErrorMessage("");
-        setNoticeMessage("已忽略非当前投喂请求的临时状态。");
+        setRequestFallbackToast(null);
+        setRequestErrorMessage("");
+        setRequestNoticeMessage("已忽略非当前投喂请求的临时状态。");
         return null;
       }
 
       // The persistent failure card is the single source of truth for generation failures.
-      setGptFallbackToast(null);
-      setMessages((current) => replaceIngestRetryOutcome(
+      setRequestFallbackToast(null);
+      commitRequestMessages((current) => replaceIngestRetryOutcome(
         current,
         options?.failedMessageId,
         {
@@ -4283,8 +4435,8 @@ export function IngestModeToggle({
           status: "failed"
         }
       ));
-      setNoticeMessage(message);
-      setErrorMessage(message);
+      setRequestNoticeMessage(message);
+      setRequestErrorMessage(message);
       return null;
     } finally {
       if (successRendered) {
@@ -4297,21 +4449,25 @@ export function IngestModeToggle({
       }
       const queuedRequest = getNextQueuedRequest(requestQueueRef.current, conversationId);
 
-      if (queuedRequest) {
+      if (queuedRequest && isRequestConversationVisible()) {
         setInput((current) => current || queuedRequest.prompt);
       }
 
-      if (activeIngestRequestIdRef.current === requestId || shouldResetLoading(conversationStateByIdRef.current[conversationId], requestId)) {
-        setIsParsing(false);
-        if (activeIngestRequestIdRef.current === requestId) {
-          activeIngestRequestIdRef.current = "";
-        }
+      if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
+        delete activeIngestRequestIdByConversationRef.current[conversationId];
       }
+      setIsParsing(
+        countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+      );
     }
   }
 
   async function handleRetryFailedMessage(failedMessageId: string, prompt: string) {
-    if (isParsing) {
+    if (
+      isIngestConversationRequestActive(
+        conversationStateByIdRef.current[activeConversationIdRef.current]
+      )
+    ) {
       setNoticeMessage("上一条还在生成，请稍候再重试。");
       return null;
     }
@@ -4359,7 +4515,12 @@ export function IngestModeToggle({
     prompt: string,
     replyMarkdown: string
   ) {
-    if (isParsing || recoveringMetadataMessageId) {
+    if (
+      isIngestConversationRequestActive(
+        conversationStateByIdRef.current[activeConversationIdRef.current]
+      )
+      || recoveringMetadataMessageId
+    ) {
       setNoticeMessage("当前已有模型任务进行中，请稍候再重新整理知识草稿。");
       return null;
     }
@@ -4538,16 +4699,23 @@ export function IngestModeToggle({
   }
 
   function handleCancelIngest() {
-    const controllers = Object.values(abortControllerByConversationRef.current);
+    const conversationId = activeConversationIdRef.current;
+    const controller = abortControllerByConversationRef.current[conversationId];
+    const requestId = activeIngestRequestIdByConversationRef.current[conversationId];
 
-    if (controllers.length === 0) {
+    if (!controller || !requestId) {
       setNoticeMessage("当前没有正在进行的附件识别或模型生成。");
       return;
     }
 
-    controllers.forEach((controller) => controller.abort(
+    requestQueueRef.current = cancelRequest(
+      requestQueueRef.current,
+      conversationId,
+      requestId
+    );
+    controller.abort(
       new DOMException("用户已停止本轮附件识别与生成。", "AbortError")
-    ));
+    );
     setNoticeMessage("正在停止本轮附件识别与生成...");
   }
 
@@ -5437,6 +5605,9 @@ export function IngestModeToggle({
   }
 
   const activeConversationRequestState = conversationStateByIdRef.current[activeConversationId];
+  const activeConversationIsParsing = isIngestConversationRequestActive(
+    activeConversationRequestState
+  ) || Boolean(preparingConversationIds[activeConversationId]);
   const hasVisibleReplyForActiveRequest = hasVisibleReplyForActiveIngestRequest(
     activeConversationRequestState
   );
@@ -5495,10 +5666,10 @@ export function IngestModeToggle({
     voiceState,
     notifications,
     settingsState,
-    isParsing,
+    isParsing: activeConversationIsParsing,
     showParsingProgress: shouldShowAdminIngestParsingProgress({
-      isParsing,
-      isRequestActive: isIngestConversationRequestActive(activeConversationRequestState),
+      isParsing: activeConversationIsParsing,
+      isRequestActive: activeConversationIsParsing,
       hasFullIngestAccess,
       hasVisibleReply: hasVisibleReplyForActiveRequest
     }),
