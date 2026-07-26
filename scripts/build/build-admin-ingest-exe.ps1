@@ -186,7 +186,7 @@ try {
     try {
       Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
       Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command {
-        npx electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis "--config.extraMetadata.version=$($ReleaseInfo.version)"
+        npx electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis --publish never "--config.extraMetadata.version=$($ReleaseInfo.version)"
       }
     } finally {
       Remove-Item -LiteralPath $ElectronBuildMetadata -Force -ErrorAction SilentlyContinue

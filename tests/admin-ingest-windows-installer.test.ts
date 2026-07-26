@@ -43,7 +43,7 @@ assert.match(
 );
 assert.doesNotMatch(packageJson.scripts["admin-ingest:desktop:build"], /portable/);
 
-assert.match(buildScript, /--win nsis/);
+assert.match(buildScript, /--win nsis --publish never/);
 assert.doesNotMatch(buildScript, /--win portable/);
 assert.match(buildScript, /Find-NsisInstallerOutput/);
 assert.match(buildScript, /admin-ingest-setup-\$Version\.exe/);
