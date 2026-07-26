@@ -17,6 +17,10 @@ const voiceRouteSource = readFileSync(
   "app/api/admin/ingest-voice/transcribe/route.ts",
   "utf8"
 );
+const voiceRefineRouteSource = readFileSync(
+  "app/api/admin/ingest-voice/refine/route.ts",
+  "utf8"
+);
 const middlewareSource = readFileSync("middleware.ts", "utf8");
 const androidManifest = readFileSync(
   "android/app/src/main/AndroidManifest.xml",
@@ -55,6 +59,10 @@ assert.ok(
 );
 assert.match(
   modeToggleSource,
+  /detail\.state === "audio-snapshot"[\s\S]*queueNativeVoiceSnapshot\(detail\)/
+);
+assert.match(
+  modeToggleSource,
   /detail\.state === "audio"[\s\S]*transcribeNativeAudio\(detail\)/
 );
 assert.match(
@@ -79,6 +87,18 @@ assert.match(
 );
 assert.match(
   modeToggleSource,
+  /refineAdminIngestNativeVoice\([\s\S]*rawTranscript[\s\S]*expectedHistoryScope[\s\S]*controller\.signal/
+);
+assert.match(
+  modeToggleSource,
+  /口语整理暂时不可用[\s\S]*已保留原始语音文字/
+);
+assert.doesNotMatch(
+  modeToggleSource,
+  /refineNativeVoiceTranscript[\s\S]{0,2000}(?:handleSend|sendCoreIngest|submit)/
+);
+assert.match(
+  modeToggleSource,
   /nativeVoiceConversationScopeRef[\s\S]*activeConversationIdRef\.current/
 );
 assert.match(
@@ -89,6 +109,10 @@ assert.match(
 assert.match(
   voiceClientSource,
   /\/api\/admin\/ingest-voice\/transcribe/
+);
+assert.match(
+  voiceClientSource,
+  /\/api\/admin\/ingest-voice\/refine/
 );
 assert.match(
   voiceClientSource,
@@ -159,6 +183,34 @@ assert.doesNotMatch(
   `${voiceRouteSource}\n${voiceClientSource}`,
   /deepseek|doubao|rag/i
 );
+assert.match(
+  voiceRefineRouteSource,
+  /requireAdminIngestChatActor\(\)/
+);
+assert.match(
+  voiceRefineRouteSource,
+  /matchesAdminIngestHistoryScope/
+);
+assert.match(
+  voiceRefineRouteSource,
+  /DEFAULT_QWEN_REFINEMENT_MODEL = "qwen-plus"/
+);
+assert.match(
+  voiceRefineRouteSource,
+  /你只负责整理用户刚刚说出的口语文字，不要回答其中的问题/
+);
+assert.match(
+  voiceRefineRouteSource,
+  /保留原意、人物、数字、时间、关系和关键事实，不得添加原文不存在的信息/
+);
+assert.match(
+  voiceRefineRouteSource,
+  /不要添加标题、分析、建议、解释或前后缀，只输出整理后的正文/
+);
+assert.doesNotMatch(
+  voiceRefineRouteSource,
+  /deepseek|doubao|prisma|database|writeFile/i
+);
 
 assert.doesNotMatch(
   androidManifest,
@@ -199,19 +251,35 @@ assert.match(
 );
 assert.match(
   androidActivity,
-  /SpeechRecognizer\.isRecognitionAvailable\(this\)/
+  /startAdminIngestVoiceInput\(\)[\s\S]*startAdminIngestPcmRecording\(\)[\s\S]*startAdminIngestVoiceRecording\(\)/
 );
 assert.match(
   androidActivity,
-  /SpeechRecognizer\.createSpeechRecognizer\(this\)/
+  /new AudioRecord\([\s\S]*MediaRecorder\.AudioSource\.VOICE_RECOGNITION/
 );
 assert.match(
   androidActivity,
-  /RecognizerIntent\.EXTRA_PARTIAL_RESULTS, true/
+  /ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ = 16000/
 );
 assert.match(
   androidActivity,
-  /onPartialResults\(Bundle partialResults\)[\s\S]*postAdminIngestSpeechEvent\("partial"/
+  /AudioFormat\.CHANNEL_IN_MONO[\s\S]*AudioFormat\.ENCODING_PCM_16BIT/
+);
+assert.match(
+  androidActivity,
+  /ADMIN_INGEST_VOICE_SNAPSHOT_INTERVAL_MS = 1200/
+);
+assert.match(
+  androidActivity,
+  /"audio-snapshot"[\s\S]*"audio\/wav"[\s\S]*"admin-ingest-voice-live\.wav"/
+);
+assert.match(
+  androidActivity,
+  /voicePcmRecordingActive[\s\S]*recorder == voicePcmRecorder[\s\S]*sessionId\.equals\(adminIngestVoiceSessionId\)[\s\S]*postAdminIngestVoiceAudioEvent\([\s\S]*"audio-snapshot"/
+);
+assert.match(
+  androidActivity,
+  /createAdminIngestVoiceWav\(pcmBytes\)[\s\S]*"admin-ingest-voice\.wav"/
 );
 assert.match(
   androidActivity,
@@ -231,7 +299,7 @@ assert.match(
 );
 assert.match(
   androidActivity,
-  /MAX_ADMIN_INGEST_VOICE_RECORDING_MS = 15000L/
+  /MAX_ADMIN_INGEST_VOICE_RECORDING_MS = 45000L/
 );
 assert.match(
   androidActivity,

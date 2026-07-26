@@ -14,6 +14,8 @@ import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
+import android.media.AudioFormat;
+import android.media.AudioRecord;
 import android.media.MediaRecorder;
 import android.net.Uri;
 import android.os.Build;
@@ -65,7 +67,15 @@ public class MainActivity extends BridgeActivity {
     private static final long ADMIN_UPDATE_STALL_TIMEOUT_MS = 45_000L;
     private static final long ADMIN_UPDATE_MINIMUM_APK_BYTES = 1_048_576L;
     private static final int RECORD_AUDIO_PERMISSION_REQUEST_CODE = 6207;
-    private static final long MAX_ADMIN_INGEST_VOICE_RECORDING_MS = 15000L;
+    private static final int ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ = 16000;
+    private static final int ADMIN_INGEST_VOICE_BYTES_PER_SAMPLE = 2;
+    private static final int ADMIN_INGEST_VOICE_SNAPSHOT_INTERVAL_MS = 1200;
+    private static final int ADMIN_INGEST_VOICE_SNAPSHOT_BYTES =
+        ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ
+        * ADMIN_INGEST_VOICE_BYTES_PER_SAMPLE
+        * ADMIN_INGEST_VOICE_SNAPSHOT_INTERVAL_MS
+        / 1000;
+    private static final long MAX_ADMIN_INGEST_VOICE_RECORDING_MS = 45000L;
     private ValueCallback<Uri[]> fileChooserCallback;
     private long updateDownloadId = -1L;
     private long updateDownloadLastBytes = 0L;
@@ -85,6 +95,10 @@ public class MainActivity extends BridgeActivity {
     private boolean pendingVoiceRecording;
     private boolean voiceRecordingActive;
     private boolean voiceRecognitionActive;
+    private volatile boolean voicePcmRecordingActive;
+    private AudioRecord voicePcmRecorder;
+    private Thread voicePcmThread;
+    private ByteArrayOutputStream voicePcmOutput;
     private MediaRecorder voiceRecorder;
     private File voiceRecordingFile;
     private SpeechRecognizer voiceSpeechRecognizer;
@@ -175,6 +189,7 @@ public class MainActivity extends BridgeActivity {
         cancelNetworkRetry();
         stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
+        releaseAdminIngestPcmRecorder();
         releaseAdminIngestLiveSpeechRecognizer(true);
         releaseAdminIngestVoiceRecorder(true);
         super.onDestroy();
@@ -203,7 +218,12 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
-        if (pendingVoiceRecording || voiceRecordingActive || voiceRecognitionActive) {
+        if (
+            pendingVoiceRecording
+            || voicePcmRecordingActive
+            || voiceRecordingActive
+            || voiceRecognitionActive
+        ) {
             return;
         }
 
@@ -225,12 +245,249 @@ public class MainActivity extends BridgeActivity {
     private void startAdminIngestVoiceInput() {
         adminIngestVoiceSessionId = "admin-ingest-voice-" + System.currentTimeMillis();
 
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            startAdminIngestLiveSpeechRecognition();
+        try {
+            startAdminIngestPcmRecording();
+        } catch (Exception error) {
+            startAdminIngestVoiceRecording();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private void startAdminIngestPcmRecording() throws Exception {
+        releaseAdminIngestPcmRecorder();
+        int minimumBufferSize = AudioRecord.getMinBufferSize(
+            ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT
+        );
+
+        if (minimumBufferSize <= 0) {
+            throw new IllegalStateException("Invalid AudioRecord buffer size.");
+        }
+
+        int bufferSize = Math.max(minimumBufferSize, 4096);
+        AudioRecord recorder = new AudioRecord(
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ,
+            AudioFormat.CHANNEL_IN_MONO,
+            AudioFormat.ENCODING_PCM_16BIT,
+            bufferSize
+        );
+
+        if (recorder.getState() != AudioRecord.STATE_INITIALIZED) {
+            recorder.release();
+            throw new IllegalStateException("AudioRecord is not initialized.");
+        }
+
+        ByteArrayOutputStream output = new ByteArrayOutputStream(
+            ADMIN_INGEST_VOICE_SNAPSHOT_BYTES * 2
+        );
+        String sessionId = adminIngestVoiceSessionId;
+
+        try {
+            recorder.startRecording();
+        } catch (Exception error) {
+            recorder.release();
+            throw error;
+        }
+
+        voicePcmRecorder = recorder;
+        voicePcmOutput = output;
+        voicePcmRecordingActive = true;
+        voicePcmThread = new Thread(
+            () -> captureAdminIngestPcmAudio(
+                recorder,
+                output,
+                bufferSize,
+                sessionId
+            ),
+            "admin-ingest-voice-capture"
+        );
+        voicePcmThread.start();
+        postAdminIngestSpeechEvent("started", "", "", sessionId);
+        scheduleAdminIngestVoiceInputStop();
+    }
+
+    private void captureAdminIngestPcmAudio(
+        AudioRecord recorder,
+        ByteArrayOutputStream output,
+        int bufferSize,
+        String sessionId
+    ) {
+        byte[] buffer = new byte[bufferSize];
+        int nextSnapshotSize = ADMIN_INGEST_VOICE_SNAPSHOT_BYTES;
+
+        while (
+            voicePcmRecordingActive
+            && recorder == voicePcmRecorder
+            && sessionId.equals(adminIngestVoiceSessionId)
+        ) {
+            int bytesRead;
+
+            try {
+                bytesRead = recorder.read(buffer, 0, buffer.length);
+            } catch (Exception error) {
+                break;
+            }
+
+            if (bytesRead <= 0) {
+                continue;
+            }
+
+            output.write(buffer, 0, bytesRead);
+            if (output.size() < nextSnapshotSize) {
+                continue;
+            }
+
+            byte[] snapshotPcm = output.toByteArray();
+            nextSnapshotSize = snapshotPcm.length + ADMIN_INGEST_VOICE_SNAPSHOT_BYTES;
+            byte[] snapshotWav = createAdminIngestVoiceWav(snapshotPcm);
+            runOnUiThread(() -> {
+                if (
+                    voicePcmRecordingActive
+                        && recorder == voicePcmRecorder
+                        && sessionId.equals(adminIngestVoiceSessionId)
+                ) {
+                    postAdminIngestVoiceAudioEvent(
+                        "audio-snapshot",
+                        Base64.encodeToString(snapshotWav, Base64.NO_WRAP),
+                        "audio/wav",
+                        "admin-ingest-voice-live.wav",
+                        sessionId
+                    );
+                }
+            });
+        }
+    }
+
+    private void stopAdminIngestPcmRecording(boolean shouldDispatchAudio) {
+        if (!voicePcmRecordingActive || voicePcmRecorder == null) {
             return;
         }
 
-        startAdminIngestVoiceRecording();
+        cancelAdminIngestVoiceInputStop();
+        AudioRecord activeRecorder = voicePcmRecorder;
+        Thread activeThread = voicePcmThread;
+        ByteArrayOutputStream activeOutput = voicePcmOutput;
+        String sessionId = adminIngestVoiceSessionId;
+        voicePcmRecordingActive = false;
+
+        try {
+            activeRecorder.stop();
+        } catch (Exception ignored) {}
+
+        if (activeThread != null && activeThread != Thread.currentThread()) {
+            try {
+                activeThread.join(1500L);
+            } catch (InterruptedException error) {
+                Thread.currentThread().interrupt();
+            }
+        }
+
+        activeRecorder.release();
+        voicePcmRecorder = null;
+        voicePcmThread = null;
+        voicePcmOutput = null;
+
+        if (!shouldDispatchAudio) {
+            clearAdminIngestVoiceSession(sessionId);
+            return;
+        }
+
+        byte[] pcmBytes = activeOutput == null ? new byte[0] : activeOutput.toByteArray();
+        if (pcmBytes.length < ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ / 5) {
+            postAdminIngestSpeechEvent(
+                "error",
+                "",
+                "录音时间太短或没有录到声音，请重新录制。",
+                sessionId
+            );
+            clearAdminIngestVoiceSession(sessionId);
+            return;
+        }
+
+        byte[] wavBytes = createAdminIngestVoiceWav(pcmBytes);
+        postAdminIngestVoiceAudioEvent(
+            "audio",
+            Base64.encodeToString(wavBytes, Base64.NO_WRAP),
+            "audio/wav",
+            "admin-ingest-voice.wav",
+            sessionId
+        );
+        clearAdminIngestVoiceSession(sessionId);
+    }
+
+    private void releaseAdminIngestPcmRecorder() {
+        if (voicePcmRecordingActive && voicePcmRecorder != null) {
+            stopAdminIngestPcmRecording(false);
+            return;
+        }
+
+        voicePcmRecordingActive = false;
+        AudioRecord activeRecorder = voicePcmRecorder;
+        voicePcmRecorder = null;
+        voicePcmThread = null;
+        voicePcmOutput = null;
+
+        if (activeRecorder != null) {
+            try {
+                activeRecorder.stop();
+            } catch (Exception ignored) {}
+            activeRecorder.release();
+        }
+    }
+
+    private byte[] createAdminIngestVoiceWav(byte[] pcmBytes) {
+        int dataLength = pcmBytes.length;
+        int byteRate = ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ
+            * ADMIN_INGEST_VOICE_BYTES_PER_SAMPLE;
+        ByteArrayOutputStream wav = new ByteArrayOutputStream(dataLength + 44);
+
+        writeAdminIngestAscii(wav, "RIFF");
+        writeAdminIngestLittleEndianInt(wav, dataLength + 36);
+        writeAdminIngestAscii(wav, "WAVE");
+        writeAdminIngestAscii(wav, "fmt ");
+        writeAdminIngestLittleEndianInt(wav, 16);
+        writeAdminIngestLittleEndianShort(wav, 1);
+        writeAdminIngestLittleEndianShort(wav, 1);
+        writeAdminIngestLittleEndianInt(wav, ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ);
+        writeAdminIngestLittleEndianInt(wav, byteRate);
+        writeAdminIngestLittleEndianShort(
+            wav,
+            ADMIN_INGEST_VOICE_BYTES_PER_SAMPLE
+        );
+        writeAdminIngestLittleEndianShort(
+            wav,
+            ADMIN_INGEST_VOICE_BYTES_PER_SAMPLE * 8
+        );
+        writeAdminIngestAscii(wav, "data");
+        writeAdminIngestLittleEndianInt(wav, dataLength);
+        wav.write(pcmBytes, 0, pcmBytes.length);
+        return wav.toByteArray();
+    }
+
+    private void writeAdminIngestAscii(ByteArrayOutputStream output, String value) {
+        for (int index = 0; index < value.length(); index += 1) {
+            output.write((byte) value.charAt(index));
+        }
+    }
+
+    private void writeAdminIngestLittleEndianInt(
+        ByteArrayOutputStream output,
+        int value
+    ) {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
+        output.write((value >> 16) & 0xff);
+        output.write((value >> 24) & 0xff);
+    }
+
+    private void writeAdminIngestLittleEndianShort(
+        ByteArrayOutputStream output,
+        int value
+    ) {
+        output.write(value & 0xff);
+        output.write((value >> 8) & 0xff);
     }
 
     private void startAdminIngestLiveSpeechRecognition() {
@@ -491,7 +748,9 @@ public class MainActivity extends BridgeActivity {
         cancelAdminIngestVoiceInputStop();
         voiceRecordingStopRunnable = () -> {
             voiceRecordingStopRunnable = null;
-            if (voiceRecognitionActive) {
+            if (voicePcmRecordingActive) {
+                stopAdminIngestPcmRecording(true);
+            } else if (voiceRecognitionActive) {
                 stopAdminIngestLiveSpeechRecognition(true);
             } else if (voiceRecordingActive) {
                 stopAdminIngestVoiceRecording(true);
@@ -644,6 +903,13 @@ public class MainActivity extends BridgeActivity {
     private void cancelAdminIngestVoiceInput() {
         String sessionId = adminIngestVoiceSessionId;
 
+        if (voicePcmRecordingActive) {
+            stopAdminIngestPcmRecording(false);
+            postAdminIngestSpeechEvent("cancelled", "", "", sessionId);
+            clearAdminIngestVoiceSession(sessionId);
+            return;
+        }
+
         if (voiceRecognitionActive) {
             stopAdminIngestLiveSpeechRecognition(false);
             return;
@@ -711,8 +977,24 @@ public class MainActivity extends BridgeActivity {
         String fileName,
         String sessionId
     ) {
-        postAdminIngestSpeechEvent(
+        postAdminIngestVoiceAudioEvent(
             "audio",
+            audioBase64,
+            mimeType,
+            fileName,
+            sessionId
+        );
+    }
+
+    private void postAdminIngestVoiceAudioEvent(
+        String state,
+        String audioBase64,
+        String mimeType,
+        String fileName,
+        String sessionId
+    ) {
+        postAdminIngestSpeechEvent(
+            state,
             "",
             "",
             audioBase64,
@@ -1469,6 +1751,11 @@ public class MainActivity extends BridgeActivity {
         @JavascriptInterface
         public void stopSpeechRecognition() {
             runOnUiThread(() -> {
+                if (voicePcmRecordingActive) {
+                    stopAdminIngestPcmRecording(true);
+                    return;
+                }
+
                 if (voiceRecognitionActive) {
                     stopAdminIngestLiveSpeechRecognition(true);
                     return;

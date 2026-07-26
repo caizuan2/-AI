@@ -197,7 +197,10 @@ import {
   hasAdminIngestWechatConversationAttachment,
   shouldRetryAdminIngestWechatModelTimeout
 } from "@/lib/enterprise/admin-ingest-wechat-request";
-import { transcribeAdminIngestNativeVoice } from "@/lib/enterprise/admin-ingest-voice-client";
+import {
+  refineAdminIngestNativeVoice,
+  transcribeAdminIngestNativeVoice
+} from "@/lib/enterprise/admin-ingest-voice-client";
 
 type IngestMode = "chat" | "workbench" | "knowledge" | "release" | "memory";
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -299,7 +302,7 @@ type SpeechWindow = Window & {
   AndroidBridge?: AndroidSpeechBridge;
 };
 type NativeSpeechEventDetail = {
-  state?: "started" | "partial" | "audio" | "result" | "cancelled" | "error";
+  state?: "started" | "partial" | "audio-snapshot" | "audio" | "result" | "cancelled" | "error";
   transcript?: string;
   error?: string;
   audioBase64?: string;
@@ -752,6 +755,10 @@ export function IngestModeToggle({
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const nativeVoiceTranscriptionAbortControllerRef = useRef<AbortController | null>(null);
+  const nativeVoiceSnapshotAbortControllerRef = useRef<AbortController | null>(null);
+  const nativeVoiceSnapshotPendingRef = useRef<NativeSpeechEventDetail | null>(null);
+  const nativeVoiceSnapshotRunningRef = useRef(false);
+  const nativeVoiceSnapshotGenerationRef = useRef(0);
   const nativeVoiceBaseInputRef = useRef("");
   const nativeVoiceSessionIdRef = useRef("");
   const nativeVoiceHistoryScopeRef = useRef("");
@@ -1849,13 +1856,24 @@ export function IngestModeToggle({
         description: message
       });
     };
+    const resetNativeVoiceSnapshots = () => {
+      nativeVoiceSnapshotGenerationRef.current += 1;
+      nativeVoiceSnapshotPendingRef.current = null;
+      nativeVoiceSnapshotAbortControllerRef.current?.abort();
+      nativeVoiceSnapshotAbortControllerRef.current = null;
+    };
     const clearNativeVoiceSession = () => {
+      resetNativeVoiceSnapshots();
       nativeVoiceBaseInputRef.current = "";
       nativeVoiceSessionIdRef.current = "";
       nativeVoiceHistoryScopeRef.current = "";
       nativeVoiceConversationScopeRef.current = "";
     };
-    const applyNativeVoiceTranscript = (transcript: string, isFinal: boolean) => {
+    const renderNativeVoiceTranscript = (
+      transcript: string,
+      isRecording: boolean,
+      notice: string
+    ) => {
       setInput(composeAdminIngestLiveVoiceInput(
         nativeVoiceBaseInputRef.current,
         transcript
@@ -1863,21 +1881,138 @@ export function IngestModeToggle({
       setVoiceState((current) => ({
         ...current,
         isVoiceSupported: true,
-        isRecording: !isFinal,
+        isRecording,
         transcript,
         error: ""
       }));
       setErrorMessage("");
-      setNoticeMessage(isFinal ? "语音内容已填入输入框。" : "正在听写，文字会同步显示在输入框。");
+      setNoticeMessage(notice);
+    };
+    const applyNativeVoiceTranscript = (transcript: string, isFinal: boolean) => {
+      renderNativeVoiceTranscript(
+        transcript,
+        !isFinal,
+        isFinal
+          ? "语音内容已整理并填入输入框，请确认后再发送。"
+          : "正在云端听写，文字会同步显示在输入框。"
+      );
 
-      if (isFinal) {
-        clearNativeVoiceSession();
+      if (!isFinal) {
+        return;
+      }
+
+      clearNativeVoiceSession();
+      setActionToast({
+        id: `voice-success-${Date.now()}`,
+        type: "success",
+        title: "语音内容已整理并填入输入框",
+        description: "请检查或继续编辑，确认后再点击发送。"
+      });
+    };
+    const refineNativeVoiceTranscript = async (
+      rawTranscript: string,
+      expectedHistoryScope: string,
+      controller: AbortController
+    ) => {
+      renderNativeVoiceTranscript(
+        rawTranscript,
+        false,
+        "语音已识别，正在整理口语表达..."
+      );
+
+      try {
+        const refinedText = await refineAdminIngestNativeVoice(
+          rawTranscript,
+          expectedHistoryScope,
+          controller.signal
+        );
+
+        if (
+          controller.signal.aborted
+          || historyScopeRef.current !== expectedHistoryScope
+        ) {
+          return;
+        }
+
+        applyNativeVoiceTranscript(refinedText, true);
+      } catch {
+        if (controller.signal.aborted) {
+          return;
+        }
+
+        applyNativeVoiceTranscript(rawTranscript, true);
         setActionToast({
-          id: `voice-success-${Date.now()}`,
-          type: "success",
-          title: "语音内容已填入输入框。"
+          id: `voice-refine-fallback-${Date.now()}`,
+          type: "warning",
+          title: "口语整理暂时不可用",
+          description: "已保留原始语音文字，您可以继续编辑后发送。"
         });
       }
+    };
+    const queueNativeVoiceSnapshot = (detail: NativeSpeechEventDetail) => {
+      nativeVoiceSnapshotPendingRef.current = detail;
+
+      if (nativeVoiceSnapshotRunningRef.current) {
+        return;
+      }
+
+      nativeVoiceSnapshotRunningRef.current = true;
+      void (async () => {
+        while (nativeVoiceSnapshotPendingRef.current) {
+          const snapshot = nativeVoiceSnapshotPendingRef.current;
+          nativeVoiceSnapshotPendingRef.current = null;
+          const audioBase64 = snapshot.audioBase64?.trim() ?? "";
+          const expectedHistoryScope = nativeVoiceHistoryScopeRef.current || historyScopeRef.current;
+          const expectedSessionId = snapshot.sessionId?.trim() ?? "";
+          const generation = nativeVoiceSnapshotGenerationRef.current;
+
+          if (!audioBase64 || !expectedHistoryScope || !expectedSessionId) {
+            continue;
+          }
+
+          const controller = new AbortController();
+          nativeVoiceSnapshotAbortControllerRef.current = controller;
+
+          try {
+            const transcript = await transcribeAdminIngestNativeVoice({
+              audioBase64,
+              mimeType: snapshot.mimeType,
+              fileName: snapshot.fileName
+            }, expectedHistoryScope, controller.signal);
+            const currentConversationScope = [
+              historyScopeRef.current,
+              activeAgentIdRef.current,
+              activeConversationIdRef.current
+            ].join("|");
+
+            if (
+              controller.signal.aborted
+              || generation !== nativeVoiceSnapshotGenerationRef.current
+              || historyScopeRef.current !== expectedHistoryScope
+              || !isCurrentAdminIngestVoiceEvent({
+                activeSessionId: nativeVoiceSessionIdRef.current,
+                eventSessionId: expectedSessionId,
+                startedHistoryScope: nativeVoiceConversationScopeRef.current,
+                currentHistoryScope: currentConversationScope
+              })
+            ) {
+              continue;
+            }
+
+            applyNativeVoiceTranscript(transcript, false);
+          } catch {
+            // Intermediate snapshots are best-effort. The complete recording is
+            // always sent when the user stops, so a transient snapshot failure
+            // must not discard the recording or show a false fatal error.
+          } finally {
+            if (nativeVoiceSnapshotAbortControllerRef.current === controller) {
+              nativeVoiceSnapshotAbortControllerRef.current = null;
+            }
+          }
+        }
+
+        nativeVoiceSnapshotRunningRef.current = false;
+      })();
     };
     const transcribeNativeAudio = async (detail: NativeSpeechEventDetail) => {
       const audioBase64 = detail.audioBase64?.trim() ?? "";
@@ -1889,6 +2024,7 @@ export function IngestModeToggle({
         return;
       }
 
+      resetNativeVoiceSnapshots();
       nativeVoiceTranscriptionAbortControllerRef.current?.abort();
       const controller = new AbortController();
       nativeVoiceTranscriptionAbortControllerRef.current = controller;
@@ -1915,7 +2051,11 @@ export function IngestModeToggle({
           return;
         }
 
-        applyNativeVoiceTranscript(transcript, true);
+        await refineNativeVoiceTranscript(
+          transcript,
+          expectedHistoryScope,
+          controller
+        );
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -1952,6 +2092,7 @@ export function IngestModeToggle({
           return;
         }
 
+        resetNativeVoiceSnapshots();
         nativeVoiceSessionIdRef.current = eventSessionId;
         setErrorMessage("");
         setVoiceState((current) => ({
@@ -1978,13 +2119,26 @@ export function IngestModeToggle({
         return;
       }
 
+      if (detail.state === "audio-snapshot") {
+        queueNativeVoiceSnapshot(detail);
+        return;
+      }
+
       if (detail.state === "audio") {
         void transcribeNativeAudio(detail);
         return;
       }
 
       if (detail.state === "result" && transcript) {
-        applyNativeVoiceTranscript(transcript, true);
+        resetNativeVoiceSnapshots();
+        nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+        const controller = new AbortController();
+        nativeVoiceTranscriptionAbortControllerRef.current = controller;
+        void refineNativeVoiceTranscript(
+          transcript,
+          nativeVoiceHistoryScopeRef.current || historyScopeRef.current,
+          controller
+        );
         return;
       }
 
@@ -2017,6 +2171,7 @@ export function IngestModeToggle({
       window.removeEventListener(ADMIN_INGEST_NATIVE_SPEECH_EVENT, handleNativeSpeechEvent);
       recognitionRef.current?.abort?.();
       recognitionRef.current = null;
+      resetNativeVoiceSnapshots();
       nativeVoiceTranscriptionAbortControllerRef.current?.abort();
       nativeVoiceTranscriptionAbortControllerRef.current = null;
       speechWindow.AndroidBridge?.cancelSpeechRecognition?.();
@@ -2025,6 +2180,10 @@ export function IngestModeToggle({
   }, []);
 
   useEffect(() => {
+    nativeVoiceSnapshotGenerationRef.current += 1;
+    nativeVoiceSnapshotPendingRef.current = null;
+    nativeVoiceSnapshotAbortControllerRef.current?.abort();
+    nativeVoiceSnapshotAbortControllerRef.current = null;
     nativeVoiceTranscriptionAbortControllerRef.current?.abort();
     nativeVoiceTranscriptionAbortControllerRef.current = null;
     const currentConversationScope = [
@@ -4757,6 +4916,12 @@ export function IngestModeToggle({
           isRecording: true,
           error: ""
         }));
+        nativeVoiceSnapshotGenerationRef.current += 1;
+        nativeVoiceSnapshotPendingRef.current = null;
+        nativeVoiceSnapshotAbortControllerRef.current?.abort();
+        nativeVoiceSnapshotAbortControllerRef.current = null;
+        nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+        nativeVoiceTranscriptionAbortControllerRef.current = null;
         nativeVoiceBaseInputRef.current = input;
         nativeVoiceSessionIdRef.current = "";
         nativeVoiceHistoryScopeRef.current = historyScopeRef.current;
