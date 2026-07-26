@@ -68,6 +68,26 @@ jobs:
       - name: Install dependencies
         run: npm install --include=dev
 
+      - name: Configure stable Android release keystore
+        shell: bash
+        env:
+          ANDROID_RELEASE_KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${ANDROID_RELEASE_KEYSTORE_BASE64}" ]]; then
+            echo "ANDROID_RELEASE_KEYSTORE_BASE64 is not configured." >&2
+            exit 1
+          fi
+          keystore_file="${RUNNER_TEMP}/ai-knowledge-release.keystore"
+          printf '%s' "${ANDROID_RELEASE_KEYSTORE_BASE64}" | base64 --decode > "${keystore_file}"
+          chmod 600 "${keystore_file}"
+          test -s "${keystore_file}"
+          keytool -list \
+            -keystore "${keystore_file}" \
+            -storepass android \
+            -alias androiddebugkey
+          echo "ANDROID_RELEASE_KEYSTORE_PATH=${keystore_file}" >> "${GITHUB_ENV}"
+
       - name: Build APK and write manifest
         id: build_apk
         shell: pwsh
@@ -77,6 +97,16 @@ jobs:
             $argsList += "-FailOnMissingApk"
           }
           ./scripts/build/build-admin-ingest-apk.ps1 @argsList
+
+      - name: Verify signed APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          signed_apk="artifacts/admin-ingest/apk/admin-ingest.apk"
+          test -s "${signed_apk}"
+          apksigner="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -n "${apksigner}"
+          "${apksigner}" verify --verbose --print-certs "${signed_apk}"
 
       - name: Upload APK artifacts
         uses: actions/upload-artifact@v4

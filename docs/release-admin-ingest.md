@@ -44,21 +44,29 @@ powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-exe.ps
 4. Create a release tag using the project release process.
 5. Run `Admin Ingest Enterprise Release`.
    - `buildWeb=true` builds the Web package on GitHub Actions.
-   - `buildApk=true` builds the APK on GitHub Actions; local Android SDK is not required.
-   - `buildExe=true` builds the EXE on GitHub Actions; local Electron dependency download stability is not required.
+   - `buildApk=true` builds the APK on GitHub Actions; a real APK is mandatory.
+   - `buildExe=true` builds the EXE on GitHub Actions; a real EXE is mandatory.
    - `deployWeb=false` keeps the run as build/verify only.
-   - GitHub Release assets are uploaded only from real artifact files. APK and EXE keep fixed asset names:
+   - First run with `deployWeb=false`. Publish and verify the native packages before changing production Web.
+   - APK and EXE keep fixed asset names:
      - `admin-ingest.apk`
      - `admin-ingest.exe`
 6. Confirm the unified release manifest:
-   - Web artifact is available.
-   - APK artifact is available or has a clear unavailable reason.
-   - EXE artifact is available or has a clear unavailable reason.
-   - All available artifacts point to the same `releaseHead`.
-   - APK/EXE download buttons appear only when `available=true` and a real `downloadUrl` exists.
-7. If deploy is enabled, confirm:
+   - Web, APK, and EXE are all `available=true`.
+   - Web, APK, and EXE have the same `releaseHead`, `version`, and `build`.
+   - APK and EXE have a non-empty SHA-256, byte size, fixed asset name, and download URL.
+   - The GitHub Release contains both fixed native asset names.
+7. Re-run the same release commit with `deployWeb=true`. Web deployment is allowed only after the package release and sync checks pass.
+   - The standalone Web workflow cannot deploy production on its own.
+   - Production deploy requires `releaseVerified=true` from the unified release workflow.
+8. After deployment, confirm:
    - `/admin-ingest?app=ingest-admin&platform=web`
    - `/api/public/expert-market`
+   - `/releases/latest.json` reports the exact deployed SHA, version, build, and `force_update=true` for `admin`.
+   - The Web shell receives a forced content-update prompt when its SHA is stale.
+   - Older APK and EXE builds receive a forced package-update prompt.
+   - Current APK and EXE builds load the deployed Web content and do not receive a false package update.
+9. Record the deployed SHA/tag/build and the immediately previous production SHA/tag before closing the release.
 
 ## Local QA Address
 
@@ -106,6 +114,7 @@ Required top-level fields:
 
 - `app`
 - `version`
+- `build`
 - `environment`
 - `releaseHead`
 - `releaseTag`
@@ -114,23 +123,18 @@ Required top-level fields:
 - `exe`
 - `rollback`
 
-Unavailable APK/EXE artifacts are acceptable only when the manifest includes a clear `reason`, such as:
-
-- `ANDROID_SDK_NOT_FOUND`
-- `APK_ENTRY_NOT_FOUND`
-- `EXE_DEPENDENCY_DOWNLOAD_TIMEOUT`
-- `EXE_ENTRY_NOT_FOUND`
-
-Available APK/EXE artifacts must include:
+Web, APK, and EXE are all mandatory for a production release. APK/EXE must include:
 
 - `head`
+- `version`
+- `build`
 - `path`
 - `assetName`
 - `downloadUrl`
 - `size`
 - `sha256`
 
-The release is invalid when any available artifact `head` differs from `releaseHead`.
+The release is invalid when an artifact is missing, or when any artifact `head`, `version`, or `build` differs from the top-level release identity.
 
 ## Rollback Checklist
 

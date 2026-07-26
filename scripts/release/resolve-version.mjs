@@ -7,6 +7,7 @@ const DEFAULT_WEB_URLS = {
   staging: "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   prod: "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web"
 };
+const ADMIN_RELEASE_CONFIG_PATH = "config/admin-ingest/release.json";
 
 function readArg(name, fallback = null) {
   const index = process.argv.indexOf(name);
@@ -42,40 +43,30 @@ function normalizeEnvironment(value) {
   throw new Error(`Unsupported release environment: ${value}`);
 }
 
-function utcStamp(date = new Date()) {
-  const pad = (value) => String(value).padStart(2, "0");
-  return [
-    date.getUTCFullYear(),
-    pad(date.getUTCMonth() + 1),
-    pad(date.getUTCDate()),
-    pad(date.getUTCHours()),
-    pad(date.getUTCMinutes()),
-    pad(date.getUTCSeconds())
-  ].join("");
-}
-
-function resolveTag(commit, version, buildNumber) {
+function resolveTag(configuredTag) {
   if (process.env.GITHUB_REF_TYPE === "tag" && process.env.GITHUB_REF_NAME) {
+    if (configuredTag && process.env.GITHUB_REF_NAME !== configuredTag) {
+      throw new Error(
+        `Admin ingest release tag mismatch: expected=${configuredTag} actual=${process.env.GITHUB_REF_NAME}`
+      );
+    }
     return process.env.GITHUB_REF_NAME;
   }
 
-  const exactTag = git(["describe", "--tags", "--exact-match", commit]);
-  if (exactTag) {
-    return exactTag;
+  if (process.env.RELEASE_TAG && configuredTag && process.env.RELEASE_TAG !== configuredTag) {
+    throw new Error(
+      `Admin ingest release tag mismatch: expected=${configuredTag} actual=${process.env.RELEASE_TAG}`
+    );
   }
 
-  const pointedTags = git(["tag", "--points-at", commit])
-    .split(/\r?\n/)
-    .map((value) => value.trim())
-    .filter(Boolean);
-
-  return process.env.RELEASE_TAG || pointedTags[0] || `release/admin-ingest-${version}-${buildNumber}-${commit.slice(0, 8)}`;
+  return process.env.RELEASE_TAG || configuredTag;
 }
 
 const environment = normalizeEnvironment(
   readArg("--environment", process.env.RELEASE_ENV || process.env.BUILD_ENV || process.env.ADMIN_INGEST_ENV || "prod")
 );
 const packageJson = JSON.parse(readFileSync("package.json", "utf8"));
+const adminReleaseConfig = JSON.parse(readFileSync(ADMIN_RELEASE_CONFIG_PATH, "utf8"));
 const commit = process.env.RELEASE_HEAD || git(["rev-parse", "HEAD"]);
 
 if (!commit) {
@@ -87,11 +78,13 @@ const branch =
   process.env.GITHUB_REF_TYPE === "branch" && process.env.GITHUB_REF_NAME
     ? process.env.GITHUB_REF_NAME
     : git(["branch", "--show-current"], "detached");
-const buildNumber = process.env.BUILD_NUMBER || process.env.GITHUB_RUN_NUMBER || utcStamp();
+const buildNumber = process.env.ADMIN_INGEST_BUILD || adminReleaseConfig.build;
 const shortCommit = commit.slice(0, 8);
-const webUrl = process.env.ADMIN_INGEST_WEB_URL || DEFAULT_WEB_URLS[environment];
-const version = packageJson.version || "0.0.0";
-const tag = resolveTag(commit, version, buildNumber);
+const webUrl = process.env.ADMIN_INGEST_WEB_URL || adminReleaseConfig.web_url || DEFAULT_WEB_URLS[environment];
+const version = process.env.ADMIN_INGEST_VERSION || adminReleaseConfig.version || packageJson.version || "0.0.0";
+const configuredTag =
+  adminReleaseConfig.release_tag || `release/admin-ingest-${version}-build.${buildNumber}`;
+const tag = resolveTag(configuredTag);
 const github = buildGithubUrls(resolveGithubRepo());
 const encodedTag = encodeURIComponent(tag);
 
@@ -111,12 +104,12 @@ const releaseInfo = {
   githubRepo: github.repo,
   repository: github.repository,
   releaseUrl: `${github.repoUrl}/releases/tag/${encodedTag}`,
-  apkAssetName: "admin-ingest.apk",
-  exeAssetName: "admin-ingest.exe",
-  apkDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/admin-ingest.apk`,
-  exeDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/admin-ingest.exe`,
-  latestApkUrl: github.latestApkUrl,
-  latestExeUrl: github.latestExeUrl,
+  apkAssetName: adminReleaseConfig.apk_asset,
+  exeAssetName: adminReleaseConfig.exe_asset,
+  apkDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/${adminReleaseConfig.apk_asset}`,
+  exeDownloadUrl: `${github.repoUrl}/releases/download/${encodedTag}/${adminReleaseConfig.exe_asset}`,
+  latestApkUrl: adminReleaseConfig.apk_url,
+  latestExeUrl: adminReleaseConfig.exe_url,
   artifactPrefix: `admin-ingest-${version}-${buildNumber}-${shortCommit}`,
   rollback: {
     previousHead: process.env.ROLLBACK_PREVIOUS_HEAD || null,

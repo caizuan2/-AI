@@ -42,6 +42,10 @@ if (-not (Test-Path $AndroidDir)) {
   throw "Android project was not found. Run the user app Android setup first."
 }
 
+if (-not $env:ANDROID_RELEASE_KEYSTORE_PATH -or -not (Test-Path $env:ANDROID_RELEASE_KEYSTORE_PATH)) {
+  throw "Admin release build requires a stable ANDROID_RELEASE_KEYSTORE_PATH."
+}
+
 if (Test-Path $OutputDir) {
   Get-ChildItem -LiteralPath $OutputDir -Force -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
@@ -132,11 +136,20 @@ try {
   if (-not $IsWindowsPlatform) {
     Invoke-ProjectCommand -FilePath "chmod" -Arguments @("+x", $GradleWrapper) -WorkingDirectory $AndroidDir
   }
-  Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments @("assembleDebug") -WorkingDirectory $AndroidDir
+  $GradleArguments = @(
+    "assembleRelease",
+    "-PAPP_VERSION=$env:ADMIN_INGEST_APP_VERSION",
+    "-PAPP_BUILD=$env:ADMIN_INGEST_APP_BUILD",
+    "-Pandroid.injected.signing.store.file=$env:ANDROID_RELEASE_KEYSTORE_PATH",
+    "-Pandroid.injected.signing.store.password=android",
+    "-Pandroid.injected.signing.key.alias=androiddebugkey",
+    "-Pandroid.injected.signing.key.password=android"
+  )
+  Invoke-ProjectCommand -FilePath $GradleWrapper -Arguments $GradleArguments -WorkingDirectory $AndroidDir
 
-  $SourceApk = Join-Path $AndroidDir "app/build/outputs/apk/debug/app-debug.apk"
+  $SourceApk = Join-Path $AndroidDir "app/build/outputs/apk/release/app-release.apk"
   if (-not (Test-Path $SourceApk)) {
-    throw "No debug APK was generated: $SourceApk"
+    throw "No release APK was generated: $SourceApk"
   }
 
   Copy-Item -LiteralPath $SourceApk -Destination $OutputApk -Force

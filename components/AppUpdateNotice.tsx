@@ -7,7 +7,7 @@ import {
   snoozeUpdateNotice,
   type AppUpdateResult
 } from "@/lib/app-update";
-import { USER_APP_KIND, type AppKind } from "@/lib/app-version";
+import { ADMIN_APP_KIND, USER_APP_KIND, type AppKind } from "@/lib/app-version";
 import { checkCurrentAppUpdate } from "@/lib/update-checker";
 import { detectPlatform, openLink, resolveDownload, type UpdatePlatform } from "@/lib/update-core";
 import { UpdateModal } from "@/components/UpdateModal";
@@ -156,10 +156,12 @@ function hasAppliedWebRelease(
 export function promoteUnappliedWebReleaseUpdate(
   result: AppUpdateResult,
   appKind: AppKind,
-  storage: UpdateNoticeStorage | undefined
+  storage: UpdateNoticeStorage | undefined,
+  allowAdminWebPromotion = true
 ) {
   if (
-    appKind !== USER_APP_KIND
+    (appKind !== USER_APP_KIND && appKind !== ADMIN_APP_KIND)
+    || (appKind === ADMIN_APP_KIND && !allowAdminWebPromotion)
     || !result.latest
     || !result.latest.web_release_sha
     || result.updateKind === "package"
@@ -178,9 +180,25 @@ export function promoteUnappliedWebReleaseUpdate(
   return {
     ...result,
     hasUpdate: true,
-    forceUpdate: false,
+    forceUpdate: appKind === ADMIN_APP_KIND,
     updateKind: "web" as const
   };
+}
+
+export function isAdminIngestUpdateSurface(pathname: string, search = "") {
+  if (
+    pathname === "/admin-ingest"
+    || pathname.startsWith("/admin-ingest/")
+    || pathname === "/ingest"
+    || pathname.startsWith("/ingest/")
+    || pathname === "/admin-download"
+    || pathname.startsWith("/admin-download/")
+  ) {
+    return true;
+  }
+
+  const appParam = new URLSearchParams(search).get("app");
+  return appParam === ADMIN_APP_KIND || appParam === "ingest-admin";
 }
 
 function clearLegacyForceUpdateState() {
@@ -342,6 +360,13 @@ export function AppUpdateNotice({
         return;
       }
 
+      if (
+        appKind === ADMIN_APP_KIND
+        && !isAdminIngestUpdateSurface(window.location.pathname, window.location.search)
+      ) {
+        return;
+      }
+
       checkInFlight = true;
       clearLegacyForceUpdateState();
       const controller = typeof AbortController === "undefined" ? null : new AbortController();
@@ -363,7 +388,13 @@ export function AppUpdateNotice({
           })
         });
         const storage = getStorage();
-        const result = promoteUnappliedWebReleaseUpdate(checkedUpdate, appKind, storage);
+        const result = promoteUnappliedWebReleaseUpdate(
+          checkedUpdate,
+          appKind,
+          storage,
+          appKind !== ADMIN_APP_KIND
+            || isAdminIngestUpdateSurface(window.location.pathname, window.location.search)
+        );
 
         if (cancelled || !result.hasUpdate || !result.latest) {
           return;
@@ -476,11 +507,6 @@ export function AppUpdateNotice({
 
     const targetUrl = updateUrl || latest.download_page;
 
-    if (appKind !== "user") {
-      openLink(targetUrl);
-      return;
-    }
-
     if (!targetUrl) {
       setInstallState({
         phase: "error",
@@ -521,6 +547,15 @@ export function AppUpdateNotice({
           phase: "downloading",
           progress: 15,
           message: "正在当前应用内下载 APK，请稍候..."
+        });
+        return;
+      }
+
+      if (appKind === ADMIN_APP_KIND && platform === "electron" && openLink(targetUrl)) {
+        setInstallState({
+          phase: "ready",
+          progress: 100,
+          message: "旧版安装包下载已打开。安装新版后，后续更新将在小董AI内完成。"
         });
         return;
       }

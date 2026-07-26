@@ -80,6 +80,8 @@ function Write-ApkManifest {
     commit = $ReleaseHead
     branch = $ReleaseInfo.branch
     tag = $ReleaseTag
+    version = $ReleaseInfo.version
+    build = [int]$ReleaseInfo.buildNumber
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
     assetName = $ReleaseAssetName
@@ -123,10 +125,16 @@ try {
     Write-Host "BUILD_COMMIT=$ReleaseHead"
     Write-Host "BUILD_TAG=$ReleaseTag"
     Write-Host "BUILD_ENV=$($ReleaseInfo.environment)"
+    Write-Host "APP_VERSION=$($ReleaseInfo.version)"
+    Write-Host "APP_BUILD=$($ReleaseInfo.buildNumber)"
     exit 0
   }
 
   node scripts/ci/verify-release-head.mjs --expected $ReleaseHead --label apk
+  $DirtyEntries = @(git status --porcelain --untracked-files=all)
+  if ($DirtyEntries.Count -gt 0) {
+    throw "RELEASE_WORKTREE_NOT_CLEAN: refusing to package admin-ingest.apk from uncommitted source."
+  }
   $BuildStartedAtUtc = (Get-Date).ToUniversalTime().AddSeconds(-5)
 
   if (-not $UsesCapacitor -and -not $UsesFlutter) {
@@ -154,6 +162,11 @@ try {
   $env:BUILD_COMMIT = $ReleaseHead
   $env:BUILD_TAG = $ReleaseTag
   $env:BUILD_ENV = $ReleaseInfo.environment
+  $env:ADMIN_INGEST_APP_VERSION = $ReleaseInfo.version
+  $env:ADMIN_INGEST_APP_BUILD = $ReleaseInfo.buildNumber
+  $env:ADMIN_WEB_RELEASE_SHA = $ReleaseHead
+  $env:APP_VERSION = $ReleaseInfo.version
+  $env:APP_BUILD = $ReleaseInfo.buildNumber
 
   if ($UsesCapacitor) {
     if (-not $PowerShellExecutable) {

@@ -103,7 +103,8 @@ jobs:
     uses: ./.github/workflows/admin-ingest-build-apk.yml
     with:
       environment: ${{ needs.release-info.outputs.release-env }}
-      strict: false
+      strict: true
+    secrets: inherit
 
   build-exe:
     name: Build EXE
@@ -112,7 +113,7 @@ jobs:
     uses: ./.github/workflows/admin-ingest-build-exe.yml
     with:
       environment: ${{ needs.release-info.outputs.release-env }}
-      strict: false
+      strict: true
 
   verify-sync:
     name: Verify Web APK EXE sync
@@ -146,14 +147,12 @@ jobs:
 
       - name: Download APK artifacts
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: admin-ingest-apk
           path: artifacts/admin-ingest/apk
 
       - name: Download EXE artifacts
         uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: admin-ingest-exe
           path: artifacts/admin-ingest/exe
@@ -179,12 +178,10 @@ jobs:
             echo "files<<EOF"
             echo "artifacts/admin-ingest/release-manifest.json"
             echo "artifacts/admin-ingest/release-notes.md"
-            if [ -f "artifacts/admin-ingest/apk/admin-ingest.apk" ]; then
-              echo "artifacts/admin-ingest/apk/admin-ingest.apk"
-            fi
-            if [ -f "artifacts/admin-ingest/exe/admin-ingest.exe" ]; then
-              echo "artifacts/admin-ingest/exe/admin-ingest.exe"
-            fi
+            test -f "artifacts/admin-ingest/apk/admin-ingest.apk"
+            test -f "artifacts/admin-ingest/exe/admin-ingest.exe"
+            echo "artifacts/admin-ingest/apk/admin-ingest.apk"
+            echo "artifacts/admin-ingest/exe/admin-ingest.exe"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -249,6 +246,7 @@ jobs:
       environment: ${{ needs.release-info.outputs.release-env }}
       deploy: true
       runQa: true
+      releaseVerified: true
     secrets: inherit
 
   publish-summary:

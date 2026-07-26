@@ -46,6 +46,14 @@ try {
   }
 
   node scripts/ci/verify-release-head.mjs --expected $ReleaseHead --label web
+  $DirtyEntries = @(git status --porcelain --untracked-files=all)
+  if ($DirtyEntries.Count -gt 0) {
+    throw "RELEASE_WORKTREE_NOT_CLEAN: refusing to build admin-ingest Web from uncommitted source."
+  }
+  $env:ADMIN_INGEST_APP_VERSION = $ReleaseInfo.version
+  $env:ADMIN_INGEST_APP_BUILD = $ReleaseInfo.buildNumber
+  $env:ADMIN_WEB_RELEASE_SHA = $ReleaseHead
+  $env:ADMIN_INGEST_RELEASE_BUILD = "1"
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("install", "--include=dev")
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "typecheck")
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "lint")
@@ -69,6 +77,8 @@ try {
     tag = $ReleaseTag
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     buildId = $BuildId
+    version = $ReleaseInfo.version
+    build = [int]$ReleaseInfo.buildNumber
     webUrl = $ReleaseInfo.webUrl
     path = ".next"
   }
