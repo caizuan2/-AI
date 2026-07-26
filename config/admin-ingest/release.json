@@ -1,18 +1,18 @@
 {
-  "version": "1.0.17",
-  "build": 117,
-  "minimum_build": 117,
+  "version": "1.0.18",
+  "build": 118,
+  "minimum_build": 118,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.17-build.117",
+  "release_tag": "release/admin-ingest-1.0.18-build.118",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.17-build.117/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.18-build.118/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 APK 改用云端增量语音识别，讲话时同步显示文字",
-    "停止录音后智能整理口语表达，结果只进入输入框并等待用户确认",
-    "识别或整理失败时保留原始语音文字，Web、EXE、APK 保持同一版本"
+    "投喂端 APK 抽屉实时显示每个对话的生成状态",
+    "后台生成完成后显示未查看蓝点，打开对应对话后自动清除",
+    "并发对话的进度、完成状态与停止操作相互隔离，Web、EXE、APK 保持同一版本"
   ]
 }
