@@ -31,10 +31,10 @@ const items = [
   },
   {
     icon: "💻",
-    title: "Windows EXE",
-    desc: "适用于 Windows 电脑，安装后进入管理员登录页面。",
+    title: "Windows 安装程序",
+    desc: "标准 EXE 安装程序，下载完成后直接双击安装，无需解压。",
     href: adminRelease.exe_url,
-    button: "下载管理员 EXE",
+    button: "下载 Windows 安装程序",
   },
   {
     icon: "🍎",
@@ -149,6 +149,7 @@ export default function AdminDownloadPage() {
 
           <ul className="mt-4 list-disc space-y-2 pl-5 text-sm leading-6 text-slate-600">
             <li>Android 安装时如提示未知来源，请在系统设置中允许安装。</li>
+            <li>Windows 下载后请直接双击 EXE 安装程序，不需要使用解压软件打开。</li>
             <li>Windows 如提示未知发布者，是因为安装包未进行代码签名，内部测试可继续安装。</li>
             <li>iOS IPA 和 macOS DMG 需要在 macOS / Xcode 环境完成签名与发布，不提供假安装包直链。</li>
             <li>登录后应进入管理员后台 /ingest，不应进入用户端 /chat-ui。</li>

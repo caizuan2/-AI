@@ -66,6 +66,9 @@ function checkArtifact(name, artifact, manifest, errors) {
     if (!artifact.sha256 || !artifact.size) {
       errors.push(`${name} package hash and size are required`);
     }
+    if (name === "exe" && artifact.installerType !== "nsis") {
+      errors.push(`exe.installerType must be nsis, actual=${artifact.installerType || "missing"}`);
+    }
   }
 }
 

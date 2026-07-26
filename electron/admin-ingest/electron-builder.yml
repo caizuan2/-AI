@@ -1,5 +1,6 @@
 appId: com.aiknowledge.ingestadmin.desktop
 productName: 小董AI
+electronVersion: 42.3.3
 directories:
   output: dist-app/admin-ingest/windows
 files:
@@ -10,5 +11,17 @@ extraMetadata:
 win:
   icon: assets/admin-ingest/xiaodong-ai.ico
   target:
-    - portable
-  artifactName: "小董AI.${ext}"
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "admin-ingest-setup-${version}.${ext}"
+nsis:
+  oneClick: false
+  perMachine: false
+  allowElevation: true
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: "小董AI投喂端"
+  uninstallDisplayName: "小董AI投喂端"
+  runAfterFinish: true

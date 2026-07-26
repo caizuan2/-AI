@@ -78,6 +78,7 @@ function Write-ExeManifest {
     tag = $ReleaseTag
     version = $ReleaseInfo.version
     build = [int]$ReleaseInfo.buildNumber
+    installerType = if ($Available) { "nsis" } else { $null }
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
     assetName = $ReleaseAssetName
@@ -91,20 +92,23 @@ function Write-ExeManifest {
   $Manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ManifestPath -Encoding UTF8
 }
 
-function Find-LatestExeOutput {
+function Find-NsisInstallerOutput {
   param(
-    [Parameter(Mandatory = $true)][datetime]$StartedAtUtc
+    [Parameter(Mandatory = $true)][datetime]$StartedAtUtc,
+    [Parameter(Mandatory = $true)][string]$Version
   )
 
-  Get-ChildItem -LiteralPath $Root -Recurse -File -Filter "*.exe" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.FullName -match "\\(dist-app|build|target)\\|/dist-app/|/build/|/target/" -and
-      $_.FullName -notmatch "\\node_modules\\|/node_modules/" -and
-      $_.FullName -notmatch "\\resources\\elevate\.exe$" -and
-      $_.LastWriteTimeUtc -ge $StartedAtUtc
-    } |
-    Sort-Object LastWriteTimeUtc -Descending |
-    Select-Object -First 1
+  $ExpectedPath = Join-Path $Root "dist-app/admin-ingest/windows/admin-ingest-setup-$Version.exe"
+  if (-not (Test-Path -LiteralPath $ExpectedPath)) {
+    return $null
+  }
+
+  $Installer = Get-Item -LiteralPath $ExpectedPath
+  if ($Installer.LastWriteTimeUtc -lt $StartedAtUtc) {
+    return $null
+  }
+
+  return $Installer
 }
 
 Push-Location $Root
@@ -182,7 +186,7 @@ try {
     try {
       Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
       Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command {
-        npx electron-builder --config electron/admin-ingest/electron-builder.yml --win portable "--config.extraMetadata.version=$($ReleaseInfo.version)"
+        npx electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis "--config.extraMetadata.version=$($ReleaseInfo.version)"
       }
     } finally {
       Remove-Item -LiteralPath $ElectronBuildMetadata -Force -ErrorAction SilentlyContinue
@@ -201,10 +205,10 @@ try {
     Invoke-CheckedCommand -FailureReason "EXE_TAURI_BUILD_FAILED" -Command { npm run tauri build }
   }
 
-  $Exe = Find-LatestExeOutput -StartedAtUtc $BuildStartedAtUtc
+  $Exe = Find-NsisInstallerOutput -StartedAtUtc $BuildStartedAtUtc -Version $ReleaseInfo.version
 
   if (-not $Exe) {
-    throw "EXE_BUILD_OUTPUT_NOT_FOUND"
+    throw "EXE_NSIS_INSTALLER_NOT_FOUND"
   }
 
   Write-ExeManifest -Available $true -Path $Exe.FullName -ReleaseInfo $ReleaseInfo -ReleaseHead $ReleaseHead -ReleaseTag $ReleaseTag
@@ -219,8 +223,8 @@ try {
   }
 
   $RecoveredExe = $null
-  if ($BuildStartedAtUtc) {
-    $RecoveredExe = Find-LatestExeOutput -StartedAtUtc $BuildStartedAtUtc
+  if ($BuildStartedAtUtc -and $ReleaseInfo) {
+    $RecoveredExe = Find-NsisInstallerOutput -StartedAtUtc $BuildStartedAtUtc -Version $ReleaseInfo.version
   }
   if ($RecoveredExe) {
     Write-Warning "EXE build command reported '$Reason', but a fresh executable was produced. Publishing executable asset."
