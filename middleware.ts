@@ -42,9 +42,15 @@ function withSecurityHeaders(response: NextResponse, pathname = "") {
   response.headers.set("X-Content-Type-Options", "nosniff");
   response.headers.set("Referrer-Policy", "same-origin");
   response.headers.set("X-Frame-Options", "DENY");
+  const permissionsPolicy = pathname === "/chat-ui"
+    ? "camera=(self), microphone=(self), geolocation=()"
+    : pathname === "/admin-ingest" || pathname.startsWith("/admin-ingest/")
+      ? "camera=(), microphone=(self), geolocation=()"
+      : "camera=(), microphone=(), geolocation=()";
+
   response.headers.set(
     "Permissions-Policy",
-    pathname === "/chat-ui" ? "camera=(self), microphone=(self), geolocation=()" : "camera=(), microphone=(), geolocation=()"
+    permissionsPolicy
   );
   response.headers.set("Content-Security-Policy", "frame-ancestors 'none'; base-uri 'self'; object-src 'none'");
 
