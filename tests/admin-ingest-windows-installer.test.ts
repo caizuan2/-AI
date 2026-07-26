@@ -49,6 +49,8 @@ assert.match(buildScript, /Find-NsisInstallerOutput/);
 assert.match(buildScript, /admin-ingest-setup-\$Version\.exe/);
 assert.match(buildScript, /installerType = if \(\$Available\) \{ "nsis" \}/);
 assert.match(buildScript, /EXE_NSIS_INSTALLER_NOT_FOUND/);
+assert.match(buildScript, /pnpm install --frozen-lockfile/);
+assert.doesNotMatch(buildScript, /npm install --include=dev/);
 
 assert.match(manifestWriter, /installerType:\s*manifest\.installerType \|\| null/);
 assert.match(ciVerifier, /exe\.installerType must be nsis/);

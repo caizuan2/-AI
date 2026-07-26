@@ -184,7 +184,7 @@ try {
     }
     $BuildMetadata | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $ElectronBuildMetadata -Encoding UTF8
     try {
-      Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
+      Invoke-CheckedCommand -FailureReason "EXE_PNPM_INSTALL_FAILED" -Command { pnpm install --frozen-lockfile }
       Invoke-CheckedCommand -FailureReason "EXE_BUILD_FAILED" -Command {
         npx electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis --publish never "--config.extraMetadata.version=$($ReleaseInfo.version)"
       }
@@ -201,7 +201,7 @@ try {
       Pop-Location
     }
   } elseif ($UsesTauri) {
-    Invoke-CheckedCommand -FailureReason "EXE_NPM_INSTALL_FAILED" -Command { npm install --include=dev }
+    Invoke-CheckedCommand -FailureReason "EXE_PNPM_INSTALL_FAILED" -Command { pnpm install --frozen-lockfile }
     Invoke-CheckedCommand -FailureReason "EXE_TAURI_BUILD_FAILED" -Command { npm run tauri build }
   }
 
