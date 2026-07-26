@@ -109,12 +109,23 @@ function Enable-AdminMicrophonePermission {
   }
 
   $manifestContent = Get-Content -LiteralPath $AndroidManifest -Raw
-  if ($manifestContent -match 'android\.permission\.RECORD_AUDIO') {
-    return
+  if ($manifestContent -notmatch 'android\.permission\.RECORD_AUDIO') {
+    $permissionLine = '    <uses-permission android:name="android.permission.RECORD_AUDIO" />'
+    $manifestContent = $manifestContent -replace '</manifest>', "$permissionLine`r`n</manifest>"
   }
 
-  $permissionLine = '    <uses-permission android:name="android.permission.RECORD_AUDIO" />'
-  $manifestContent = $manifestContent -replace '</manifest>', "$permissionLine`r`n</manifest>"
+  if ($manifestContent -notmatch 'android\.speech\.RecognitionService') {
+    $speechRecognitionQuery = @'
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
+'@
+    $manifestContent = $manifestContent -replace '<application', "$speechRecognitionQuery    <application"
+  }
+
   [System.IO.File]::WriteAllText($AndroidManifest, $manifestContent, $utf8NoBom)
 }
 

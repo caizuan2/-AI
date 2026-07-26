@@ -89,6 +89,10 @@ import {
   resolveAdminIngestDisplayProfile
 } from "@/lib/enterprise/admin-ingest-profile";
 import {
+  composeAdminIngestLiveVoiceInput,
+  isCurrentAdminIngestVoiceEvent
+} from "@/lib/enterprise/admin-ingest-live-voice";
+import {
   clearAdminIngestAvatarCache,
   legacyAdminIngestAvatarToFile,
   loadAdminIngestAccountProfile,
@@ -287,6 +291,7 @@ type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 type AndroidSpeechBridge = {
   startSpeechRecognition?: () => void;
   stopSpeechRecognition?: () => void;
+  cancelSpeechRecognition?: () => void;
 };
 type SpeechWindow = Window & {
   SpeechRecognition?: SpeechRecognitionConstructor;
@@ -294,12 +299,13 @@ type SpeechWindow = Window & {
   AndroidBridge?: AndroidSpeechBridge;
 };
 type NativeSpeechEventDetail = {
-  state?: "started" | "audio" | "result" | "cancelled" | "error";
+  state?: "started" | "partial" | "audio" | "result" | "cancelled" | "error";
   transcript?: string;
   error?: string;
   audioBase64?: string;
   mimeType?: string;
   fileName?: string;
+  sessionId?: string;
 };
 
 const ADMIN_INGEST_NATIVE_SPEECH_EVENT = "admin-ingest-native-speech";
@@ -746,6 +752,10 @@ export function IngestModeToggle({
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const nativeVoiceTranscriptionAbortControllerRef = useRef<AbortController | null>(null);
+  const nativeVoiceBaseInputRef = useRef("");
+  const nativeVoiceSessionIdRef = useRef("");
+  const nativeVoiceHistoryScopeRef = useRef("");
+  const nativeVoiceConversationScopeRef = useRef("");
   const restoredInitialConversationRef = useRef(false);
   const doubaoHealthRequestVersionRef = useRef(0);
   const activeAgentIdRef = useRef("");
@@ -1839,30 +1849,42 @@ export function IngestModeToggle({
         description: message
       });
     };
-    const applyNativeVoiceTranscript = (transcript: string) => {
-      setInput((current) => current.trim()
-        ? `${current.trim()} ${transcript}`
-        : transcript);
+    const clearNativeVoiceSession = () => {
+      nativeVoiceBaseInputRef.current = "";
+      nativeVoiceSessionIdRef.current = "";
+      nativeVoiceHistoryScopeRef.current = "";
+      nativeVoiceConversationScopeRef.current = "";
+    };
+    const applyNativeVoiceTranscript = (transcript: string, isFinal: boolean) => {
+      setInput(composeAdminIngestLiveVoiceInput(
+        nativeVoiceBaseInputRef.current,
+        transcript
+      ));
       setVoiceState((current) => ({
         ...current,
         isVoiceSupported: true,
-        isRecording: false,
+        isRecording: !isFinal,
         transcript,
         error: ""
       }));
       setErrorMessage("");
-      setNoticeMessage("语音内容已填入输入框。");
-      setActionToast({
-        id: `voice-success-${Date.now()}`,
-        type: "success",
-        title: "语音内容已填入输入框。"
-      });
+      setNoticeMessage(isFinal ? "语音内容已填入输入框。" : "正在听写，文字会同步显示在输入框。");
+
+      if (isFinal) {
+        clearNativeVoiceSession();
+        setActionToast({
+          id: `voice-success-${Date.now()}`,
+          type: "success",
+          title: "语音内容已填入输入框。"
+        });
+      }
     };
     const transcribeNativeAudio = async (detail: NativeSpeechEventDetail) => {
       const audioBase64 = detail.audioBase64?.trim() ?? "";
-      const expectedHistoryScope = historyScopeRef.current;
+      const expectedHistoryScope = nativeVoiceHistoryScopeRef.current || historyScopeRef.current;
 
       if (!audioBase64) {
+        clearNativeVoiceSession();
         showNativeVoiceError("没有收到有效录音，请重新录制。");
         return;
       }
@@ -1893,7 +1915,7 @@ export function IngestModeToggle({
           return;
         }
 
-        applyNativeVoiceTranscript(transcript);
+        applyNativeVoiceTranscript(transcript, true);
       } catch (error) {
         if (controller.signal.aborted) {
           return;
@@ -1902,6 +1924,7 @@ export function IngestModeToggle({
         const message = error instanceof Error && error.message.trim()
           ? error.message.trim()
           : "语音转文字失败，请检查网络后重试。";
+        clearNativeVoiceSession();
         showNativeVoiceError(message);
       } finally {
         if (nativeVoiceTranscriptionAbortControllerRef.current === controller) {
@@ -1912,8 +1935,24 @@ export function IngestModeToggle({
     const handleNativeSpeechEvent = (event: Event) => {
       const detail = (event as CustomEvent<NativeSpeechEventDetail>).detail ?? {};
       const transcript = detail.transcript?.trim() ?? "";
+      const eventSessionId = detail.sessionId?.trim() ?? "";
+      const currentConversationScope = [
+        historyScopeRef.current,
+        activeAgentIdRef.current,
+        activeConversationIdRef.current
+      ].join("|");
 
       if (detail.state === "started") {
+        if (!isCurrentAdminIngestVoiceEvent({
+          activeSessionId: nativeVoiceSessionIdRef.current,
+          eventSessionId,
+          startedHistoryScope: nativeVoiceConversationScopeRef.current,
+          currentHistoryScope: currentConversationScope
+        })) {
+          return;
+        }
+
+        nativeVoiceSessionIdRef.current = eventSessionId;
         setErrorMessage("");
         setVoiceState((current) => ({
           ...current,
@@ -1921,7 +1960,21 @@ export function IngestModeToggle({
           isRecording: true,
           error: ""
         }));
-        setNoticeMessage("正在录音，点击麦克风可停止；最长 15 秒。");
+        setNoticeMessage("正在听写，文字会同步显示在输入框；点击麦克风可停止。");
+        return;
+      }
+
+      if (!isCurrentAdminIngestVoiceEvent({
+        activeSessionId: nativeVoiceSessionIdRef.current,
+        eventSessionId,
+        startedHistoryScope: nativeVoiceConversationScopeRef.current,
+        currentHistoryScope: currentConversationScope
+      })) {
+        return;
+      }
+
+      if (detail.state === "partial" && transcript) {
+        applyNativeVoiceTranscript(transcript, false);
         return;
       }
 
@@ -1931,11 +1984,12 @@ export function IngestModeToggle({
       }
 
       if (detail.state === "result" && transcript) {
-        applyNativeVoiceTranscript(transcript);
+        applyNativeVoiceTranscript(transcript, true);
         return;
       }
 
       if (detail.state === "cancelled") {
+        clearNativeVoiceSession();
         setVoiceState((current) => ({
           ...current,
           isVoiceSupported: true,
@@ -1948,6 +2002,7 @@ export function IngestModeToggle({
 
       if (detail.state === "error") {
         const message = detail.error?.trim() || "手机语音识别失败，请检查麦克风权限后重试。";
+        clearNativeVoiceSession();
         showNativeVoiceError(message);
       }
     };
@@ -1964,13 +2019,41 @@ export function IngestModeToggle({
       recognitionRef.current = null;
       nativeVoiceTranscriptionAbortControllerRef.current?.abort();
       nativeVoiceTranscriptionAbortControllerRef.current = null;
+      speechWindow.AndroidBridge?.cancelSpeechRecognition?.();
+      clearNativeVoiceSession();
     };
   }, []);
 
   useEffect(() => {
     nativeVoiceTranscriptionAbortControllerRef.current?.abort();
     nativeVoiceTranscriptionAbortControllerRef.current = null;
-  }, [historyScope]);
+    const currentConversationScope = [
+      historyScope,
+      activeAgentId,
+      activeConversationId
+    ].join("|");
+    if (
+      (
+        nativeVoiceHistoryScopeRef.current
+        && nativeVoiceHistoryScopeRef.current !== historyScope
+      )
+      || (
+        nativeVoiceConversationScopeRef.current
+        && nativeVoiceConversationScopeRef.current !== currentConversationScope
+      )
+    ) {
+      (window as SpeechWindow).AndroidBridge?.cancelSpeechRecognition?.();
+      nativeVoiceBaseInputRef.current = "";
+      nativeVoiceSessionIdRef.current = "";
+      nativeVoiceHistoryScopeRef.current = "";
+      nativeVoiceConversationScopeRef.current = "";
+      setVoiceState((current) => ({
+        ...current,
+        isRecording: false,
+        transcript: ""
+      }));
+    }
+  }, [activeAgentId, activeConversationId, historyScope]);
 
   useEffect(() => {
     if (!actionToast) {
@@ -4674,9 +4757,21 @@ export function IngestModeToggle({
           isRecording: true,
           error: ""
         }));
+        nativeVoiceBaseInputRef.current = input;
+        nativeVoiceSessionIdRef.current = "";
+        nativeVoiceHistoryScopeRef.current = historyScopeRef.current;
+        nativeVoiceConversationScopeRef.current = [
+          historyScopeRef.current,
+          activeAgentIdRef.current,
+          activeConversationIdRef.current
+        ].join("|");
         setNoticeMessage("正在打开麦克风...");
         nativeSpeech.call(speechWindow.AndroidBridge);
       } catch {
+        nativeVoiceBaseInputRef.current = "";
+        nativeVoiceSessionIdRef.current = "";
+        nativeVoiceHistoryScopeRef.current = "";
+        nativeVoiceConversationScopeRef.current = "";
         const message = "无法启动手机麦克风，请检查麦克风权限后重试。";
 
         setVoiceState((current) => ({

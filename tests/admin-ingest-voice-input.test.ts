@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import {
+  composeAdminIngestLiveVoiceInput,
+  isCurrentAdminIngestVoiceEvent
+} from "../lib/enterprise/admin-ingest-live-voice";
 
 const modeToggleSource = readFileSync(
   "components/enterprise-admin/IngestModeToggle.tsx",
@@ -67,11 +71,19 @@ assert.match(
 );
 assert.match(
   modeToggleSource,
-  /setInput\(\(current\) => current\.trim\(\)[\s\S]*\$\{current\.trim\(\)\} \$\{transcript\}/
+  /composeAdminIngestLiveVoiceInput\([\s\S]*nativeVoiceBaseInputRef\.current/
 );
 assert.match(
   modeToggleSource,
-  /正在录音，点击麦克风可停止；最长 15 秒/
+  /detail\.state === "partial" && transcript[\s\S]*applyNativeVoiceTranscript\(transcript, false\)/
+);
+assert.match(
+  modeToggleSource,
+  /nativeVoiceConversationScopeRef[\s\S]*activeConversationIdRef\.current/
+);
+assert.match(
+  modeToggleSource,
+  /cancelSpeechRecognition\?\.\(\)/
 );
 
 assert.match(
@@ -152,6 +164,10 @@ assert.doesNotMatch(
   androidManifest,
   /android\.permission\.RECORD_AUDIO/
 );
+assert.doesNotMatch(
+  androidManifest,
+  /android\.speech\.RecognitionService/
+);
 assert.match(
   adminAndroidBuildScript,
   /Enable-AdminMicrophonePermission/
@@ -159,6 +175,10 @@ assert.match(
 assert.match(
   adminAndroidBuildScript,
   /android\.permission\.RECORD_AUDIO/
+);
+assert.match(
+  adminAndroidBuildScript,
+  /android\.speech\.RecognitionService/
 );
 assert.match(
   adminAndroidBuildScript,
@@ -176,6 +196,26 @@ assert.match(
 assert.match(
   androidActivity,
   /ADMIN_APP_PACKAGE\.equals\(getPackageName\(\)\)/
+);
+assert.match(
+  androidActivity,
+  /SpeechRecognizer\.isRecognitionAvailable\(this\)/
+);
+assert.match(
+  androidActivity,
+  /SpeechRecognizer\.createSpeechRecognizer\(this\)/
+);
+assert.match(
+  androidActivity,
+  /RecognizerIntent\.EXTRA_PARTIAL_RESULTS, true/
+);
+assert.match(
+  androidActivity,
+  /onPartialResults\(Bundle partialResults\)[\s\S]*postAdminIngestSpeechEvent\("partial"/
+);
+assert.match(
+  androidActivity,
+  /detail\.put\("sessionId", sessionId\)/
 );
 assert.match(
   androidActivity,
@@ -199,7 +239,7 @@ assert.match(
 );
 assert.match(
   androidActivity,
-  /postAdminIngestSpeechEvent\("audio"/
+  /postAdminIngestVoiceAudioEvent\([\s\S]*audioBase64/
 );
 assert.match(
   androidActivity,
@@ -209,9 +249,46 @@ assert.match(
   androidActivity,
   /public void stopSpeechRecognition\(\)/
 );
-assert.doesNotMatch(
+assert.match(
   androidActivity,
-  /SpeechRecognizer|RecognizerIntent|RecognitionListener/
+  /public void cancelSpeechRecognition\(\)/
+);
+
+assert.equal(
+  composeAdminIngestLiveVoiceInput("帮我回复：", "客户有点顾虑"),
+  "帮我回复： 客户有点顾虑"
+);
+assert.equal(
+  composeAdminIngestLiveVoiceInput("帮我回复：", "客户还在考虑"),
+  "帮我回复： 客户还在考虑",
+  "A newer partial result must replace the previous partial instead of duplicating it."
+);
+assert.equal(
+  isCurrentAdminIngestVoiceEvent({
+    activeSessionId: "voice-1",
+    eventSessionId: "voice-1",
+    startedHistoryScope: "account|agent-a|conversation-a",
+    currentHistoryScope: "account|agent-a|conversation-a"
+  }),
+  true
+);
+assert.equal(
+  isCurrentAdminIngestVoiceEvent({
+    activeSessionId: "voice-1",
+    eventSessionId: "voice-2",
+    startedHistoryScope: "account|agent-a|conversation-a",
+    currentHistoryScope: "account|agent-a|conversation-a"
+  }),
+  false
+);
+assert.equal(
+  isCurrentAdminIngestVoiceEvent({
+    activeSessionId: "voice-1",
+    eventSessionId: "voice-1",
+    startedHistoryScope: "account|agent-a|conversation-a",
+    currentHistoryScope: "account|agent-a|conversation-b"
+  }),
+  false
 );
 
 console.log("admin-ingest-voice-input tests passed");
