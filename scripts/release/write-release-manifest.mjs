@@ -101,6 +101,7 @@ function normalizeArtifact(name, manifest, releaseHead) {
     assetName,
     version: manifest.version || null,
     build: Number(manifest.build) || null,
+    installerType: manifest.installerType || null,
     buildId: manifest.buildId || null,
     size: manifest.size || null,
     sha256: manifest.sha256 || null,
