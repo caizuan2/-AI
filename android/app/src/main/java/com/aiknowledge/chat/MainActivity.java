@@ -489,6 +489,30 @@ public class MainActivity extends BridgeActivity {
         webView.loadUrl(withFreshUserShellMarker(USER_CHAT_URL, marker));
     }
 
+    private void injectAdminShellVersion(WebView webView) {
+        if (webView == null || !isAdminShell()) {
+            return;
+        }
+
+        String reloadKey = "__ai_admin_native_version_" + BuildConfig.VERSION_CODE;
+        String script = "(function(){try{"
+            + "var version=" + JSONObject.quote(BuildConfig.VERSION_NAME) + ";"
+            + "var build=" + BuildConfig.VERSION_CODE + ";"
+            + "var previousVersion=localStorage.getItem('ai_knowledge_shell_version');"
+            + "var previousBuild=localStorage.getItem('ai_knowledge_shell_build');"
+            + "window.__AI_KNOWLEDGE_APP_VERSION__={version:version,build:build};"
+            + "localStorage.setItem('ai_knowledge_shell_version',version);"
+            + "localStorage.setItem('ai_knowledge_shell_build',String(build));"
+            + "if((previousVersion!==version||previousBuild!==String(build))"
+            + "&&!sessionStorage.getItem(" + JSONObject.quote(reloadKey) + ")){"
+            + "sessionStorage.setItem(" + JSONObject.quote(reloadKey) + ",'1');"
+            + "setTimeout(function(){location.reload();},0);"
+            + "}"
+            + "}catch(error){}})();";
+
+        webView.evaluateJavascript(script, null);
+    }
+
     private void finishUserBootstrapCacheBypass(WebView webView, String url) {
         if (!userBootstrapCacheBypass || !isRecoverableUserUrl(Uri.parse(url))) {
             return;
@@ -1371,6 +1395,8 @@ public class MainActivity extends BridgeActivity {
             if (isNetworkErrorPage(url) || showingNetworkError) {
                 return;
             }
+
+            injectAdminShellVersion(view);
 
             if (!adminShell) {
                 markUserPageRecovered(url);

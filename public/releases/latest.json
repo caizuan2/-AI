@@ -65,24 +65,24 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.13",
+      "active_version": "1.0.14",
       "versions": [
         {
-          "version": "1.0.13",
-          "build": 113,
+          "version": "1.0.14",
+          "build": 114,
           "channel": "stable",
           "rollout": 100,
-          "minimum_build": 113,
+          "minimum_build": 114,
           "force_update": true,
           "web_release_sha": "6d6af0a9367bab1fdf507ec08cbf4a665d97d818",
           "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
           "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.13-build.113/admin-ingest.exe",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.14-build.114/admin-ingest.exe",
           "download_page": "http://47.238.0.23/admin-download",
           "changelog": [
-            "Windows EXE 改为标准安装程序，双击即可安装，无需解压",
-            "安装程序支持选择安装目录、桌面快捷方式和开始菜单",
-            "投喂端 Web、Windows EXE 与 Android APK 继续保持同一发布版本"
+            "修复管理员 APK 登录跳转后版本参数丢失导致的重复强制更新",
+            "管理员 APK 语音录音通过云端识别后自动写入输入框",
+            "投喂端 Web、Windows EXE 与 Android APK 保持同一发布版本"
           ],
           "created_at": "2026-07-26T07:09:15.710Z"
         }
@@ -110,19 +110,19 @@
   },
   "admin": {
     "app_name": "小董AI投喂端",
-    "version": "1.0.13",
-    "build": 113,
-    "minimum_build": 113,
+    "version": "1.0.14",
+    "build": 114,
+    "minimum_build": 114,
     "force_update": true,
     "web_release_sha": "6d6af0a9367bab1fdf507ec08cbf4a665d97d818",
     "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
     "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.13-build.113/admin-ingest.exe",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.14-build.114/admin-ingest.exe",
     "download_page": "http://47.238.0.23/admin-download",
     "changelog": [
-      "Windows EXE 改为标准安装程序，双击即可安装，无需解压",
-      "安装程序支持选择安装目录、桌面快捷方式和开始菜单",
-      "投喂端 Web、Windows EXE 与 Android APK 继续保持同一发布版本"
+      "修复管理员 APK 登录跳转后版本参数丢失导致的重复强制更新",
+      "管理员 APK 语音录音通过云端识别后自动写入输入框",
+      "投喂端 Web、Windows EXE 与 Android APK 保持同一发布版本"
     ]
   }
 }

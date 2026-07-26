@@ -29,6 +29,12 @@ assert.match(mainActivity, /isAdminShell\(\) && total <= 0L/);
 assert.match(mainActivity, /isAdminShell\(\) && !isValidAdminUpdateApk\(apkFile\)/);
 assert.match(mainActivity, /getPackageArchiveInfo/);
 assert.match(mainActivity, /getPackageName\(\)\.equals\(packageInfo\.packageName\)/);
+assert.match(mainActivity, /injectAdminShellVersion\(WebView webView\)/);
+assert.match(mainActivity, /window\.__AI_KNOWLEDGE_APP_VERSION__/);
+assert.match(mainActivity, /localStorage\.setItem\('ai_knowledge_shell_version',version\)/);
+assert.match(mainActivity, /localStorage\.setItem\('ai_knowledge_shell_build',String\(build\)\)/);
+assert.match(mainActivity, /sessionStorage\.getItem\(/);
+assert.match(mainActivity, /injectAdminShellVersion\(view\)/);
 
 const adminUnknownTotalBlock = mainActivity.slice(
   mainActivity.indexOf("if (isAdminShell() && total <= 0L)"),
