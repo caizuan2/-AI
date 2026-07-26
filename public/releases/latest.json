@@ -65,24 +65,24 @@
         "web",
         "electron"
       ],
-      "active_version": "1.0.15",
+      "active_version": "1.0.16",
       "versions": [
         {
-          "version": "1.0.15",
-          "build": 115,
+          "version": "1.0.16",
+          "build": 116,
           "channel": "stable",
           "rollout": 100,
-          "minimum_build": 115,
+          "minimum_build": 116,
           "force_update": true,
           "web_release_sha": "6d6af0a9367bab1fdf507ec08cbf4a665d97d818",
           "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
           "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-          "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.15-build.115/admin-ingest.exe",
+          "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.16-build.116/admin-ingest.exe",
           "download_page": "http://47.238.0.23/admin-download",
           "changelog": [
-            "修复管理员 APK 将投喂页误交给外部浏览器打开",
-            "管理员 APK 语音录音通过云端识别后自动写入输入框",
-            "投喂端 Web、Windows EXE 与 Android APK 保持同一发布版本"
+            "投喂端 APK 支持讲话时实时显示识别文字",
+            "投喂端 APK 左侧功能改为按需滑出抽屉",
+            "实时识别不可用时保留原录音转写兜底，Web、EXE、APK 保持同一版本"
           ],
           "created_at": "2026-07-26T07:09:15.710Z"
         }
@@ -110,19 +110,19 @@
   },
   "admin": {
     "app_name": "小董AI投喂端",
-    "version": "1.0.15",
-    "build": 115,
-    "minimum_build": 115,
+    "version": "1.0.16",
+    "build": 116,
+    "minimum_build": 116,
     "force_update": true,
     "web_release_sha": "6d6af0a9367bab1fdf507ec08cbf4a665d97d818",
     "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
     "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-    "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.15-build.115/admin-ingest.exe",
+    "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.16-build.116/admin-ingest.exe",
     "download_page": "http://47.238.0.23/admin-download",
     "changelog": [
-      "修复管理员 APK 将投喂页误交给外部浏览器打开",
-      "管理员 APK 语音录音通过云端识别后自动写入输入框",
-      "投喂端 Web、Windows EXE 与 Android APK 保持同一发布版本"
+      "投喂端 APK 支持讲话时实时显示识别文字",
+      "投喂端 APK 左侧功能改为按需滑出抽屉",
+      "实时识别不可用时保留原录音转写兜底，Web、EXE、APK 保持同一版本"
     ]
   }
 }
