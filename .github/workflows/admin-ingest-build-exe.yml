@@ -35,6 +35,7 @@ permissions:
 env:
   RELEASE_ENV: ${{ inputs.environment || 'prod' }}
   RELEASE_HEAD: ${{ github.sha }}
+  PNPM_VERSION: "10.12.4"
   DATABASE_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
   DIRECT_URL: postgresql://ci:ci@localhost:5432/ci?schema=public
   ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
@@ -50,10 +51,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup pinned pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "22.13.0"
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -62,7 +71,7 @@ jobs:
           cache: true
 
       - name: Install dependencies
-        run: npm install --include=dev
+        run: pnpm install --frozen-lockfile
 
       - name: Build EXE and write manifest
         id: build_exe

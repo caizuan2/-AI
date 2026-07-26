@@ -59,6 +59,10 @@ assert.match(downloadPage, /下载完成后直接双击安装，无需解压/);
 assert.match(downloadPage, /不需要使用解压软件打开/);
 
 assert.match(exeWorkflow, /artifacts\/admin-ingest\/exe\/admin-ingest\.exe/);
+assert.match(exeWorkflow, /PNPM_VERSION:\s*"10\.12\.4"/);
+assert.match(exeWorkflow, /uses:\s*pnpm\/action-setup@v4/);
+assert.match(exeWorkflow, /pnpm install --frozen-lockfile/);
+assert.doesNotMatch(exeWorkflow, /npm install --include=dev/);
 assert.doesNotMatch(exeWorkflow, /dist-app\/admin-ingest\/windows\/\*\*\/\*\.exe/);
 assert.doesNotMatch(exeWorkflow, /dist-app\/admin-windows\/\*\*\/\*\.exe/);
 assert.doesNotMatch(exeWorkflow, /flutter_app\/build\/windows\/\*\*\/\*\.exe/);
