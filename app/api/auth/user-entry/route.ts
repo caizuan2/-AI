@@ -54,10 +54,6 @@ function parseUserEntryRequest(body: unknown) {
     throw new ValidationError("请输入合法手机号。");
   }
 
-  if (!password) {
-    throw new ValidationError("请输入密码。");
-  }
-
   if (password.length > 128) {
     throw new ValidationError("密码长度不能超过 128 位。");
   }

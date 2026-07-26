@@ -14,7 +14,7 @@ assert.match(loginPage, /\/api\/auth\/user-entry/);
 assert.match(loginPage, /!isAdminEntry && !showLicenseEntry/);
 assert.match(loginPage, /首次使用或卡密失效？输入卡密/);
 assert.match(loginPage, /!isAdminEntry && showLicenseEntry/);
-assert.match(loginPage, /填写新的有效用户端卡密重新激活/);
+assert.match(loginPage, /新的有效用户端卡密即可恢复；无需原密码，设置新密码可选/);
 assert.doesNotMatch(loginPage, /没有账号？|去注册|已注册但还没激活？|继续激活/);
 assert.match(loginPage, /!isAdminEntry/);
 
