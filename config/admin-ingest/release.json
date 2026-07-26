@@ -1,17 +1,17 @@
 {
-  "version": "1.0.14",
-  "build": 114,
-  "minimum_build": 114,
+  "version": "1.0.15",
+  "build": 115,
+  "minimum_build": 115,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.14-build.114",
+  "release_tag": "release/admin-ingest-1.0.15-build.115",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.14-build.114/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.15-build.115/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "修复管理员 APK 登录跳转后版本参数丢失导致的重复强制更新",
+    "修复管理员 APK 将投喂页误交给外部浏览器打开",
     "管理员 APK 语音录音通过云端识别后自动写入输入框",
     "投喂端 Web、Windows EXE 与 Android APK 保持同一发布版本"
   ]

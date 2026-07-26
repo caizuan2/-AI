@@ -604,7 +604,10 @@ public class MainActivity extends BridgeActivity {
         }
 
         if (adminShell) {
-            return path.equals("/ingest") || path.startsWith("/ingest/");
+            return path.equals("/ingest")
+                || path.startsWith("/ingest/")
+                || path.equals("/admin-ingest")
+                || path.startsWith("/admin-ingest/");
         }
 
         return path.equals("/app/chat")
@@ -1147,6 +1150,8 @@ public class MainActivity extends BridgeActivity {
 
         return path.equals("/ingest")
             || path.startsWith("/ingest/")
+            || path.equals("/admin-ingest")
+            || path.startsWith("/admin-ingest/")
             || path.equals("/admin")
             || path.startsWith("/admin/")
             || path.equals("/api/admin")
