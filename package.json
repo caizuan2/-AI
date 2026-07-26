@@ -63,7 +63,7 @@
     "admin:copy-installers": "powershell -ExecutionPolicy Bypass -File scripts/copy-admin-installers-to-public.ps1",
     "admin-ingest:desktop:dev": "electron electron/admin-ingest/main.js",
     "admin-ingest:desktop:open": "electron electron/admin-ingest/main.js",
-    "admin-ingest:desktop:build": "electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis",
+    "admin-ingest:desktop:build": "electron-builder --config electron/admin-ingest/electron-builder.yml --win nsis --publish never",
     "ci:admin-ingest:release-info": "node scripts/ci/resolve-admin-ingest-release-info.mjs",
     "ci:admin-ingest:verify-head": "node scripts/ci/verify-release-head.mjs",
     "ci:admin-ingest:web": "powershell -ExecutionPolicy Bypass -File scripts/build/build-admin-ingest-web.ps1",
