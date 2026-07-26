@@ -1,18 +1,18 @@
 {
-  "version": "1.0.11",
-  "build": 111,
-  "minimum_build": 111,
+  "version": "1.0.12",
+  "build": 112,
+  "minimum_build": 112,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.11-build.111",
+  "release_tag": "release/admin-ingest-1.0.12-build.112",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
-  "apk_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.11-build.111/admin-ingest.exe",
+  "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.12-build.112/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 Web、Windows EXE 与 Android APK 统一版本",
-    "投喂端强制更新与应用内安装",
-    "投喂端最新功能与线上 Web 保持一致"
+    "修复投喂端 Android APK 下载停在虚假 25% 的问题",
+    "APK 改用阿里云直链并增加下载停滞恢复与安装包校验",
+    "投喂端 Web、Windows EXE 与 Android APK 统一为同一发布版本"
   ]
 }

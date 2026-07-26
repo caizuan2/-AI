@@ -62,14 +62,13 @@ assert.equal(releaseInfo.download.android, manifest.user.apk_url);
 assert.equal(releaseInfo.download.windows, manifest.user.exe_url);
 assert.equal(releaseInfo.download.web, manifest.user.web_url);
 assert.match(manifest.user.apk_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.apk$/);
-assert.match(
-  manifest.admin.apk_url,
-  /github\.com\/caizuan2\/-AI\/releases\/download\/release%2Fadmin-ingest-1\.0\.11-build\.111\/admin-ingest\.apk$/
-);
+assert.equal(manifest.admin.apk_url, "http://47.238.0.23/admin-installers/admin-ingest.apk");
 assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.exe$/);
-assert.match(
+assert.equal(
   manifest.admin.exe_url,
-  /github\.com\/caizuan2\/-AI\/releases\/download\/release%2Fadmin-ingest-1\.0\.11-build\.111\/admin-ingest\.exe$/
+  `https://github.com/caizuan2/-AI/releases/download/${encodeURIComponent(
+    `release/admin-ingest-${manifest.admin.version}-build.${manifest.admin.build}`
+  )}/admin-ingest.exe`
 );
 assert.doesNotMatch(JSON.stringify(manifest), /\.(ipa|dmg)"/i);
 

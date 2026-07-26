@@ -9,6 +9,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.SharedPreferences;
+import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -18,6 +20,7 @@ import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
@@ -49,8 +52,12 @@ public class MainActivity extends BridgeActivity {
     private static final String NETWORK_ERROR_PAGE_URL = "file:///android_asset/xiaodong-network-error/";
     private static final long[] NETWORK_RETRY_DELAYS_MS = { 2000L, 5000L, 10000L };
     private static final int FILE_CHOOSER_REQUEST_CODE = 6205;
+    private static final long ADMIN_UPDATE_STALL_TIMEOUT_MS = 45_000L;
+    private static final long ADMIN_UPDATE_MINIMUM_APK_BYTES = 1_048_576L;
     private ValueCallback<Uri[]> fileChooserCallback;
     private long updateDownloadId = -1L;
+    private long updateDownloadLastBytes = 0L;
+    private long updateDownloadLastActivityAtMs = 0L;
     private BroadcastReceiver updateDownloadReceiver;
     private File updateDownloadFile;
     private final Handler updateProgressHandler = new Handler(Looper.getMainLooper());
@@ -487,6 +494,10 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void postUpdateProgress(String phase, int progress, String message, String error) {
+        postUpdateProgress(phase, progress, message, error, false);
+    }
+
+    private void postUpdateProgress(String phase, int progress, String message, String error, boolean indeterminate) {
         if (getBridge() == null || getBridge().getWebView() == null) {
             return;
         }
@@ -497,6 +508,7 @@ public class MainActivity extends BridgeActivity {
             + ",progress:" + progress
             + ",message:" + JSONObject.quote(message)
             + ",error:" + (error == null ? "undefined" : JSONObject.quote(error))
+            + ",indeterminate:" + indeterminate
             + "}}));";
 
         webView.post(() -> webView.evaluateJavascript(script, null));
@@ -572,6 +584,7 @@ public class MainActivity extends BridgeActivity {
                 int reason = getCursorInt(cursor, DownloadManager.COLUMN_REASON, 0);
                 postUpdateProgress("error", 0, "更新包下载失败。", "系统下载失败，错误码：" + reason);
                 stopUpdateProgressPolling();
+                unregisterUpdateDownloadReceiver();
                 return true;
             }
 
@@ -585,10 +598,44 @@ public class MainActivity extends BridgeActivity {
 
             long loaded = getCursorLong(cursor, DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR, 0L);
             long total = getCursorLong(cursor, DownloadManager.COLUMN_TOTAL_SIZE_BYTES, 0L);
+            long now = SystemClock.elapsedRealtime();
+
+            if (isAdminShell()) {
+                if (updateDownloadLastActivityAtMs <= 0L || loaded > updateDownloadLastBytes) {
+                    updateDownloadLastActivityAtMs = now;
+                    updateDownloadLastBytes = loaded;
+                } else if (now - updateDownloadLastActivityAtMs >= ADMIN_UPDATE_STALL_TIMEOUT_MS) {
+                    manager.remove(updateDownloadId);
+                    updateDownloadId = -1L;
+                    if (updateDownloadFile != null && updateDownloadFile.exists()) {
+                        updateDownloadFile.delete();
+                    }
+                    postUpdateProgress(
+                        "error",
+                        0,
+                        "APK 下载长时间没有进度。",
+                        "请检查手机网络后点击“立即更新”重新下载。"
+                    );
+                    stopUpdateProgressPolling();
+                    unregisterUpdateDownloadReceiver();
+                    return true;
+                }
+            }
+
             int progress = 25;
 
             if (total > 0L) {
                 progress = Math.min(95, 15 + (int) ((loaded * 80L) / total));
+            }
+
+            if (isAdminShell() && total <= 0L) {
+                String message = status == DownloadManager.STATUS_PAUSED
+                    ? "下载已暂停，正在等待手机网络恢复..."
+                    : loaded > 0L
+                        ? "正在下载 APK，请保持网络连接..."
+                        : "正在连接阿里云下载服务器...";
+                postUpdateProgress("downloading", 0, message, null, true);
+                return false;
             }
 
             postUpdateProgress("downloading", progress, "正在当前应用内下载 APK，请稍候...", null);
@@ -682,10 +729,16 @@ public class MainActivity extends BridgeActivity {
         request.setDestinationUri(Uri.fromFile(updateDownloadFile));
 
         try {
+            updateDownloadLastBytes = 0L;
+            updateDownloadLastActivityAtMs = SystemClock.elapsedRealtime();
             updateDownloadId = manager.enqueue(request);
             registerUpdateDownloadReceiver();
             startUpdateProgressPolling();
-            postUpdateProgress("downloading", 15, "正在当前应用内下载 APK，请稍候...", null);
+            if (isAdminShell()) {
+                postUpdateProgress("downloading", 0, "正在连接阿里云下载服务器...", null, true);
+            } else {
+                postUpdateProgress("downloading", 15, "正在当前应用内下载 APK，请稍候...", null);
+            }
             Toast.makeText(this, "正在下载更新包", Toast.LENGTH_SHORT).show();
         } catch (IllegalArgumentException error) {
             postUpdateProgress("error", 0, "更新包下载失败。", error.getMessage());
@@ -695,6 +748,17 @@ public class MainActivity extends BridgeActivity {
     private void installDownloadedApk(File apkFile) {
         if (apkFile == null || !apkFile.exists()) {
             postUpdateProgress("error", 0, "更新包下载失败。", "APK 文件不存在。");
+            return;
+        }
+
+        if (isAdminShell() && !isValidAdminUpdateApk(apkFile)) {
+            apkFile.delete();
+            postUpdateProgress(
+                "error",
+                0,
+                "下载到的文件不是有效的投喂端 APK。",
+                "安装包可能下载不完整，请点击“立即更新”重新下载。"
+            );
             return;
         }
 
@@ -720,6 +784,20 @@ public class MainActivity extends BridgeActivity {
         } catch (ActivityNotFoundException error) {
             postUpdateProgress("error", 0, "无法打开安装界面。", "请在系统下载通知中手动打开安装包。");
         }
+    }
+
+    private boolean isValidAdminUpdateApk(File apkFile) {
+        if (apkFile.length() < ADMIN_UPDATE_MINIMUM_APK_BYTES) {
+            return false;
+        }
+
+        PackageManager packageManager = getPackageManager();
+        PackageInfo packageInfo = packageManager.getPackageArchiveInfo(
+            apkFile.getAbsolutePath(),
+            PackageManager.GET_META_DATA
+        );
+
+        return packageInfo != null && getPackageName().equals(packageInfo.packageName);
     }
 
     private class AndroidBridge {
