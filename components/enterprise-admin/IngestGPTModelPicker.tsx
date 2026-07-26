@@ -16,6 +16,7 @@ interface IngestGPTModelPickerProps {
   onOpen?: () => void;
   compact?: boolean;
   align?: "left" | "right";
+  menuPlacement?: "above" | "below";
   unavailableProviders?: string[];
   onCheckUnavailableProvider?: (provider: IngestModelOption["provider"]) => void;
 }
@@ -64,6 +65,7 @@ export function IngestGPTModelPicker({
   onOpen,
   compact = false,
   align = "left",
+  menuPlacement = "above",
   unavailableProviders = [],
   onCheckUnavailableProvider
 }: IngestGPTModelPickerProps) {
@@ -156,8 +158,10 @@ export function IngestGPTModelPicker({
         <div className={[
           "z-40 max-h-[calc(100dvh-8rem)] overflow-y-auto overscroll-contain rounded-2xl border border-[#e7e7e4] bg-white p-2 text-xs text-[#303030] shadow-[0_18px_50px_rgba(15,23,42,0.14)]",
           compact
-            ? "fixed inset-x-4 bottom-24 w-auto sm:absolute sm:inset-x-auto sm:bottom-11 sm:right-0 sm:w-[320px] sm:max-w-[calc(100vw-2rem)]"
-            : `absolute bottom-11 w-[320px] max-w-[calc(100vw-2rem)] ${align === "right" ? "right-0" : "left-0"}`
+            ? menuPlacement === "below"
+              ? "fixed inset-x-4 top-20 w-auto sm:absolute sm:inset-x-auto sm:top-11 sm:right-0 sm:w-[320px] sm:max-w-[calc(100vw-2rem)]"
+              : "fixed inset-x-4 bottom-24 w-auto sm:absolute sm:inset-x-auto sm:bottom-11 sm:right-0 sm:w-[320px] sm:max-w-[calc(100vw-2rem)]"
+            : `absolute ${menuPlacement === "below" ? "top-11" : "bottom-11"} w-[320px] max-w-[calc(100vw-2rem)] ${align === "right" ? "right-0" : "left-0"}`
         ].join(" ")}>
           <div className="mb-2 px-2 py-1">
             <p className="font-semibold text-[#202020]">选择当前投喂大模型</p>
