@@ -1,18 +1,18 @@
 {
-  "version": "1.0.18",
-  "build": 118,
-  "minimum_build": 118,
+  "version": "1.0.19",
+  "build": 119,
+  "minimum_build": 119,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.18-build.118",
+  "release_tag": "release/admin-ingest-1.0.19-build.119",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.18-build.118/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.19-build.119/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 APK 抽屉实时显示每个对话的生成状态",
-    "后台生成完成后显示未查看蓝点，打开对应对话后自动清除",
-    "并发对话的进度、完成状态与停止操作相互隔离，Web、EXE、APK 保持同一版本"
+    "投喂端 APK 点击切换 Agent 时保持左侧抽屉展开，减少重复打开操作",
+    "抽屉搜索同时支持 Agent 与活动对话标题，命中对话时自动展示所属 Agent 和匹配结果",
+    "点击具体对话仍按原路径进入并关闭抽屉，兼容生成状态、未读蓝点与并发隔离状态机"
   ]
 }
