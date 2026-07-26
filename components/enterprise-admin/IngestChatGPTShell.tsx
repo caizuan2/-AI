@@ -2494,7 +2494,7 @@ export function IngestChatGPTShell({
               />
             ) : null}
             {!hasMessages ? (
-              welcomeVariant === "chat_only" && canIngest ? (
+              welcomeVariant === "chat_only" ? (
                 <IngestChatOnlyWelcome userName={userName} />
               ) : (
                 <div className={`${CHAT_CONTENT_WIDTH_CLASS} flex flex-col items-center text-center`}>
