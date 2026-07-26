@@ -200,6 +200,52 @@ jobs:
         if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
         run: node scripts/release/verify-github-release-assets.mjs
 
+      - name: Configure Aliyun direct-download upload
+        if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+          ALIYUN_SSH_KEY: ${{ secrets.ALIYUN_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ALIYUN_HOST:-}"
+          test -n "${ALIYUN_USER:-}"
+          test -n "${ALIYUN_SSH_KEY:-}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$ALIYUN_SSH_KEY" > ~/.ssh/aliyun_admin_ingest_installers
+          chmod 600 ~/.ssh/aliyun_admin_ingest_installers
+
+      - name: Publish verified APK to Aliyun direct-download storage
+        if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
+        shell: bash
+        env:
+          ALIYUN_HOST: ${{ secrets.ALIYUN_HOST }}
+          ALIYUN_USER: ${{ secrets.ALIYUN_USER }}
+        run: |
+          set -euo pipefail
+          apk="artifacts/admin-ingest/apk/admin-ingest.apk"
+          manifest="artifacts/admin-ingest/release-manifest.json"
+          test -s "$apk"
+          test -s "$manifest"
+          expected_sha="$(node -e 'const m=require("./artifacts/admin-ingest/release-manifest.json"); process.stdout.write(String(m.apk?.sha256 || ""))')"
+          test -n "$expected_sha"
+          test "$(sha256sum "$apk" | awk '{print $1}')" = "$expected_sha"
+          remote_dir="/var/www/ai-knowledge-shared/admin-ingest/releases/current"
+          incoming="$remote_dir/admin-ingest.apk.incoming-$RELEASE_HEAD"
+          ssh -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" \
+            "install -d -m 755 '$remote_dir'"
+          scp -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$apk" \
+            "$ALIYUN_USER@$ALIYUN_HOST:$incoming"
+          ssh -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" \
+            "INCOMING='$incoming' EXPECTED_SHA='$expected_sha' bash -s" <<'REMOTE'
+          set -euo pipefail
+          test -s "$INCOMING"
+          test "$(sha256sum "$INCOMING" | awk '{print $1}')" = "$EXPECTED_SHA"
+          chmod 644 "$INCOMING"
+          mv -f "$INCOMING" "$(dirname "$INCOMING")/admin-ingest.apk"
+          REMOTE
+
       - name: Upload release manifest
         uses: actions/upload-artifact@v4
         if: always()

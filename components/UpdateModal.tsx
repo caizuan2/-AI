@@ -25,6 +25,7 @@ interface UpdateInstallState {
   progress: number;
   message: string;
   error?: string;
+  indeterminate?: boolean;
 }
 
 const platformUpdateTips: Record<UpdatePlatform, string> = {
@@ -66,6 +67,7 @@ export function UpdateModal({
   const busy = isInstallBusy(activeInstallState.phase);
   const hasInstallFeedback = activeInstallState.phase !== "idle";
   const installProgress = Math.max(0, Math.min(100, Math.round(activeInstallState.progress || 0)));
+  const installIndeterminate = Boolean(activeInstallState.indeterminate && busy);
   const updateTip = isWebContentUpdate
     ? "这是线上内容更新，点击后会在当前应用内加载最新内容，进度完成后自动进入系统，不需要重新安装 APK/EXE。"
     : platformUpdateTips[platform];
@@ -165,12 +167,20 @@ export function UpdateModal({
           >
             <div className="flex items-center justify-between gap-3">
               <span className="min-w-0 font-semibold">{activeInstallState.message}</span>
-              <span className="shrink-0 text-xs font-bold">{installProgress}%</span>
+              <span className="shrink-0 text-xs font-bold">
+                {installIndeterminate ? "连接中" : `${installProgress}%`}
+              </span>
             </div>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-white/80">
               <div
-                className={activeInstallState.phase === "error" ? "h-full rounded-full bg-rose-500" : "h-full rounded-full bg-blue-600"}
-                style={{ width: `${installProgress}%` }}
+                className={
+                  activeInstallState.phase === "error"
+                    ? "h-full rounded-full bg-rose-500"
+                    : installIndeterminate
+                      ? "h-full animate-pulse rounded-full bg-blue-400"
+                      : "h-full rounded-full bg-blue-600"
+                }
+                style={{ width: installIndeterminate ? "38%" : `${installProgress}%` }}
               />
             </div>
             {activeInstallState.error ? (

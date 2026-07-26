@@ -19,6 +19,7 @@ export interface UpdateInstallState {
   progress: number;
   message: string;
   error?: string;
+  indeterminate?: boolean;
 }
 
 interface UpdateProgressDetail {
@@ -27,6 +28,7 @@ interface UpdateProgressDetail {
   progress?: number;
   message?: string;
   error?: string;
+  indeterminate?: boolean;
 }
 
 interface UpdateRuntimeWindow extends Window {
@@ -330,7 +332,8 @@ export function AppUpdateNotice({
         phase,
         progress: clampProgress(detail.progress ?? (phase === "ready" ? 100 : 35)),
         message: detail.message || (phase === "ready" ? "更新包已下载完成，正在打开安装程序。" : "正在下载更新包..."),
-        error: detail.error
+        error: detail.error,
+        indeterminate: detail.indeterminate
       });
     };
     const runtimeWindow = getRuntimeWindow();
@@ -545,8 +548,11 @@ export function AppUpdateNotice({
         runtimeWindow.AndroidBridge.downloadUpdate(targetUrl, fileName);
         setInstallState({
           phase: "downloading",
-          progress: 15,
-          message: "正在当前应用内下载 APK，请稍候..."
+          progress: appKind === ADMIN_APP_KIND ? 0 : 15,
+          message: appKind === ADMIN_APP_KIND
+            ? "正在连接阿里云下载服务器..."
+            : "正在当前应用内下载 APK，请稍候...",
+          indeterminate: appKind === ADMIN_APP_KIND
         });
         return;
       }

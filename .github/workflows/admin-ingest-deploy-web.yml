@@ -138,6 +138,14 @@ jobs:
           git checkout main
           git pull --ff-only origin main
           test "$(git rev-parse HEAD)" = "$RELEASE_SHA"
+          installer_source="/var/www/ai-knowledge-shared/admin-ingest/releases/current"
+          installer_link="$APP_DIR/public/admin-installers"
+          test -s "$installer_source/admin-ingest.apk"
+          if [ -e "$installer_link" ] && [ ! -L "$installer_link" ]; then
+            echo "ADMIN_INSTALLER_LINK_CONFLICT=$installer_link" >&2
+            exit 1
+          fi
+          ln -sfn "$installer_source" "$installer_link"
           npm install --include=dev
           npx prisma generate
           npx prisma validate
@@ -150,6 +158,7 @@ jobs:
           sleep 3
           curl -fsS -I "http://127.0.0.1:3021/admin-ingest?app=ingest-admin&platform=web"
           curl -fsS -I "http://127.0.0.1:3021/api/public/expert-market"
+          test "$(curl -fsS -r 0-0 -o /dev/null -w '%{http_code}' "http://127.0.0.1:3021/admin-installers/admin-ingest.apk")" = "206"
           echo "DEPLOYMENT_DONE=true"
           REMOTE
 
