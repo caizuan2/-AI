@@ -20,6 +20,7 @@ import {
   Image,
   Link2,
   Loader2,
+  Menu,
   Mic,
   Paperclip,
   Plus,
@@ -151,6 +152,7 @@ const CHAT_CONTENT_WIDTH_CLASS = "mx-auto w-full max-w-[780px]";
 
 const SHOW_INTERNAL_OS_UI = false;
 const SHOW_STRUCTURED_RESULT_DRAWER = false;
+const ADMIN_INGEST_MOBILE_DRAWER_HISTORY_KEY = "__adminIngestMobileDrawer";
 
 type LatestTurnSpacerMode = "active" | "settled";
 
@@ -919,6 +921,8 @@ export function IngestChatGPTShell({
   const [drawerView, setDrawerView] = useState<"draft" | "records">("records");
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
+  const [isMobileNavigationOpen, setIsMobileNavigationOpen] = useState(false);
+  const isMobileNavigationOpenRef = useRef(false);
   const [internalAutonomousEnabled, setInternalAutonomousEnabled] = useState(false);
   const [autonomousTask, setAutonomousTask] = useState<AutonomousTaskStateSnapshot | null>(null);
   const [taskChain, setTaskChain] = useState<TaskChainStateSnapshot | null>(null);
@@ -954,6 +958,7 @@ export function IngestChatGPTShell({
   const selectedModelLabel = normalizedModelSelection.label;
   const autonomousEnabled = controlledAutonomousEnabled ?? internalAutonomousEnabled;
   const setAutonomousEnabled = onAutonomousEnabledChange ?? setInternalAutonomousEnabled;
+  const isAdminApk = voiceState.platform === "apk";
 
   useEffect(() => {
     const now = Date.now();
@@ -1333,6 +1338,52 @@ export function IngestChatGPTShell({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [drawerOpen]);
+
+  useEffect(() => {
+    isMobileNavigationOpenRef.current = isMobileNavigationOpen;
+  }, [isMobileNavigationOpen]);
+
+  useEffect(() => {
+    if (!isAdminApk) {
+      isMobileNavigationOpenRef.current = false;
+      setIsMobileNavigationOpen(false);
+      return;
+    }
+
+    function handleMobileDrawerHistoryChange() {
+      if (!isMobileNavigationOpenRef.current) {
+        return;
+      }
+
+      isMobileNavigationOpenRef.current = false;
+      setIsMobileNavigationOpen(false);
+    }
+
+    function handleMobileDrawerKeyDown(event: KeyboardEvent) {
+      if (event.key !== "Escape" || !isMobileNavigationOpenRef.current) {
+        return;
+      }
+
+      const currentHistoryState = window.history.state as Record<string, unknown> | null;
+      if (currentHistoryState?.[ADMIN_INGEST_MOBILE_DRAWER_HISTORY_KEY] === true) {
+        isMobileNavigationOpenRef.current = false;
+        setIsMobileNavigationOpen(false);
+        window.history.back();
+        return;
+      }
+
+      isMobileNavigationOpenRef.current = false;
+      setIsMobileNavigationOpen(false);
+    }
+
+    window.addEventListener("popstate", handleMobileDrawerHistoryChange);
+    document.addEventListener("keydown", handleMobileDrawerKeyDown);
+
+    return () => {
+      window.removeEventListener("popstate", handleMobileDrawerHistoryChange);
+      document.removeEventListener("keydown", handleMobileDrawerKeyDown);
+    };
+  }, [isAdminApk]);
 
   useEffect(() => {
     if (!isMoreOpen && !isConnectionOpen) {
@@ -1947,8 +1998,40 @@ export function IngestChatGPTShell({
     setDrawerOpen(true);
   }
 
+  function openMobileNavigation() {
+    if (!isAdminApk || isMobileNavigationOpenRef.current) {
+      return;
+    }
+
+    const currentHistoryState = window.history.state as Record<string, unknown> | null;
+    window.history.pushState({
+      ...(currentHistoryState ?? {}),
+      [ADMIN_INGEST_MOBILE_DRAWER_HISTORY_KEY]: true
+    }, "", window.location.href);
+    isMobileNavigationOpenRef.current = true;
+    setIsMobileNavigationOpen(true);
+  }
+
+  function closeMobileNavigation() {
+    if (!isAdminApk || !isMobileNavigationOpenRef.current) {
+      return;
+    }
+
+    const currentHistoryState = window.history.state as Record<string, unknown> | null;
+    if (currentHistoryState?.[ADMIN_INGEST_MOBILE_DRAWER_HISTORY_KEY] === true) {
+      isMobileNavigationOpenRef.current = false;
+      setIsMobileNavigationOpen(false);
+      window.history.back();
+      return;
+    }
+
+    isMobileNavigationOpenRef.current = false;
+    setIsMobileNavigationOpen(false);
+  }
+
   function handleAgentCardSelect(agentId: string) {
     setActiveAgentId(agentId);
+    closeMobileNavigation();
   }
 
   function handleSearchConfirm() {
@@ -2079,12 +2162,36 @@ export function IngestChatGPTShell({
   }
 
   return (
-    <main className="flex h-screen overflow-hidden bg-[#f7f7f6] text-[#191919]">
-      <aside className="flex h-screen w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5">
+    <main className={["flex overflow-hidden bg-[#f7f7f6] text-[#191919]", isAdminApk ? "h-dvh" : "h-screen"].join(" ")}>
+      {isAdminApk ? (
+        <button
+          type="button"
+          aria-label="关闭左侧功能"
+          tabIndex={isMobileNavigationOpen ? 0 : -1}
+          onClick={closeMobileNavigation}
+          className={[
+            "fixed inset-0 z-[60] bg-black/30 transition-opacity duration-200",
+            isMobileNavigationOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+          ].join(" ")}
+        />
+      ) : null}
+      <div
+        aria-hidden={isAdminApk ? !isMobileNavigationOpen : undefined}
+        className={isAdminApk
+          ? [
+              "fixed inset-y-0 left-0 z-[70] flex w-[min(92vw,390px)] max-w-full bg-[#fbfbfa] shadow-2xl transition-transform duration-200 ease-out",
+              isMobileNavigationOpen ? "translate-x-0" : "pointer-events-none -translate-x-full"
+            ].join(" ")
+          : "contents"}
+      >
+      <aside className={["flex w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5", isAdminApk ? "h-dvh" : "h-screen"].join(" ")}>
         <button
           type="button"
           title="管理员头像 / 设置"
-          onClick={() => onRailChange?.("settings")}
+          onClick={() => {
+            onRailChange?.("settings");
+            closeMobileNavigation();
+          }}
           className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full border border-white bg-gradient-to-br from-[#d9f8e9] to-[#fff7e8] text-sm font-semibold text-[#128246] shadow-sm transition hover:scale-[1.03] hover:shadow-md"
         >
           {adminAvatar ? (
@@ -2122,6 +2229,7 @@ export function IngestChatGPTShell({
                   if (item.key === "tasks") {
                     openDrawer("records", { toggle: true });
                   }
+                  closeMobileNavigation();
                 }}
               >
                 <span className={["relative flex h-8 w-8 items-center justify-center rounded-xl transition", isActive ? "bg-[#191919] text-white shadow-sm" : isDisabled ? "text-[#aaa]" : "text-[#222] group-hover:bg-white"].join(" ")}>
@@ -2135,32 +2243,57 @@ export function IngestChatGPTShell({
         </nav>
 
         <div className="flex flex-col items-center gap-2 text-[#333]">
-          <button type="button" title="更新提示" onClick={() => onRailChange?.("notifications")} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "notifications" ? "bg-white text-[#128246]" : ""].join(" ")}>
+          <button type="button" title="更新提示" onClick={() => {
+            onRailChange?.("notifications");
+            closeMobileNavigation();
+          }} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "notifications" ? "bg-white text-[#128246]" : ""].join(" ")}>
             <Bell className="h-5 w-5" aria-hidden="true" />
           </button>
-          <button type="button" title="我的设置" onClick={() => onRailChange?.("settings")} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "settings" ? "bg-white text-[#128246]" : ""].join(" ")}>
+          <button type="button" title="我的设置" onClick={() => {
+            onRailChange?.("settings");
+            closeMobileNavigation();
+          }} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "settings" ? "bg-white text-[#128246]" : ""].join(" ")}>
             <Settings className="h-5 w-5" aria-hidden="true" />
           </button>
         </div>
       </aside>
 
-      <IngestResizableSidebar className="border-[#ededeb] bg-[#fbfbfa]" ariaLabel="管理员投喂 Agent 列表">
+      <IngestResizableSidebar
+        className="border-[#ededeb] bg-[#fbfbfa]"
+        ariaLabel="管理员投喂 Agent 列表"
+        mobileDrawer={isAdminApk}
+      >
         <div className="p-4 pb-3">
-          <div className="flex h-9 items-center gap-2 rounded-full bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
-            <Search className="h-4 w-4" aria-hidden="true" />
-            <input
-              value={searchKeyword}
-              onChange={(event) => setSearchKeyword(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  handleSearchConfirm();
-                }
-              }}
-              placeholder="搜索"
-              className="min-w-0 flex-1 bg-transparent text-sm text-[#333] outline-none placeholder:text-[#8a8a86]"
-            />
+          <div className="flex items-center gap-2">
+            <div className="flex h-9 min-w-0 flex-1 items-center gap-2 rounded-full bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
+              <Search className="h-4 w-4" aria-hidden="true" />
+              <input
+                value={searchKeyword}
+                onChange={(event) => setSearchKeyword(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    handleSearchConfirm();
+                  }
+                }}
+                placeholder="搜索"
+                className="min-w-0 flex-1 bg-transparent text-sm text-[#333] outline-none placeholder:text-[#8a8a86]"
+              />
+            </div>
+            {isAdminApk ? (
+              <button
+                type="button"
+                aria-label="关闭左侧功能"
+                onClick={closeMobileNavigation}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[#6f6f6b] transition hover:bg-[#f0f0ef] hover:text-[#202020]"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : null}
           </div>
-          <button type="button" onClick={onOpenCreateAgent} className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-full border border-[#e4e4e1] bg-white text-sm font-medium text-[#202020] shadow-sm transition hover:bg-[#f7f7f5]">
+          <button type="button" onClick={() => {
+            onOpenCreateAgent?.();
+            closeMobileNavigation();
+          }} className="mt-3 flex h-10 w-full items-center justify-center gap-2 rounded-full border border-[#e4e4e1] bg-white text-sm font-medium text-[#202020] shadow-sm transition hover:bg-[#f7f7f5]">
             <Plus className="h-4 w-4" aria-hidden="true" />
             添加专家 Agent
           </button>
@@ -2173,7 +2306,10 @@ export function IngestChatGPTShell({
                 <p className="text-xs font-semibold text-[#202020]">暂无 Agent，请到专家广场添加专家。</p>
                 <button
                   type="button"
-                  onClick={() => onRailChange?.("experts")}
+                  onClick={() => {
+                    onRailChange?.("experts");
+                    closeMobileNavigation();
+                  }}
                   className="mt-3 h-8 rounded-full bg-[#202020] px-3 text-xs font-semibold text-white hover:bg-black"
                 >
                   打开专家广场
@@ -2262,7 +2398,10 @@ export function IngestChatGPTShell({
                       conversations={conversations}
                       activeConversationId={activeConversationId}
                       expandedAll={expandedConversationAgentIds.includes(agent.id)}
-                      onSelectConversation={(agentId, conversationId) => onAgentConversationSelect?.(agentId, conversationId)}
+                      onSelectConversation={(agentId, conversationId) => {
+                        onAgentConversationSelect?.(agentId, conversationId);
+                        closeMobileNavigation();
+                      }}
                       onToggleExpandedAll={(agentId) => onAgentConversationToggleExpanded?.(agentId)}
                       onShareConversation={(agentId, conversationId) => onAgentConversationShare?.(agentId, conversationId)}
                       onStartGroupChat={(agentId, conversationId) => onAgentConversationStartGroupChat?.(agentId, conversationId)}
@@ -2278,10 +2417,33 @@ export function IngestChatGPTShell({
           </div>
         </div>
       </IngestResizableSidebar>
+      </div>
 
       <section className="relative flex min-w-0 flex-1 flex-col bg-white">
+        {isAdminApk && isExpertMarketplace ? (
+          <button
+            type="button"
+            aria-label="打开左侧功能"
+            aria-expanded={isMobileNavigationOpen}
+            onClick={openMobileNavigation}
+            className="absolute left-4 top-3 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95"
+          >
+            <Menu className="h-5 w-5" aria-hidden="true" />
+          </button>
+        ) : null}
         {!isExpertMarketplace ? (
-          <div className="flex h-16 shrink-0 items-center justify-end border-b border-[#f0f0ee] px-5">
+          <div className={["flex h-16 shrink-0 items-center border-b border-[#f0f0ee] px-5", isAdminApk ? "justify-between" : "justify-end"].join(" ")}>
+            {isAdminApk ? (
+              <button
+                type="button"
+                aria-label="打开左侧功能"
+                aria-expanded={isMobileNavigationOpen}
+                onClick={openMobileNavigation}
+                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95"
+              >
+                <Menu className="h-5 w-5" aria-hidden="true" />
+              </button>
+            ) : null}
             <IngestGPTModelPicker
               selectedModel={selectedModelLabel}
               disabled={isParsing}

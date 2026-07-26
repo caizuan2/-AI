@@ -24,6 +24,9 @@ import android.os.Looper;
 import android.os.Message;
 import android.os.SystemClock;
 import android.provider.Settings;
+import android.speech.RecognitionListener;
+import android.speech.RecognizerIntent;
+import android.speech.SpeechRecognizer;
 import android.util.Base64;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
@@ -44,6 +47,8 @@ import com.getcapacitor.BridgeWebViewClient;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
+import java.util.ArrayList;
+import java.util.Locale;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
@@ -79,10 +84,15 @@ public class MainActivity extends BridgeActivity {
     private boolean staleUserAssetsRecoveryAttempted;
     private boolean pendingVoiceRecording;
     private boolean voiceRecordingActive;
+    private boolean voiceRecognitionActive;
     private MediaRecorder voiceRecorder;
     private File voiceRecordingFile;
+    private SpeechRecognizer voiceSpeechRecognizer;
+    private String voiceRecognitionLastTranscript = "";
+    private String adminIngestVoiceSessionId = "";
     private final Handler voiceRecordingHandler = new Handler(Looper.getMainLooper());
     private Runnable voiceRecordingStopRunnable;
+    private Runnable voiceRecognitionFinalizeRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -138,7 +148,7 @@ public class MainActivity extends BridgeActivity {
 
         if (granted && pendingVoiceRecording) {
             pendingVoiceRecording = false;
-            startAdminIngestVoiceRecording();
+            startAdminIngestVoiceInput();
             return;
         }
 
@@ -165,6 +175,7 @@ public class MainActivity extends BridgeActivity {
         cancelNetworkRetry();
         stopUpdateProgressPolling();
         unregisterUpdateDownloadReceiver();
+        releaseAdminIngestLiveSpeechRecognizer(true);
         releaseAdminIngestVoiceRecorder(true);
         super.onDestroy();
     }
@@ -192,7 +203,7 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
-        if (pendingVoiceRecording || voiceRecordingActive) {
+        if (pendingVoiceRecording || voiceRecordingActive || voiceRecognitionActive) {
             return;
         }
 
@@ -208,7 +219,145 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
+        startAdminIngestVoiceInput();
+    }
+
+    private void startAdminIngestVoiceInput() {
+        adminIngestVoiceSessionId = "admin-ingest-voice-" + System.currentTimeMillis();
+
+        if (SpeechRecognizer.isRecognitionAvailable(this)) {
+            startAdminIngestLiveSpeechRecognition();
+            return;
+        }
+
         startAdminIngestVoiceRecording();
+    }
+
+    private void startAdminIngestLiveSpeechRecognition() {
+        releaseAdminIngestLiveSpeechRecognizer(true);
+        final String sessionId = adminIngestVoiceSessionId;
+        final SpeechRecognizer recognizer;
+
+        try {
+            recognizer = SpeechRecognizer.createSpeechRecognizer(this);
+        } catch (Exception error) {
+            startAdminIngestVoiceRecording();
+            return;
+        }
+
+        voiceSpeechRecognizer = recognizer;
+        voiceRecognitionActive = true;
+        voiceRecognitionLastTranscript = "";
+        recognizer.setRecognitionListener(new RecognitionListener() {
+            @Override
+            public void onReadyForSpeech(Bundle params) {}
+
+            @Override
+            public void onBeginningOfSpeech() {}
+
+            @Override
+            public void onRmsChanged(float rmsdB) {}
+
+            @Override
+            public void onBufferReceived(byte[] buffer) {}
+
+            @Override
+            public void onEndOfSpeech() {}
+
+            @Override
+            public void onError(int error) {
+                if (!isActiveAdminIngestSpeechSession(sessionId)) {
+                    return;
+                }
+
+                String partialTranscript = voiceRecognitionLastTranscript;
+                releaseAdminIngestLiveSpeechRecognizer(false);
+
+                if (!partialTranscript.isEmpty()) {
+                    postAdminIngestSpeechEvent(
+                        "result",
+                        partialTranscript,
+                        "",
+                        sessionId
+                    );
+                    clearAdminIngestVoiceSession(sessionId);
+                    return;
+                }
+
+                postAdminIngestSpeechEvent(
+                    "error",
+                    "",
+                    resolveAdminIngestSpeechError(error),
+                    sessionId
+                );
+                clearAdminIngestVoiceSession(sessionId);
+            }
+
+            @Override
+            public void onResults(Bundle results) {
+                if (!isActiveAdminIngestSpeechSession(sessionId)) {
+                    return;
+                }
+
+                String transcript = resolveAdminIngestSpeechTranscript(results);
+                if (transcript.isEmpty()) {
+                    transcript = voiceRecognitionLastTranscript;
+                }
+
+                releaseAdminIngestLiveSpeechRecognizer(false);
+
+                if (transcript.isEmpty()) {
+                    postAdminIngestSpeechEvent(
+                        "error",
+                        "",
+                        "没有识别到清晰语音，请靠近麦克风后重试。",
+                        sessionId
+                    );
+                } else {
+                    postAdminIngestSpeechEvent("result", transcript, "", sessionId);
+                }
+                clearAdminIngestVoiceSession(sessionId);
+            }
+
+            @Override
+            public void onPartialResults(Bundle partialResults) {
+                if (!isActiveAdminIngestSpeechSession(sessionId)) {
+                    return;
+                }
+
+                String transcript = resolveAdminIngestSpeechTranscript(partialResults);
+                if (transcript.isEmpty()) {
+                    return;
+                }
+
+                voiceRecognitionLastTranscript = transcript;
+                postAdminIngestSpeechEvent("partial", transcript, "", sessionId);
+            }
+
+            @Override
+            public void onEvent(int eventType, Bundle params) {}
+        });
+
+        Intent recognizerIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        recognizerIntent.putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
+        );
+        recognizerIntent.putExtra(
+            RecognizerIntent.EXTRA_LANGUAGE,
+            Locale.SIMPLIFIED_CHINESE.toLanguageTag()
+        );
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true);
+        recognizerIntent.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3);
+
+        try {
+            postAdminIngestSpeechEvent("started", "", "", sessionId);
+            recognizer.startListening(recognizerIntent);
+            scheduleAdminIngestVoiceInputStop();
+        } catch (Exception error) {
+            releaseAdminIngestLiveSpeechRecognizer(true);
+            startAdminIngestVoiceRecording();
+        }
     }
 
     @SuppressWarnings("deprecation")
@@ -234,8 +383,13 @@ public class MainActivity extends BridgeActivity {
             voiceRecorder = recorder;
             voiceRecordingFile = recordingFile;
             voiceRecordingActive = true;
-            postAdminIngestSpeechEvent("started", "", "");
-            scheduleAdminIngestVoiceRecordingStop();
+            postAdminIngestSpeechEvent(
+                "started",
+                "",
+                "",
+                adminIngestVoiceSessionId
+            );
+            scheduleAdminIngestVoiceInputStop();
         } catch (Exception error) {
             try {
                 recorder.reset();
@@ -245,8 +399,10 @@ public class MainActivity extends BridgeActivity {
             postAdminIngestSpeechEvent(
                 "error",
                 "",
-                "无法启动麦克风录音，请检查麦克风权限后重试。"
+                "无法启动麦克风录音，请检查麦克风权限后重试。",
+                adminIngestVoiceSessionId
             );
+            clearAdminIngestVoiceSession(adminIngestVoiceSessionId);
         }
     }
 
@@ -255,7 +411,7 @@ public class MainActivity extends BridgeActivity {
             return;
         }
 
-        cancelAdminIngestVoiceRecordingStop();
+        cancelAdminIngestVoiceInputStop();
         MediaRecorder activeRecorder = voiceRecorder;
         File recordingFile = voiceRecordingFile;
         voiceRecorder = null;
@@ -277,6 +433,7 @@ public class MainActivity extends BridgeActivity {
 
         if (!shouldDispatchAudio) {
             deleteVoiceRecordingFile(recordingFile);
+            clearAdminIngestVoiceSession(adminIngestVoiceSessionId);
             return;
         }
 
@@ -285,8 +442,10 @@ public class MainActivity extends BridgeActivity {
             postAdminIngestSpeechEvent(
                 "error",
                 "",
-                "录音时间太短或没有录到声音，请重新录制。"
+                "录音时间太短或没有录到声音，请重新录制。",
+                adminIngestVoiceSessionId
             );
+            clearAdminIngestVoiceSession(adminIngestVoiceSessionId);
             return;
         }
 
@@ -296,16 +455,19 @@ public class MainActivity extends BridgeActivity {
             postAdminIngestVoiceAudioEvent(
                 audioBase64,
                 "audio/mp4",
-                "admin-ingest-voice.m4a"
+                "admin-ingest-voice.m4a",
+                adminIngestVoiceSessionId
             );
         } catch (Exception error) {
             postAdminIngestSpeechEvent(
                 "error",
                 "",
-                "录音读取失败，请重新录制。"
+                "录音读取失败，请重新录制。",
+                adminIngestVoiceSessionId
             );
         } finally {
             deleteVoiceRecordingFile(recordingFile);
+            clearAdminIngestVoiceSession(adminIngestVoiceSessionId);
         }
     }
 
@@ -325,11 +487,13 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
-    private void scheduleAdminIngestVoiceRecordingStop() {
-        cancelAdminIngestVoiceRecordingStop();
+    private void scheduleAdminIngestVoiceInputStop() {
+        cancelAdminIngestVoiceInputStop();
         voiceRecordingStopRunnable = () -> {
             voiceRecordingStopRunnable = null;
-            if (voiceRecordingActive) {
+            if (voiceRecognitionActive) {
+                stopAdminIngestLiveSpeechRecognition(true);
+            } else if (voiceRecordingActive) {
                 stopAdminIngestVoiceRecording(true);
             }
         };
@@ -339,7 +503,7 @@ public class MainActivity extends BridgeActivity {
         );
     }
 
-    private void cancelAdminIngestVoiceRecordingStop() {
+    private void cancelAdminIngestVoiceInputStop() {
         if (voiceRecordingStopRunnable == null) {
             return;
         }
@@ -348,8 +512,158 @@ public class MainActivity extends BridgeActivity {
         voiceRecordingStopRunnable = null;
     }
 
+    private void stopAdminIngestLiveSpeechRecognition(boolean shouldFinalize) {
+        if (!voiceRecognitionActive || voiceSpeechRecognizer == null) {
+            return;
+        }
+
+        cancelAdminIngestVoiceInputStop();
+        final String sessionId = adminIngestVoiceSessionId;
+
+        if (!shouldFinalize) {
+            releaseAdminIngestLiveSpeechRecognizer(true);
+            postAdminIngestSpeechEvent("cancelled", "", "", sessionId);
+            clearAdminIngestVoiceSession(sessionId);
+            return;
+        }
+
+        try {
+            voiceSpeechRecognizer.stopListening();
+        } catch (Exception error) {
+            finalizeAdminIngestLiveSpeechRecognition(sessionId);
+            return;
+        }
+
+        cancelAdminIngestVoiceRecognitionFinalize();
+        voiceRecognitionFinalizeRunnable = () -> {
+            voiceRecognitionFinalizeRunnable = null;
+            finalizeAdminIngestLiveSpeechRecognition(sessionId);
+        };
+        voiceRecordingHandler.postDelayed(voiceRecognitionFinalizeRunnable, 2500L);
+    }
+
+    private void finalizeAdminIngestLiveSpeechRecognition(String sessionId) {
+        if (!isActiveAdminIngestSpeechSession(sessionId)) {
+            return;
+        }
+
+        String transcript = voiceRecognitionLastTranscript;
+        releaseAdminIngestLiveSpeechRecognizer(true);
+
+        if (transcript.isEmpty()) {
+            postAdminIngestSpeechEvent(
+                "error",
+                "",
+                "没有识别到清晰语音，请靠近麦克风后重试。",
+                sessionId
+            );
+        } else {
+            postAdminIngestSpeechEvent("result", transcript, "", sessionId);
+        }
+        clearAdminIngestVoiceSession(sessionId);
+    }
+
+    private void cancelAdminIngestVoiceRecognitionFinalize() {
+        if (voiceRecognitionFinalizeRunnable == null) {
+            return;
+        }
+
+        voiceRecordingHandler.removeCallbacks(voiceRecognitionFinalizeRunnable);
+        voiceRecognitionFinalizeRunnable = null;
+    }
+
+    private void releaseAdminIngestLiveSpeechRecognizer(boolean shouldCancel) {
+        cancelAdminIngestVoiceInputStop();
+        cancelAdminIngestVoiceRecognitionFinalize();
+        SpeechRecognizer activeRecognizer = voiceSpeechRecognizer;
+        voiceSpeechRecognizer = null;
+        voiceRecognitionActive = false;
+        voiceRecognitionLastTranscript = "";
+
+        if (activeRecognizer == null) {
+            return;
+        }
+
+        if (shouldCancel) {
+            try {
+                activeRecognizer.cancel();
+            } catch (Exception ignored) {}
+        }
+
+        activeRecognizer.destroy();
+    }
+
+    private boolean isActiveAdminIngestSpeechSession(String sessionId) {
+        return voiceRecognitionActive
+            && !sessionId.isEmpty()
+            && sessionId.equals(adminIngestVoiceSessionId);
+    }
+
+    private String resolveAdminIngestSpeechTranscript(Bundle results) {
+        if (results == null) {
+            return "";
+        }
+
+        ArrayList<String> matches = results.getStringArrayList(
+            SpeechRecognizer.RESULTS_RECOGNITION
+        );
+        if (matches == null || matches.isEmpty() || matches.get(0) == null) {
+            return "";
+        }
+
+        return matches.get(0).trim();
+    }
+
+    private String resolveAdminIngestSpeechError(int error) {
+        if (
+            error == SpeechRecognizer.ERROR_NETWORK
+            || error == SpeechRecognizer.ERROR_NETWORK_TIMEOUT
+            || error == SpeechRecognizer.ERROR_SERVER
+        ) {
+            return "实时语音服务连接失败，请检查网络后重试。";
+        }
+
+        if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) {
+            return "麦克风权限未开启，请在手机设置中允许小董AI使用麦克风。";
+        }
+
+        if (
+            error == SpeechRecognizer.ERROR_NO_MATCH
+            || error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
+        ) {
+            return "没有识别到清晰语音，请靠近麦克风后重试。";
+        }
+
+        if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) {
+            return "手机语音识别正忙，请稍后再试。";
+        }
+
+        return "手机实时语音识别失败，请稍后重试。";
+    }
+
+    private void cancelAdminIngestVoiceInput() {
+        String sessionId = adminIngestVoiceSessionId;
+
+        if (voiceRecognitionActive) {
+            stopAdminIngestLiveSpeechRecognition(false);
+            return;
+        }
+
+        if (voiceRecordingActive) {
+            stopAdminIngestVoiceRecording(false);
+            postAdminIngestSpeechEvent("cancelled", "", "", sessionId);
+            clearAdminIngestVoiceSession(sessionId);
+        }
+    }
+
+    private void clearAdminIngestVoiceSession(String sessionId) {
+        if (sessionId != null && sessionId.equals(adminIngestVoiceSessionId)) {
+            adminIngestVoiceSessionId = "";
+        }
+    }
+
     private void releaseAdminIngestVoiceRecorder(boolean shouldDeleteRecording) {
-        cancelAdminIngestVoiceRecordingStop();
+        cancelAdminIngestVoiceInputStop();
         MediaRecorder activeRecorder = voiceRecorder;
         File recordingFile = voiceRecordingFile;
         voiceRecorder = null;
@@ -379,15 +693,33 @@ public class MainActivity extends BridgeActivity {
     }
 
     private void postAdminIngestSpeechEvent(String state, String transcript, String error) {
-        postAdminIngestSpeechEvent(state, transcript, error, "", "", "");
+        postAdminIngestSpeechEvent(state, transcript, error, "", "", "", "");
+    }
+
+    private void postAdminIngestSpeechEvent(
+        String state,
+        String transcript,
+        String error,
+        String sessionId
+    ) {
+        postAdminIngestSpeechEvent(state, transcript, error, "", "", "", sessionId);
     }
 
     private void postAdminIngestVoiceAudioEvent(
         String audioBase64,
         String mimeType,
-        String fileName
+        String fileName,
+        String sessionId
     ) {
-        postAdminIngestSpeechEvent("audio", "", "", audioBase64, mimeType, fileName);
+        postAdminIngestSpeechEvent(
+            "audio",
+            "",
+            "",
+            audioBase64,
+            mimeType,
+            fileName,
+            sessionId
+        );
     }
 
     private void postAdminIngestSpeechEvent(
@@ -396,7 +728,8 @@ public class MainActivity extends BridgeActivity {
         String error,
         String audioBase64,
         String mimeType,
-        String fileName
+        String fileName,
+        String sessionId
     ) {
         if (!isAdminShell()) {
             return;
@@ -415,6 +748,7 @@ public class MainActivity extends BridgeActivity {
             detail.put("audioBase64", audioBase64);
             detail.put("mimeType", mimeType);
             detail.put("fileName", fileName);
+            detail.put("sessionId", sessionId);
             String script = "window.dispatchEvent(new CustomEvent('admin-ingest-native-speech',{detail:"
                 + detail.toString()
                 + "}));";
@@ -1134,7 +1468,19 @@ public class MainActivity extends BridgeActivity {
 
         @JavascriptInterface
         public void stopSpeechRecognition() {
-            runOnUiThread(() -> stopAdminIngestVoiceRecording(true));
+            runOnUiThread(() -> {
+                if (voiceRecognitionActive) {
+                    stopAdminIngestLiveSpeechRecognition(true);
+                    return;
+                }
+
+                stopAdminIngestVoiceRecording(true);
+            });
+        }
+
+        @JavascriptInterface
+        public void cancelSpeechRecognition() {
+            runOnUiThread(() -> cancelAdminIngestVoiceInput());
         }
     }
 

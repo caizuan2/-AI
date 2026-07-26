@@ -23,11 +23,13 @@ function applySidebarWidth(width: number) {
 export function IngestResizableSidebar({
   children,
   className = "",
-  ariaLabel = "Admin ingest Agent sidebar"
+  ariaLabel = "Admin ingest Agent sidebar",
+  mobileDrawer = false
 }: {
   children: ReactNode;
   className?: string;
   ariaLabel?: string;
+  mobileDrawer?: boolean;
 }) {
   const [width, setWidth] = useState(DEFAULT_SIDEBAR_WIDTH);
 
@@ -74,17 +76,24 @@ export function IngestResizableSidebar({
   return (
     <aside
       aria-label={ariaLabel}
-      className={["relative hidden h-screen shrink-0 flex-col border-r md:flex", className].join(" ")}
-      style={{ width }}
+      className={[
+        mobileDrawer
+          ? "relative flex h-dvh min-w-0 flex-1 flex-col border-r"
+          : "relative hidden h-screen shrink-0 flex-col border-r md:flex",
+        className
+      ].join(" ")}
+      style={mobileDrawer ? undefined : { width }}
     >
       {children}
-      <div
-        aria-hidden="true"
-        onMouseDown={startResize}
-        className="absolute inset-y-0 right-0 z-30 w-2 cursor-col-resize touch-none select-none transition hover:bg-orange-100/70"
-      >
-        <div className="absolute right-0 top-1/2 h-12 w-px -translate-y-1/2 rounded-full bg-[#d8d8d4]" />
-      </div>
+      {!mobileDrawer ? (
+        <div
+          aria-hidden="true"
+          onMouseDown={startResize}
+          className="absolute inset-y-0 right-0 z-30 w-2 cursor-col-resize touch-none select-none transition hover:bg-orange-100/70"
+        >
+          <div className="absolute right-0 top-1/2 h-12 w-px -translate-y-1/2 rounded-full bg-[#d8d8d4]" />
+        </div>
+      ) : null}
     </aside>
   );
 }
