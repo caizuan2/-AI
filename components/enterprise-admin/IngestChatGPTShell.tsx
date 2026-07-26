@@ -1009,6 +1009,22 @@ export function IngestChatGPTShell({
     [activeAgentId, agents, controlledActiveAgent, fallbackAgent]
   );
   const canIngest = controlledHasActiveAgent ?? agents.length > 0;
+  const activeConversation = useMemo(
+    () => agentConversations.find((conversation) => (
+      conversation.id === activeConversationId
+      && conversation.agentId === activeAgent.id
+      && conversation.status !== "archived"
+    )) ?? null,
+    [activeAgent.id, activeConversationId, agentConversations]
+  );
+  const activeAgentHeaderProfile = useMemo(
+    () => resolveAdminIngestDisplayProfile({
+      currentAgent: activeAgent,
+      appName,
+      adminAvatar
+    }),
+    [activeAgent, adminAvatar, appName]
+  );
   const activeDisplayProfile = useMemo(
     () => displayProfile ?? resolveAdminIngestDisplayProfile({
       currentAgent: canIngest ? activeAgent : null,
@@ -2432,7 +2448,7 @@ export function IngestChatGPTShell({
           </button>
         ) : null}
         {!isExpertMarketplace ? (
-          <div className={["flex h-16 shrink-0 items-center border-b border-[#f0f0ee] px-5", isAdminApk ? "justify-between" : "justify-end"].join(" ")}>
+          <div className={["relative flex h-16 shrink-0 items-center border-b border-[#f0f0ee] px-5", isAdminApk ? "justify-between" : "justify-end"].join(" ")}>
             {isAdminApk ? (
               <button
                 type="button"
@@ -2443,6 +2459,34 @@ export function IngestChatGPTShell({
               >
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </button>
+            ) : null}
+            {isAdminApk && welcomeVariant === "chat_only" && canIngest ? (
+              <div className="pointer-events-none absolute inset-y-0 left-[72px] right-[72px] flex items-center justify-center">
+                <div
+                  aria-label={activeConversation
+                    ? `当前 Agent：${activeAgent.name}，当前对话：${activeConversation.title}`
+                    : `当前 Agent：${activeAgent.name}`}
+                  className="relative w-full max-w-[180px] overflow-hidden rounded-2xl border border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white px-2.5 py-1.5 shadow-sm"
+                  title={activeConversation
+                    ? `${activeAgent.name} · ${activeConversation.title}`
+                    : activeAgent.name}
+                >
+                  <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" />
+                  <span className="flex min-w-0 items-center justify-center gap-2">
+                    <IngestAgentAvatar profile={activeAgentHeaderProfile} size="xs" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-center text-sm font-semibold leading-4 text-[#2f1f0f]">
+                        {activeAgent.name}
+                      </span>
+                      {activeConversation ? (
+                        <span className="mt-0.5 block truncate text-center text-xs font-medium leading-4 text-[#8a7464]">
+                          {activeConversation.title}
+                        </span>
+                      ) : null}
+                    </span>
+                  </span>
+                </div>
+              </div>
             ) : null}
             <IngestGPTModelPicker
               selectedModel={selectedModelLabel}
