@@ -135,6 +135,14 @@ import {
   type IngestConversationState
 } from "@/lib/enterprise/ingest-conversation-state";
 import {
+  clearAdminIngestConversationRuntimeStatus,
+  markAdminIngestConversationCompleted,
+  markAdminIngestConversationGenerating,
+  markAdminIngestConversationRead,
+  removeAdminIngestConversationRuntimeStatus,
+  type AdminIngestConversationRuntimeStatusMap
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
+import {
   hasVisibleReplyForActiveIngestRequest,
   shouldShowAdminIngestParsingProgress
 } from "@/lib/enterprise/admin-ingest-visible-answer-state";
@@ -828,6 +836,8 @@ export function IngestModeToggle({
   const [errorMessage, setErrorMessage] = useState("");
   const [isParsing, setIsParsing] = useState(false);
   const [preparingConversationIds, setPreparingConversationIds] = useState<Record<string, true>>({});
+  const [conversationRuntimeStatusById, setConversationRuntimeStatusById] =
+    useState<AdminIngestConversationRuntimeStatusMap>({});
   const [isSaving, setIsSaving] = useState(false);
   const [recoveringMetadataMessageId, setRecoveringMetadataMessageId] = useState<string | null>(null);
   const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
@@ -1545,6 +1555,7 @@ export function IngestModeToggle({
     activeIngestRequestIdByConversationRef.current = {};
     preparingConversationIdsRef.current = {};
     setPreparingConversationIds({});
+    setConversationRuntimeStatusById({});
     ingestSuccessLockByConversationRef.current = {};
     lastSuccessfulIngestAtByConversationRef.current = {};
     suppressFallbackToastUntilByConversationRef.current = {};
@@ -2472,6 +2483,9 @@ export function IngestModeToggle({
     setMode("chat");
     setActiveConversationScope(nextConversation?.id ?? "");
     if (nextConversation) {
+      setConversationRuntimeStatusById((current) => (
+        markAdminIngestConversationRead(current, nextConversation.id)
+      ));
       restoreConversationState(nextConversation, nextAgent);
     } else {
       clearConversationState();
@@ -2668,6 +2682,9 @@ export function IngestModeToggle({
 
     setCurrentAgent(targetAgent);
     setActiveConversationScope(targetConversation.id);
+    setConversationRuntimeStatusById((current) => (
+      markAdminIngestConversationRead(current, targetConversation.id)
+    ));
     restoreConversationState(targetConversation, targetAgent);
     setActiveRailKey("chat");
     setMode("chat");
@@ -3079,6 +3096,9 @@ export function IngestModeToggle({
     };
     delete nextConversationLastInputs[conversationId];
     conversationLastInputByIdRef.current = nextConversationLastInputs;
+    setConversationRuntimeStatusById((current) => (
+      removeAdminIngestConversationRuntimeStatus(current, conversationId)
+    ));
 
     if (activeConversationId === conversationId) {
       setCurrentAgent(targetAgent);
@@ -3582,6 +3602,12 @@ export function IngestModeToggle({
     });
     conversationState = markRequestActive(conversationState, requestId);
     conversationStateByIdRef.current[conversationId] = conversationState;
+    setConversationRuntimeStatusById((current) => (
+      markAdminIngestConversationGenerating(current, {
+        conversationId,
+        requestId
+      })
+    ));
     const isRequestConversationVisible = () => activeConversationIdRef.current === conversationId;
     const commitRequestMessages = (
       updater: (current: IngestChatMessage[]) => IngestChatMessage[]
@@ -4443,6 +4469,22 @@ export function IngestModeToggle({
         requestQueueRef.current = completeRequest(requestQueueRef.current, conversationId, requestId);
       } else {
         requestQueueRef.current = failRequest(requestQueueRef.current, conversationId, requestId);
+      }
+      if (successRendered && !abortController.signal.aborted) {
+        setConversationRuntimeStatusById((current) => (
+          markAdminIngestConversationCompleted(current, {
+            conversationId,
+            requestId,
+            isVisible: isRequestConversationVisible()
+          })
+        ));
+      } else {
+        setConversationRuntimeStatusById((current) => (
+          clearAdminIngestConversationRuntimeStatus(current, {
+            conversationId,
+            requestId
+          })
+        ));
       }
       if (abortControllerByConversationRef.current[conversationId] === abortController) {
         delete abortControllerByConversationRef.current[conversationId];
@@ -5640,6 +5682,7 @@ export function IngestModeToggle({
     onAgentConversationTogglePinned: handleToggleAgentConversationPinned,
     onAgentConversationToggleArchived: handleToggleAgentConversationArchived,
     onAgentConversationDelete: handleDeleteAgentConversation,
+    conversationRuntimeStatusById,
     onAgentTogglePinned: handleToggleAgentPinned,
     activeRailKey: effectiveRailKey,
     onRailChange: handleRailChange,
