@@ -2281,7 +2281,26 @@ export function IngestChatGPTShell({
 
       <section className="relative flex min-w-0 flex-1 flex-col bg-white">
         {!isExpertMarketplace ? (
-          <div className="h-16 shrink-0 border-b border-[#f0f0ee]" />
+          <div className="flex h-16 shrink-0 items-center justify-end border-b border-[#f0f0ee] px-5">
+            <IngestGPTModelPicker
+              selectedModel={selectedModelLabel}
+              disabled={isParsing}
+              compact
+              align="right"
+              menuPlacement="below"
+              unavailableProviders={unavailableModelProviders}
+              onModelChange={(selection) => onModelChange?.(selection.label)}
+              onCheckUnavailableProvider={(provider) => {
+                if (provider === "doubao-pro") {
+                  void onReconnectGpt?.("Doubao-Seed-2.1-pro");
+                }
+              }}
+              onOpen={() => {
+                setIsMoreOpen(false);
+                setIsConnectionOpen(false);
+              }}
+            />
+          </div>
         ) : null}
 
         <div
@@ -2837,23 +2856,6 @@ export function IngestChatGPTShell({
                 className="max-h-[160px] min-h-11 min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]"
               />
               <div className="flex shrink-0 items-center justify-end gap-1.5">
-                <IngestGPTModelPicker
-                  selectedModel={selectedModelLabel}
-                  disabled={isParsing}
-                  compact
-                  align="right"
-                  unavailableProviders={unavailableModelProviders}
-                  onModelChange={(selection) => onModelChange?.(selection.label)}
-                  onCheckUnavailableProvider={(provider) => {
-                    if (provider === "doubao-pro") {
-                      void onReconnectGpt?.("Doubao-Seed-2.1-pro");
-                    }
-                  }}
-                  onOpen={() => {
-                    setIsMoreOpen(false);
-                    setIsConnectionOpen(false);
-                  }}
-                />
                 <button
                   type="button"
                   title={voiceState.isRecording ? "停止语音输入" : "语音"}

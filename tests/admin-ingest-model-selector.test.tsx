@@ -117,14 +117,24 @@ function testPickerPlacementAndProviderIdentity() {
     process.cwd(),
     "lib/enterprise/doubao-health-check.ts"
   ), "utf8");
-  const pickerPosition = shellSource.indexOf("<IngestGPTModelPicker", shellSource.indexOf("items-center justify-end"));
-  const voicePosition = shellSource.indexOf("<Mic", pickerPosition);
+  const headerPosition = shellSource.indexOf('className="flex h-16 shrink-0 items-center justify-end');
+  const pickerPosition = shellSource.indexOf("<IngestGPTModelPicker", headerPosition);
+  const composerPosition = shellSource.indexOf("<form onSubmit={handleSubmit}");
+  const voicePosition = shellSource.indexOf("<Mic", composerPosition);
 
-  assert.ok(pickerPosition > -1, "the Web composer must render the model selector");
-  assert.ok(voicePosition > pickerPosition, "the model selector must remain in the Web composer toolbar");
+  assert.ok(headerPosition > -1, "the Web chat header must expose the top-right model selector area");
+  assert.ok(pickerPosition > headerPosition, "the Web chat header must render the model selector");
+  assert.ok(composerPosition > pickerPosition, "the model selector must render above the Web composer");
+  assert.equal(
+    shellSource.indexOf("<IngestGPTModelPicker", composerPosition),
+    -1,
+    "the Web composer must not render a duplicate model selector"
+  );
+  assert.ok(voicePosition > composerPosition, "the Web composer voice action must remain intact");
   assert.doesNotMatch(shellSource, /<div className="hidden">\s*<IngestGPTModelPicker/);
-  assert.match(shellSource.slice(pickerPosition, voicePosition), /compact/);
-  assert.match(shellSource.slice(pickerPosition, voicePosition), /align="right"/);
+  assert.match(shellSource.slice(pickerPosition, composerPosition), /compact/);
+  assert.match(shellSource.slice(pickerPosition, composerPosition), /align="right"/);
+  assert.match(shellSource.slice(pickerPosition, composerPosition), /menuPlacement="below"/);
   assert.doesNotMatch(shellSource, /<Scissors/);
   assert.doesNotMatch(shellSource, /<Paperclip/);
   assert.match(shellSource, /type=\{isParsing \? "button" : "submit"\}/);
@@ -188,7 +198,7 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(shellSource, /inferenceLimitPaused/);
   assert.match(
     ingestClientSource,
-    /if \(modelProvider !== "doubao-pro"\) \{[\s\S]*?checkGptHealthStatus\(/,
+    /if \(shouldRunAdminIngestHealthPreflight\(\{[\s\S]*?modelProvider,[\s\S]*?\}\)\) \{[\s\S]*?checkGptHealthStatus\(/,
     "The existing DeepSeek and legacy-provider preflight must remain intact."
   );
   assert.match(ingestClientSource, /params\.set\("testRequest", input\.testRequest === true \? "true" : "false"\)/);
