@@ -18,6 +18,7 @@ import { normalizeAppStoreManifest } from "../lib/app-store";
 import { checkCurrentAppUpdate, getCurrentAppVersion } from "../lib/update-checker";
 import {
   AppUpdateNoticeDialog,
+  buildAdminAndroidFallbackUrl,
   buildUpdateManifestUrl,
   UPDATE_CHECK_INTERVAL_MS,
   UPDATE_CHECK_TIMEOUT_MS,
@@ -551,6 +552,42 @@ async function main() {
         latest: manifest.admin,
         updatedAt: manifest.updated_at
       },
+      updateUrl: manifest.admin.apk_url,
+      platform: "android",
+      dismissible: false,
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+
+  assert.match(adminForceDialogMarkup, /发现新版本/);
+  assert.match(adminForceDialogMarkup, new RegExp(manifest.admin.apk_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(adminForceDialogMarkup, /必须更新到最新版本后才能继续使用/);
+  assert.match(adminForceDialogMarkup, /立即更新/);
+  assert.doesNotMatch(adminForceDialogMarkup, new RegExp(manifest.admin.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(adminForceDialogMarkup, /当前版本：/);
+  assert.doesNotMatch(adminForceDialogMarkup, /最新版本：/);
+  assert.doesNotMatch(adminForceDialogMarkup, /更新内容：/);
+  assert.doesNotMatch(adminForceDialogMarkup, /进度完成后自动打开安装界面/);
+  for (const item of manifest.admin.changelog) {
+    assert.doesNotMatch(adminForceDialogMarkup, new RegExp(item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.doesNotMatch(adminForceDialogMarkup, />稍后提醒</);
+
+  const adminWindowsDialogMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "admin",
+      update: {
+        appKind: "admin",
+        currentVersion: "1.0.1",
+        currentBuild: manifest.admin.minimum_build - 1,
+        currentWebReleaseSha: manifest.admin.web_release_sha,
+        hasUpdate: true,
+        forceUpdate: true,
+        updateKind: "package",
+        latest: manifest.admin,
+        updatedAt: manifest.updated_at
+      },
       updateUrl: manifest.admin.exe_url,
       platform: "windows",
       dismissible: false,
@@ -558,11 +595,76 @@ async function main() {
       onSnooze: () => undefined
     })
   );
+  assert.match(adminWindowsDialogMarkup, new RegExp(manifest.admin.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(adminWindowsDialogMarkup, /当前版本：1\.0\.1/);
+  assert.match(adminWindowsDialogMarkup, /更新内容：/);
 
-  assert.match(adminForceDialogMarkup, new RegExp(manifest.admin.app_name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(adminForceDialogMarkup, new RegExp(manifest.admin.exe_url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.match(adminForceDialogMarkup, /必须更新到最新版本后才能继续使用/);
-  assert.doesNotMatch(adminForceDialogMarkup, />稍后提醒</);
+  const adminDownloadProgressMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "admin",
+      update: {
+        appKind: "admin",
+        currentVersion: "1.0.1",
+        currentBuild: manifest.admin.minimum_build - 1,
+        currentWebReleaseSha: manifest.admin.web_release_sha,
+        hasUpdate: true,
+        forceUpdate: true,
+        updateKind: "package",
+        latest: manifest.admin,
+        updatedAt: manifest.updated_at
+      },
+      updateUrl: manifest.admin.apk_url,
+      platform: "android",
+      dismissible: false,
+      installState: {
+        phase: "downloading",
+        progress: 38,
+        message: "正在下载更新包..."
+      },
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+  assert.match(adminDownloadProgressMarkup, /正在更新 38%/);
+  assert.doesNotMatch(adminDownloadProgressMarkup, /正在下载更新包/);
+  assert.doesNotMatch(adminDownloadProgressMarkup, /bg-blue-50 px-4 py-3 text-sm text-blue-800/);
+
+  const adminDownloadErrorMarkup = renderToStaticMarkup(
+    React.createElement(AppUpdateNoticeDialog, {
+      appKind: "admin",
+      update: {
+        appKind: "admin",
+        currentVersion: "1.0.1",
+        currentBuild: manifest.admin.minimum_build - 1,
+        currentWebReleaseSha: manifest.admin.web_release_sha,
+        hasUpdate: true,
+        forceUpdate: true,
+        updateKind: "package",
+        latest: manifest.admin,
+        updatedAt: manifest.updated_at
+      },
+      updateUrl: manifest.admin.apk_url,
+      platform: "android",
+      dismissible: false,
+      installState: {
+        phase: "error",
+        progress: 0,
+        message: "更新包下载失败。",
+        error: "系统下载失败，错误码：404"
+      },
+      onUpdateNow: () => undefined,
+      onSnooze: () => undefined
+    })
+  );
+  assert.match(adminDownloadErrorMarkup, /更新失败，点击重试/);
+  assert.doesNotMatch(adminDownloadErrorMarkup, /更新包下载失败/);
+  assert.doesNotMatch(adminDownloadErrorMarkup, /错误码：404/);
+  assert.equal(
+    buildAdminAndroidFallbackUrl(manifest.admin),
+    `https://github.com/caizuan2/-AI/releases/download/${encodeURIComponent(
+      `release/admin-ingest-${manifest.admin.version}-build.${manifest.admin.build}`
+    )}/admin-ingest.apk`
+  );
 
   const storage = new Map<string, string>();
   const storageAdapter = {

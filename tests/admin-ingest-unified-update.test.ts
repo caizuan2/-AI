@@ -3,8 +3,10 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { checkAppUpdate, normalizeLatestReleaseManifest } from "../lib/app-update";
 import {
+  buildAdminAndroidFallbackUrl,
   isAdminIngestUpdateSurface,
-  promoteUnappliedWebReleaseUpdate
+  promoteUnappliedWebReleaseUpdate,
+  resolveAdminAndroidUpdateUrl
 } from "../components/AppUpdateNotice";
 import { checkCurrentAppUpdate } from "../lib/update-checker";
 import releaseInfo from "../public/releases/latest.json";
@@ -56,8 +58,112 @@ const staleNativeWithOlderWeb = await checkCurrentAppUpdate({
   },
   fetcher: manifestFetch
 });
-assert.equal(staleNativeWithOlderWeb.updateKind, "package");
+assert.equal(staleNativeWithOlderWeb.updateKind, "web");
 assert.equal(staleNativeWithOlderWeb.forceUpdate, true);
+
+const build115AdminApkUpdate = await checkCurrentAppUpdate({
+  appKind: "admin",
+  currentVersion: "1.0.15",
+  currentBuild: 115,
+  currentWebReleaseSha: admin.web_release_sha,
+  runtimeWindow: {
+    location: { search: "" },
+    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
+    AndroidBridge: {}
+  },
+  fetcher: manifestFetch
+});
+assert.equal(build115AdminApkUpdate.updateKind, "web");
+assert.equal(build115AdminApkUpdate.forceUpdate, true);
+
+const contentOnlyManifest = {
+  updated_at: releaseInfo.updated_at,
+  user: normalized.user,
+  admin: {
+    ...admin,
+    version: "1.0.17",
+    build: 117,
+    minimum_build: 116,
+    force_update: false,
+    web_release_sha: "newer-admin-web-release"
+  }
+};
+const contentOnlyFetch = (async () => ({
+  ok: true,
+  json: async () => contentOnlyManifest
+} as Response)) as unknown as typeof fetch;
+const contentOnlyUpdate = await checkCurrentAppUpdate({
+  appKind: "admin",
+  currentVersion: admin.version,
+  currentBuild: admin.minimum_build,
+  currentWebReleaseSha: admin.web_release_sha,
+  runtimeWindow: {
+    location: { search: "" },
+    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
+    AndroidBridge: {}
+  },
+  fetcher: contentOnlyFetch
+});
+assert.equal(contentOnlyUpdate.updateKind, "web");
+assert.equal(contentOnlyUpdate.forceUpdate, true);
+
+const requiredNativeFetch = (async () => ({
+  ok: true,
+  json: async () => ({
+    ...contentOnlyManifest,
+    admin: {
+      ...contentOnlyManifest.admin,
+      minimum_build: 117,
+      force_update: true
+    }
+  })
+} as Response)) as unknown as typeof fetch;
+const requiredNativeUpdate = await checkCurrentAppUpdate({
+  appKind: "admin",
+  currentVersion: admin.version,
+  currentBuild: admin.minimum_build,
+  currentWebReleaseSha: admin.web_release_sha,
+  runtimeWindow: {
+    location: { search: "" },
+    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
+    AndroidBridge: {}
+  },
+  fetcher: requiredNativeFetch
+});
+assert.equal(requiredNativeUpdate.updateKind, "web");
+assert.equal(requiredNativeUpdate.forceUpdate, true);
+
+const expectedFallbackUrl = buildAdminAndroidFallbackUrl(admin);
+assert.equal(
+  expectedFallbackUrl,
+  `https://github.com/caizuan2/-AI/releases/download/${encodeURIComponent(adminRelease.release_tag)}/admin-ingest.apk`
+);
+assert.equal(
+  await resolveAdminAndroidUpdateUrl(
+    admin.apk_url,
+    admin,
+    (async () => ({ ok: true } as Response)) as unknown as typeof fetch
+  ),
+  admin.apk_url
+);
+assert.equal(
+  await resolveAdminAndroidUpdateUrl(
+    admin.apk_url,
+    admin,
+    (async () => ({ ok: false, status: 404 } as Response)) as unknown as typeof fetch
+  ),
+  expectedFallbackUrl
+);
+assert.equal(
+  await resolveAdminAndroidUpdateUrl(
+    admin.apk_url,
+    admin,
+    (async () => {
+      throw new Error("network unavailable");
+    }) as unknown as typeof fetch
+  ),
+  expectedFallbackUrl
+);
 
 const storageValues = new Map<string, string>();
 const storage = {
@@ -117,11 +223,12 @@ assert.match(updateNotice, /forceUpdate:\s*appKind === ADMIN_APP_KIND/);
 assert.doesNotMatch(updateNotice, /if \(appKind !== "user"\)\s*\{\s*openLink/);
 assert.match(
   updateNotice,
-  /appKind === ADMIN_APP_KIND && platform === "electron" && openLink\(targetUrl\)/
+  /appKind === ADMIN_APP_KIND && platform === "electron" && openLink\(resolvedTargetUrl\)/
 );
 assert.match(updateNotice, /旧版安装包下载已打开/);
 assert.match(updateNotice, /appKind === ADMIN_APP_KIND \? 0 : 15/);
 assert.match(updateNotice, /indeterminate:\s*appKind === ADMIN_APP_KIND/);
+assert.match(updateNotice, /resolveAdminAndroidUpdateUrl\(targetUrl, latest\)/);
 
 const electronMain = readFileSync("electron/admin-ingest/main.js", "utf8");
 const electronPreload = readFileSync("electron/admin-ingest/preload.js", "utf8");
@@ -189,6 +296,7 @@ assert.equal(releaseResolver.latestApkUrl, adminRelease.apk_url);
 assert.equal(releaseResolver.latestExeUrl, adminRelease.exe_url);
 
 const deployWorkflow = readFileSync(".github/workflows/admin-ingest-deploy-web.yml", "utf8");
+const installerLinkScript = readFileSync("scripts/ci/ensure-admin-installer-link.sh", "utf8");
 assert.match(deployWorkflow, /name:\s*admin-ingest-deploy-web-manifest/);
 assert.match(deployWorkflow, /releaseVerified:[\s\S]{0,160}required:\s*true/);
 assert.match(
@@ -200,7 +308,10 @@ assert.match(
   /ADMIN_INGEST_RELEASE_BUILD=1[\s\S]{0,120}ADMIN_WEB_RELEASE_SHA="\$RELEASE_SHA"[\s\S]{0,120}npm run build/
 );
 assert.match(deployWorkflow, /installer_source="\/var\/www\/ai-knowledge-shared\/admin-ingest\/releases\/current"/);
-assert.match(deployWorkflow, /ln -sfn "\$installer_source" "\$installer_link"/);
+assert.match(deployWorkflow, /ensure-admin-installer-link\.sh/);
+assert.match(installerLinkScript, /ln -sfn "\$installer_source" "\$installer_link"/);
+assert.match(installerLinkScript, /ADMIN_INSTALLER_LINK_CONFLICT/);
+assert.match(installerLinkScript, /test -s "\$installer_link\/admin-ingest\.apk"/);
 assert.match(deployWorkflow, /curl -fsS -r 0-0[\s\S]*admin-installers\/admin-ingest\.apk[\s\S]*"206"/);
 assert.doesNotMatch(deployWorkflow, /name:\s*admin-ingest-web-manifest/);
 assert.match(releaseWorkflow, /deploy-web:[\s\S]*releaseVerified:\s*true/);

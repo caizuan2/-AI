@@ -73,8 +73,14 @@ const deployWorkflow = readFileSync(
   ".github/workflows/admin-ingest-deploy-web.yml",
   "utf8"
 );
-assert.match(deployWorkflow, /public\/admin-installers/);
-assert.match(deployWorkflow, /ln -sfn/);
+const installerLinkScript = readFileSync(
+  "scripts/ci/ensure-admin-installer-link.sh",
+  "utf8"
+);
+assert.match(deployWorkflow, /ensure-admin-installer-link\.sh/);
+assert.match(installerLinkScript, /public_dir="\$app_dir\/public"/);
+assert.match(installerLinkScript, /ln -sfn/);
+assert.match(installerLinkScript, /readlink -f/);
 assert.match(deployWorkflow, /admin-installers\/admin-ingest\.apk/);
 assert.match(deployWorkflow, /"206"/);
 

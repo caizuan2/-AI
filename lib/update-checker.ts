@@ -239,17 +239,30 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
     fetcher: options.fetcher
   });
 
+  if (
+    options.appKind === ADMIN_APP_KIND
+    && nativeShell
+    && result.hasUpdate
+    && result.latest?.web_url
+  ) {
+    return {
+      ...result,
+      forceUpdate: true,
+      updateKind: "web"
+    };
+  }
+
   const currentBuild = options.currentBuild ?? current.build;
   if (
     options.appKind === ADMIN_APP_KIND
     && nativeShell
     && result.hasUpdate
     && result.latest
-    && currentBuild < result.latest.build
+    && currentBuild < result.latest.minimum_build
   ) {
     return {
       ...result,
-      forceUpdate: result.latest.force_update || currentBuild < result.latest.minimum_build,
+      forceUpdate: true,
       updateKind: "package"
     };
   }

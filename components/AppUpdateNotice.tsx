@@ -76,9 +76,61 @@ const idleInstallState: UpdateInstallState = {
 
 export const UPDATE_CHECK_INTERVAL_MS = 15_000;
 export const UPDATE_CHECK_TIMEOUT_MS = 10_000;
+const ADMIN_ANDROID_APK_PATH = "/admin-installers/admin-ingest.apk";
+const ADMIN_ANDROID_RELEASE_REPOSITORY = "https://github.com/caizuan2/-AI";
+const ADMIN_ANDROID_PREFLIGHT_TIMEOUT_MS = 5_000;
 
 export function buildUpdateManifestUrl(now = Date.now()) {
   return `/releases/latest.json?__update_check=${encodeURIComponent(String(now))}`;
+}
+
+export function buildAdminAndroidFallbackUrl(release: Pick<NonNullable<AppUpdateResult["latest"]>, "version" | "build">) {
+  const releaseTag = `release/admin-ingest-${release.version}-build.${release.build}`;
+  return `${ADMIN_ANDROID_RELEASE_REPOSITORY}/releases/download/${encodeURIComponent(releaseTag)}/admin-ingest.apk`;
+}
+
+export async function resolveAdminAndroidUpdateUrl(
+  primaryUrl: string,
+  release: Pick<NonNullable<AppUpdateResult["latest"]>, "version" | "build">,
+  fetcher: typeof fetch | undefined = globalThis.fetch
+) {
+  let parsedUrl: URL;
+
+  try {
+    parsedUrl = new URL(primaryUrl);
+  } catch {
+    return primaryUrl;
+  }
+
+  if (parsedUrl.pathname !== ADMIN_ANDROID_APK_PATH || !fetcher) {
+    return primaryUrl;
+  }
+
+  const controller = typeof AbortController === "undefined" ? null : new AbortController();
+  const timeoutId = controller
+    ? globalThis.setTimeout(() => controller.abort(), ADMIN_ANDROID_PREFLIGHT_TIMEOUT_MS)
+    : null;
+
+  try {
+    const response = await fetcher(primaryUrl, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: controller?.signal
+    });
+
+    if (response.ok) {
+      return primaryUrl;
+    }
+  } catch {
+    // The Aliyun direct-download path is optional at runtime because the
+    // immutable GitHub release asset remains available as a verified fallback.
+  } finally {
+    if (timeoutId !== null) {
+      globalThis.clearTimeout(timeoutId);
+    }
+  }
+
+  return buildAdminAndroidFallbackUrl(release);
 }
 
 function getStorage(): UpdateNoticeStorage | undefined {
@@ -520,7 +572,6 @@ export function AppUpdateNotice({
       return;
     }
 
-    const fileName = getInstallerFileName(targetUrl, platform);
     const runtimeWindow = getRuntimeWindow();
 
     setInstallState({
@@ -530,8 +581,15 @@ export function AppUpdateNotice({
     });
 
     try {
+      const resolvedTargetUrl = appKind === ADMIN_APP_KIND
+        && platform === "android"
+        && runtimeWindow?.AndroidBridge?.downloadUpdate
+        ? await resolveAdminAndroidUpdateUrl(targetUrl, latest)
+        : targetUrl;
+      const fileName = getInstallerFileName(resolvedTargetUrl, platform);
+
       if (runtimeWindow?.aiKnowledge?.downloadAndInstallUpdate) {
-        const result = await runtimeWindow.aiKnowledge.downloadAndInstallUpdate({ url: targetUrl, fileName });
+        const result = await runtimeWindow.aiKnowledge.downloadAndInstallUpdate({ url: resolvedTargetUrl, fileName });
         if (typeof result === "object" && result?.ok === false) {
           throw new Error(result.error || "桌面端更新下载失败。");
         }
@@ -545,7 +603,7 @@ export function AppUpdateNotice({
       }
 
       if (platform === "android" && runtimeWindow?.AndroidBridge?.downloadUpdate) {
-        runtimeWindow.AndroidBridge.downloadUpdate(targetUrl, fileName);
+        runtimeWindow.AndroidBridge.downloadUpdate(resolvedTargetUrl, fileName);
         setInstallState({
           phase: "downloading",
           progress: appKind === ADMIN_APP_KIND ? 0 : 15,
@@ -557,7 +615,7 @@ export function AppUpdateNotice({
         return;
       }
 
-      if (appKind === ADMIN_APP_KIND && platform === "electron" && openLink(targetUrl)) {
+      if (appKind === ADMIN_APP_KIND && platform === "electron" && openLink(resolvedTargetUrl)) {
         setInstallState({
           phase: "ready",
           progress: 100,
