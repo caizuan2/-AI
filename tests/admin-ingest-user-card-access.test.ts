@@ -130,9 +130,15 @@ test("chat-only UI hides advanced navigation and knowledge save without removing
   assert.match(shell, /if \(!canSaveKnowledge\)/);
   assert.match(
     shell,
-    /placeholder=\{canIngest[\s\S]*?\? \(canUseFullIngestTools \? "投喂 小董AI" : "问问 小董AI"\)[\s\S]*?: "请先到专家广场添加专家 Agent"\}/,
+    /placeholder=\{canIngest[\s\S]*?\? \(canUseFullIngestTools \? "投喂 小董AI" : "问问 小董AI"\)[\s\S]*?: "请先添加AI专家。"\}/,
     "输入框必须根据投喂端卡密与用户端卡密显示对应的小董AI文案"
   );
+  assert.match(
+    shell,
+    /isParsing \? "h-10 w-auto px-3 text-xs font-semibold" : "h-9 w-9"/,
+    "空闲发送按钮应缩小为 36px，生成中的停止按钮保持原尺寸"
+  );
+  assert.match(shell, /<SendHorizontal className="h-3\.5 w-3\.5"/);
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(actions, /title="复制"/);
   assert.match(actions, /title=\{isParsing \? "生成中" : "重新生成"\}/);

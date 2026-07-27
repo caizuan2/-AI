@@ -3072,7 +3072,7 @@ export function IngestChatGPTShell({
                 disabled={!canIngest}
                 placeholder={canIngest
                   ? (canUseFullIngestTools ? "投喂 小董AI" : "问问 小董AI")
-                  : "请先到专家广场添加专家 Agent"}
+                  : "请先添加AI专家。"}
                 className="max-h-[160px] min-h-11 min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]"
               />
               <div className="flex shrink-0 items-center justify-end gap-1.5">
@@ -3095,8 +3095,8 @@ export function IngestChatGPTShell({
                   title={isParsing ? "停止本轮识别与生成" : "发送"}
                   aria-label={isParsing ? "停止本轮识别与生成" : "发送"}
                   className={[
-                    "flex h-10 items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
-                    isParsing ? "w-auto px-3 text-xs font-semibold" : "w-10"
+                    "flex items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
+                    isParsing ? "h-10 w-auto px-3 text-xs font-semibold" : "h-9 w-9"
                   ].join(" ")}
                 >
                   {isParsing ? (
@@ -3105,7 +3105,7 @@ export function IngestChatGPTShell({
                       停止
                     </>
                   ) : (
-                    <SendHorizontal className="h-4 w-4" aria-hidden="true" />
+                    <SendHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
                   )}
                 </button>
               </div>
