@@ -1,18 +1,18 @@
 {
-  "version": "1.0.20",
-  "build": 120,
-  "minimum_build": 120,
+  "version": "1.0.21",
+  "build": 121,
+  "minimum_build": 121,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.20-build.120",
+  "release_tag": "release/admin-ingest-1.0.21-build.121",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.20-build.120/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.21-build.121/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 APK 忽略“无内容”等无效语音占位结果，不再覆盖输入框",
-    "录音中断时保留最后一段有效识别文字和原有输入，供用户确认后发送",
-    "Web、Windows EXE 与 Android APK 统一升级到 1.0.20 Build 120"
+    "投喂端 Android APK 安装界面和桌面图标统一更换为绿色小董AI Logo，并适配白底与多档安卓分辨率",
+    "投喂端欢迎页两处“经营疑问”统一调整为“沟通疑问”，用户端原文保持不变",
+    "Web、Windows EXE 与 Android APK 统一升级到 1.0.21 Build 121"
   ]
 }
