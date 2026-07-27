@@ -10,10 +10,12 @@ import { CustomerDetailHeader } from "@/apps/team-os/features/crm/components/Cus
 import { CustomerFollowUpForm } from "@/apps/team-os/features/crm/components/CustomerFollowUpForm";
 import { CustomerFollowUpSuggestion } from "@/apps/team-os/features/crm/components/CustomerFollowUpSuggestion";
 import { CustomerFollowUpTimeline } from "@/apps/team-os/features/crm/components/CustomerFollowUpTimeline";
+import { CustomerLifecyclePanel } from "@/apps/team-os/features/crm/components/CustomerLifecyclePanel";
 import { CrmEmptyState, CrmErrorState, CrmLoadingState } from "@/apps/team-os/features/crm/components/CrmState";
 import { crmScopeQuery } from "@/apps/team-os/features/crm/components/crm-ui";
 import { useCustomerDetail } from "@/apps/team-os/features/crm/hooks/useCustomerDetail";
 import type { AnalyzeCustomerResult, CustomerFollowUpRecord, CustomerLevel, CustomerStage } from "@/apps/team-os/features/crm/types";
+import { CrmSalesNavigation } from "@/apps/team-os/features/crm/sales/CrmSalesNavigation";
 
 export function CustomerDetailPage({ customerId, returnCompanyId, returnTeamId, returnStage, returnLevel, returnTag }: { customerId: string; returnCompanyId?: string; returnTeamId?: string; returnStage?: CustomerStage; returnLevel?: CustomerLevel; returnTag?: string }) {
   const { data, loading, error, reload } = useCustomerDetail(customerId);
@@ -24,7 +26,7 @@ export function CustomerDetailPage({ customerId, returnCompanyId, returnTeamId, 
     level: returnLevel,
     tag: returnTag
   });
-  const backHref = scope ? `/team-os/crm?${scope}` : "/team-os/crm";
+  const backHref = scope ? `/team-os/crm/customers?${scope}` : "/team-os/crm/customers";
 
   async function handleFollowUpCreated(_record: CustomerFollowUpRecord) {
     setFollowUpSuccess(true);
@@ -59,6 +61,7 @@ export function CustomerDetailPage({ customerId, returnCompanyId, returnTeamId, 
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      <CrmSalesNavigation />
       <CustomerDetailHeader customer={data.customer} backHref={backHref} />
       <CustomerBasicInfo customer={data.customer} />
       {followUpSuccess ? <p className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status"><CheckCircle2 className="h-4 w-4" aria-hidden="true" />跟进记录已保存，可重新运行 AI 分析更新客户画像。</p> : null}
@@ -70,6 +73,14 @@ export function CustomerDetailPage({ customerId, returnCompanyId, returnTeamId, 
         </div>
 
         <aside className="order-1 space-y-6 self-start lg:order-2 lg:sticky lg:top-6">
+          {data.permissions.canManageLifecycle ? (
+            <CustomerLifecyclePanel
+              customerId={data.customer.id}
+              initialStage={data.customer.stage}
+              initialLevel={data.customer.level}
+              onUpdated={reload}
+            />
+          ) : null}
           <CustomerAIProfileCard profile={data.aiProfile} stale={profileStale} />
           {visibleSuggestion ? <CustomerFollowUpSuggestion value={visibleSuggestion} /> : null}
           {data.permissions.canAnalyze ? <CustomerAnalysisPanel customerId={data.customer.id} onAnalyzed={handleAnalyzed} /> : <Card><CardContent className="flex items-start gap-3 p-5 text-sm leading-6 text-slate-600"><ShieldAlert className="h-5 w-5 shrink-0" aria-hidden="true" />请先保存至少一条客户跟进记录，再运行 AI 客户分析。</CardContent></Card>}

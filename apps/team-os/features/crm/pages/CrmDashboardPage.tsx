@@ -12,6 +12,7 @@ import { CustomerFilterBar } from "@/apps/team-os/features/crm/components/Custom
 import { CustomerList } from "@/apps/team-os/features/crm/components/CustomerList";
 import { useCustomers, type CrmListFilterState } from "@/apps/team-os/features/crm/hooks/useCustomers";
 import type { CustomerLevel, CustomerStage } from "@/apps/team-os/features/crm/types";
+import { CrmSalesNavigation } from "@/apps/team-os/features/crm/sales/CrmSalesNavigation";
 
 function routeKey(filters: CrmListFilterState) {
   return JSON.stringify({ companyId: filters.companyId, teamId: filters.teamId, stage: filters.stage, level: filters.level, tag: filters.tag });
@@ -58,7 +59,7 @@ export function CrmDashboardPage({ initialFilters }: { initialFilters: CrmListFi
     if (next.level) query.set("level", next.level);
     if (next.tag) query.set("tag", next.tag);
     const value = query.toString();
-    router.replace(value ? `/team-os/crm?${value}` : "/team-os/crm", { scroll: false });
+    router.replace(value ? `/team-os/crm/customers?${value}` : "/team-os/crm/customers", { scroll: false });
   }
 
   function updateFilter(patch: Partial<CrmListFilterState>) {
@@ -100,6 +101,7 @@ export function CrmDashboardPage({ initialFilters }: { initialFilters: CrmListFi
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
+      <CrmSalesNavigation />
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div><p className="text-sm font-medium text-indigo-700">AI CRM 客户智能管理系统</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">客户管理中心</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">管理客户资料与跟进记录，并用企业知识和 AI Coach 生成客户画像与下一步建议。</p></div>
         {context?.canCreateCustomer && !loading && !creating ? <Button onClick={() => { setCreatedCustomerId(null); setCreating(true); }}><Plus className="h-4 w-4" />新增客户</Button> : null}
@@ -107,7 +109,7 @@ export function CrmDashboardPage({ initialFilters }: { initialFilters: CrmListFi
 
       {context ? <CrmCompanySelector companyId={activeCompanyId ?? null} companyName={context.companyName} companies={context.companies} disabled={loading || creating} onChange={handleCompanyChange} /> : null}
 
-      {createdCustomerId ? <p className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status"><CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />客户已创建并进入客户池。<Link href={`/team-os/crm/customer/${encodeURIComponent(createdCustomerId)}${detailScope.size ? `?${detailScope.toString()}` : ""}`} className="font-semibold underline underline-offset-2">查看客户</Link></p> : null}
+      {createdCustomerId ? <p className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800" role="status"><CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />客户已创建并进入客户池。<Link href={`/team-os/crm/customers/${encodeURIComponent(createdCustomerId)}${detailScope.size ? `?${detailScope.toString()}` : ""}`} className="font-semibold underline underline-offset-2">查看客户</Link></p> : null}
 
       {!loading && creating && context?.canCreateCustomer && selectedTeam ? <CreateCustomerForm teamId={selectedTeam.id} teamName={selectedTeam.name} ownerOptions={context.ownerOptions} onCreated={handleCreated} onCancel={() => setCreating(false)} /> : null}
 

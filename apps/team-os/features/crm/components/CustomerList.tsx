@@ -25,7 +25,7 @@ export function CustomerList({ items, detailQuery }: { items: CustomerListItem[]
               <p className="flex items-center gap-2"><CalendarClock className="h-4 w-4 shrink-0" aria-hidden="true" />最后跟进：{formatCrmDate(customer.lastFollowUpAt)}</p>
             </div>
             {customer.tags.length > 0 ? <div className="mt-4 flex flex-wrap gap-2">{customer.tags.slice(0, 6).map((tag) => <Badge key={tag} variant="secondary" className="max-w-full whitespace-normal break-words [overflow-wrap:anywhere]">{tag}</Badge>)}{customer.tags.length > 6 ? <Badge variant="outline">+{customer.tags.length - 6}</Badge> : null}</div> : null}
-            <div className="mt-5 flex justify-end"><Link href={`/team-os/crm/customer/${encodeURIComponent(customer.id)}${detailQuery ? `?${detailQuery}` : ""}`} className="focus-ring inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-ink px-3 text-xs font-semibold text-white hover:bg-slate-800">查看详情<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /></Link></div>
+            <div className="mt-5 flex justify-end"><Link href={`/team-os/crm/customers/${encodeURIComponent(customer.id)}${detailQuery ? `?${detailQuery}` : ""}`} className="focus-ring inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-ink px-3 text-xs font-semibold text-white hover:bg-slate-800">查看详情<ExternalLink className="h-3.5 w-3.5" aria-hidden="true" /></Link></div>
           </CardContent>
         </Card>
       ))}

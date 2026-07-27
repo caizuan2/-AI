@@ -110,6 +110,7 @@ export interface CustomerAIProfileRecord {
 export interface CustomerDetailPermissions {
   canAddFollowUp: boolean;
   canAnalyze: boolean;
+  canManageLifecycle: boolean;
 }
 
 export interface CustomerDetailData {
@@ -144,6 +145,45 @@ export interface CreateCustomerInput {
 
 export interface CreateCustomerResult {
   customerId: string;
+}
+
+export interface CustomerStageEventRecord {
+  id: string;
+  fromStage?: CustomerStage;
+  toStage: CustomerStage;
+  reason: string;
+  changedById: string;
+  changedByName: string;
+  createdAt: string;
+}
+
+export interface CustomerScoreRecord {
+  id: string;
+  score: number;
+  level: CustomerLevel;
+  riskLevel: CustomerRiskLevel;
+  source: "AI" | "MANUAL" | "RULE";
+  reason: string;
+  calculatedById?: string;
+  calculatedByName?: string;
+  createdAt: string;
+}
+
+export interface CustomerLifecycleData {
+  customerId: string;
+  stage: CustomerStage;
+  level: CustomerLevel;
+  stageEvents: CustomerStageEventRecord[];
+  scores: CustomerScoreRecord[];
+  permissions: {
+    canManage: boolean;
+  };
+}
+
+export interface UpdateCustomerLifecycleInput {
+  stage?: CustomerStage;
+  level?: CustomerLevel;
+  reason: string;
 }
 
 export interface CreateCustomerFollowUpInput {

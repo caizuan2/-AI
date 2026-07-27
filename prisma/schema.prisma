@@ -158,6 +158,207 @@ enum CustomerIntent {
   CHURN_RISK
 }
 
+enum CrmLeadSource {
+  MANUAL
+  IMPORT
+  WEBSITE
+  REFERRAL
+  AI_PROSPECTING
+  PARTNER
+  CAMPAIGN
+  OTHER
+}
+
+enum CrmLeadStatus {
+  NEW
+  UNASSIGNED
+  ASSIGNED
+  CONTACTED
+  QUALIFIED
+  CONVERTED
+  DISQUALIFIED
+  RECYCLED
+}
+
+enum CrmContactRole {
+  DECISION_MAKER
+  INFLUENCER
+  USER
+  FINANCE
+  TECHNICAL
+  PROCUREMENT
+  OTHER
+}
+
+enum CrmScoreSource {
+  AI
+  MANUAL
+  RULE
+}
+
+enum CrmOpportunityStage {
+  DISCOVERY
+  QUALIFICATION
+  SOLUTION
+  QUOTATION
+  NEGOTIATION
+  CONTRACT
+  WON
+  LOST
+}
+
+enum CrmOpportunityStatus {
+  OPEN
+  WON
+  LOST
+  ON_HOLD
+}
+
+enum CrmContractStatus {
+  DRAFT
+  APPROVING
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CrmReceivableStatus {
+  PENDING
+  PARTIAL
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum CrmVisitPlanStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  MISSED
+}
+
+enum CrmConversationChannel {
+  CRM_HISTORY
+  PHONE
+  WECHAT
+  WECHAT_WORK
+  MEETING
+  ONLINE_MEETING
+}
+
+enum CrmConversationDirection {
+  INBOUND
+  OUTBOUND
+  INTERNAL
+}
+
+enum CrmQualityInspectionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum CrmDailyPlanStatus {
+  DRAFT
+  SUBMITTED
+  COMPLETED
+  CANCELLED
+}
+
+enum CrmSalesTargetMetric {
+  NEW_CUSTOMERS
+  VISITS
+  CALLS
+  OPPORTUNITY_AMOUNT
+  CONTRACT_AMOUNT
+  RECEIPT_AMOUNT
+  SALES_AMOUNT
+}
+
+enum CrmSalesTargetStatus {
+  DRAFT
+  ACTIVE
+  COMPLETED
+  CANCELLED
+}
+
+enum CrmIntegrationStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+  DISABLED
+}
+
+enum CrmAutomationTrigger {
+  LEAD_CREATED
+  LEAD_IDLE
+  CUSTOMER_IDLE
+  STAGE_CHANGED
+  FOLLOW_UP_DUE
+  CONTRACT_DUE
+  RECEIVABLE_DUE
+  QUALITY_FAILED
+  SCHEDULED
+}
+
+enum CrmAutomationAction {
+  ASSIGN_OWNER
+  RETURN_TO_POOL
+  CREATE_TASK
+  SEND_NOTIFICATION
+  UPDATE_STAGE
+  UPDATE_SCORE
+  START_WORKFLOW
+}
+
+enum CrmAutomationRuleStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  DISABLED
+}
+
+enum CrmProductStatus {
+  ACTIVE
+  INACTIVE
+  ARCHIVED
+}
+
+enum CrmOrderStatus {
+  DRAFT
+  APPROVING
+  CONFIRMED
+  FULFILLING
+  COMPLETED
+  CANCELLED
+}
+
+enum CrmApprovalType {
+  CUSTOMER
+  OPPORTUNITY
+  CONTRACT
+  ORDER
+  PAYMENT
+  CUSTOM
+}
+
+enum CrmApprovalStatus {
+  DRAFT
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum CrmApprovalStepStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SKIPPED
+}
+
 enum TrainingCourseCategory {
   PRODUCT
   SALES
@@ -358,24 +559,41 @@ enum TaskSubmissionStatus {
 }
 
 model TeamOrganization {
-  id          String                 @id @default(cuid())
-  companyId   String                 @map("company_id")
-  name        String
-  description String                 @default("") @db.Text
-  ownerId     String                 @map("owner_id")
-  status      TeamOrganizationStatus @default(ACTIVE)
-  createdAt   DateTime               @default(now()) @map("created_at")
-  updatedAt   DateTime               @updatedAt @map("updated_at")
-  members     TeamMember[]
-  invitations TeamInvitation[]
-  tasks       Task[]
-  analysisReports EmployeeAnalysisReport[]
-  customers   Customer[]
-  trainingAssignments TrainingAssignment[]
-  workflowDefinitions WorkflowDefinition[]
-  knowledgeCandidates KnowledgeCandidate[]
-  knowledgeFeedback KnowledgeFeedback[]
-  knowledgeOptimizations KnowledgeOptimization[]
+  id                        String                     @id @default(cuid())
+  companyId                 String                     @map("company_id")
+  name                      String
+  description               String                     @default("") @db.Text
+  ownerId                   String                     @map("owner_id")
+  status                    TeamOrganizationStatus     @default(ACTIVE)
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                   @updatedAt @map("updated_at")
+  members                   TeamMember[]
+  invitations               TeamInvitation[]
+  tasks                     Task[]
+  analysisReports           EmployeeAnalysisReport[]
+  customers                 Customer[]
+  trainingAssignments       TrainingAssignment[]
+  workflowDefinitions       WorkflowDefinition[]
+  knowledgeCandidates       KnowledgeCandidate[]
+  knowledgeFeedback         KnowledgeFeedback[]
+  knowledgeOptimizations    KnowledgeOptimization[]
+  crmLeads                  CrmLead[]
+  crmContacts               CrmContact[]
+  crmCustomerStageEvents    CrmCustomerStageEvent[]
+  crmCustomerScores         CrmCustomerScore[]
+  crmOpportunities          CrmOpportunity[]
+  crmOpportunityStageEvents CrmOpportunityStageEvent[]
+  crmContracts              CrmContract[]
+  crmReceivables            CrmReceivable[]
+  crmVisitPlans             CrmVisitPlan[]
+  crmConversations          CrmConversation[]
+  crmQualityInspections     CrmQualityInspection[]
+  crmDailyPlans             CrmDailyPlan[]
+  crmSalesTargets           CrmSalesTarget[]
+  crmIntegrationSources     CrmIntegrationSource[]
+  crmAutomationRules        CrmAutomationRule[]
+  crmOrders                 CrmOrder[]
+  crmApprovals              CrmApproval[]
 
   @@unique([id, companyId], map: "team_organizations_id_company_id_key")
   @@index([companyId], map: "team_organizations_company_id_idx")
@@ -453,23 +671,34 @@ model CoachRule {
 }
 
 model Customer {
-  id        String        @id @default(cuid())
-  companyId String        @map("company_id")
-  teamId    String        @map("team_id")
-  ownerId   String        @map("owner_id")
-  name      String
-  phone     String?
-  wechat    String?
-  source    String
-  tags      String[]      @default([])
-  stage     CustomerStage @default(LEAD)
-  level     CustomerLevel @default(LOW)
-  notes     String        @default("") @db.Text
-  createdAt DateTime      @default(now()) @map("created_at")
-  updatedAt DateTime      @updatedAt @map("updated_at")
-  team      TeamOrganization @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
-  followUps CustomerFollowUp[]
-  aiProfile CustomerAIProfile?
+  id                    String                  @id @default(cuid())
+  companyId             String                  @map("company_id")
+  teamId                String                  @map("team_id")
+  ownerId               String                  @map("owner_id")
+  name                  String
+  phone                 String?
+  wechat                String?
+  source                String
+  tags                  String[]                @default([])
+  stage                 CustomerStage           @default(LEAD)
+  level                 CustomerLevel           @default(LOW)
+  notes                 String                  @default("") @db.Text
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @updatedAt @map("updated_at")
+  team                  TeamOrganization        @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  followUps             CustomerFollowUp[]
+  aiProfile             CustomerAIProfile?
+  convertedLeads        CrmLead[]               @relation("CrmLeadConvertedCustomer")
+  crmContacts           CrmContact[]
+  crmStageEvents        CrmCustomerStageEvent[]
+  crmScores             CrmCustomerScore[]
+  crmOpportunities      CrmOpportunity[]
+  crmContracts          CrmContract[]
+  crmReceivables        CrmReceivable[]
+  crmVisitPlans         CrmVisitPlan[]
+  crmConversations      CrmConversation[]
+  crmQualityInspections CrmQualityInspection[]
+  crmOrders             CrmOrder[]
 
   @@index([companyId, teamId, updatedAt], map: "crm_customers_company_id_team_id_updated_at_idx")
   @@index([companyId, ownerId, updatedAt], map: "crm_customers_company_id_owner_id_updated_at_idx")
@@ -510,6 +739,611 @@ model CustomerAIProfile {
   customer            Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@map("customer_ai_profiles")
+}
+
+model CrmLead {
+  id                  String            @id @default(cuid())
+  companyId           String            @map("company_id")
+  teamId              String?           @map("team_id")
+  ownerId             String?           @map("owner_id")
+  createdById         String            @map("created_by_id")
+  name                String
+  companyName         String?           @map("company_name")
+  contactName         String?           @map("contact_name")
+  phone               String?
+  email               String?
+  wechat              String?
+  industry            String?
+  source              CrmLeadSource     @default(MANUAL)
+  sourceDetail        String?           @map("source_detail")
+  status              CrmLeadStatus     @default(NEW)
+  score               Int               @default(0)
+  scoreReason         Json?             @map("score_reason")
+  estimatedValue      Decimal?          @map("estimated_value") @db.Decimal(18, 2)
+  lastContactAt       DateTime?         @map("last_contact_at")
+  nextFollowUpAt      DateTime?         @map("next_follow_up_at")
+  convertedCustomerId String?           @unique @map("converted_customer_id")
+  convertedAt         DateTime?         @map("converted_at")
+  lostReason          String?           @map("lost_reason") @db.Text
+  tags                String[]          @default([])
+  notes               String            @default("") @db.Text
+  createdAt           DateTime          @default(now()) @map("created_at")
+  updatedAt           DateTime          @updatedAt @map("updated_at")
+  company             TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team                TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  owner               User?             @relation("CrmLeadOwner", fields: [ownerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy           User              @relation("CrmLeadCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  convertedCustomer   Customer?         @relation("CrmLeadConvertedCustomer", fields: [convertedCustomerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([companyId, status, createdAt], map: "crm_leads_company_status_created_idx")
+  @@index([companyId, teamId, status, updatedAt], map: "crm_leads_company_team_status_updated_idx")
+  @@index([companyId, ownerId, status, nextFollowUpAt], map: "crm_leads_company_owner_status_followup_idx")
+  @@index([companyId, score, updatedAt], map: "crm_leads_company_score_updated_idx")
+  @@index([companyId, phone], map: "crm_leads_company_phone_idx")
+  @@index([companyId, email], map: "crm_leads_company_email_idx")
+  @@index([companyId, convertedCustomerId], map: "crm_leads_company_converted_customer_idx")
+  @@map("team_os_crm_leads")
+}
+
+model CrmContact {
+  id                   String            @id @default(cuid())
+  companyId            String            @map("company_id")
+  teamId               String?           @map("team_id")
+  customerId           String            @map("customer_id")
+  ownerId              String?           @map("owner_id")
+  name                 String
+  position             String?
+  department           String?
+  role                 CrmContactRole    @default(OTHER)
+  phone                String?
+  email                String?
+  wechat               String?
+  isPrimary            Boolean           @default(false) @map("is_primary")
+  influenceLevel       Int               @default(0) @map("influence_level")
+  birthday             DateTime?         @db.Date
+  notes                String            @default("") @db.Text
+  createdAt            DateTime          @default(now()) @map("created_at")
+  updatedAt            DateTime          @updatedAt @map("updated_at")
+  company              TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team                 TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer             Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  owner                User?             @relation(fields: [ownerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  primaryOpportunities CrmOpportunity[]  @relation("CrmOpportunityPrimaryContact")
+  visitPlans           CrmVisitPlan[]
+  conversations        CrmConversation[]
+  orders               CrmOrder[]
+
+  @@index([companyId, customerId, isPrimary], map: "crm_contacts_company_customer_primary_idx")
+  @@index([companyId, teamId, updatedAt], map: "crm_contacts_company_team_updated_idx")
+  @@index([companyId, ownerId, updatedAt], map: "crm_contacts_company_owner_updated_idx")
+  @@index([companyId, phone], map: "crm_contacts_company_phone_idx")
+  @@index([companyId, email], map: "crm_contacts_company_email_idx")
+  @@map("team_os_crm_contacts")
+}
+
+model CrmCustomerStageEvent {
+  id          String            @id @default(cuid())
+  companyId   String            @map("company_id")
+  teamId      String?           @map("team_id")
+  customerId  String            @map("customer_id")
+  changedById String            @map("changed_by_id")
+  fromStage   CustomerStage?    @map("from_stage")
+  toStage     CustomerStage     @map("to_stage")
+  reason      String            @default("") @db.Text
+  snapshot    Json?
+  createdAt   DateTime          @default(now()) @map("created_at")
+  company     TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team        TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer    Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  changedBy   User              @relation(fields: [changedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([companyId, customerId, createdAt], map: "crm_customer_stage_events_company_customer_created_idx")
+  @@index([companyId, teamId, createdAt], map: "crm_customer_stage_events_company_team_created_idx")
+  @@index([companyId, changedById, createdAt], map: "crm_customer_stage_events_company_user_created_idx")
+  @@index([companyId, toStage, createdAt], map: "crm_customer_stage_events_company_stage_created_idx")
+  @@map("team_os_crm_customer_stage_events")
+}
+
+model CrmCustomerScore {
+  id                 String            @id @default(cuid())
+  companyId          String            @map("company_id")
+  teamId             String?           @map("team_id")
+  customerId         String            @map("customer_id")
+  calculatedByUserId String?           @map("calculated_by_user_id")
+  score              Int
+  level              CustomerLevel
+  riskLevel          CustomerRiskLevel @map("risk_level")
+  source             CrmScoreSource
+  dimensions         Json?
+  reason             String            @default("") @db.Text
+  validUntil         DateTime?         @map("valid_until")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  company            TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team               TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer           Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  calculatedBy       User?             @relation(fields: [calculatedByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([companyId, customerId, createdAt], map: "crm_customer_scores_company_customer_created_idx")
+  @@index([companyId, teamId, createdAt], map: "crm_customer_scores_company_team_created_idx")
+  @@index([companyId, riskLevel, score, createdAt], map: "crm_customer_scores_company_risk_score_created_idx")
+  @@index([companyId, calculatedByUserId, createdAt], map: "crm_customer_scores_company_user_created_idx")
+  @@map("team_os_crm_customer_scores")
+}
+
+model CrmOpportunity {
+  id                String                     @id @default(cuid())
+  companyId         String                     @map("company_id")
+  teamId            String?                    @map("team_id")
+  customerId        String                     @map("customer_id")
+  primaryContactId  String?                    @map("primary_contact_id")
+  ownerId           String                     @map("owner_id")
+  name              String
+  stage             CrmOpportunityStage        @default(DISCOVERY)
+  status            CrmOpportunityStatus       @default(OPEN)
+  amount            Decimal                    @default(0) @db.Decimal(18, 2)
+  probability       Int                        @default(0)
+  expectedCloseDate DateTime?                  @map("expected_close_date") @db.Date
+  nextAction        String                     @default("") @map("next_action") @db.Text
+  competitors       String[]                   @default([])
+  decisionChain     Json?                      @map("decision_chain")
+  lossReason        String?                    @map("loss_reason") @db.Text
+  wonAt             DateTime?                  @map("won_at")
+  lostAt            DateTime?                  @map("lost_at")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  company           TenantCompany              @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team              TeamOrganization?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer          Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  primaryContact    CrmContact?                @relation("CrmOpportunityPrimaryContact", fields: [primaryContactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  owner             User                       @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  stageEvents       CrmOpportunityStageEvent[]
+  contracts         CrmContract[]
+  conversations     CrmConversation[]
+  orders            CrmOrder[]
+
+  @@index([companyId, customerId, updatedAt], map: "crm_opportunities_company_customer_updated_idx")
+  @@index([companyId, teamId, stage, updatedAt], map: "crm_opportunities_company_team_stage_updated_idx")
+  @@index([companyId, ownerId, status, expectedCloseDate], map: "crm_opportunities_company_owner_status_close_idx")
+  @@index([companyId, stage, status, updatedAt], map: "crm_opportunities_company_stage_status_updated_idx")
+  @@index([companyId, primaryContactId], map: "crm_opportunities_company_primary_contact_idx")
+  @@map("team_os_crm_opportunities")
+}
+
+model CrmOpportunityStageEvent {
+  id            String               @id @default(cuid())
+  companyId     String               @map("company_id")
+  teamId        String?              @map("team_id")
+  opportunityId String               @map("opportunity_id")
+  changedById   String               @map("changed_by_id")
+  fromStage     CrmOpportunityStage? @map("from_stage")
+  toStage       CrmOpportunityStage  @map("to_stage")
+  reason        String               @default("") @db.Text
+  snapshot      Json?
+  createdAt     DateTime             @default(now()) @map("created_at")
+  company       TenantCompany        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team          TeamOrganization?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  opportunity   CrmOpportunity       @relation(fields: [opportunityId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  changedBy     User                 @relation(fields: [changedById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([companyId, opportunityId, createdAt], map: "crm_opportunity_stage_events_company_opportunity_created_idx")
+  @@index([companyId, teamId, createdAt], map: "crm_opportunity_stage_events_company_team_created_idx")
+  @@index([companyId, changedById, createdAt], map: "crm_opportunity_stage_events_company_user_created_idx")
+  @@index([companyId, toStage, createdAt], map: "crm_opportunity_stage_events_company_stage_created_idx")
+  @@map("team_os_crm_opportunity_stage_events")
+}
+
+model CrmContract {
+  id            String            @id @default(cuid())
+  companyId     String            @map("company_id")
+  teamId        String?           @map("team_id")
+  customerId    String            @map("customer_id")
+  opportunityId String?           @map("opportunity_id")
+  ownerId       String            @map("owner_id")
+  contractNo    String            @map("contract_no")
+  title         String
+  amount        Decimal           @db.Decimal(18, 2)
+  status        CrmContractStatus @default(DRAFT)
+  signedAt      DateTime?         @map("signed_at")
+  startDate     DateTime?         @map("start_date") @db.Date
+  endDate       DateTime?         @map("end_date") @db.Date
+  terms         Json?
+  fileUrls      String[]          @default([]) @map("file_urls")
+  notes         String            @default("") @db.Text
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  company       TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team          TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  opportunity   CrmOpportunity?   @relation(fields: [opportunityId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  owner         User              @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  receivables   CrmReceivable[]
+  orders        CrmOrder[]
+
+  @@unique([companyId, contractNo], map: "crm_contracts_company_contract_no_key")
+  @@index([companyId, customerId, updatedAt], map: "crm_contracts_company_customer_updated_idx")
+  @@index([companyId, teamId, status, updatedAt], map: "crm_contracts_company_team_status_updated_idx")
+  @@index([companyId, ownerId, status, endDate], map: "crm_contracts_company_owner_status_end_idx")
+  @@index([companyId, opportunityId], map: "crm_contracts_company_opportunity_idx")
+  @@map("team_os_crm_contracts")
+}
+
+model CrmReceivable {
+  id             String              @id @default(cuid())
+  companyId      String              @map("company_id")
+  teamId         String?             @map("team_id")
+  customerId     String              @map("customer_id")
+  contractId     String              @map("contract_id")
+  ownerId        String?             @map("owner_id")
+  installmentNo  Int                 @default(1) @map("installment_no")
+  amount         Decimal             @db.Decimal(18, 2)
+  receivedAmount Decimal             @default(0) @map("received_amount") @db.Decimal(18, 2)
+  dueDate        DateTime            @map("due_date") @db.Date
+  receivedAt     DateTime?           @map("received_at")
+  status         CrmReceivableStatus @default(PENDING)
+  reminderAt     DateTime?           @map("reminder_at")
+  notes          String              @default("") @db.Text
+  createdAt      DateTime            @default(now()) @map("created_at")
+  updatedAt      DateTime            @updatedAt @map("updated_at")
+  company        TenantCompany       @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team           TeamOrganization?   @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer       Customer            @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  contract       CrmContract         @relation(fields: [contractId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  owner          User?               @relation(fields: [ownerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@unique([companyId, contractId, installmentNo], map: "crm_receivables_company_contract_installment_key")
+  @@index([companyId, customerId, dueDate], map: "crm_receivables_company_customer_due_idx")
+  @@index([companyId, teamId, status, dueDate], map: "crm_receivables_company_team_status_due_idx")
+  @@index([companyId, ownerId, status, dueDate], map: "crm_receivables_company_owner_status_due_idx")
+  @@index([companyId, contractId, status], map: "crm_receivables_company_contract_status_idx")
+  @@map("team_os_crm_receivables")
+}
+
+model CrmVisitPlan {
+  id             String             @id @default(cuid())
+  companyId      String             @map("company_id")
+  teamId         String?            @map("team_id")
+  customerId     String             @map("customer_id")
+  contactId      String?            @map("contact_id")
+  ownerId        String             @map("owner_id")
+  title          String
+  purpose        String             @default("") @db.Text
+  plannedStart   DateTime           @map("planned_start")
+  plannedEnd     DateTime?          @map("planned_end")
+  actualStart    DateTime?          @map("actual_start")
+  actualEnd      DateTime?          @map("actual_end")
+  address        String?
+  latitude       Decimal?           @db.Decimal(10, 7)
+  longitude      Decimal?           @db.Decimal(10, 7)
+  status         CrmVisitPlanStatus @default(PLANNED)
+  signInAt       DateTime?          @map("sign_in_at")
+  signInLocation String?            @map("sign_in_location")
+  result         String             @default("") @db.Text
+  nextAction     String             @default("") @map("next_action") @db.Text
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+  company        TenantCompany      @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team           TeamOrganization?  @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer       Customer           @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  contact        CrmContact?        @relation(fields: [contactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  owner          User               @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([companyId, customerId, plannedStart], map: "crm_visit_plans_company_customer_start_idx")
+  @@index([companyId, teamId, status, plannedStart], map: "crm_visit_plans_company_team_status_start_idx")
+  @@index([companyId, ownerId, status, plannedStart], map: "crm_visit_plans_company_owner_status_start_idx")
+  @@index([companyId, contactId, plannedStart], map: "crm_visit_plans_company_contact_start_idx")
+  @@map("team_os_crm_visit_plans")
+}
+
+model CrmConversation {
+  id                  String                   @id @default(cuid())
+  companyId           String                   @map("company_id")
+  teamId              String?                  @map("team_id")
+  customerId          String                   @map("customer_id")
+  contactId           String?                  @map("contact_id")
+  opportunityId       String?                  @map("opportunity_id")
+  userId              String                   @map("user_id")
+  integrationSourceId String?                  @map("integration_source_id")
+  channel             CrmConversationChannel
+  direction           CrmConversationDirection @default(OUTBOUND)
+  externalId          String?                  @map("external_id")
+  title               String                   @default("")
+  content             String                   @default("") @db.Text
+  transcript          String                   @default("") @db.Text
+  summary             String                   @default("") @db.Text
+  startedAt           DateTime                 @map("started_at")
+  endedAt             DateTime?                @map("ended_at")
+  durationSeconds     Int                      @default(0) @map("duration_seconds")
+  mediaUrls           String[]                 @default([]) @map("media_urls")
+  metadata            Json?
+  consentRecorded     Boolean                  @default(false) @map("consent_recorded")
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  company             TenantCompany            @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team                TeamOrganization?        @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer            Customer                 @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  contact             CrmContact?              @relation(fields: [contactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  opportunity         CrmOpportunity?          @relation(fields: [opportunityId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user                User                     @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  integrationSource   CrmIntegrationSource?    @relation(fields: [integrationSourceId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  qualityInspections  CrmQualityInspection[]
+
+  @@unique([companyId, channel, externalId], map: "crm_conversations_company_channel_external_key")
+  @@index([companyId, customerId, startedAt], map: "crm_conversations_company_customer_started_idx")
+  @@index([companyId, teamId, channel, startedAt], map: "crm_conversations_company_team_channel_started_idx")
+  @@index([companyId, userId, startedAt], map: "crm_conversations_company_user_started_idx")
+  @@index([companyId, opportunityId, startedAt], map: "crm_conversations_company_opportunity_started_idx")
+  @@index([companyId, integrationSourceId, startedAt], map: "crm_conversations_company_integration_started_idx")
+  @@map("team_os_crm_conversations")
+}
+
+model CrmQualityInspection {
+  id                  String                     @id @default(cuid())
+  companyId           String                     @map("company_id")
+  teamId              String?                    @map("team_id")
+  conversationId      String                     @map("conversation_id")
+  customerId          String                     @map("customer_id")
+  userId              String                     @map("user_id")
+  inspectedById       String?                    @map("inspected_by_id")
+  status              CrmQualityInspectionStatus @default(PENDING)
+  score               Int                        @default(0)
+  validCall           Boolean?                   @map("valid_call")
+  matchedRules        Json?                      @map("matched_rules")
+  needs               String[]                   @default([])
+  objections          String[]                   @default([])
+  priceRequests       String[]                   @default([]) @map("price_requests")
+  sensitiveWords      String[]                   @default([]) @map("sensitive_words")
+  issues              Json?
+  unresolvedQuestions String[]                   @default([]) @map("unresolved_questions")
+  suggestions         String[]                   @default([])
+  createdAt           DateTime                   @default(now()) @map("created_at")
+  updatedAt           DateTime                   @updatedAt @map("updated_at")
+  company             TenantCompany              @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team                TeamOrganization?          @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  conversation        CrmConversation            @relation(fields: [conversationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  customer            Customer                   @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  user                User                       @relation("CrmQualityInspectionSalesUser", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  inspectedBy         User?                      @relation("CrmQualityInspectionInspector", fields: [inspectedById], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([companyId, conversationId, createdAt], map: "crm_quality_inspections_company_conversation_created_idx")
+  @@index([companyId, customerId, createdAt], map: "crm_quality_inspections_company_customer_created_idx")
+  @@index([companyId, teamId, status, createdAt], map: "crm_quality_inspections_company_team_status_created_idx")
+  @@index([companyId, userId, score, createdAt], map: "crm_quality_inspections_company_user_score_created_idx")
+  @@index([companyId, inspectedById, createdAt], map: "crm_quality_inspections_company_inspector_created_idx")
+  @@map("team_os_crm_quality_inspections")
+}
+
+model CrmDailyPlan {
+  id               String             @id @default(cuid())
+  companyId        String             @map("company_id")
+  teamId           String?            @map("team_id")
+  userId           String             @map("user_id")
+  planDate         DateTime           @map("plan_date") @db.Date
+  status           CrmDailyPlanStatus @default(DRAFT)
+  goals            Json?
+  keyCustomerIds   String[]           @default([]) @map("key_customer_ids")
+  actionItems      Json?              @map("action_items")
+  completedSummary String             @default("") @map("completed_summary") @db.Text
+  aiSummary        String             @default("") @map("ai_summary") @db.Text
+  submittedAt      DateTime?          @map("submitted_at")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+  company          TenantCompany      @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team             TeamOrganization?  @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([companyId, userId, planDate], map: "crm_daily_plans_company_user_date_key")
+  @@index([companyId, teamId, planDate, status], map: "crm_daily_plans_company_team_date_status_idx")
+  @@index([companyId, userId, status, planDate], map: "crm_daily_plans_company_user_status_date_idx")
+  @@map("team_os_crm_daily_plans")
+}
+
+model CrmSalesTarget {
+  id            String               @id @default(cuid())
+  companyId     String               @map("company_id")
+  teamId        String?              @map("team_id")
+  userId        String?              @map("user_id")
+  createdById   String               @map("created_by_id")
+  metric        CrmSalesTargetMetric
+  periodStart   DateTime             @map("period_start") @db.Date
+  periodEnd     DateTime             @map("period_end") @db.Date
+  targetValue   Decimal              @map("target_value") @db.Decimal(18, 2)
+  achievedValue Decimal              @default(0) @map("achieved_value") @db.Decimal(18, 2)
+  status        CrmSalesTargetStatus @default(DRAFT)
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  company       TenantCompany        @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team          TeamOrganization?    @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  user          User?                @relation("CrmSalesTargetAssignee", fields: [userId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy     User                 @relation("CrmSalesTargetCreator", fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([companyId, teamId, metric, periodStart, periodEnd], map: "crm_sales_targets_company_team_metric_period_idx")
+  @@index([companyId, userId, metric, periodStart, periodEnd], map: "crm_sales_targets_company_user_metric_period_idx")
+  @@index([companyId, status, periodEnd], map: "crm_sales_targets_company_status_end_idx")
+  @@index([companyId, createdById, createdAt], map: "crm_sales_targets_company_creator_created_idx")
+  @@map("team_os_crm_sales_targets")
+}
+
+model CrmIntegrationSource {
+  id               String                 @id @default(cuid())
+  companyId        String                 @map("company_id")
+  teamId           String?                @map("team_id")
+  createdById      String                 @map("created_by_id")
+  channel          CrmConversationChannel
+  name             String
+  status           CrmIntegrationStatus   @default(ACTIVE)
+  externalTenantId String?                @map("external_tenant_id")
+  config           Json?
+  lastSyncAt       DateTime?              @map("last_sync_at")
+  createdAt        DateTime               @default(now()) @map("created_at")
+  updatedAt        DateTime               @updatedAt @map("updated_at")
+  company          TenantCompany          @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team             TeamOrganization?      @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy        User                   @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  conversations    CrmConversation[]
+
+  @@unique([companyId, channel, name], map: "crm_integration_sources_company_channel_name_key")
+  @@index([companyId, teamId, status, updatedAt], map: "crm_integration_sources_company_team_status_updated_idx")
+  @@index([companyId, channel, status], map: "crm_integration_sources_company_channel_status_idx")
+  @@index([companyId, createdById, createdAt], map: "crm_integration_sources_company_creator_created_idx")
+  @@map("team_os_crm_integration_sources")
+}
+
+model CrmAutomationRule {
+  id           String                  @id @default(cuid())
+  companyId    String                  @map("company_id")
+  teamId       String?                 @map("team_id")
+  createdById  String                  @map("created_by_id")
+  name         String
+  description  String                  @default("") @db.Text
+  trigger      CrmAutomationTrigger
+  conditions   Json
+  action       CrmAutomationAction
+  actionConfig Json                    @map("action_config")
+  status       CrmAutomationRuleStatus @default(DRAFT)
+  priority     Int                     @default(100)
+  lastRunAt    DateTime?               @map("last_run_at")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+  company      TenantCompany           @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team         TeamOrganization?       @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  createdBy    User                    @relation(fields: [createdById], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([companyId, name], map: "crm_automation_rules_company_name_key")
+  @@index([companyId, teamId, status, priority], map: "crm_automation_rules_company_team_status_priority_idx")
+  @@index([companyId, trigger, status], map: "crm_automation_rules_company_trigger_status_idx")
+  @@index([companyId, createdById, createdAt], map: "crm_automation_rules_company_creator_created_idx")
+  @@map("team_os_crm_automation_rules")
+}
+
+model CrmProduct {
+  id          String           @id @default(cuid())
+  companyId   String           @map("company_id")
+  sku         String
+  name        String
+  category    String?
+  unit        String           @default("件")
+  listPrice   Decimal          @map("list_price") @db.Decimal(18, 2)
+  costPrice   Decimal?         @map("cost_price") @db.Decimal(18, 2)
+  status      CrmProductStatus @default(ACTIVE)
+  description String           @default("") @db.Text
+  spec        Json?
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
+  company     TenantCompany    @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  orderItems  CrmOrderItem[]
+
+  @@unique([companyId, sku], map: "crm_products_company_sku_key")
+  @@index([companyId, status, updatedAt], map: "crm_products_company_status_updated_idx")
+  @@index([companyId, category, status], map: "crm_products_company_category_status_idx")
+  @@map("team_os_crm_products")
+}
+
+model CrmOrder {
+  id            String            @id @default(cuid())
+  companyId     String            @map("company_id")
+  teamId        String?           @map("team_id")
+  customerId    String            @map("customer_id")
+  contactId     String?           @map("contact_id")
+  opportunityId String?           @map("opportunity_id")
+  contractId    String?           @map("contract_id")
+  ownerId       String            @map("owner_id")
+  orderNo       String            @map("order_no")
+  status        CrmOrderStatus    @default(DRAFT)
+  subtotal      Decimal           @default(0) @db.Decimal(18, 2)
+  discount      Decimal           @default(0) @db.Decimal(18, 2)
+  taxAmount     Decimal           @default(0) @map("tax_amount") @db.Decimal(18, 2)
+  totalAmount   Decimal           @default(0) @map("total_amount") @db.Decimal(18, 2)
+  orderedAt     DateTime?         @map("ordered_at")
+  deliveryAt    DateTime?         @map("delivery_at")
+  notes         String            @default("") @db.Text
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  company       TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team          TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  customer      Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  contact       CrmContact?       @relation(fields: [contactId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  opportunity   CrmOpportunity?   @relation(fields: [opportunityId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  contract      CrmContract?      @relation(fields: [contractId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  owner         User              @relation(fields: [ownerId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  items         CrmOrderItem[]
+
+  @@unique([companyId, orderNo], map: "crm_orders_company_order_no_key")
+  @@index([companyId, customerId, updatedAt], map: "crm_orders_company_customer_updated_idx")
+  @@index([companyId, teamId, status, updatedAt], map: "crm_orders_company_team_status_updated_idx")
+  @@index([companyId, ownerId, status, orderedAt], map: "crm_orders_company_owner_status_ordered_idx")
+  @@index([companyId, opportunityId], map: "crm_orders_company_opportunity_idx")
+  @@index([companyId, contractId], map: "crm_orders_company_contract_idx")
+  @@map("team_os_crm_orders")
+}
+
+model CrmOrderItem {
+  id        String        @id @default(cuid())
+  companyId String        @map("company_id")
+  orderId   String        @map("order_id")
+  productId String?       @map("product_id")
+  sku       String
+  name      String
+  unit      String
+  quantity  Decimal       @db.Decimal(18, 3)
+  unitPrice Decimal       @map("unit_price") @db.Decimal(18, 2)
+  amount    Decimal       @db.Decimal(18, 2)
+  createdAt DateTime      @default(now()) @map("created_at")
+  company   TenantCompany @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  order     CrmOrder      @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product   CrmProduct?   @relation(fields: [productId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([companyId, orderId], map: "crm_order_items_company_order_idx")
+  @@index([companyId, productId, createdAt], map: "crm_order_items_company_product_created_idx")
+  @@map("team_os_crm_order_items")
+}
+
+model CrmApproval {
+  id           String            @id @default(cuid())
+  companyId    String            @map("company_id")
+  teamId       String?           @map("team_id")
+  requesterId  String            @map("requester_id")
+  type         CrmApprovalType
+  entityType   String            @map("entity_type")
+  entityId     String            @map("entity_id")
+  title        String
+  status       CrmApprovalStatus @default(DRAFT)
+  currentStep  Int               @default(0) @map("current_step")
+  payload      Json?
+  flowSnapshot Json?             @map("flow_snapshot")
+  submittedAt  DateTime?         @map("submitted_at")
+  decidedAt    DateTime?         @map("decided_at")
+  createdAt    DateTime          @default(now()) @map("created_at")
+  updatedAt    DateTime          @updatedAt @map("updated_at")
+  company      TenantCompany     @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  team         TeamOrganization? @relation(fields: [teamId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  requester    User              @relation(fields: [requesterId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  steps        CrmApprovalStep[]
+
+  @@index([companyId, teamId, status, createdAt], map: "crm_approvals_company_team_status_created_idx")
+  @@index([companyId, requesterId, status, createdAt], map: "crm_approvals_company_requester_status_created_idx")
+  @@index([companyId, entityType, entityId], map: "crm_approvals_company_entity_idx")
+  @@index([companyId, type, status, createdAt], map: "crm_approvals_company_type_status_created_idx")
+  @@map("team_os_crm_approvals")
+}
+
+model CrmApprovalStep {
+  id         String                @id @default(cuid())
+  companyId  String                @map("company_id")
+  approvalId String                @map("approval_id")
+  approverId String                @map("approver_id")
+  stepOrder  Int                   @map("step_order")
+  status     CrmApprovalStepStatus @default(PENDING)
+  comment    String                @default("") @db.Text
+  actedAt    DateTime?             @map("acted_at")
+  createdAt  DateTime              @default(now()) @map("created_at")
+  company    TenantCompany         @relation(fields: [companyId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  approval   CrmApproval           @relation(fields: [approvalId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  approver   User                  @relation(fields: [approverId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([companyId, approvalId, stepOrder], map: "crm_approval_steps_company_approval_order_key")
+  @@index([companyId, approverId, status, createdAt], map: "crm_approval_steps_company_approver_status_created_idx")
+  @@index([companyId, approvalId, status], map: "crm_approval_steps_company_approval_status_idx")
+  @@map("team_os_crm_approval_steps")
 }
 
 model TrainingCourse {
@@ -690,21 +1524,21 @@ model AITaskRecommendation {
 }
 
 model WorkflowDefinition {
-  id           String                   @id @default(cuid())
-  companyId    String                   @map("company_id")
-  teamId       String?                  @map("team_id")
-  name         String
-  description  String                   @db.Text
-  triggerType  WorkflowTriggerType      @map("trigger_type")
-  eventType    WorkflowEventType        @map("event_type")
-  status       WorkflowDefinitionStatus @default(ACTIVE)
-  config       Json
-  createdBy    String                   @map("created_by")
-  createdAt    DateTime                 @default(now()) @map("created_at")
-  updatedAt    DateTime                 @updatedAt @map("updated_at")
-  actions      WorkflowAction[]
-  executions   WorkflowExecution[]
-  team         TeamOrganization?        @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
+  id          String                   @id @default(cuid())
+  companyId   String                   @map("company_id")
+  teamId      String?                  @map("team_id")
+  name        String
+  description String                   @db.Text
+  triggerType WorkflowTriggerType      @map("trigger_type")
+  eventType   WorkflowEventType        @map("event_type")
+  status      WorkflowDefinitionStatus @default(ACTIVE)
+  config      Json
+  createdBy   String                   @map("created_by")
+  createdAt   DateTime                 @default(now()) @map("created_at")
+  updatedAt   DateTime                 @updatedAt @map("updated_at")
+  actions     WorkflowAction[]
+  executions  WorkflowExecution[]
+  team        TeamOrganization?        @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade)
 
   @@unique([id, companyId], map: "workflow_definitions_id_company_id_key")
   @@index([companyId, status, eventType, updatedAt], map: "workflow_defs_company_status_event_updated_idx")
@@ -799,15 +1633,15 @@ model KnowledgeFeedback {
 }
 
 model KnowledgeOptimization {
-  id          String                      @id @default(cuid())
-  companyId   String                      @map("company_id")
-  teamId      String?                     @map("team_id")
-  knowledgeId String                      @map("knowledge_id")
-  suggestion  String                      @db.Text
-  suggestionKey String                    @map("suggestion_key")
-  status      KnowledgeOptimizationStatus @default(PENDING)
-  createdAt   DateTime                    @default(now()) @map("created_at")
-  team        TeamOrganization?           @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_optimizations_team_company_fkey")
+  id            String                      @id @default(cuid())
+  companyId     String                      @map("company_id")
+  teamId        String?                     @map("team_id")
+  knowledgeId   String                      @map("knowledge_id")
+  suggestion    String                      @db.Text
+  suggestionKey String                      @map("suggestion_key")
+  status        KnowledgeOptimizationStatus @default(PENDING)
+  createdAt     DateTime                    @default(now()) @map("created_at")
+  team          TeamOrganization?           @relation(fields: [teamId, companyId], references: [id, companyId], onDelete: Restrict, onUpdate: Cascade, map: "knowledge_optimizations_team_company_fkey")
 
   @@unique([companyId, suggestionKey], map: "knowledge_optimizations_company_key_key")
   @@index([companyId, status, createdAt], map: "knowledge_optimizations_company_status_created_idx")
@@ -817,15 +1651,35 @@ model KnowledgeOptimization {
 }
 
 model TenantCompany {
-  id            String               @id
-  name          String
-  logo          String?
-  industry      String?
-  ownerId       String               @map("owner_id")
-  status        TenantCompanyStatus  @default(ACTIVE)
-  createdAt     DateTime             @default(now()) @map("created_at")
-  updatedAt     DateTime             @updatedAt @map("updated_at")
-  subscriptions TenantSubscription[]
+  id                        String                     @id
+  name                      String
+  logo                      String?
+  industry                  String?
+  ownerId                   String                     @map("owner_id")
+  status                    TenantCompanyStatus        @default(ACTIVE)
+  createdAt                 DateTime                   @default(now()) @map("created_at")
+  updatedAt                 DateTime                   @updatedAt @map("updated_at")
+  subscriptions             TenantSubscription[]
+  crmLeads                  CrmLead[]
+  crmContacts               CrmContact[]
+  crmCustomerStageEvents    CrmCustomerStageEvent[]
+  crmCustomerScores         CrmCustomerScore[]
+  crmOpportunities          CrmOpportunity[]
+  crmOpportunityStageEvents CrmOpportunityStageEvent[]
+  crmContracts              CrmContract[]
+  crmReceivables            CrmReceivable[]
+  crmVisitPlans             CrmVisitPlan[]
+  crmConversations          CrmConversation[]
+  crmQualityInspections     CrmQualityInspection[]
+  crmDailyPlans             CrmDailyPlan[]
+  crmSalesTargets           CrmSalesTarget[]
+  crmIntegrationSources     CrmIntegrationSource[]
+  crmAutomationRules        CrmAutomationRule[]
+  crmProducts               CrmProduct[]
+  crmOrders                 CrmOrder[]
+  crmOrderItems             CrmOrderItem[]
+  crmApprovals              CrmApproval[]
+  crmApprovalSteps          CrmApprovalStep[]
 
   @@index([ownerId, status], map: "team_os_tenant_companies_owner_id_status_idx")
   @@index([status, updatedAt], map: "team_os_tenant_companies_status_updated_at_idx")
@@ -945,17 +1799,17 @@ model Task {
 }
 
 model TaskSubmission {
-  id          String               @id @default(cuid())
-  taskId      String               @map("task_id")
-  userId      String               @map("user_id")
-  content     String               @db.Text
-  images      String[]             @default([])
-  attachments String[]             @default([])
-  summary     String               @db.Text
-  status      TaskSubmissionStatus @default(SUBMITTED)
-  createdAt   DateTime             @default(now()) @map("created_at")
-  updatedAt   DateTime             @updatedAt @map("updated_at")
-  task        Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  id             String                  @id @default(cuid())
+  taskId         String                  @map("task_id")
+  userId         String                  @map("user_id")
+  content        String                  @db.Text
+  images         String[]                @default([])
+  attachments    String[]                @default([])
+  summary        String                  @db.Text
+  status         TaskSubmissionStatus    @default(SUBMITTED)
+  createdAt      DateTime                @default(now()) @map("created_at")
+  updatedAt      DateTime                @updatedAt @map("updated_at")
+  task           Task                    @relation(fields: [taskId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   analysisReport EmployeeAnalysisReport?
 
   @@index([taskId], map: "task_submissions_task_id_idx")
@@ -1029,30 +1883,51 @@ model Tenant {
 }
 
 model User {
-  id               String           @id @default(cuid())
-  tenantId         String?          @map("tenant_id")
-  email            String?          @unique
-  phone            String           @unique
-  passwordHash     String           @default("")
-  name             String?
-  isActive         Boolean          @default(true)
-  licenseActivated Boolean          @default(false)
-  role             UserRole         @default(user)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  sessions         Session[]
-  redeemedLicenses LicenseKey[]     @relation("LicenseRedeemer")
-  conversations    Conversation[]
-  messages         Message[]
-  knowledgeItems   KnowledgeItem[]
-  settings         UserSettings?
-  feedback         Feedback[]
-  analyticsEvents  AnalyticsEvent[]
-  roleAssignments  UserRoleAssignment[]
-  auditLogs        AuditLog[]
-  uploadedFiles    KnowledgeFile[]
-  ingestionJobs    IngestionJob[]
-  tenant           Tenant?          @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  id                               String                     @id @default(cuid())
+  tenantId                         String?                    @map("tenant_id")
+  email                            String?                    @unique
+  phone                            String                     @unique
+  passwordHash                     String                     @default("")
+  name                             String?
+  isActive                         Boolean                    @default(true)
+  licenseActivated                 Boolean                    @default(false)
+  role                             UserRole                   @default(user)
+  createdAt                        DateTime                   @default(now())
+  updatedAt                        DateTime                   @updatedAt
+  sessions                         Session[]
+  redeemedLicenses                 LicenseKey[]               @relation("LicenseRedeemer")
+  conversations                    Conversation[]
+  messages                         Message[]
+  knowledgeItems                   KnowledgeItem[]
+  settings                         UserSettings?
+  feedback                         Feedback[]
+  analyticsEvents                  AnalyticsEvent[]
+  roleAssignments                  UserRoleAssignment[]
+  auditLogs                        AuditLog[]
+  uploadedFiles                    KnowledgeFile[]
+  ingestionJobs                    IngestionJob[]
+  tenant                           Tenant?                    @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  crmLeadsOwned                    CrmLead[]                  @relation("CrmLeadOwner")
+  crmLeadsCreated                  CrmLead[]                  @relation("CrmLeadCreator")
+  crmContacts                      CrmContact[]
+  crmCustomerStageEvents           CrmCustomerStageEvent[]
+  crmCustomerScores                CrmCustomerScore[]
+  crmOpportunities                 CrmOpportunity[]
+  crmOpportunityStageEvents        CrmOpportunityStageEvent[]
+  crmContracts                     CrmContract[]
+  crmReceivables                   CrmReceivable[]
+  crmVisitPlans                    CrmVisitPlan[]
+  crmConversations                 CrmConversation[]
+  crmQualityInspectionsAsSalesUser CrmQualityInspection[]     @relation("CrmQualityInspectionSalesUser")
+  crmQualityInspectionsAsInspector CrmQualityInspection[]     @relation("CrmQualityInspectionInspector")
+  crmDailyPlans                    CrmDailyPlan[]
+  crmSalesTargetsAssigned          CrmSalesTarget[]           @relation("CrmSalesTargetAssignee")
+  crmSalesTargetsCreated           CrmSalesTarget[]           @relation("CrmSalesTargetCreator")
+  crmIntegrationSources            CrmIntegrationSource[]
+  crmAutomationRules               CrmAutomationRule[]
+  crmOrders                        CrmOrder[]
+  crmApprovals                     CrmApproval[]
+  crmApprovalSteps                 CrmApprovalStep[]
 
   @@index([tenantId], map: "users_tenant_id_idx")
   @@index([role])
@@ -1355,24 +2230,24 @@ model KnowledgeFile {
 }
 
 model IngestionJob {
-  id                String         @id @default(cuid())
-  sourceType        String         @map("source_type")
-  sourceId          String?        @map("source_id")
-  status            String         @default("pending")
-  progress          Int            @default(0)
-  errorMessage      String?        @map("error_message") @db.Text
-  createdByUserId   String         @map("created_by")
-  fileId            String?        @map("file_id")
-  knowledgeItemId   String?        @map("knowledge_item_id")
-  tenantId          String?        @map("tenant_id")
-  metadata          Json?
-  createdAt         DateTime       @default(now()) @map("created_at")
-  updatedAt         DateTime       @updatedAt @map("updated_at")
-  finishedAt        DateTime?      @map("finished_at")
-  createdBy         User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
-  tenant            Tenant?        @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  file              KnowledgeFile? @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
-  knowledgeItem     KnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  id              String         @id @default(cuid())
+  sourceType      String         @map("source_type")
+  sourceId        String?        @map("source_id")
+  status          String         @default("pending")
+  progress        Int            @default(0)
+  errorMessage    String?        @map("error_message") @db.Text
+  createdByUserId String         @map("created_by")
+  fileId          String?        @map("file_id")
+  knowledgeItemId String?        @map("knowledge_item_id")
+  tenantId        String?        @map("tenant_id")
+  metadata        Json?
+  createdAt       DateTime       @default(now()) @map("created_at")
+  updatedAt       DateTime       @updatedAt @map("updated_at")
+  finishedAt      DateTime?      @map("finished_at")
+  createdBy       User           @relation(fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  tenant          Tenant?        @relation(fields: [tenantId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  file            KnowledgeFile? @relation(fields: [fileId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  knowledgeItem   KnowledgeItem? @relation(fields: [knowledgeItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([createdByUserId], map: "ingestion_jobs_created_by_idx")
   @@index([tenantId], map: "ingestion_jobs_tenant_id_idx")
