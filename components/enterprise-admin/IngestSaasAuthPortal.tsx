@@ -530,11 +530,11 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           {mode === "login" ? (
             <div className="flex items-center gap-3">
               <Image
-                src="/brand/xiaodong-ai-logo.png"
-                alt="小董AI Logo"
+                src="/brand/admin-ingest-logo.png"
+                alt="小董AI投喂端 Logo"
                 width={56}
                 height={56}
-                className="h-14 w-14 rounded-2xl border border-slate-200 object-cover"
+                className="h-14 w-14 rounded-2xl border border-slate-200 bg-white object-contain"
               />
               <h2 className="text-3xl font-semibold">{copy.title}</h2>
             </div>

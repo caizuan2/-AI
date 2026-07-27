@@ -19,11 +19,11 @@ export function IngestChatOnlyWelcome({ userName }: IngestChatOnlyWelcomeProps) 
       <div className="w-full max-w-3xl">
         <div className="relative mx-auto h-20 w-20 overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
           <Image
-            src="/brand/xiaodong-ai-logo.png"
-            alt="小董AI Logo"
+            src="/brand/admin-ingest-logo.png"
+            alt="小董AI投喂端 Logo"
             fill
             sizes="80px"
-            className="object-cover"
+            className="object-contain"
             priority
           />
         </div>
