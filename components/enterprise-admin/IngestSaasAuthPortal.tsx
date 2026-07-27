@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
 import { INGEST_LICENSE_REACTIVATION_EVENT_KEY } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
+import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 
 type IngestAuthMode = "login" | "register" | "activate" | "reset";
 
@@ -530,7 +531,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           {mode === "login" ? (
             <div className="flex items-center gap-3">
               <Image
-                src="/brand/admin-ingest-logo.png"
+                src={adminIngestLogo}
                 alt="小董AI投喂端 Logo"
                 width={56}
                 height={56}

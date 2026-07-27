@@ -59,13 +59,14 @@ test("chat-only empty conversations always use the Xiaodong welcome even without
     /\}, \[accessTier, activeConversationId,/,
     "initial restore must react to the resolved access tier"
   );
-  assert.match(chatOnlyWelcome, /src="\/brand\/admin-ingest-logo\.png"/);
+  assert.match(chatOnlyWelcome, /import adminIngestLogo from "@\/assets\/admin-ingest\/web-logo\.png"/);
+  assert.match(chatOnlyWelcome, /src=\{adminIngestLogo\}/);
   assert.match(chatOnlyWelcome, /alt="小董AI投喂端 Logo"/);
   assert.match(chatOnlyWelcome, /className="object-contain"/);
   assert.doesNotMatch(chatOnlyWelcome, /src="\/brand\/xiaodong-ai-logo\.png"/);
   assert.equal(
     createHash("sha256")
-      .update(readFileSync("public/brand/admin-ingest-logo.png"))
+      .update(readFileSync("assets/admin-ingest/web-logo.png"))
       .digest("hex"),
     "3ceda174e3a0c3b731b24aa13b20b3790dfd881a33e5b8565591582c9185a562",
     "the admin-ingest welcome must use the exact approved logo asset"

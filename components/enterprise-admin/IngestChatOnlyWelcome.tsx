@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { Target } from "lucide-react";
+import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 
 interface IngestChatOnlyWelcomeProps {
   userName?: string | null;
@@ -19,7 +20,7 @@ export function IngestChatOnlyWelcome({ userName }: IngestChatOnlyWelcomeProps) 
       <div className="w-full max-w-3xl">
         <div className="relative mx-auto h-20 w-20 overflow-hidden rounded-3xl bg-white shadow-sm ring-1 ring-slate-200">
           <Image
-            src="/brand/admin-ingest-logo.png"
+            src={adminIngestLogo}
             alt="小董AI投喂端 Logo"
             fill
             sizes="80px"
