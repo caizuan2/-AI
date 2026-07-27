@@ -35,8 +35,13 @@ assert.match(
 );
 assert.match(
   shellSource,
-  /aria-label="打开左侧功能"[\s\S]*<Menu/
+  /import adminIngestLogo from "@\/assets\/admin-ingest\/web-logo\.png"/
 );
+assert.match(
+  shellSource,
+  /aria-label="打开左侧功能"[\s\S]*<NextImage[\s\S]*src=\{adminIngestLogo\}/
+);
+assert.doesNotMatch(shellSource, /<Menu className=/);
 assert.match(
   shellSource,
   /aria-label="关闭左侧功能"[\s\S]*bg-black\/30/

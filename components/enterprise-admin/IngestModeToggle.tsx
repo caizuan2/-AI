@@ -351,6 +351,7 @@ const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
 const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
 const INGEST_REMOTE_SYNC_DEBOUNCE_MS = 800;
+const INGEST_REMOTE_SYNC_POLL_INTERVAL_MS = 2_000;
 
 function isAdminIngestHistoryScopeMismatch(error: unknown) {
   return readAdminIngestRequestError(error)?.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
@@ -876,6 +877,7 @@ export function IngestModeToggle({
   const conversationSyncAbortControllersRef = useRef<Set<AbortController>>(new Set());
   const accountScopedMutationAbortControllersRef = useRef<Set<AbortController>>(new Set());
   const conversationSyncInFlightRef = useRef(false);
+  const conversationPullInFlightRef = useRef(false);
   const pendingConversationSyncRef = useRef<PendingAdminIngestConversationSync | null>(null);
   const isAccountTransitioningRef = useRef(false);
   const historyStorageKeys = useMemo(
@@ -1087,6 +1089,7 @@ export function IngestModeToggle({
     conversationMessagesByIdRef.current = {};
     setConversationDraftsById({});
     conversationDraftsByIdRef.current = {};
+    setConversationRuntimeStatusById({});
     conversationLastInputByIdRef.current = {};
     setPinnedAgentIds([]);
     setExpandedAgentIds([]);
@@ -1193,6 +1196,8 @@ export function IngestModeToggle({
           activeConversationId: nextActiveConversationId,
           conversationMessagesById: hydratedMessages,
           conversationDraftsById: hydratedDrafts,
+          conversationRuntimeStatusById:
+            selectedState.conversationRuntimeStatusById,
           pinnedAgentIds: selectedState.pinnedAgentIds,
           expandedAgentIds: selectedState.expandedAgentIds,
           expandedConversationAgentIds:
@@ -1218,6 +1223,9 @@ export function IngestModeToggle({
         );
         setConversationDraftsById(
           hydratedState.conversationDraftsById
+        );
+        setConversationRuntimeStatusById(
+          hydratedState.conversationRuntimeStatusById
         );
         setPinnedAgentIds(hydratedState.pinnedAgentIds);
         setExpandedAgentIds(hydratedState.expandedAgentIds);
@@ -1544,6 +1552,7 @@ export function IngestModeToggle({
     });
     conversationSyncAbortControllersRef.current.clear();
     conversationSyncInFlightRef.current = false;
+    conversationPullInFlightRef.current = false;
     pendingConversationSyncRef.current = null;
     accountScopedMutationAbortControllersRef.current.forEach((controller) => {
       controller.abort();
@@ -1781,6 +1790,7 @@ export function IngestModeToggle({
       conversationDraftsById: capabilities.saveKnowledge
         ? conversationDraftsById
         : {},
+      conversationRuntimeStatusById,
       pinnedAgentIds,
       expandedAgentIds,
       expandedConversationAgentIds
@@ -1835,6 +1845,7 @@ export function IngestModeToggle({
     agents,
     capabilities.saveKnowledge,
     conversationDraftsById,
+    conversationRuntimeStatusById,
     conversationMessagesById,
     conversationSyncLoaded,
     expandedAgentIds,
@@ -1844,6 +1855,227 @@ export function IngestModeToggle({
     historyStorageKeys,
     pinnedAgentIds,
     flushConversationSync
+  ]);
+
+  useEffect(() => {
+    if (
+      !historyLoaded
+      || !conversationSyncLoaded
+      || !historyStorageKeys
+      || !historyScope
+      || isAccountTransitioningRef.current
+    ) {
+      return;
+    }
+
+    let disposed = false;
+
+    const pullRemoteConversationState = async () => {
+      if (
+        disposed
+        || document.visibilityState === "hidden"
+        || conversationPullInFlightRef.current
+        || conversationSyncInFlightRef.current
+        || pendingConversationSyncRef.current
+        || countActiveIngestConversationRequests(
+          conversationStateByIdRef.current
+        ) > 0
+      ) {
+        return;
+      }
+
+      conversationPullInFlightRef.current = true;
+      const abortController = new AbortController();
+      conversationSyncAbortControllersRef.current.add(abortController);
+
+      try {
+        const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          signal: abortController.signal
+        });
+        const payload = await response.json() as AdminIngestConversationSyncResponse;
+
+        if (!response.ok) {
+          return;
+        }
+
+        const nextHistoryScope = normalizeAdminIngestHistoryScope(
+          payload.historyScope
+        );
+        const nextRevision = typeof payload.revision === "number"
+          && Number.isSafeInteger(payload.revision)
+          && payload.revision >= 0
+          ? payload.revision
+          : null;
+
+        if (
+          disposed
+          || abortController.signal.aborted
+          || nextHistoryScope !== historyScopeRef.current
+          || nextRevision === null
+          || nextRevision <= conversationSyncRevisionRef.current
+          || conversationSyncInFlightRef.current
+          || pendingConversationSyncRef.current
+          || countActiveIngestConversationRequests(
+            conversationStateByIdRef.current
+          ) > 0
+        ) {
+          return;
+        }
+
+        const remoteState = normalizeAdminIngestConversationSyncSnapshot(
+          payload.state,
+          {
+            includeDrafts: capabilities.saveKnowledge
+          }
+        );
+        const nextAgents = remoteState.agents.map((agent) => ({
+          ...agent,
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget]
+        }));
+        const nextConversations = remoteState.agentConversations.map(
+          (conversation) => ({
+            ...conversation,
+            platform: platformContext.platform,
+            syncTarget: [...platformContext.syncTarget]
+          })
+        );
+        const currentActiveAgentId = activeAgentIdRef.current;
+        const nextActiveAgentId = nextAgents.some(
+          (agent) => agent.id === currentActiveAgentId
+        )
+          ? currentActiveAgentId
+          : nextAgents.some((agent) => agent.id === remoteState.activeAgentId)
+            ? remoteState.activeAgentId
+            : nextAgents[0]?.id ?? "";
+        const currentActiveConversationId = activeConversationIdRef.current;
+        const nextActiveConversationId = nextConversations.some(
+          (conversation) => (
+            conversation.id === currentActiveConversationId
+            && conversation.status !== "archived"
+          )
+        )
+          ? currentActiveConversationId
+          : nextConversations.find((conversation) => (
+              conversation.id === remoteState.activeConversationId
+              && conversation.status !== "archived"
+            ))?.id
+            ?? nextConversations.find((conversation) => (
+              conversation.agentId === nextActiveAgentId
+              && conversation.status !== "archived"
+            ))?.id
+            ?? "";
+        const nextMessagesById = remoteState.conversationMessagesById;
+        const nextDraftsById = capabilities.saveKnowledge
+          ? remoteState.conversationDraftsById
+          : {};
+        const nextLocalSnapshot: AdminIngestConversationSyncSnapshot = {
+          agents: nextAgents,
+          agentConversations: nextConversations,
+          activeAgentId: nextActiveAgentId,
+          activeConversationId: nextActiveConversationId,
+          conversationMessagesById: nextMessagesById,
+          conversationDraftsById: nextDraftsById,
+          conversationRuntimeStatusById:
+            remoteState.conversationRuntimeStatusById,
+          pinnedAgentIds: remoteState.pinnedAgentIds,
+          expandedAgentIds,
+          expandedConversationAgentIds
+        };
+
+        conversationSyncRevisionRef.current = nextRevision;
+        lastConversationSyncPayloadRef.current =
+          JSON.stringify(nextLocalSnapshot);
+        activeAgentIdRef.current = nextActiveAgentId;
+        activeConversationIdRef.current = nextActiveConversationId;
+        conversationMessagesByIdRef.current = nextMessagesById;
+        conversationDraftsByIdRef.current = nextDraftsById;
+
+        setAgents(nextAgents);
+        setAgentConversations(nextConversations);
+        setActiveAgentId(nextActiveAgentId);
+        setActiveConversationScope(nextActiveConversationId);
+        setConversationMessagesById(nextMessagesById);
+        setConversationDraftsById(nextDraftsById);
+        setConversationRuntimeStatusById(
+          remoteState.conversationRuntimeStatusById
+        );
+        setPinnedAgentIds(remoteState.pinnedAgentIds);
+
+        const nextActiveConversation = nextConversations.some(
+          (conversation) => conversation.id === nextActiveConversationId
+        );
+        const nextActiveAgent = nextAgents.some(
+          (agent) => agent.id === nextActiveAgentId
+        );
+
+        if (nextActiveConversation && nextActiveAgent) {
+          setMessages(nextMessagesById[nextActiveConversationId] ?? []);
+          setDraft(
+            nextDraftsById[nextActiveConversationId]
+              ?? ingestChatInitialDraft
+          );
+        } else {
+          setMessages([]);
+          setDraft(ingestChatInitialDraft);
+        }
+
+        try {
+          writeAdminIngestScopedLocalSnapshot({
+            storage: window.localStorage,
+            historyScope: nextHistoryScope,
+            keys: historyStorageKeys,
+            revision: nextRevision,
+            state: nextLocalSnapshot,
+            markSynced: true
+          });
+        } catch {
+          // Live cloud sync remains authoritative if local cache is unavailable.
+        }
+      } catch (error) {
+        if (!abortController.signal.aborted) {
+          console.warn("[admin-ingest:conversation-sync:pull]", error);
+        }
+      } finally {
+        conversationSyncAbortControllersRef.current.delete(abortController);
+        conversationPullInFlightRef.current = false;
+      }
+    };
+
+    const handleForegroundRefresh = () => {
+      if (document.visibilityState === "visible") {
+        void pullRemoteConversationState();
+      }
+    };
+    const interval = window.setInterval(() => {
+      void pullRemoteConversationState();
+    }, INGEST_REMOTE_SYNC_POLL_INTERVAL_MS);
+
+    window.addEventListener("focus", handleForegroundRefresh);
+    document.addEventListener("visibilitychange", handleForegroundRefresh);
+    void pullRemoteConversationState();
+
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleForegroundRefresh);
+      document.removeEventListener(
+        "visibilitychange",
+        handleForegroundRefresh
+      );
+    };
+  }, [
+    capabilities.saveKnowledge,
+    conversationSyncLoaded,
+    expandedAgentIds,
+    expandedConversationAgentIds,
+    historyLoaded,
+    historyScope,
+    historyStorageKeys,
+    platformContext
   ]);
 
   useEffect(() => {
@@ -3634,6 +3866,7 @@ export function IngestModeToggle({
       requestMessagesSnapshot
     );
     const requestId = createIngestRequestId();
+    const requestStartedAt = Date.now();
     const assistantMessageId = `assistant-result-${requestId}`;
     const abortController = new AbortController();
     let conversationState = ensureConversationState(conversationStateByIdRef.current[conversationId], {
@@ -3673,12 +3906,17 @@ export function IngestModeToggle({
         provider: requestModelOption.provider
       }
     });
-    conversationState = markRequestActive(conversationState, requestId);
+    conversationState = markRequestActive(
+      conversationState,
+      requestId,
+      requestStartedAt
+    );
     conversationStateByIdRef.current[conversationId] = conversationState;
     setConversationRuntimeStatusById((current) => (
       markAdminIngestConversationGenerating(current, {
         conversationId,
-        requestId
+        requestId,
+        now: requestStartedAt
       })
     ));
     const isRequestConversationVisible = () => activeConversationIdRef.current === conversationId;
@@ -3937,6 +4175,67 @@ export function IngestModeToggle({
             skipHealthPreflight: isWechatConversationReply,
             streaming: {
               signal: abortController.signal,
+              onVisibleDelta: (event) => {
+                if (
+                  event.requestId !== requestId
+                  || !isCurrentRequest()
+                  || shouldIgnoreRequestResult(
+                    conversationStateByIdRef.current[conversationId],
+                    requestId
+                  )
+                ) {
+                  return;
+                }
+
+                conversationStateByIdRef.current[conversationId] =
+                  updateAssistantMessage(
+                    conversationStateByIdRef.current[conversationId],
+                    {
+                      requestId,
+                      messageId: assistantMessageId,
+                      content: event.replyMarkdown,
+                      meta: {
+                        provider: "doubao-pro",
+                        model: event.actualModel ?? currentModelLabel
+                      }
+                    }
+                  );
+                commitRequestMessages((current) => replaceIngestRetryOutcome(
+                  current.map(markMessageCompleted),
+                  options?.failedMessageId,
+                  {
+                    id: assistantMessageId,
+                    role: "assistant",
+                    content: event.replyMarkdown,
+                    time: new Date().toLocaleTimeString("zh-CN", {
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    }),
+                    source: "admin_ingest",
+                    platform: platformContext.platform,
+                    syncTarget: [...platformContext.syncTarget],
+                    tenantId,
+                    userId,
+                    agentId: activeAgent.id,
+                    expertId: activeAgent.expertId ?? null,
+                    conversationId,
+                    agentName: activeAgent.name,
+                    expertName: activeAgent.expertId
+                      ? activeAgent.name
+                      : null,
+                    model: event.actualModel ?? currentModelLabel,
+                    provider: "doubao-pro",
+                    isRestored: false,
+                    isHistorical: false,
+                    isStreaming: true,
+                    isGenerating: true,
+                    typing: false,
+                    status: "streaming"
+                  }
+                ));
+                setRequestNoticeMessage("豆包正在生成正文...");
+                setRequestErrorMessage("");
+              },
               onVisibleReply: (event) => {
                 if (
                   event.requestId !== requestId
@@ -5722,9 +6021,13 @@ export function IngestModeToggle({
   }
 
   const activeConversationRequestState = conversationStateByIdRef.current[activeConversationId];
+  const activeConversationRuntimeStatus =
+    conversationRuntimeStatusById[activeConversationId];
   const activeConversationIsParsing = isIngestConversationRequestActive(
     activeConversationRequestState
-  ) || Boolean(preparingConversationIds[activeConversationId]);
+  )
+    || activeConversationRuntimeStatus?.state === "generating"
+    || Boolean(preparingConversationIds[activeConversationId]);
   const hasVisibleReplyForActiveRequest = hasVisibleReplyForActiveIngestRequest(
     activeConversationRequestState
   );
@@ -5785,6 +6088,9 @@ export function IngestModeToggle({
     notifications,
     settingsState,
     isParsing: activeConversationIsParsing,
+    thinkingStartedAt: activeConversationRuntimeStatus?.state === "generating"
+      ? activeConversationRuntimeStatus.startedAt
+      : activeConversationRequestState?.requestStartedAt ?? null,
     showParsingProgress: shouldShowAdminIngestParsingProgress({
       isParsing: activeConversationIsParsing,
       isRequestActive: activeConversationIsParsing,

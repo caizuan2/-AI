@@ -26,11 +26,13 @@ function testConversationRuntimeStatusIsolation() {
   assert.deepEqual(statuses["conversation-a"], {
     state: "generating",
     requestId: "request-a",
+    startedAt: 1,
     updatedAt: 1
   });
   assert.deepEqual(statuses["conversation-b"], {
     state: "generating",
     requestId: "request-b",
+    startedAt: 2,
     updatedAt: 2
   });
 
@@ -148,7 +150,11 @@ async function testApkDrawerProductionWiring() {
   );
   assert.match(
     shellSource,
-    /conversationRuntimeStatusById=\{isAdminApk \? conversationRuntimeStatusById : \{\}\}/
+    /conversationRuntimeStatusById=\{conversationRuntimeStatusById\}/
+  );
+  assert.doesNotMatch(
+    shellSource,
+    /conversationRuntimeStatusById=\{isAdminApk \?/
   );
   assert.match(
     shellSource,

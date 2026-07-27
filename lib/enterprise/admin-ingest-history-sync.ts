@@ -4,6 +4,10 @@ import type {
   IngestKnowledgeDraft
 } from "@/lib/enterprise/mock-chat";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
+import {
+  normalizeAdminIngestConversationRuntimeStatusMap,
+  type AdminIngestConversationRuntimeStatusMap
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 
 export type AdminIngestConversationSyncSnapshot = {
   agents: IngestChatAgent[];
@@ -12,6 +16,7 @@ export type AdminIngestConversationSyncSnapshot = {
   activeConversationId: string;
   conversationMessagesById: Record<string, IngestChatMessage[]>;
   conversationDraftsById: Record<string, IngestKnowledgeDraft>;
+  conversationRuntimeStatusById: AdminIngestConversationRuntimeStatusMap;
   pinnedAgentIds: string[];
   expandedAgentIds: string[];
   expandedConversationAgentIds: string[];
@@ -143,6 +148,7 @@ export function createEmptyAdminIngestConversationSyncSnapshot(): AdminIngestCon
     activeConversationId: "",
     conversationMessagesById: {},
     conversationDraftsById: {},
+    conversationRuntimeStatusById: {},
     pinnedAgentIds: [],
     expandedAgentIds: [],
     expandedConversationAgentIds: []
@@ -509,6 +515,10 @@ export function normalizeAdminIngestConversationSyncSnapshot(
     conversationDraftsById: options.includeDrafts
       ? normalizeRecord<IngestKnowledgeDraft>(source.conversationDraftsById)
       : {},
+    conversationRuntimeStatusById:
+      normalizeAdminIngestConversationRuntimeStatusMap(
+        source.conversationRuntimeStatusById
+      ),
     pinnedAgentIds: normalizeArray<string>(source.pinnedAgentIds),
     expandedAgentIds: normalizeArray<string>(source.expandedAgentIds),
     expandedConversationAgentIds: normalizeArray<string>(
@@ -530,6 +540,7 @@ export function hasAdminIngestConversationSyncContent(
       || state.expandedConversationAgentIds.length
       || Object.keys(state.conversationMessagesById).length
       || Object.keys(state.conversationDraftsById).length
+      || Object.keys(state.conversationRuntimeStatusById).length
     )
   );
 }

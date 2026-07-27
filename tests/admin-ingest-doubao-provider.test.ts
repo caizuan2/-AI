@@ -142,6 +142,18 @@ try {
   assert.equal(maximumQueuedRequests, 1, "The server-side Doubao scheduler must serialize requests by default.");
   assert.deepEqual(queueEvents, ["metadata:1"]);
 
+  activeQueuedRequests = 0;
+  maximumQueuedRequests = 0;
+  const metadataFirst = runQueuedTask("metadata", 30);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const visibleAfterMetadata = runQueuedTask("visible", 5);
+  await Promise.all([metadataFirst, visibleAfterMetadata]);
+  assert.equal(
+    maximumQueuedRequests,
+    2,
+    "A visible reply must use the reserved foreground slot instead of waiting for background metadata."
+  );
+
   delete process.env.DOUBAO_PRO_MODEL;
   delete process.env.DOUBAO_MODEL;
   assert.equal(resolveIngestActualModel("doubao-pro"), DOUBAO_PRO_MODEL_ID);
@@ -294,6 +306,7 @@ try {
   let capturedRequestBody: Record<string, unknown> = {};
   const capturedRequestBodies: Record<string, unknown>[] = [];
   const progressEvents: string[] = [];
+  const visibleDeltaSnapshots: string[] = [];
 
   globalThis.fetch = async (url, init) => {
     capturedUrl = String(url);
@@ -369,6 +382,9 @@ try {
     }],
     requestId: "request-doubao-contract-test",
     onProgressEvent: (event) => {
+      if (event.type === "visible_delta") {
+        visibleDeltaSnapshots.push(event.replyMarkdown);
+      }
       progressEvents.push(event.type === "metadata_status"
         ? `${event.type}:${event.state}`
         : event.type);
@@ -414,6 +430,15 @@ try {
   assert.match(finalPrompt, /不得跨 Agent、跨知识库或使用通用模型知识替代/);
 
   assert.equal(result.provider, "doubao");
+  assert.ok(
+    visibleDeltaSnapshots.length > 0,
+    "Doubao visible Markdown must be forwarded before the completed reply event."
+  );
+  assert.equal(
+    visibleDeltaSnapshots.at(-1),
+    exactReplyMarkdown,
+    "The cumulative delta stream must end at the exact provider Markdown."
+  );
   assert.equal(result.replyMarkdown, exactReplyMarkdown, "Provider replyMarkdown must pass through byte-for-byte as a JS string.");
   assert.equal(
     result.knowledgeDraft.standardAnswer,
@@ -513,7 +538,8 @@ try {
   assert.equal(metadataRateLimitResult.knowledgeDraft.standardAnswer, exactReplyMarkdown);
   assert.equal(metadataRateLimitResult.saveRecommendation, "暂缓入库");
   assert.ok(metadataRateLimitResult.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_RATE_LIMITED"));
-  assert.deepEqual(metadataRateLimitEvents, [
+  assert.ok(metadataRateLimitEvents.includes("visible_delta"));
+  assert.deepEqual(metadataRateLimitEvents.filter((event) => event !== "visible_delta"), [
     "visible_reply",
     "metadata_status:pending",
     "metadata_status:deferred"
@@ -557,7 +583,8 @@ try {
   assert.equal(metadataInferencePausedResult.knowledgeDraft.standardAnswer, exactReplyMarkdown);
   assert.equal(metadataInferencePausedResult.saveRecommendation, "暂缓入库");
   assert.ok(metadataInferencePausedResult.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED"));
-  assert.deepEqual(metadataInferencePausedEvents, [
+  assert.ok(metadataInferencePausedEvents.includes("visible_delta"));
+  assert.deepEqual(metadataInferencePausedEvents.filter((event) => event !== "visible_delta"), [
     "visible_reply",
     "metadata_status:pending:",
     "metadata_status:deferred:DOUBAO_INFERENCE_LIMIT_PAUSED"

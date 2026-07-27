@@ -118,7 +118,7 @@ async function main() {
   );
   assert.match(
     modeToggleSource,
-    /const activeConversationIsParsing = isIngestConversationRequestActive\(\s*activeConversationRequestState\s*\)\s*\|\|\s*Boolean\(preparingConversationIds\[activeConversationId\]\)/
+    /const activeConversationIsParsing = isIngestConversationRequestActive\(\s*activeConversationRequestState\s*\)[\s\S]*activeConversationRuntimeStatus\?\.state === "generating"[\s\S]*Boolean\(preparingConversationIds\[activeConversationId\]\)/
   );
   assert.match(
     modeToggleSource,

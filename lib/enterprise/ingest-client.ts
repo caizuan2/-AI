@@ -297,6 +297,13 @@ export interface IngestStreamingOptions {
     responseId?: string;
     metadataPending: true;
   }) => void;
+  onVisibleDelta?: (event: {
+    requestId: string;
+    delta: string;
+    replyMarkdown: string;
+    actualModel?: string;
+    responseId?: string;
+  }) => void;
   onStatus?: (event: {
     type: "queue_wait" | "rate_limit_wait" | "metadata_status";
     phase?: "visible" | "continuation" | "metadata" | "health";
@@ -556,6 +563,7 @@ type AdminIngestBrowserSseTerminal = {
 
 type AdminIngestBrowserSseCallbacks = {
   expectedRequestId: string;
+  onVisibleDelta?: IngestStreamingOptions["onVisibleDelta"];
   onVisibleReply?: IngestStreamingOptions["onVisibleReply"];
   onStatus?: IngestStreamingOptions["onStatus"];
 };
@@ -606,6 +614,27 @@ function parseAdminIngestSseBlock(
   const eventRequestId = readString(envelope.requestId);
 
   if (eventRequestId && eventRequestId !== callbacks.expectedRequestId) {
+    return null;
+  }
+
+  if (eventName === "visible_delta") {
+    const delta = typeof envelope.delta === "string"
+      ? envelope.delta
+      : "";
+    const replyMarkdown = typeof envelope.replyMarkdown === "string"
+      ? envelope.replyMarkdown
+      : "";
+
+    if (eventRequestId && delta && replyMarkdown) {
+      callbacks.onVisibleDelta?.({
+        requestId: eventRequestId,
+        delta,
+        replyMarkdown,
+        actualModel: readString(envelope.actualModel),
+        responseId: readString(envelope.responseId)
+      });
+    }
+
     return null;
   }
 
@@ -1492,6 +1521,7 @@ export async function sendCoreIngest(input: {
     });
     const transportResult = await readAdminIngestResponse(response, input.streaming?.signal, {
       expectedRequestId: requestId,
+      onVisibleDelta: input.streaming?.onVisibleDelta,
       onVisibleReply: input.streaming?.onVisibleReply,
       onStatus: input.streaming?.onStatus
     });

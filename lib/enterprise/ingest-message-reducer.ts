@@ -194,6 +194,7 @@ export function failAssistantMessage(
     ...state,
     messages,
     activeRequestId: undefined,
+    requestStartedAt: undefined,
     isGenerating: false,
     transientError: input.message ?? null,
     updatedAt: now

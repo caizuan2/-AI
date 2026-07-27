@@ -59,6 +59,17 @@ function createBrowserSseResponse(input: {
       `event: status\ndata: ${JSON.stringify({ requestId: input.requestId, ...statusBeforeVisible })}\n\n`
     ] : []),
     ...(input.includeVisibleReply ? [
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId: input.requestId,
+        provider: "doubao-pro",
+        actualModel: "doubao-seed-2-1-pro-260628",
+        responseId: "doubao-browser-sse-success",
+        delta: rawMarkdown,
+        replyMarkdown: rawMarkdown
+      })}\n\n`
+    ] : []),
+    ...(input.includeVisibleReply ? [
       `event: visible\ndata: ${JSON.stringify({
         type: "visible",
         requestId: input.requestId,
@@ -291,6 +302,7 @@ async function main() {
 
   try {
     const successEventOrder: string[] = [];
+    let visibleDelta = "";
     let visibleReply = "";
     const success = await sendCoreIngest({
       text: "豆包浏览器 SSE 成功测试",
@@ -302,6 +314,12 @@ async function main() {
       requestId: "browser-sse-success",
       agent,
       streaming: {
+        onVisibleDelta(event) {
+          successEventOrder.push("visible_delta");
+          visibleDelta = event.replyMarkdown;
+          assert.equal(event.delta, rawMarkdown);
+          assert.equal(event.requestId, "browser-sse-success");
+        },
         onVisibleReply(event) {
           successEventOrder.push("visible");
           visibleReply = event.replyMarkdown;
@@ -314,9 +332,11 @@ async function main() {
       }
     });
     successEventOrder.push("final");
+    assert.equal(visibleDelta, rawMarkdown, "The incremental Doubao event must preserve the exact Markdown.");
     assert.equal(visibleReply, rawMarkdown, "The early visible event must preserve the exact Doubao Markdown.");
     assert.deepEqual(successEventOrder, [
       "queue_wait:visible",
+      "visible_delta",
       "visible",
       "metadata_status:pending",
       "metadata_status:completed",
