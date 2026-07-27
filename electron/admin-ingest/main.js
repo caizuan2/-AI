@@ -174,7 +174,7 @@ function getInstallerFileName(fileName, targetUrl) {
     // Fall through to the branded fallback.
   }
 
-  return "小董AI投喂端.exe";
+  return "小董AI.exe";
 }
 
 function downloadHttpFile(targetUrl, destinationPath, onProgress, redirectCount = 0) {

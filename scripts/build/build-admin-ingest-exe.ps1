@@ -11,7 +11,7 @@ $ReleaseAssetName = "admin-ingest.exe"
 $ReleaseAssetPath = Join-Path $ManifestDir $ReleaseAssetName
 $ElectronIngestConfig = Join-Path $Root "electron/admin-ingest/electron-builder.yml"
 $ElectronBuildMetadata = Join-Path $Root "electron/admin-ingest/build-metadata.json"
-$ElectronProductName = "小董AI投喂端"
+$ElectronProductName = "小董AI"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $TauriConfig = Join-Path $Root "src-tauri/tauri.conf.json"
 
