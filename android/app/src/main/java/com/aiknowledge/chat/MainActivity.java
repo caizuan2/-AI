@@ -30,6 +30,7 @@ import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.util.Base64;
+import android.util.Log;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -54,6 +55,7 @@ import java.util.Locale;
 import org.json.JSONObject;
 
 public class MainActivity extends BridgeActivity {
+    private static final String ADMIN_INGEST_VOICE_LOG_TAG = "AdminIngestVoice";
     private static final String APP_ORIGIN = "http://47.238.0.23";
     private static final String LEGACY_APP_ORIGIN = "https://stately-sawine-1efd4d.netlify.app";
     private static final String USER_CHAT_URL = APP_ORIGIN + "/app/chat";
@@ -244,10 +246,19 @@ public class MainActivity extends BridgeActivity {
 
     private void startAdminIngestVoiceInput() {
         adminIngestVoiceSessionId = "admin-ingest-voice-" + System.currentTimeMillis();
+        Log.i(
+            ADMIN_INGEST_VOICE_LOG_TAG,
+            "start session=" + adminIngestVoiceSessionId
+        );
 
         try {
             startAdminIngestPcmRecording();
         } catch (Exception error) {
+            Log.w(
+                ADMIN_INGEST_VOICE_LOG_TAG,
+                "AudioRecord unavailable; falling back to MediaRecorder.",
+                error
+            );
             startAdminIngestVoiceRecording();
         }
     }
@@ -342,6 +353,10 @@ public class MainActivity extends BridgeActivity {
             byte[] snapshotPcm = output.toByteArray();
             nextSnapshotSize = snapshotPcm.length + ADMIN_INGEST_VOICE_SNAPSHOT_BYTES;
             byte[] snapshotWav = createAdminIngestVoiceWav(snapshotPcm);
+            Log.d(
+                ADMIN_INGEST_VOICE_LOG_TAG,
+                "snapshot session=" + sessionId + " pcmBytes=" + snapshotPcm.length
+            );
             runOnUiThread(() -> {
                 if (
                     voicePcmRecordingActive
@@ -390,11 +405,20 @@ public class MainActivity extends BridgeActivity {
         voicePcmOutput = null;
 
         if (!shouldDispatchAudio) {
+            Log.i(
+                ADMIN_INGEST_VOICE_LOG_TAG,
+                "cancel session=" + sessionId + " pcmBytes="
+                    + (activeOutput == null ? 0 : activeOutput.size())
+            );
             clearAdminIngestVoiceSession(sessionId);
             return;
         }
 
         byte[] pcmBytes = activeOutput == null ? new byte[0] : activeOutput.toByteArray();
+        Log.i(
+            ADMIN_INGEST_VOICE_LOG_TAG,
+            "stop session=" + sessionId + " pcmBytes=" + pcmBytes.length
+        );
         if (pcmBytes.length < ADMIN_INGEST_VOICE_SAMPLE_RATE_HZ / 5) {
             postAdminIngestSpeechEvent(
                 "error",
@@ -1036,6 +1060,11 @@ public class MainActivity extends BridgeActivity {
                 + "}));";
             webView.post(() -> webView.evaluateJavascript(script, null));
         } catch (Exception ignored) {
+            Log.e(
+                ADMIN_INGEST_VOICE_LOG_TAG,
+                "Failed to dispatch state=" + state + " session=" + sessionId,
+                ignored
+            );
             Toast.makeText(this, "语音识别结果传递失败，请重试。", Toast.LENGTH_SHORT).show();
         }
     }

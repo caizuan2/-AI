@@ -2,6 +2,7 @@ import { apiError, apiSuccess } from "@/lib/api-response";
 import { AppError, ValidationError } from "@/lib/errors";
 import { requireAdminIngestChatActor } from "@/lib/enterprise/admin-ingest-auth";
 import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
+import { normalizeAdminIngestVoiceTranscript } from "@/lib/enterprise/admin-ingest-live-voice";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -235,10 +236,12 @@ export async function POST(request: Request) {
 
     const mimeType = normalizeAudioMimeType(file);
     const audioBytes = new Uint8Array(await file.arrayBuffer());
-    const transcript = await transcribeWithQwenAsr(audioBytes, mimeType);
+    const transcript = normalizeAdminIngestVoiceTranscript(
+      await transcribeWithQwenAsr(audioBytes, mimeType)
+    );
 
     if (!transcript) {
-      throw new ValidationError("没有识别到语音内容，请靠近麦克风后重试。");
+      throw new ValidationError("没有识别到清晰语音，请靠近麦克风后重试。");
     }
 
     return apiSuccess(

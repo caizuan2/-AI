@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   composeAdminIngestLiveVoiceInput,
-  isCurrentAdminIngestVoiceEvent
+  isCurrentAdminIngestVoiceEvent,
+  normalizeAdminIngestVoiceTranscript
 } from "../lib/enterprise/admin-ingest-live-voice";
 
 const modeToggleSource = readFileSync(
@@ -173,6 +174,10 @@ assert.match(
 );
 assert.match(
   voiceRouteSource,
+  /normalizeAdminIngestVoiceTranscript/
+);
+assert.match(
+  voiceRouteSource,
   /"Cache-Control": "no-store"/
 );
 assert.doesNotMatch(
@@ -271,6 +276,10 @@ assert.match(
 );
 assert.match(
   androidActivity,
+  /ADMIN_INGEST_VOICE_LOG_TAG = "AdminIngestVoice"/
+);
+assert.match(
+  androidActivity,
   /"audio-snapshot"[\s\S]*"audio\/wav"[\s\S]*"admin-ingest-voice-live\.wav"/
 );
 assert.match(
@@ -330,6 +339,25 @@ assert.equal(
   composeAdminIngestLiveVoiceInput("帮我回复：", "客户还在考虑"),
   "帮我回复： 客户还在考虑",
   "A newer partial result must replace the previous partial instead of duplicating it."
+);
+assert.equal(
+  normalizeAdminIngestVoiceTranscript("（无内容）"),
+  "",
+  "Qwen's no-speech sentinel must never be written into the input."
+);
+assert.equal(
+  normalizeAdminIngestVoiceTranscript("<|nospeech|>"),
+  "",
+  "An English no-speech sentinel must be ignored."
+);
+assert.equal(
+  composeAdminIngestLiveVoiceInput("原有文字", "（无内容）"),
+  "原有文字",
+  "A silent recording must preserve the user's existing input."
+);
+assert.match(
+  modeToggleSource,
+  /nativeVoiceLastMeaningfulTranscriptRef[\s\S]*录音已中断，已保留输入框中的识别文字/
 );
 assert.equal(
   isCurrentAdminIngestVoiceEvent({
