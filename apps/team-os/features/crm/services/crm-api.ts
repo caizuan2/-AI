@@ -3,6 +3,7 @@ import "server-only";
 import { apiSuccess, databaseConfigError } from "@/lib/api-response";
 import { requireTeamOsAccess } from "@/apps/team-os/features/auth/services/team-os-access";
 import { RateLimitError } from "@/lib/errors";
+import { getAuditRequestContext } from "@/lib/audit-log";
 import { getRequestIdFromHeaders } from "@/lib/logger";
 import { checkPersistentRateLimit, rateLimitHeaders } from "@/lib/rate-limit";
 import { hasDatabaseUrl } from "@/lib/server-config";
@@ -10,15 +11,18 @@ import { analyzeCustomerForUser } from "@/apps/team-os/features/crm/services/crm
 import {
   createCustomerFollowUp,
   createCustomerForUser,
+  getCustomerLifecycleForUser,
   getCustomerDetailForUser,
-  listCustomersForUser
+  listCustomersForUser,
+  updateCustomerLifecycleForUser
 } from "@/apps/team-os/features/crm/services/crm-repository";
 import {
   parseAnalyzeCustomerInput,
   parseCreateCustomerFollowUpInput,
   parseCreateCustomerInput,
   parseCustomerId,
-  parseCustomerListFilters
+  parseCustomerListFilters,
+  parseUpdateCustomerLifecycleInput
 } from "@/apps/team-os/features/crm/utils/crm-input";
 import { createTeamOsApiErrorHandler } from "@/apps/team-os/features/production/services/error-handler";
 import { readTeamOsJson as readJson } from "@/apps/team-os/features/production/services/production-http";
@@ -58,6 +62,39 @@ export async function handleCrmCustomerDetailGet(request: Request, customerId: s
       return apiError(databaseConfigError("读取 CRM 客户详情"));
     }
     return apiSuccess(await getCustomerDetailForUser(user.id, parseCustomerId(customerId)));
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+export async function handleCrmCustomerLifecycleGet(request: Request, customerId: string) {
+  try {
+    const user = await requireTeamOsAccess(request, "crm");
+    if (!hasDatabaseUrl()) {
+      return apiError(databaseConfigError("读取客户阶段历史"));
+    }
+    return apiSuccess(
+      await getCustomerLifecycleForUser(user.id, parseCustomerId(customerId))
+    );
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
+export async function handleCrmCustomerLifecyclePatch(request: Request, customerId: string) {
+  try {
+    const user = await requireTeamOsAccess(request, "crm");
+    if (!hasDatabaseUrl()) {
+      return apiError(databaseConfigError("更新客户阶段和等级"));
+    }
+    return apiSuccess(
+      await updateCustomerLifecycleForUser(
+        user.id,
+        parseCustomerId(customerId),
+        parseUpdateCustomerLifecycleInput(await readJson(request)),
+        getAuditRequestContext(request)
+      )
+    );
   } catch (error) {
     return apiError(error);
   }

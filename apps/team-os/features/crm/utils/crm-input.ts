@@ -10,7 +10,8 @@ import {
   type CustomerFollowUpType,
   type CustomerLevel,
   type CustomerListFilters,
-  type CustomerStage
+  type CustomerStage,
+  type UpdateCustomerLifecycleInput
 } from "@/apps/team-os/features/crm/types";
 
 function requiredText(value: unknown, label: string, maxLength: number) {
@@ -67,6 +68,22 @@ function level(value: string | null): CustomerLevel | undefined {
   if (!value) return undefined;
   if (!CUSTOMER_LEVELS.includes(value as CustomerLevel)) {
     throw new ValidationError("客户等级筛选值不正确。");
+  }
+  return value as CustomerLevel;
+}
+
+function lifecycleStage(value: unknown): CustomerStage | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !CUSTOMER_STAGES.includes(value as CustomerStage)) {
+    throw new ValidationError("客户阶段值不正确。");
+  }
+  return value as CustomerStage;
+}
+
+function lifecycleLevel(value: unknown): CustomerLevel | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string" || !CUSTOMER_LEVELS.includes(value as CustomerLevel)) {
+    throw new ValidationError("客户等级值不正确。");
   }
   return value as CustomerLevel;
 }
@@ -140,6 +157,22 @@ export function parseAnalyzeCustomerInput(body: unknown): AnalyzeCustomerInput {
   return {
     customerId: requiredText(body.customerId, "客户 ID", 120),
     conversation: optionalText(body.conversation, "补充沟通内容", 20_000)
+  };
+}
+
+export function parseUpdateCustomerLifecycleInput(body: unknown): UpdateCustomerLifecycleInput {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("请求体必须是 JSON 对象。");
+  }
+  const stageValue = lifecycleStage(body.stage);
+  const levelValue = lifecycleLevel(body.level);
+  if (!stageValue && !levelValue) {
+    throw new ValidationError("客户阶段和客户等级至少修改一项。");
+  }
+  return {
+    stage: stageValue,
+    level: levelValue,
+    reason: requiredText(body.reason, "调整原因", 1_000)
   };
 }
 

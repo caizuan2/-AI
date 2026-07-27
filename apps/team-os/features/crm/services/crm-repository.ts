@@ -20,8 +20,12 @@ import type {
   CustomerAIProfileRecord,
   CustomerDetailData,
   CustomerFollowUpRecord,
+  CustomerLifecycleData,
+  CustomerLevel,
   CustomerListData,
-  CustomerListFilters
+  CustomerListFilters,
+  CustomerStage,
+  UpdateCustomerLifecycleInput
 } from "@/apps/team-os/features/crm/types";
 import type {
   CustomerAiCustomer,
@@ -92,6 +96,27 @@ function serializeFollowUp(
         : {}),
     createdAt: followUp.createdAt.toISOString()
   };
+}
+
+const CUSTOMER_STAGE_TRANSITIONS: Record<CustomerStage, readonly CustomerStage[]> = {
+  LEAD: ["CONTACTED", "LOST"],
+  CONTACTED: ["INTERESTED", "LOST"],
+  INTERESTED: ["NEGOTIATING", "LOST"],
+  NEGOTIATING: ["CUSTOMER", "LOST"],
+  CUSTOMER: ["LOST"],
+  LOST: ["LEAD"]
+};
+
+function assertCustomerStageTransition(from: CustomerStage, to: CustomerStage) {
+  if (!CUSTOMER_STAGE_TRANSITIONS[from].includes(to)) {
+    throw new ValidationError("客户阶段只能按销售链路逐步推进；流失客户可重新激活为潜在线索。");
+  }
+}
+
+function manualScoreForLevel(level: CustomerLevel) {
+  if (level === "HIGH") return 90;
+  if (level === "MEDIUM") return 60;
+  return 25;
 }
 
 interface CustomerPageCursor {
@@ -391,8 +416,36 @@ export async function createCustomerForUser(
         tags: input.tags,
         notes: input.notes
       },
-      select: { id: true }
+      select: { id: true, stage: true, level: true }
     });
+    await Promise.all([
+      transaction.crmCustomerStageEvent.create({
+        data: {
+          companyId: team.companyId,
+          teamId: team.id,
+          customerId: customer.id,
+          changedById: userId,
+          fromStage: null,
+          toStage: customer.stage,
+          reason: "客户创建",
+          snapshot: { level: customer.level }
+        }
+      }),
+      transaction.crmCustomerScore.create({
+        data: {
+          companyId: team.companyId,
+          teamId: team.id,
+          customerId: customer.id,
+          calculatedByUserId: userId,
+          score: manualScoreForLevel(customer.level),
+          level: customer.level,
+          riskLevel: "LOW",
+          source: "MANUAL",
+          reason: "客户创建初始等级",
+          dimensions: { source: "CUSTOMER_CREATE" }
+        }
+      })
+    ]);
     return { customerId: customer.id };
   });
 }
@@ -467,9 +520,176 @@ export async function getCustomerDetailForUser(
     followUpsTruncated: customer.followUps.length > visibleFollowUps.length,
     permissions: {
       canAddFollowUp: true,
-      canAnalyze: visibleFollowUps.length > 0
+      canAnalyze: visibleFollowUps.length > 0,
+      canManageLifecycle: true
     }
   };
+}
+
+export async function getCustomerLifecycleForUser(
+  userId: string,
+  customerId: string
+): Promise<CustomerLifecycleData> {
+  const { customer: identity } = await loadAuthorizedCustomerIdentity(userId, customerId);
+  const [customer, stageEvents, scores] = await Promise.all([
+    prisma.customer.findFirst({
+      where: {
+        id: identity.id,
+        companyId: identity.companyId,
+        teamId: identity.teamId,
+        ownerId: identity.ownerId
+      },
+      select: { id: true, stage: true, level: true }
+    }),
+    prisma.crmCustomerStageEvent.findMany({
+      where: { companyId: identity.companyId, customerId: identity.id },
+      include: {
+        changedBy: { select: { id: true, name: true, email: true, phone: true } }
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 100
+    }),
+    prisma.crmCustomerScore.findMany({
+      where: { companyId: identity.companyId, customerId: identity.id },
+      include: {
+        calculatedBy: { select: { id: true, name: true, email: true, phone: true } }
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      take: 100
+    })
+  ]);
+  if (!customer) {
+    throw new NotFoundError("客户不存在或当前账号无权访问。");
+  }
+  return {
+    customerId: customer.id,
+    stage: customer.stage,
+    level: customer.level,
+    stageEvents: stageEvents.map((event) => ({
+      id: event.id,
+      ...(event.fromStage ? { fromStage: event.fromStage } : {}),
+      toStage: event.toStage,
+      reason: event.reason,
+      changedById: event.changedById,
+      changedByName: crmDisplayName(event.changedBy),
+      createdAt: event.createdAt.toISOString()
+    })),
+    scores: scores.map((score) => ({
+      id: score.id,
+      score: score.score,
+      level: score.level,
+      riskLevel: score.riskLevel,
+      source: score.source,
+      reason: score.reason,
+      ...(score.calculatedBy
+        ? {
+            calculatedById: score.calculatedBy.id,
+            calculatedByName: crmDisplayName(score.calculatedBy)
+          }
+        : {}),
+      createdAt: score.createdAt.toISOString()
+    })),
+    permissions: { canManage: true }
+  };
+}
+
+export async function updateCustomerLifecycleForUser(
+  userId: string,
+  customerId: string,
+  input: UpdateCustomerLifecycleInput,
+  audit: { ip: string | null; userAgent: string | null }
+): Promise<CustomerLifecycleData> {
+  await runSerializableTransaction(async (transaction) => {
+    const customer = await transaction.customer.findFirst({
+      where: {
+        id: customerId,
+        team: { status: "ACTIVE" }
+      },
+      select: {
+        id: true,
+        companyId: true,
+        teamId: true,
+        ownerId: true,
+        stage: true,
+        level: true,
+        aiProfile: { select: { riskLevel: true } }
+      }
+    });
+    if (!customer) {
+      throw new NotFoundError("客户不存在或当前账号无权访问。");
+    }
+    await assertCustomerAuthorityInTransaction(transaction, userId, customer);
+    const nextStage = input.stage ?? customer.stage;
+    const nextLevel = input.level ?? customer.level;
+    if (nextStage === customer.stage && nextLevel === customer.level) {
+      throw new ValidationError("客户阶段和等级均未发生变化。");
+    }
+    if (nextStage !== customer.stage) {
+      assertCustomerStageTransition(customer.stage, nextStage);
+    }
+
+    await transaction.customer.update({
+      where: { id: customer.id },
+      data: { stage: nextStage, level: nextLevel }
+    });
+    if (nextStage !== customer.stage) {
+      await transaction.crmCustomerStageEvent.create({
+        data: {
+          companyId: customer.companyId,
+          teamId: customer.teamId,
+          customerId: customer.id,
+          changedById: userId,
+          fromStage: customer.stage,
+          toStage: nextStage,
+          reason: input.reason,
+          snapshot: {
+            fromLevel: customer.level,
+            toLevel: nextLevel
+          }
+        }
+      });
+    }
+    if (nextLevel !== customer.level) {
+      await transaction.crmCustomerScore.create({
+        data: {
+          companyId: customer.companyId,
+          teamId: customer.teamId,
+          customerId: customer.id,
+          calculatedByUserId: userId,
+          score: manualScoreForLevel(nextLevel),
+          level: nextLevel,
+          riskLevel: customer.aiProfile?.riskLevel ?? "LOW",
+          source: "MANUAL",
+          reason: input.reason,
+          dimensions: {
+            fromLevel: customer.level,
+            toLevel: nextLevel
+          }
+        }
+      });
+    }
+    await transaction.auditLog.create({
+      data: {
+        userId,
+        role: null,
+        action: "CRM_CUSTOMER_LIFECYCLE_UPDATE",
+        targetType: "crm_customer",
+        targetId: customer.id,
+        ip: audit.ip,
+        userAgent: audit.userAgent,
+        metadata: {
+          companyId: customer.companyId,
+          teamId: customer.teamId,
+          fromStage: customer.stage,
+          toStage: nextStage,
+          fromLevel: customer.level,
+          toLevel: nextLevel,
+          reason: input.reason
+        }
+      }
+    });
+  });
+  return getCustomerLifecycleForUser(userId, customerId);
 }
 
 export async function createCustomerFollowUp(

@@ -8,8 +8,10 @@ import type {
   CreateCustomerResult,
   CustomerDetailData,
   CustomerFollowUpRecord,
+  CustomerLifecycleData,
   CustomerListData,
-  CustomerListFilters
+  CustomerListFilters,
+  UpdateCustomerLifecycleInput
 } from "@/apps/team-os/features/crm/types";
 
 export class CrmClientError extends Error {
@@ -69,6 +71,28 @@ export async function createCustomer(input: CreateCustomerInput): Promise<Create
 
 export async function fetchCustomerDetail(customerId: string): Promise<CustomerDetailData> {
   return readResponse<CustomerDetailData>(await fetch(`/api/team-os/crm/customer/${encodeURIComponent(customerId)}`, { cache: "no-store" }));
+}
+
+export async function fetchCustomerLifecycle(customerId: string): Promise<CustomerLifecycleData> {
+  return readResponse<CustomerLifecycleData>(
+    await fetch(
+      `/api/team-os/crm/customers/${encodeURIComponent(customerId)}/lifecycle`,
+      { cache: "no-store" }
+    )
+  );
+}
+
+export async function updateCustomerLifecycle(
+  customerId: string,
+  input: UpdateCustomerLifecycleInput
+): Promise<CustomerLifecycleData> {
+  return readResponse<CustomerLifecycleData>(
+    await fetch(`/api/team-os/crm/customers/${encodeURIComponent(customerId)}/lifecycle`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input)
+    })
+  );
 }
 
 export async function createCustomerFollowUp(input: CreateCustomerFollowUpInput): Promise<CustomerFollowUpRecord> {
