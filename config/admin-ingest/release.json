@@ -1,9 +1,9 @@
 {
-  "version": "1.0.22",
-  "build": 122,
-  "minimum_build": 122,
+  "version": "1.0.23",
+  "build": 123,
+  "minimum_build": 123,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.22-build.122",
+  "release_tag": "release/admin-ingest-1.0.23-build.123",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -12,7 +12,7 @@
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
     "投喂端 Windows 安装程序、快捷方式和卸载列表统一显示“小董AI”",
-    "投喂端 EXE 改为阿里云直链下载，点击即可下载，不再跳转 GitHub 双因素认证",
-    "发布前强制校验 EXE 内部版本、Build 和 Web 提交 SHA，Web、EXE、APK 统一升级到 1.0.22 Build 122"
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.23 Build 123",
+    "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
