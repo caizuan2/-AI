@@ -11,6 +11,7 @@ import {
   type FormEvent,
   type SetStateAction
 } from "react";
+import NextImage from "next/image";
 import {
   Bell,
   Camera,
@@ -20,7 +21,6 @@ import {
   Image,
   Link2,
   Loader2,
-  Menu,
   Mic,
   Paperclip,
   Plus,
@@ -31,6 +31,7 @@ import {
   Square,
   X
 } from "lucide-react";
+import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 import { IngestAttachmentPreview } from "@/components/enterprise-admin/IngestAttachmentPreview";
 import { IngestAgentConversationList } from "@/components/enterprise-admin/IngestAgentConversationList";
 import { IngestAgentMoreMenu } from "@/components/enterprise-admin/IngestAgentMoreMenu";
@@ -227,6 +228,7 @@ interface IngestChatGPTShellProps {
   uploadedFiles?: IngestUploadState[];
   voiceState?: IngestVoiceState;
   isParsing?: boolean;
+  thinkingStartedAt?: number | null;
   showParsingProgress?: boolean;
   isSaving?: boolean;
   onOpenCreateAgent?: () => void;
@@ -862,6 +864,7 @@ export function IngestChatGPTShell({
     syncTarget: ["web", "exe", "apk"]
   },
   isParsing: controlledIsParsing,
+  thinkingStartedAt: controlledThinkingStartedAt,
   showParsingProgress: controlledShowParsingProgress,
   isSaving: controlledIsSaving,
   onOpenCreateAgent,
@@ -921,7 +924,8 @@ export function IngestChatGPTShell({
   const [internalIsParsing, setInternalIsParsing] = useState(false);
   const [internalIsSaving, setInternalIsSaving] = useState(false);
   const [internalNoticeMessage, setInternalNoticeMessage] = useState("");
-  const [thinkingStartedAt, setThinkingStartedAt] = useState<number | null>(null);
+  const [localThinkingStartedAt, setLocalThinkingStartedAt] =
+    useState<number | null>(null);
   const [thinkingElapsedSeconds, setThinkingElapsedSeconds] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerView, setDrawerView] = useState<"draft" | "records">("records");
@@ -1457,15 +1461,20 @@ export function IngestChatGPTShell({
 
   useEffect(() => {
     if (!isParsing) {
-      setThinkingStartedAt(null);
+      setLocalThinkingStartedAt(null);
       setThinkingElapsedSeconds(0);
       return;
     }
 
-    const startedAt = thinkingStartedAt ?? Date.now();
+    const startedAt = controlledThinkingStartedAt
+      ?? localThinkingStartedAt
+      ?? Date.now();
 
-    if (thinkingStartedAt === null) {
-      setThinkingStartedAt(startedAt);
+    if (
+      controlledThinkingStartedAt == null
+      && localThinkingStartedAt === null
+    ) {
+      setLocalThinkingStartedAt(startedAt);
     }
 
     const updateElapsed = () => {
@@ -1476,7 +1485,11 @@ export function IngestChatGPTShell({
     const timer = window.setInterval(updateElapsed, 1000);
 
     return () => window.clearInterval(timer);
-  }, [isParsing, thinkingStartedAt]);
+  }, [
+    controlledThinkingStartedAt,
+    isParsing,
+    localThinkingStartedAt
+  ]);
 
   function persistAutonomousTask(result?: AutonomousTaskResult | null) {
     if (!result) {
@@ -1606,7 +1619,7 @@ export function IngestChatGPTShell({
     const now = getTimeLabel();
 
     if (onSend) {
-      setThinkingStartedAt(Date.now());
+      setLocalThinkingStartedAt(Date.now());
       setThinkingElapsedSeconds(0);
       setErrorMessage("");
       setNoticeMessage("");
@@ -1634,7 +1647,7 @@ export function IngestChatGPTShell({
       return;
     }
 
-    setThinkingStartedAt(Date.now());
+    setLocalThinkingStartedAt(Date.now());
     setThinkingElapsedSeconds(0);
     setInternalIsParsing(true);
     setErrorMessage("");
@@ -2335,11 +2348,11 @@ export function IngestChatGPTShell({
               const isExpanded = expandedAgentIds.includes(agent.id);
               const isPinned = pinnedAgentIds.includes(agent.id);
               const allAgentConversations = agentConversations.filter((conversation) => conversation.agentId === agent.id);
-              const hasGeneratingConversation = isAdminApk && allAgentConversations.some((conversation) => (
+              const hasGeneratingConversation = allAgentConversations.some((conversation) => (
                 conversation.status !== "archived"
                 && conversationRuntimeStatusById[conversation.id]?.state === "generating"
               ));
-              const hasUnreadConversation = isAdminApk && allAgentConversations.some((conversation) => (
+              const hasUnreadConversation = allAgentConversations.some((conversation) => (
                 conversation.status !== "archived"
                 && conversationRuntimeStatusById[conversation.id]?.state === "completed_unread"
               ));
@@ -2430,7 +2443,7 @@ export function IngestChatGPTShell({
                     <IngestAgentConversationList
                       agentId={agent.id}
                       conversations={conversations}
-                      conversationRuntimeStatusById={isAdminApk ? conversationRuntimeStatusById : {}}
+                      conversationRuntimeStatusById={conversationRuntimeStatusById}
                       activeConversationId={activeConversationId}
                       expandedAll={expandedConversationAgentIds.includes(agent.id)}
                       onSelectConversation={(agentId, conversationId) => {
@@ -2463,7 +2476,13 @@ export function IngestChatGPTShell({
             onClick={openMobileNavigation}
             className="absolute left-4 top-3 z-30 flex h-10 w-10 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95"
           >
-            <Menu className="h-5 w-5" aria-hidden="true" />
+            <NextImage
+              src={adminIngestLogo}
+              alt=""
+              className="h-7 w-7 rounded-full object-contain"
+              aria-hidden="true"
+              priority
+            />
           </button>
         ) : null}
         {!isExpertMarketplace ? (
@@ -2476,7 +2495,13 @@ export function IngestChatGPTShell({
                 onClick={openMobileNavigation}
                 className="flex h-10 w-10 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95"
               >
-                <Menu className="h-5 w-5" aria-hidden="true" />
+                <NextImage
+                  src={adminIngestLogo}
+                  alt=""
+                  className="h-7 w-7 rounded-full object-contain"
+                  aria-hidden="true"
+                  priority
+                />
               </button>
             ) : null}
             {isAdminApk && canIngest && welcomeVariant === "chat_only" ? (

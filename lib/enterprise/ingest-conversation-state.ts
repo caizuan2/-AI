@@ -22,6 +22,7 @@ export type IngestConversationState = {
   knowledgeBaseId?: string;
   messages: IngestConversationMessage[];
   activeRequestId?: string;
+  requestStartedAt?: number;
   lastCompletedRequestId?: string;
   isGenerating: boolean;
   transientError?: string | null;
@@ -118,13 +119,20 @@ export function ensureConversationState(
   };
 }
 
-export function markRequestActive(state: IngestConversationState, requestId: string): IngestConversationState {
+export function markRequestActive(
+  state: IngestConversationState,
+  requestId: string,
+  now = Date.now()
+): IngestConversationState {
   return {
     ...state,
     activeRequestId: requestId,
+    requestStartedAt: state.activeRequestId === requestId
+      ? state.requestStartedAt ?? now
+      : now,
     isGenerating: true,
     transientError: null,
-    updatedAt: Date.now()
+    updatedAt: now
   };
 }
 
@@ -136,6 +144,7 @@ export function markRequestCompleted(state: IngestConversationState, requestId: 
   return {
     ...state,
     activeRequestId: undefined,
+    requestStartedAt: undefined,
     lastCompletedRequestId: requestId,
     isGenerating: false,
     transientError: null,

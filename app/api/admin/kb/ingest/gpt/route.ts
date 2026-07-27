@@ -242,6 +242,20 @@ function createDoubaoBrowserSseResponse(input: {
           return;
         }
 
+        if (event.type === "visible_delta") {
+          enqueue("visible_delta", {
+            type: "visible_delta",
+            requestId: input.requestId,
+            provider: "doubao-pro",
+            actualModel: event.model,
+            responseId: event.responseId,
+            fallbackUsed: false,
+            delta: event.delta,
+            replyMarkdown: event.replyMarkdown
+          });
+          return;
+        }
+
         if (event.type === "visible_reply") {
           enqueue("visible", {
             type: "visible",

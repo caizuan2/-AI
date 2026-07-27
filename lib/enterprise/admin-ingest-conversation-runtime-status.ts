@@ -1,9 +1,8 @@
-"use client";
-
 export type AdminIngestConversationRuntimeStatus =
   | {
     state: "generating";
     requestId?: string;
+    startedAt: number;
     updatedAt: number;
   }
   | {
@@ -16,6 +15,84 @@ export type AdminIngestConversationRuntimeStatusMap = Record<
   string,
   AdminIngestConversationRuntimeStatus
 >;
+
+const MAX_GENERATING_STATUS_AGE_MS = 15 * 60 * 1000;
+const MAX_COMPLETED_STATUS_AGE_MS = 24 * 60 * 60 * 1000;
+
+function readTimestamp(value: unknown) {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value > 0
+    ? value
+    : null;
+}
+
+export function normalizeAdminIngestConversationRuntimeStatusMap(
+  value: unknown,
+  now = Date.now()
+): AdminIngestConversationRuntimeStatusMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return {};
+  }
+
+  const next: AdminIngestConversationRuntimeStatusMap = {};
+
+  for (const [conversationId, rawStatus] of Object.entries(value)) {
+    if (
+      !conversationId
+      || !rawStatus
+      || typeof rawStatus !== "object"
+      || Array.isArray(rawStatus)
+    ) {
+      continue;
+    }
+
+    const status = rawStatus as Record<string, unknown>;
+    const rawUpdatedAt = readTimestamp(status.updatedAt);
+    const requestId = typeof status.requestId === "string"
+      ? status.requestId.trim()
+      : "";
+
+    if (!rawUpdatedAt) {
+      continue;
+    }
+
+    const updatedAt = Math.min(rawUpdatedAt, now);
+
+    if (status.state === "generating") {
+      const startedAt = Math.min(
+        readTimestamp(status.startedAt) ?? updatedAt,
+        now
+      );
+
+      if (now - updatedAt > MAX_GENERATING_STATUS_AGE_MS) {
+        continue;
+      }
+
+      next[conversationId] = {
+        state: "generating",
+        requestId: requestId || undefined,
+        startedAt,
+        updatedAt
+      };
+      continue;
+    }
+
+    if (
+      status.state === "completed_unread"
+      && requestId
+      && now - updatedAt <= MAX_COMPLETED_STATUS_AGE_MS
+    ) {
+      next[conversationId] = {
+        state: "completed_unread",
+        requestId,
+        updatedAt
+      };
+    }
+  }
+
+  return next;
+}
 
 function withoutConversation(
   current: AdminIngestConversationRuntimeStatusMap,
@@ -39,6 +116,7 @@ export function markAdminIngestConversationGenerating(
   }
 ) {
   const previous = current[input.conversationId];
+  const now = input.now ?? Date.now();
 
   if (
     previous?.state === "generating"
@@ -52,7 +130,8 @@ export function markAdminIngestConversationGenerating(
     [input.conversationId]: {
       state: "generating" as const,
       requestId: input.requestId,
-      updatedAt: input.now ?? Date.now()
+      startedAt: now,
+      updatedAt: now
     }
   };
 }

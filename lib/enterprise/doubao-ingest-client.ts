@@ -63,6 +63,13 @@ export type DoubaoAdminIngestProgressEvent =
       metadataPending: true;
     }
   | {
+      type: "visible_delta";
+      delta: string;
+      replyMarkdown: string;
+      model?: string;
+      responseId?: string;
+    }
+  | {
       type: "metadata_status";
       state: "pending" | "completed" | "deferred";
       failureCode?: string;
@@ -231,6 +238,12 @@ type DoubaoQueueEntry = {
 
 let doubaoQueueSequence = 0;
 let activeDoubaoRequests = 0;
+const activeDoubaoRequestsByPhase: Record<DoubaoRequestPhase, number> = {
+  visible: 0,
+  continuation: 0,
+  metadata: 0,
+  health: 0
+};
 const pendingDoubaoRequests: DoubaoQueueEntry[] = [];
 
 function requestPhasePriority(phase: DoubaoRequestPhase) {
@@ -257,12 +270,43 @@ function resolveDoubaoConcurrency() {
     : DEFAULT_DOUBAO_CONCURRENCY;
 }
 
-function pumpDoubaoQueue() {
+function canStartDoubaoPhase(phase: DoubaoRequestPhase) {
   const concurrency = resolveDoubaoConcurrency();
 
-  while (activeDoubaoRequests < concurrency && pendingDoubaoRequests.length > 0) {
+  if (activeDoubaoRequests < concurrency) {
+    return true;
+  }
+
+  const isVisibleOutput = phase === "visible" || phase === "continuation";
+  const visibleOutputActive = activeDoubaoRequestsByPhase.visible
+    + activeDoubaoRequestsByPhase.continuation;
+
+  return (
+    concurrency === 1
+    && isVisibleOutput
+    && visibleOutputActive === 0
+    && activeDoubaoRequestsByPhase.metadata > 0
+    && activeDoubaoRequests < 2
+  );
+}
+
+function markDoubaoPhaseStarted(phase: DoubaoRequestPhase) {
+  activeDoubaoRequests += 1;
+  activeDoubaoRequestsByPhase[phase] += 1;
+}
+
+function pumpDoubaoQueue() {
+  while (pendingDoubaoRequests.length > 0) {
     pendingDoubaoRequests.sort((left, right) => left.priority - right.priority || left.id - right.id);
-    const next = pendingDoubaoRequests.shift();
+    const nextIndex = pendingDoubaoRequests.findIndex((entry) => (
+      canStartDoubaoPhase(entry.phase)
+    ));
+
+    if (nextIndex < 0) {
+      return;
+    }
+
+    const [next] = pendingDoubaoRequests.splice(nextIndex, 1);
 
     if (!next) {
       return;
@@ -275,7 +319,7 @@ function pumpDoubaoQueue() {
       continue;
     }
 
-    activeDoubaoRequests += 1;
+    markDoubaoPhaseStarted(next.phase);
     next.resolve();
   }
 }
@@ -289,8 +333,8 @@ async function acquireDoubaoRequestSlot(input: {
     throw new DOMException("The operation was aborted.", "AbortError");
   }
 
-  if (activeDoubaoRequests < resolveDoubaoConcurrency() && pendingDoubaoRequests.length === 0) {
-    activeDoubaoRequests += 1;
+  if (canStartDoubaoPhase(input.phase) && pendingDoubaoRequests.length === 0) {
+    markDoubaoPhaseStarted(input.phase);
     return;
   }
 
@@ -325,8 +369,12 @@ async function acquireDoubaoRequestSlot(input: {
   });
 }
 
-function releaseDoubaoRequestSlot() {
+function releaseDoubaoRequestSlot(phase: DoubaoRequestPhase) {
   activeDoubaoRequests = Math.max(0, activeDoubaoRequests - 1);
+  activeDoubaoRequestsByPhase[phase] = Math.max(
+    0,
+    activeDoubaoRequestsByPhase[phase] - 1
+  );
   pumpDoubaoQueue();
 }
 
@@ -347,7 +395,7 @@ export async function runWithDoubaoRequestSlot<T>(input: {
 
     return await input.task();
   } finally {
-    releaseDoubaoRequestSlot();
+    releaseDoubaoRequestSlot(input.phase);
   }
 }
 
@@ -861,6 +909,13 @@ async function collectDoubaoSseCompletion(input: {
   controller: AbortController;
   firstEventTimeoutMs: number;
   idleTimeoutMs: number;
+  visiblePrefix?: string;
+  onContentDelta?: (event: {
+    delta: string;
+    replyMarkdown: string;
+    model?: string;
+    responseId?: string;
+  }) => void;
 }) {
   const reader = input.response.body?.getReader();
 
@@ -915,7 +970,19 @@ async function collectDoubaoSseCompletion(input: {
       const eventCountBeforeParse = accumulator.eventCount;
 
       for (const block of blocks) {
+        const contentLengthBeforeParse = accumulator.content.length;
         parseDoubaoSseEvent(block, accumulator);
+        const delta = accumulator.content.slice(contentLengthBeforeParse);
+
+        if (delta) {
+          input.onContentDelta?.({
+            delta,
+            replyMarkdown: `${input.visiblePrefix ?? ""}${accumulator.content}`,
+            model: accumulator.model || undefined,
+            responseId: accumulator.responseId || undefined
+          });
+        }
+
         if (accumulator.done) {
           break;
         }
@@ -928,7 +995,18 @@ async function collectDoubaoSseCompletion(input: {
 
     if (!accumulator.done && buffer.trim()) {
       const eventCountBeforeParse = accumulator.eventCount;
+      const contentLengthBeforeParse = accumulator.content.length;
       parseDoubaoSseEvent(buffer, accumulator);
+      const delta = accumulator.content.slice(contentLengthBeforeParse);
+
+      if (delta) {
+        input.onContentDelta?.({
+          delta,
+          replyMarkdown: `${input.visiblePrefix ?? ""}${accumulator.content}`,
+          model: accumulator.model || undefined,
+          responseId: accumulator.responseId || undefined
+        });
+      }
 
       if (accumulator.eventCount > eventCountBeforeParse) {
         lastEventAt = Date.now();
@@ -1041,6 +1119,13 @@ async function callDoubaoStreaming(payload: {
   temperature: number;
   maxTokens: number;
   signal: AbortSignal;
+  visiblePrefix?: string;
+  onContentDelta?: (event: {
+    delta: string;
+    replyMarkdown: string;
+    model?: string;
+    responseId?: string;
+  }) => void;
 }) {
   const timeouts = resolveDoubaoStreamTimeouts();
   const controller = new AbortController();
@@ -1114,7 +1199,9 @@ async function callDoubaoStreaming(payload: {
       response,
       controller,
       firstEventTimeoutMs: timeouts.firstEventMs,
-      idleTimeoutMs: timeouts.idleMs
+      idleTimeoutMs: timeouts.idleMs,
+      visiblePrefix: payload.visiblePrefix,
+      onContentDelta: payload.onContentDelta
     });
   } finally {
     payload.signal.removeEventListener("abort", forwardAbort);
@@ -1179,6 +1266,7 @@ async function callDoubaoChatCompletions(input: {
   assistantPrefix?: string;
   continuationInstruction?: string;
   retryRateLimited?: boolean;
+  visiblePrefix?: string;
   onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
 }) {
   const startedAt = Date.now();
@@ -1212,7 +1300,17 @@ async function callDoubaoChatCompletions(input: {
           messages,
           temperature: input.temperature ?? 0.7,
           maxTokens: input.maxTokens ?? 6000,
-          signal: input.signal
+          signal: input.signal,
+          visiblePrefix: input.visiblePrefix,
+          onContentDelta: input.phase === "visible"
+            || input.phase === "continuation"
+            ? (event) => {
+                input.onProgressEvent?.({
+                  type: "visible_delta",
+                  ...event
+                });
+              }
+            : undefined
         })
       });
       break;
@@ -1629,6 +1727,7 @@ async function runDoubaoVisiblePhase(input: {
     userPrompt,
     signal: input.signal,
     phase: "visible",
+    visiblePrefix: "",
     onProgressEvent: input.ingestInput.onProgressEvent,
     maxTokens: 6000
   });
@@ -1654,6 +1753,7 @@ async function runDoubaoVisiblePhase(input: {
         : "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
       signal: input.signal,
       phase: "continuation",
+      visiblePrefix: replyMarkdown,
       onProgressEvent: input.ingestInput.onProgressEvent,
       maxTokens: 4000
     });
