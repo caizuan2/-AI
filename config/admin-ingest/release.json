@@ -1,18 +1,18 @@
 {
-  "version": "1.0.19",
-  "build": 119,
-  "minimum_build": 119,
+  "version": "1.0.20",
+  "build": 120,
+  "minimum_build": 120,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.19-build.119",
+  "release_tag": "release/admin-ingest-1.0.20-build.120",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.19-build.119/admin-ingest.exe",
+  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.20-build.120/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 APK 点击切换 Agent 时保持左侧抽屉展开，减少重复打开操作",
-    "抽屉搜索同时支持 Agent 与活动对话标题，命中对话时自动展示所属 Agent 和匹配结果",
-    "点击具体对话仍按原路径进入并关闭抽屉，兼容生成状态、未读蓝点与并发隔离状态机"
+    "投喂端 APK 忽略“无内容”等无效语音占位结果，不再覆盖输入框",
+    "录音中断时保留最后一段有效识别文字和原有输入，供用户确认后发送",
+    "Web、Windows EXE 与 Android APK 统一升级到 1.0.20 Build 120"
   ]
 }
