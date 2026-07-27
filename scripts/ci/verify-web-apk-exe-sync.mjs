@@ -41,7 +41,7 @@ function requireArtifact(name, artifact) {
     if (name === "exe" && artifact.installerType !== "nsis") {
       errors.push(`exe.installerType must be nsis, actual=${artifact.installerType || "missing"}`);
     }
-    if (name === "exe" && artifact.productName !== "小董AI投喂端") {
+    if (name === "exe" && artifact.productName !== "小董AI") {
       errors.push(`exe.productName mismatch actual=${artifact.productName || "missing"}`);
     }
     if (name === "exe" && artifact.internalVersion !== manifest.version) {

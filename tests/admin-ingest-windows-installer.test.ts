@@ -10,6 +10,10 @@ const buildScript = readFileSync(
   "scripts/build/build-admin-ingest-exe.ps1",
   "utf8"
 );
+const electronMain = readFileSync(
+  "electron/admin-ingest/main.js",
+  "utf8"
+);
 const manifestWriter = readFileSync(
   "scripts/release/write-release-manifest.mjs",
   "utf8"
@@ -37,7 +41,9 @@ const packageVerifier = readFileSync(
 );
 
 assert.match(builderConfig, /target:\s*nsis/);
-assert.match(builderConfig, /productName:\s*小董AI投喂端/);
+assert.match(builderConfig, /productName:\s*小董AI(?:\r?\n|$)/);
+assert.match(builderConfig, /shortcutName:\s*"小董AI"/);
+assert.match(builderConfig, /uninstallDisplayName:\s*"小董AI"/);
 assert.doesNotMatch(builderConfig, /-\s*portable/);
 assert.match(builderConfig, /electronVersion:\s*42\.3\.3/);
 assert.match(builderConfig, /artifactName:\s*"admin-ingest-setup-\$\{version\}\.\$\{ext\}"/);
@@ -64,12 +70,16 @@ assert.match(buildScript, /verify-admin-ingest-exe-package\.mjs/);
 assert.match(buildScript, /EXE_FILE_VERSION_MISMATCH/);
 assert.match(buildScript, /EXE_PRODUCT_VERSION_MISMATCH/);
 assert.match(buildScript, /EXE_PRODUCT_NAME_MISMATCH/);
+assert.match(buildScript, /\$ElectronProductName = "小董AI"/);
+assert.match(electronMain, /return "小董AI\.exe";/);
 assert.doesNotMatch(buildScript, /npx electron-builder/);
 assert.doesNotMatch(buildScript, /npm install --include=dev/);
 
 assert.match(manifestWriter, /installerType:\s*manifest\.installerType \|\| null/);
 assert.match(ciVerifier, /exe\.installerType must be nsis/);
+assert.match(ciVerifier, /artifact\.productName !== "小董AI"/);
 assert.match(releaseVerifier, /exe\.installerType must be nsis/);
+assert.match(releaseVerifier, /artifact\.productName !== "小董AI"/);
 assert.match(releaseVerifier, /exe\.internalVersion mismatch/);
 assert.match(releaseVerifier, /exe\.internalBuild mismatch/);
 assert.match(releaseVerifier, /exe\.internalWebReleaseSha mismatch/);

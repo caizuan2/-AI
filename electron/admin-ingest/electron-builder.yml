@@ -1,5 +1,5 @@
 appId: com.aiknowledge.ingestadmin.desktop
-productName: 小董AI投喂端
+productName: 小董AI
 electronVersion: 42.3.3
 directories:
   output: dist-app/admin-ingest/windows
@@ -22,6 +22,6 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
-  shortcutName: "小董AI投喂端"
-  uninstallDisplayName: "小董AI投喂端"
+  shortcutName: "小董AI"
+  uninstallDisplayName: "小董AI"
   runAfterFinish: true

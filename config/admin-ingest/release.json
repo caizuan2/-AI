@@ -11,7 +11,7 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 Windows 安装程序明确显示“小董AI投喂端”，避免与用户端及旧版快捷方式混淆",
+    "投喂端 Windows 安装程序、快捷方式和卸载列表统一显示“小董AI”",
     "投喂端 EXE 改为阿里云直链下载，点击即可下载，不再跳转 GitHub 双因素认证",
     "发布前强制校验 EXE 内部版本、Build 和 Web 提交 SHA，Web、EXE、APK 统一升级到 1.0.22 Build 122"
   ]
