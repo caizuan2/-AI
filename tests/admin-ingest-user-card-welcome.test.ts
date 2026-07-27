@@ -74,9 +74,11 @@ test("chat-only empty conversations always use the Xiaodong welcome even without
   assert.match(chatOnlyWelcome, /小董AI/);
   assert.match(chatOnlyWelcome, /AI大脑🧠 \+ AI思考/);
   assert.match(chatOnlyWelcome, /Hi，\$\{greetingName\}，我是你的沟通助手/);
-  for (const label of ["客户对话", "微信截图", "经营疑问", "沟通建议", "下一步建议"]) {
+  for (const label of ["客户对话", "微信截图", "沟通疑问", "沟通建议", "下一步建议"]) {
     assert.match(chatOnlyWelcome, new RegExp(label));
   }
+  assert.equal(chatOnlyWelcome.match(/沟通疑问/g)?.length, 2);
+  assert.doesNotMatch(chatOnlyWelcome, /经营疑问/);
   assert.match(chatOnlyWelcome, /试试这样问/);
   assert.match(chatOnlyWelcome, /客户说考虑考虑怎么回复/);
 });
@@ -96,4 +98,5 @@ test("the user client welcome component remains untouched and independent", () =
   assert.match(userDrawer, /src="\/brand\/xiaodong-ai-logo\.png"/);
   assert.doesNotMatch(userEmptyState, /admin-ingest-logo/);
   assert.doesNotMatch(userDrawer, /admin-ingest-logo/);
+  assert.match(userEmptyState, /经营疑问/);
 });

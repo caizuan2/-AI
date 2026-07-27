@@ -39,12 +39,12 @@ export function IngestChatOnlyWelcome({ userName }: IngestChatOnlyWelcomeProps) 
         </h1>
 
         <p className="mx-auto mt-4 max-w-2xl text-base leading-7 text-slate-600">
-          <span className="block">把客户对话、微信截图或经营疑问发给我，我会调用 AI大脑🧠 并结合 AI 思考。</span>
+          <span className="block">把客户对话、微信截图或沟通疑问发给我，我会调用 AI大脑🧠 并结合 AI 思考。</span>
           <span className="block">为你整理可复制内容和下一步建议。</span>
         </p>
 
         <div className="mx-auto mt-6 flex max-w-3xl flex-wrap justify-center gap-2 text-sm font-semibold">
-          {["客户对话", "微信截图", "经营疑问", "沟通建议", "下一步建议"].map((item) => (
+          {["客户对话", "微信截图", "沟通疑问", "沟通建议", "下一步建议"].map((item) => (
             <span
               key={item}
               className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-slate-700 shadow-sm"
