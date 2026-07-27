@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -58,7 +59,17 @@ test("chat-only empty conversations always use the Xiaodong welcome even without
     /\}, \[accessTier, activeConversationId,/,
     "initial restore must react to the resolved access tier"
   );
-  assert.match(chatOnlyWelcome, /src="\/brand\/xiaodong-ai-logo\.png"/);
+  assert.match(chatOnlyWelcome, /src="\/brand\/admin-ingest-logo\.png"/);
+  assert.match(chatOnlyWelcome, /alt="小董AI投喂端 Logo"/);
+  assert.match(chatOnlyWelcome, /className="object-contain"/);
+  assert.doesNotMatch(chatOnlyWelcome, /src="\/brand\/xiaodong-ai-logo\.png"/);
+  assert.equal(
+    createHash("sha256")
+      .update(readFileSync("public/brand/admin-ingest-logo.png"))
+      .digest("hex"),
+    "3ceda174e3a0c3b731b24aa13b20b3790dfd881a33e5b8565591582c9185a562",
+    "the admin-ingest welcome must use the exact approved logo asset"
+  );
   assert.match(chatOnlyWelcome, /小董AI/);
   assert.match(chatOnlyWelcome, /AI大脑🧠 \+ AI思考/);
   assert.match(chatOnlyWelcome, /Hi，\$\{greetingName\}，我是你的沟通助手/);
@@ -75,7 +86,13 @@ test("the user client welcome component remains untouched and independent", () =
     "utf8"
   );
   const shell = readFileSync("components/enterprise-admin/IngestChatGPTShell.tsx", "utf8");
+  const userEmptyState = readFileSync("app/(user)/chat-ui/components/EmptyState.tsx", "utf8");
+  const userDrawer = readFileSync("app/(user)/chat-ui/components/ChatSidebarDrawer.tsx", "utf8");
 
   assert.doesNotMatch(chatOnlyWelcome, /app\/\(user\)\/chat-ui/);
   assert.doesNotMatch(shell, /app\/\(user\)\/chat-ui\/components\/EmptyState/);
+  assert.match(userEmptyState, /src="\/brand\/xiaodong-ai-logo\.png"/);
+  assert.match(userDrawer, /src="\/brand\/xiaodong-ai-logo\.png"/);
+  assert.doesNotMatch(userEmptyState, /admin-ingest-logo/);
+  assert.doesNotMatch(userDrawer, /admin-ingest-logo/);
 });
