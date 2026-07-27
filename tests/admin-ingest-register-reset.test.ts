@@ -136,7 +136,8 @@ test("ingest auth UI exposes register activation and password recovery only in i
   assert.match(portal, /mode === "activate" \|\| mode === "register" \|\| mode === "reset"/);
   assert.match(portal, /\/api\/ingest\/auth\/reset-password/);
   assert.match(portal, /忘记密码？/);
-  assert.match(portal, /src="\/brand\/admin-ingest-logo\.png"/);
+  assert.match(portal, /import adminIngestLogo from "@\/assets\/admin-ingest\/web-logo\.png"/);
+  assert.match(portal, /src=\{adminIngestLogo\}/);
   assert.match(portal, /alt="小董AI投喂端 Logo"/);
   assert.match(portal, /bg-white object-contain/);
   assert.doesNotMatch(portal, /src="\/brand\/xiaodong-ai-logo\.png"/);
