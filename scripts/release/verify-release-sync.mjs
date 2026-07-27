@@ -69,6 +69,18 @@ function checkArtifact(name, artifact, manifest, errors) {
     if (name === "exe" && artifact.installerType !== "nsis") {
       errors.push(`exe.installerType must be nsis, actual=${artifact.installerType || "missing"}`);
     }
+    if (name === "exe" && artifact.productName !== "小董AI投喂端") {
+      errors.push(`exe.productName mismatch actual=${artifact.productName || "missing"}`);
+    }
+    if (name === "exe" && artifact.internalVersion !== manifest.version) {
+      errors.push(`exe.internalVersion mismatch expected=${manifest.version} actual=${artifact.internalVersion || "missing"}`);
+    }
+    if (name === "exe" && Number(artifact.internalBuild) !== Number(manifest.build)) {
+      errors.push(`exe.internalBuild mismatch expected=${manifest.build} actual=${artifact.internalBuild || "missing"}`);
+    }
+    if (name === "exe" && artifact.internalWebReleaseSha !== manifest.releaseHead) {
+      errors.push(`exe.internalWebReleaseSha mismatch expected=${manifest.releaseHead} actual=${artifact.internalWebReleaseSha || "missing"}`);
+    }
   }
 }
 

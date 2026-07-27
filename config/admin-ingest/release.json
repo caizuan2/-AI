@@ -1,18 +1,18 @@
 {
-  "version": "1.0.21",
-  "build": 121,
-  "minimum_build": 121,
+  "version": "1.0.22",
+  "build": 122,
+  "minimum_build": 122,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.21-build.121",
+  "release_tag": "release/admin-ingest-1.0.22-build.122",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
   "apk_url": "http://47.238.0.23/admin-installers/admin-ingest.apk",
-  "exe_url": "https://github.com/caizuan2/-AI/releases/download/release%2Fadmin-ingest-1.0.21-build.121/admin-ingest.exe",
+  "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 Android APK 安装界面和桌面图标统一更换为绿色小董AI Logo，并适配白底与多档安卓分辨率",
-    "投喂端欢迎页两处“经营疑问”统一调整为“沟通疑问”，用户端原文保持不变",
-    "Web、Windows EXE 与 Android APK 统一升级到 1.0.21 Build 121"
+    "投喂端 Windows 安装程序明确显示“小董AI投喂端”，避免与用户端及旧版快捷方式混淆",
+    "投喂端 EXE 改为阿里云直链下载，点击即可下载，不再跳转 GitHub 双因素认证",
+    "发布前强制校验 EXE 内部版本、Build 和 Web 提交 SHA，Web、EXE、APK 统一升级到 1.0.22 Build 122"
   ]
 }

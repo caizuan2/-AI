@@ -25,6 +25,7 @@ assert.equal(admin.web_url, adminRelease.web_url);
 assert.equal(admin.apk_url, adminRelease.apk_url);
 assert.equal(admin.exe_url, adminRelease.exe_url);
 assert.equal(admin.apk_url, "http://47.238.0.23/admin-installers/admin-ingest.apk");
+assert.equal(admin.exe_url, "http://47.238.0.23/admin-installers/admin-ingest.exe");
 
 const manifestFetch = (async () => ({
   ok: true,
@@ -268,10 +269,19 @@ assert.match(releaseWorkflow, /build-apk:[\s\S]*strict:\s*true/);
 assert.match(releaseWorkflow, /build-exe:[\s\S]*strict:\s*true/);
 assert.doesNotMatch(releaseWorkflow, /Download APK artifacts[\s\S]{0,120}continue-on-error:\s*true/);
 assert.doesNotMatch(releaseWorkflow, /Download EXE artifacts[\s\S]{0,120}continue-on-error:\s*true/);
-assert.match(releaseWorkflow, /Publish verified APK to Aliyun direct-download storage/);
-assert.match(releaseWorkflow, /expected_sha=.*release-manifest\.json/);
+assert.match(releaseWorkflow, /Publish verified APK and EXE to Aliyun direct-download storage/);
+assert.match(releaseWorkflow, /expected_apk_sha=.*release-manifest\.json/);
+assert.match(releaseWorkflow, /expected_exe_sha=.*release-manifest\.json/);
 assert.match(releaseWorkflow, /admin-ingest\.apk\.incoming-\$RELEASE_HEAD/);
-assert.match(releaseWorkflow, /mv -f "\$INCOMING" "\$\(dirname "\$INCOMING"\)\/admin-ingest\.apk"/);
+assert.match(releaseWorkflow, /admin-ingest\.exe\.incoming-\$RELEASE_HEAD/);
+assert.match(
+  releaseWorkflow,
+  /mv -f "\$APK_INCOMING" "\$\(dirname "\$APK_INCOMING"\)\/admin-ingest\.apk"/
+);
+assert.match(
+  releaseWorkflow,
+  /mv -f "\$EXE_INCOMING" "\$\(dirname "\$EXE_INCOMING"\)\/admin-ingest\.exe"/
+);
 
 const apkWorkflow = readFileSync(".github/workflows/admin-ingest-build-apk.yml", "utf8");
 assert.match(apkWorkflow, /ANDROID_RELEASE_KEYSTORE_BASE64/);
@@ -312,7 +322,9 @@ assert.match(deployWorkflow, /ensure-admin-installer-link\.sh/);
 assert.match(installerLinkScript, /ln -sfn "\$installer_source" "\$installer_link"/);
 assert.match(installerLinkScript, /ADMIN_INSTALLER_LINK_CONFLICT/);
 assert.match(installerLinkScript, /test -s "\$installer_link\/admin-ingest\.apk"/);
+assert.match(installerLinkScript, /test -s "\$installer_link\/admin-ingest\.exe"/);
 assert.match(deployWorkflow, /curl -fsS -r 0-0[\s\S]*admin-installers\/admin-ingest\.apk[\s\S]*"206"/);
+assert.match(deployWorkflow, /curl -fsS -r 0-0[\s\S]*admin-installers\/admin-ingest\.exe[\s\S]*"206"/);
 assert.doesNotMatch(deployWorkflow, /name:\s*admin-ingest-web-manifest/);
 assert.match(releaseWorkflow, /deploy-web:[\s\S]*releaseVerified:\s*true/);
 

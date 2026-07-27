@@ -1,5 +1,5 @@
 appId: com.aiknowledge.ingestadmin.desktop
-productName: 小董AI
+productName: 小董AI投喂端
 electronVersion: 42.3.3
 directories:
   output: dist-app/admin-ingest/windows

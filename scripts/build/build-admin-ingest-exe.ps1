@@ -11,6 +11,7 @@ $ReleaseAssetName = "admin-ingest.exe"
 $ReleaseAssetPath = Join-Path $ManifestDir $ReleaseAssetName
 $ElectronIngestConfig = Join-Path $Root "electron/admin-ingest/electron-builder.yml"
 $ElectronBuildMetadata = Join-Path $Root "electron/admin-ingest/build-metadata.json"
+$ElectronProductName = "小董AI投喂端"
 $FlutterPubspec = Join-Path $Root "flutter_app/pubspec.yaml"
 $TauriConfig = Join-Path $Root "src-tauri/tauri.conf.json"
 
@@ -79,6 +80,10 @@ function Write-ExeManifest {
     version = $ReleaseInfo.version
     build = [int]$ReleaseInfo.buildNumber
     installerType = if ($Available) { "nsis" } else { $null }
+    productName = if ($Available) { $ElectronProductName } else { $null }
+    internalVersion = if ($Available) { $ReleaseInfo.version } else { $null }
+    internalBuild = if ($Available) { [int]$ReleaseInfo.buildNumber } else { $null }
+    internalWebReleaseSha = if ($Available) { $ReleaseHead } else { $null }
     buildTime = (Get-Date).ToUniversalTime().ToString("o")
     path = $Path
     assetName = $ReleaseAssetName
@@ -190,6 +195,30 @@ try {
       }
     } finally {
       Remove-Item -LiteralPath $ElectronBuildMetadata -Force -ErrorAction SilentlyContinue
+    }
+
+    $UnpackedRoot = Join-Path $Root "dist-app/admin-ingest/windows/win-unpacked"
+    $UnpackedExe = Join-Path $UnpackedRoot "$ElectronProductName.exe"
+    $AppAsar = Join-Path $UnpackedRoot "resources/app.asar"
+    if (-not (Test-Path -LiteralPath $UnpackedExe)) {
+      throw "EXE_UNPACKED_BINARY_NOT_FOUND"
+    }
+    $VersionInfo = (Get-Item -LiteralPath $UnpackedExe).VersionInfo
+    if (-not $VersionInfo.FileVersion.StartsWith($ReleaseInfo.version)) {
+      throw "EXE_FILE_VERSION_MISMATCH"
+    }
+    if (-not $VersionInfo.ProductVersion.StartsWith($ReleaseInfo.version)) {
+      throw "EXE_PRODUCT_VERSION_MISMATCH"
+    }
+    if ($VersionInfo.ProductName -ne $ElectronProductName) {
+      throw "EXE_PRODUCT_NAME_MISMATCH"
+    }
+    Invoke-CheckedCommand -FailureReason "EXE_INTERNAL_METADATA_MISMATCH" -Command {
+      node scripts/ci/verify-admin-ingest-exe-package.mjs `
+        --asar $AppAsar `
+        --version $ReleaseInfo.version `
+        --build $ReleaseInfo.buildNumber `
+        --web-release-sha $ReleaseHead
     }
   } elseif ($UsesFlutterWindows) {
     Push-Location (Join-Path $Root "flutter_app")

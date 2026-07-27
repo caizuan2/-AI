@@ -67,9 +67,7 @@ assert.equal(manifest.admin.apk_url, "http://47.238.0.23/admin-installers/admin-
 assert.match(manifest.user.exe_url, /github\.com\/caizuan2\/-AI\/releases\/(?:latest\/download|download\/[^/]+)\/ai-knowledge-chat-latest\.exe$/);
 assert.equal(
   manifest.admin.exe_url,
-  `https://github.com/caizuan2/-AI/releases/download/${encodeURIComponent(
-    `release/admin-ingest-${manifest.admin.version}-build.${manifest.admin.build}`
-  )}/admin-ingest.exe`
+  "http://47.238.0.23/admin-installers/admin-ingest.exe"
 );
 assert.doesNotMatch(JSON.stringify(manifest), /\.(ipa|dmg)"/i);
 

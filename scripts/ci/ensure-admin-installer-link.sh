@@ -17,9 +17,11 @@ fi
 public_dir="$app_dir/public"
 installer_link="$public_dir/admin-installers"
 installer_apk="$installer_source/admin-ingest.apk"
+installer_exe="$installer_source/admin-ingest.exe"
 
 test -d "$public_dir"
 test -s "$installer_apk"
+test -s "$installer_exe"
 
 if [[ ( -e "$installer_link" || -L "$installer_link" ) && ! -L "$installer_link" ]]; then
   echo "ADMIN_INSTALLER_LINK_CONFLICT=$installer_link" >&2
@@ -37,4 +39,5 @@ if [[ -z "$resolved_source" || "$resolved_link" != "$resolved_source" ]]; then
 fi
 
 test -s "$installer_link/admin-ingest.apk"
+test -s "$installer_link/admin-ingest.exe"
 echo "ADMIN_INSTALLER_LINK_READY=$installer_link"

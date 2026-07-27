@@ -153,6 +153,7 @@ jobs:
           curl -fsS -I "http://127.0.0.1:3021/admin-ingest?app=ingest-admin&platform=web"
           curl -fsS -I "http://127.0.0.1:3021/api/public/expert-market"
           test "$(curl -fsS -r 0-0 -o /dev/null -w '%{http_code}' "http://127.0.0.1:3021/admin-installers/admin-ingest.apk")" = "206"
+          test "$(curl -fsS -r 0-0 -o /dev/null -w '%{http_code}' "http://127.0.0.1:3021/admin-installers/admin-ingest.exe")" = "206"
           echo "DEPLOYMENT_DONE=true"
           REMOTE
 

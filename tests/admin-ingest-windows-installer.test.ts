@@ -27,8 +27,17 @@ const exeWorkflow = readFileSync(
   ".github/workflows/admin-ingest-build-exe.yml",
   "utf8"
 );
+const releaseWorkflow = readFileSync(
+  ".github/workflows/admin-ingest-release.yml",
+  "utf8"
+);
+const packageVerifier = readFileSync(
+  "scripts/ci/verify-admin-ingest-exe-package.mjs",
+  "utf8"
+);
 
 assert.match(builderConfig, /target:\s*nsis/);
+assert.match(builderConfig, /productName:\s*小董AI投喂端/);
 assert.doesNotMatch(builderConfig, /-\s*portable/);
 assert.match(builderConfig, /electronVersion:\s*42\.3\.3/);
 assert.match(builderConfig, /artifactName:\s*"admin-ingest-setup-\$\{version\}\.\$\{ext\}"/);
@@ -51,12 +60,30 @@ assert.match(buildScript, /installerType = if \(\$Available\) \{ "nsis" \}/);
 assert.match(buildScript, /EXE_NSIS_INSTALLER_NOT_FOUND/);
 assert.match(buildScript, /pnpm install --frozen-lockfile/);
 assert.match(buildScript, /pnpm exec electron-builder/);
+assert.match(buildScript, /verify-admin-ingest-exe-package\.mjs/);
+assert.match(buildScript, /EXE_FILE_VERSION_MISMATCH/);
+assert.match(buildScript, /EXE_PRODUCT_VERSION_MISMATCH/);
+assert.match(buildScript, /EXE_PRODUCT_NAME_MISMATCH/);
 assert.doesNotMatch(buildScript, /npx electron-builder/);
 assert.doesNotMatch(buildScript, /npm install --include=dev/);
 
 assert.match(manifestWriter, /installerType:\s*manifest\.installerType \|\| null/);
 assert.match(ciVerifier, /exe\.installerType must be nsis/);
 assert.match(releaseVerifier, /exe\.installerType must be nsis/);
+assert.match(releaseVerifier, /exe\.internalVersion mismatch/);
+assert.match(releaseVerifier, /exe\.internalBuild mismatch/);
+assert.match(releaseVerifier, /exe\.internalWebReleaseSha mismatch/);
+assert.match(packageVerifier, /ADMIN_INGEST_EXE_INTERNAL_SYNC=true/);
+assert.match(packageVerifier, /electron\/admin-ingest\/build-metadata\.json/);
+assert.match(
+  releaseWorkflow,
+  /Publish verified APK and EXE to Aliyun direct-download storage/
+);
+assert.match(releaseWorkflow, /admin-ingest\.exe\.incoming-\$RELEASE_HEAD/);
+assert.match(
+  releaseWorkflow,
+  /mv -f "\$EXE_INCOMING" "\$\(dirname "\$EXE_INCOMING"\)\/admin-ingest\.exe"/
+);
 
 assert.match(downloadPage, /Windows 安装程序/);
 assert.match(downloadPage, /下载完成后直接双击安装，无需解压/);

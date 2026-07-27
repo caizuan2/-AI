@@ -216,7 +216,7 @@ jobs:
           printf '%s\n' "$ALIYUN_SSH_KEY" > ~/.ssh/aliyun_admin_ingest_installers
           chmod 600 ~/.ssh/aliyun_admin_ingest_installers
 
-      - name: Publish verified APK to Aliyun direct-download storage
+      - name: Publish verified APK and EXE to Aliyun direct-download storage
         if: ${{ startsWith(env.RELEASE_TAG, 'release/admin-ingest-') }}
         shell: bash
         env:
@@ -225,25 +225,36 @@ jobs:
         run: |
           set -euo pipefail
           apk="artifacts/admin-ingest/apk/admin-ingest.apk"
+          exe="artifacts/admin-ingest/exe/admin-ingest.exe"
           manifest="artifacts/admin-ingest/release-manifest.json"
           test -s "$apk"
+          test -s "$exe"
           test -s "$manifest"
-          expected_sha="$(node -e 'const m=require("./artifacts/admin-ingest/release-manifest.json"); process.stdout.write(String(m.apk?.sha256 || ""))')"
-          test -n "$expected_sha"
-          test "$(sha256sum "$apk" | awk '{print $1}')" = "$expected_sha"
+          expected_apk_sha="$(node -e 'const m=require("./artifacts/admin-ingest/release-manifest.json"); process.stdout.write(String(m.apk?.sha256 || ""))')"
+          expected_exe_sha="$(node -e 'const m=require("./artifacts/admin-ingest/release-manifest.json"); process.stdout.write(String(m.exe?.sha256 || ""))')"
+          test -n "$expected_apk_sha"
+          test -n "$expected_exe_sha"
+          test "$(sha256sum "$apk" | awk '{print $1}')" = "$expected_apk_sha"
+          test "$(sha256sum "$exe" | awk '{print $1}')" = "$expected_exe_sha"
           remote_dir="/var/www/ai-knowledge-shared/admin-ingest/releases/current"
-          incoming="$remote_dir/admin-ingest.apk.incoming-$RELEASE_HEAD"
+          apk_incoming="$remote_dir/admin-ingest.apk.incoming-$RELEASE_HEAD"
+          exe_incoming="$remote_dir/admin-ingest.exe.incoming-$RELEASE_HEAD"
           ssh -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" \
             "install -d -m 755 '$remote_dir'"
           scp -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$apk" \
-            "$ALIYUN_USER@$ALIYUN_HOST:$incoming"
+            "$ALIYUN_USER@$ALIYUN_HOST:$apk_incoming"
+          scp -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$exe" \
+            "$ALIYUN_USER@$ALIYUN_HOST:$exe_incoming"
           ssh -i ~/.ssh/aliyun_admin_ingest_installers -o StrictHostKeyChecking=no "$ALIYUN_USER@$ALIYUN_HOST" \
-            "INCOMING='$incoming' EXPECTED_SHA='$expected_sha' bash -s" <<'REMOTE'
+            "APK_INCOMING='$apk_incoming' EXE_INCOMING='$exe_incoming' EXPECTED_APK_SHA='$expected_apk_sha' EXPECTED_EXE_SHA='$expected_exe_sha' bash -s" <<'REMOTE'
           set -euo pipefail
-          test -s "$INCOMING"
-          test "$(sha256sum "$INCOMING" | awk '{print $1}')" = "$EXPECTED_SHA"
-          chmod 644 "$INCOMING"
-          mv -f "$INCOMING" "$(dirname "$INCOMING")/admin-ingest.apk"
+          test -s "$APK_INCOMING"
+          test -s "$EXE_INCOMING"
+          test "$(sha256sum "$APK_INCOMING" | awk '{print $1}')" = "$EXPECTED_APK_SHA"
+          test "$(sha256sum "$EXE_INCOMING" | awk '{print $1}')" = "$EXPECTED_EXE_SHA"
+          chmod 644 "$APK_INCOMING" "$EXE_INCOMING"
+          mv -f "$APK_INCOMING" "$(dirname "$APK_INCOMING")/admin-ingest.apk"
+          mv -f "$EXE_INCOMING" "$(dirname "$EXE_INCOMING")/admin-ingest.exe"
           REMOTE
 
       - name: Upload release manifest
