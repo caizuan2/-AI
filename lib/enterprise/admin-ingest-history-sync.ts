@@ -73,6 +73,8 @@ export type AdminIngestScopedLocalSnapshot = {
 
 const HISTORY_SCOPE_PATTERN = /^[a-zA-Z0-9_-]{20,80}$/;
 const HISTORY_STORAGE_VERSION = "v2";
+const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
+const EMPTY_HISTORY_MESSAGE_CONTENT = "暂无历史内容";
 
 const HISTORY_STORAGE_KEY_BASES = {
   snapshotEnvelope: "ai-kb-ingest-history-snapshot",
@@ -495,6 +497,58 @@ function normalizeRecord<T>(value: unknown): Record<string, T> {
     : {};
 }
 
+export function countEffectiveAdminIngestHistoryMessages(
+  messages: readonly IngestChatMessage[] | null | undefined
+) {
+  if (!Array.isArray(messages)) {
+    return 0;
+  }
+
+  return messages.filter((message) => {
+    if (!message || typeof message !== "object") {
+      return false;
+    }
+
+    const candidate = message as Partial<IngestChatMessage>;
+    const content = typeof candidate.content === "string"
+      ? candidate.content.trim()
+      : "";
+    const id = typeof candidate.id === "string" ? candidate.id : "";
+
+    return Boolean(
+      content
+      && content !== EMPTY_HISTORY_MESSAGE_CONTENT
+      && candidate.status !== "failed"
+      && !id.startsWith(EMPTY_HISTORY_MESSAGE_PREFIX)
+    );
+  }).length;
+}
+
+export function reconcileAdminIngestConversationMessageCounts(
+  conversations: IngestAgentConversation[],
+  messagesByConversationId: Record<string, IngestChatMessage[]>
+): IngestAgentConversation[] {
+  let changed = false;
+  const reconciled = conversations.map((conversation) => {
+    const messageCount = countEffectiveAdminIngestHistoryMessages(
+      messagesByConversationId[conversation.id]
+    );
+
+    if (conversation.messageCount === messageCount) {
+      return conversation;
+    }
+
+    changed = true;
+
+    return {
+      ...conversation,
+      messageCount
+    };
+  });
+
+  return changed ? reconciled : conversations;
+}
+
 export function normalizeAdminIngestConversationSyncSnapshot(
   value: unknown,
   options: { includeDrafts: boolean }
@@ -502,17 +556,22 @@ export function normalizeAdminIngestConversationSyncSnapshot(
   const source = value && typeof value === "object"
     ? value as Partial<AdminIngestConversationSyncSnapshot>
     : {};
+  const conversationMessagesById = normalizeRecord<IngestChatMessage[]>(
+    source.conversationMessagesById
+  );
+  const agentConversations = reconcileAdminIngestConversationMessageCounts(
+    normalizeArray<IngestAgentConversation>(source.agentConversations),
+    conversationMessagesById
+  );
 
   return {
     agents: normalizeArray<IngestChatAgent>(source.agents),
-    agentConversations: normalizeArray<IngestAgentConversation>(source.agentConversations),
+    agentConversations,
     activeAgentId: typeof source.activeAgentId === "string" ? source.activeAgentId : "",
     activeConversationId: typeof source.activeConversationId === "string"
       ? source.activeConversationId
       : "",
-    conversationMessagesById: normalizeRecord<IngestChatMessage[]>(
-      source.conversationMessagesById
-    ),
+    conversationMessagesById,
     conversationDraftsById: options.includeDrafts
       ? normalizeRecord<IngestKnowledgeDraft>(source.conversationDraftsById)
       : {},
