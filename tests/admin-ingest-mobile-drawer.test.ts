@@ -61,10 +61,23 @@ assert.match(
 const agentCardSelectSource = shellSource.match(
   /function handleAgentCardSelect\(agentId: string\) \{[\s\S]*?\n  \}/
 )?.[0];
+const agentExpandToggleSource = shellSource.match(
+  /function handleAgentExpandToggle\(agentId: string\) \{[\s\S]*?\n  \}/
+)?.[0];
 
 assert.ok(agentCardSelectSource);
 assert.match(agentCardSelectSource, /setActiveAgentId\(agentId\)/);
 assert.doesNotMatch(agentCardSelectSource, /closeMobileNavigation\(\)/);
+assert.ok(agentExpandToggleSource);
+assert.match(
+  agentExpandToggleSource,
+  /setActiveAgentId\(agentId\)[\s\S]*onAgentToggleExpanded\?\.\(agentId\)/
+);
+assert.doesNotMatch(agentExpandToggleSource, /isAdminApk|closeMobileNavigation/);
+assert.match(
+  shellSource,
+  /aria-label=\{isConversationListVisible \? "收起 Agent 对话记录" : "展开 Agent 对话记录"\}[\s\S]*handleAgentExpandToggle\(agent\.id\)/
+);
 assert.match(
   shellSource,
   /searchIngestAgentSidebar\(agents, agentConversations, searchKeyword\)/

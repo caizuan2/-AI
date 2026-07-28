@@ -2086,6 +2086,11 @@ export function IngestChatGPTShell({
     setActiveAgentId(agentId);
   }
 
+  function handleAgentExpandToggle(agentId: string) {
+    setActiveAgentId(agentId);
+    onAgentToggleExpanded?.(agentId);
+  }
+
   function handleSearchConfirm() {
     setNoticeMessage(searchKeyword.trim()
       ? `已搜索：${searchKeyword.trim()}`
@@ -2518,7 +2523,7 @@ export function IngestChatGPTShell({
                                   aria-label={isConversationListVisible ? "收起 Agent 对话记录" : "展开 Agent 对话记录"}
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    onAgentToggleExpanded?.(agent.id);
+                                    handleAgentExpandToggle(agent.id);
                                   }}
                                   className="flex h-7 w-7 items-center justify-center rounded-full text-[#8a8a86] transition hover:bg-white hover:text-[#202020]"
                                 >
