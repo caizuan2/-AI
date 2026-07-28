@@ -114,7 +114,20 @@ export function cancelRequest(
   conversationId: string,
   requestId: string
 ): IngestRequestQueueState {
-  return completeRequest(state, conversationId, requestId);
+  const entry = readEntry(state, conversationId);
+
+  if (entry.activeRequestId !== requestId) {
+    return state;
+  }
+
+  return {
+    ...state,
+    [conversationId]: {
+      ...entry,
+      activeRequestId: undefined,
+      pending: undefined
+    }
+  };
 }
 
 export function getNextQueuedRequest(state: IngestRequestQueueState, conversationId: string) {
