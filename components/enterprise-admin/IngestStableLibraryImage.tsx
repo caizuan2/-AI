@@ -4,6 +4,8 @@ import Image from "next/image";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   bundledAdminIngestImageManifest,
+  getAdminIngestAgentAccentStyle,
+  getAdminIngestPageRefreshKey,
   loadAdminIngestImageManifest,
   selectAdminIngestStableImage,
   type AdminIngestImageManifest
@@ -16,6 +18,7 @@ type IngestStableLibraryImageProps = {
   fallback: ReactNode;
   priority?: boolean;
   size?: number;
+  selectionIndex?: number;
 };
 
 export function IngestStableLibraryImage({
@@ -25,19 +28,30 @@ export function IngestStableLibraryImage({
   fallback,
   priority = false,
   size = 64,
+  selectionIndex,
 }: IngestStableLibraryImageProps) {
   const [manifest, setManifest] = useState<AdminIngestImageManifest>(
     bundledAdminIngestImageManifest
   );
+  const [pageRefreshKey, setPageRefreshKey] = useState("initial-render");
   const [failedSource, setFailedSource] = useState("");
   const selectedAsset = useMemo(
-    () => selectAdminIngestStableImage(manifest, slotKey),
-    [manifest, slotKey]
+    () => selectAdminIngestStableImage(
+      manifest,
+      slotKey,
+      pageRefreshKey,
+      selectionIndex
+    ),
+    [manifest, pageRefreshKey, selectionIndex, slotKey]
   );
+  const accentStyle = selectionIndex === undefined
+    ? undefined
+    : getAdminIngestAgentAccentStyle(selectionIndex, pageRefreshKey);
 
   useEffect(() => {
     let isMounted = true;
 
+    setPageRefreshKey(getAdminIngestPageRefreshKey());
     void loadAdminIngestImageManifest().then((nextManifest) => {
       if (isMounted) {
         setManifest(nextManifest);
@@ -55,11 +69,9 @@ export function IngestStableLibraryImage({
     }
   }, [failedSource, selectedAsset?.src]);
 
-  if (!selectedAsset || failedSource === selectedAsset.src) {
-    return fallback;
-  }
-
-  return (
+  const content = !selectedAsset || failedSource === selectedAsset.src
+    ? fallback
+    : (
     <Image
       src={selectedAsset.src}
       alt={alt}
@@ -70,5 +82,15 @@ export function IngestStableLibraryImage({
       unoptimized
       onError={() => setFailedSource(selectedAsset.src)}
     />
+  );
+
+  if (!accentStyle) {
+    return content;
+  }
+
+  return (
+    <span aria-hidden="true" className="flex h-full w-full p-[2px]" style={accentStyle}>
+      {content}
+    </span>
   );
 }

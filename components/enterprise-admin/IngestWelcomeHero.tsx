@@ -7,6 +7,7 @@ type IngestWelcomeHeroProps = {
   profile: AdminIngestDisplayProfile;
   canIngest: boolean;
   assetSlotKey?: string;
+  assetSelectionIndex?: number;
   onOpenExperts?: () => void;
   compact?: boolean;
 };
@@ -15,6 +16,7 @@ export function IngestWelcomeHero({
   profile,
   canIngest,
   assetSlotKey,
+  assetSelectionIndex,
   onOpenExperts,
   compact = false
 }: IngestWelcomeHeroProps) {
@@ -25,6 +27,7 @@ export function IngestWelcomeHero({
         size="lg"
         className={compact ? "h-20 w-20 rounded-[26px]" : ""}
         assetSlotKey={assetSlotKey}
+        assetSelectionIndex={assetSelectionIndex}
       />
       <h1 className="mt-5 text-[34px] font-black tracking-[0px] text-[#101010]">
         Hi，我是{profile.assistantTitle}

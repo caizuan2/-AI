@@ -4,16 +4,24 @@ import test from "node:test";
 import sharp from "sharp";
 import {
   bundledAdminIngestImageManifest,
+  createAdminIngestImageRefreshKey,
+  getAdminIngestAgentAccentStyle,
   getAdminIngestImageRotationKey,
   parseAdminIngestImageManifest,
   selectAdminIngestStableImage
 } from "../lib/enterprise/admin-ingest-image-library";
 
 test("bundled image library keeps all supplied assets valid and optimized", async () => {
-  assert.equal(bundledAdminIngestImageManifest.assets.length, 21);
+  assert.equal(bundledAdminIngestImageManifest.assets.length, 51);
+  assert.equal(bundledAdminIngestImageManifest.rotation, "refresh");
   assert.deepEqual(
     Object.keys(bundledAdminIngestImageManifest.pools).sort(),
     ["agent:default", "rail:chat", "rail:experts"]
+  );
+  assert.equal(bundledAdminIngestImageManifest.pools["agent:default"].length, 51);
+  assert.equal(
+    new Set(bundledAdminIngestImageManifest.assets.map((asset) => asset.id)).size,
+    51
   );
 
   for (const asset of bundledAdminIngestImageManifest.assets) {
@@ -24,6 +32,41 @@ test("bundled image library keeps all supplied assets valid and optimized", asyn
     assert.equal(metadata.width, 512);
     assert.equal(metadata.height, 512);
   }
+});
+
+test("one refresh assigns every available agent a different image", () => {
+  const firstRefresh = Array.from({ length: 51 }, (_, index) => (
+    selectAdminIngestStableImage(
+      bundledAdminIngestImageManifest,
+      `agent:agent-${index}`,
+      "refresh-a",
+      index
+    )?.id
+  ));
+  const secondRefresh = Array.from({ length: 51 }, (_, index) => (
+    selectAdminIngestStableImage(
+      bundledAdminIngestImageManifest,
+      `agent:agent-${index}`,
+      "refresh-b",
+      index
+    )?.id
+  ));
+
+  assert.equal(new Set(firstRefresh).size, 51);
+  assert.equal(new Set(secondRefresh).size, 51);
+  assert.notDeepEqual(secondRefresh, firstRefresh);
+});
+
+test("refresh keys reshuffle images and overflow agents retain different accent colors", () => {
+  assert.notEqual(
+    createAdminIngestImageRefreshKey(1_000, 11),
+    createAdminIngestImageRefreshKey(1_000, 12)
+  );
+
+  const accentBackgrounds = Array.from({ length: 120 }, (_, index) => (
+    getAdminIngestAgentAccentStyle(index, "refresh-a").background
+  ));
+  assert.equal(new Set(accentBackgrounds).size, 120);
 });
 
 test("stable selection remains fixed for a slot and day across render order", () => {
@@ -102,7 +145,10 @@ test("admin ingest surfaces use the shared library without touching model routes
   assert.match(shell, /assetSlotKey=\{`agent:\$\{agent\.id\}`\}/);
   assert.match(shell, /assetSlotKey=\{`agent:\$\{messageAgent\.id\}`\}/);
   assert.match(avatar, /IngestStableLibraryImage/);
+  assert.match(avatar, /selectionIndex=\{assetSelectionIndex\}/);
+  assert.match(shell, /assetSelectionIndex=\{agentVisualIndexById\.get\(agent\.id\)\}/);
   assert.match(exeList, /assetSlotKey=\{`agent:\$\{agent\.id\}`\}/);
+  assert.match(exeList, /assetSelectionIndex=\{agentVisualIndexById\.get\(agent\.id\)\}/);
   assert.match(exeSidebar, /slotKey=\{`rail:\$\{railKey\}`\}/);
   assert.doesNotMatch(shell, /doubao-ingest-client|deepseek-ingest-client/);
 });

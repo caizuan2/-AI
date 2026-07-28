@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "revision": "2026-07-28-001",
-  "rotation": "daily",
+  "revision": "2026-07-28-002",
+  "rotation": "refresh",
   "timeZone": "Asia/Shanghai",
   "assets": [
     {
@@ -108,6 +108,156 @@
       "id": "mascot-823b455ab5f0",
       "src": "/admin-ingest-media/library/xiaodong-mascot-823b455ab5f0.webp",
       "enabled": true
+    },
+    {
+      "id": "mascot-94b3ae88221d",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-94b3ae88221d.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-baf5e49351b2",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-baf5e49351b2.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-c7709b472de2",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-c7709b472de2.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-27b8a4c35cd9",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-27b8a4c35cd9.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-9e3283abe667",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-9e3283abe667.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-c9493ac3cb14",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-c9493ac3cb14.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-8a607390c9aa",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-8a607390c9aa.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-014deb306216",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-014deb306216.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-a67739b10ca8",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-a67739b10ca8.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-a1d5d4e52c2a",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-a1d5d4e52c2a.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-07f2eae0d0ea",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-07f2eae0d0ea.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-4a5094b0e53e",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-4a5094b0e53e.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-d075796737e6",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-d075796737e6.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-f9b759f82b57",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-f9b759f82b57.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-407f3f48a95f",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-407f3f48a95f.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-f922d38a89bf",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-f922d38a89bf.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-1afadda85237",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-1afadda85237.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-88bcd28d27f2",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-88bcd28d27f2.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-1fe7b8cc5117",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-1fe7b8cc5117.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-2f8c780d981b",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-2f8c780d981b.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-7d8ae15ae051",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-7d8ae15ae051.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-03f5254b4a56",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-03f5254b4a56.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-52cb702c640d",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-52cb702c640d.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-1db0de136503",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-1db0de136503.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-97b685b5f6b2",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-97b685b5f6b2.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-bcada094272f",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-bcada094272f.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-65abe28dfeb5",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-65abe28dfeb5.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-03c28de99c3a",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-03c28de99c3a.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-ee0346cf30df",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-ee0346cf30df.webp",
+      "enabled": true
+    },
+    {
+      "id": "mascot-951b01476e5a",
+      "src": "/admin-ingest-media/library/xiaodong-mascot-951b01476e5a.webp",
+      "enabled": true
     }
   ],
   "pools": {
@@ -178,7 +328,37 @@
       "mascot-bf8b552f7b5d",
       "mascot-cbe1fd5abb5b",
       "mascot-3909e12a4a4e",
-      "mascot-823b455ab5f0"
+      "mascot-823b455ab5f0",
+      "mascot-94b3ae88221d",
+      "mascot-baf5e49351b2",
+      "mascot-c7709b472de2",
+      "mascot-27b8a4c35cd9",
+      "mascot-9e3283abe667",
+      "mascot-c9493ac3cb14",
+      "mascot-8a607390c9aa",
+      "mascot-014deb306216",
+      "mascot-a67739b10ca8",
+      "mascot-a1d5d4e52c2a",
+      "mascot-07f2eae0d0ea",
+      "mascot-4a5094b0e53e",
+      "mascot-d075796737e6",
+      "mascot-f9b759f82b57",
+      "mascot-407f3f48a95f",
+      "mascot-f922d38a89bf",
+      "mascot-1afadda85237",
+      "mascot-88bcd28d27f2",
+      "mascot-1fe7b8cc5117",
+      "mascot-2f8c780d981b",
+      "mascot-7d8ae15ae051",
+      "mascot-03f5254b4a56",
+      "mascot-52cb702c640d",
+      "mascot-1db0de136503",
+      "mascot-97b685b5f6b2",
+      "mascot-bcada094272f",
+      "mascot-65abe28dfeb5",
+      "mascot-03c28de99c3a",
+      "mascot-ee0346cf30df",
+      "mascot-951b01476e5a"
     ]
   }
 }

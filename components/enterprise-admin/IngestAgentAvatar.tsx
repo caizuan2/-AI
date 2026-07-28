@@ -15,6 +15,7 @@ type IngestAgentAvatarProps = {
   size?: keyof typeof avatarSizeClasses;
   className?: string;
   assetSlotKey?: string;
+  assetSelectionIndex?: number;
 };
 
 export function IngestAgentAvatar({
@@ -22,6 +23,7 @@ export function IngestAgentAvatar({
   size = "md",
   className = "",
   assetSlotKey,
+  assetSelectionIndex,
 }: IngestAgentAvatarProps) {
   const baseClasses = [
     "relative flex shrink-0 items-center justify-center overflow-hidden border border-white/80 shadow-sm",
@@ -52,6 +54,7 @@ export function IngestAgentAvatar({
           className="h-full w-full object-cover"
           fallback={fallback}
           size={size === "lg" ? 176 : 96}
+          selectionIndex={assetSelectionIndex}
         />
       </span>
     );
