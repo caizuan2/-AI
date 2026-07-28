@@ -1,4 +1,4 @@
-const { app, BrowserView, BrowserWindow, Menu, ipcMain, shell } = require("electron");
+const { app, BrowserView, BrowserWindow, Menu, ipcMain, shell, systemPreferences } = require("electron");
 const fs = require("fs");
 const http = require("http");
 const https = require("https");
@@ -21,13 +21,17 @@ function readBuildMetadata() {
     return {
       version: typeof value.version === "string" ? value.version : "0.0.0",
       build: Number.isInteger(value.build) ? value.build : 0,
-      webReleaseSha: typeof value.webReleaseSha === "string" ? value.webReleaseSha : ""
+      webReleaseSha: typeof value.webReleaseSha === "string" ? value.webReleaseSha : "",
+      webUrl: typeof value.webUrl === "string" ? value.webUrl : "",
+      platform: value.platform === "macos" ? "macos" : "exe"
     };
   } catch {
     return {
       version: "0.0.0",
       build: 0,
-      webReleaseSha: ""
+      webReleaseSha: "",
+      webUrl: "",
+      platform: process.platform === "darwin" ? "macos" : "exe"
     };
   }
 }
@@ -80,7 +84,7 @@ function normalizeTargetUrl(candidate) {
     }
 
     url.searchParams.set("app", "ingest-admin");
-    url.searchParams.set("platform", "exe");
+    url.searchParams.set("platform", BUILD_METADATA.platform);
     url.searchParams.set("shellVersion", BUILD_METADATA.version);
     url.searchParams.set("shellBuild", String(BUILD_METADATA.build));
     if (BUILD_METADATA.webReleaseSha) {
@@ -94,7 +98,7 @@ function normalizeTargetUrl(candidate) {
 }
 
 function getAppUrl() {
-  return normalizeTargetUrl(process.env.ADMIN_INGEST_APP_URL);
+  return normalizeTargetUrl(process.env.ADMIN_INGEST_APP_URL || BUILD_METADATA.webUrl);
 }
 
 function getTargetPort(targetUrl) {
@@ -160,21 +164,41 @@ function sendUpdateProgress(webContents, detail) {
 }
 
 function getInstallerFileName(fileName, targetUrl) {
+  const installerExtension = process.platform === "darwin" ? "dmg" : "exe";
   const inputName = typeof fileName === "string" ? fileName.trim() : "";
-  if (/^[^<>:"/\\|?*]+\.exe$/i.test(inputName)) {
+  if (new RegExp(`^[^<>:"/\\\\|?*]+\\.${installerExtension}$`, "i").test(inputName)) {
     return inputName;
   }
 
   try {
     const urlName = decodeURIComponent(new URL(targetUrl).pathname.split("/").filter(Boolean).pop() || "");
-    if (/^[^<>:"/\\|?*]+\.exe$/i.test(urlName)) {
+    if (new RegExp(`^[^<>:"/\\\\|?*]+\\.${installerExtension}$`, "i").test(urlName)) {
       return urlName;
     }
   } catch {
     // Fall through to the branded fallback.
   }
 
+  if (process.platform === "darwin") {
+    return "小董AI.dmg";
+  }
+
   return "小董AI.exe";
+}
+
+async function requestMacMicrophonePermission() {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  const currentStatus = systemPreferences.getMediaAccessStatus("microphone");
+  if (currentStatus === "not-determined") {
+    const granted = await systemPreferences.askForMediaAccess("microphone");
+    log("macOS microphone permission", granted ? "granted" : "denied");
+    return;
+  }
+
+  log("macOS microphone permission", currentStatus);
 }
 
 function downloadHttpFile(targetUrl, destinationPath, onProgress, redirectCount = 0) {
@@ -929,7 +953,8 @@ ipcMain.handle("admin-ingest:download-update", async (event, payload) => {
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await requestMacMicrophonePermission();
   createWindow();
 
   app.on("activate", () => {
