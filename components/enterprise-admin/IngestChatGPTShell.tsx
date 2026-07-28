@@ -2510,7 +2510,7 @@ export function IngestChatGPTShell({
                   aria-label={activeConversation
                     ? `当前 Agent：${activeAgent.name}，当前对话：${activeConversation.title}`
                     : `当前 Agent：${activeAgent.name}`}
-                  className="w-full max-w-[164px] overflow-hidden rounded-[13px] border border-[#e6e0d7] bg-[#fffaf3] px-2.5 py-1 shadow-[0_4px_12px_rgba(55,45,35,0.08)]"
+                  className="w-full max-w-[164px] overflow-hidden rounded-[13px] border border-[#c9f0eb] bg-[#e9fbf9] px-2.5 py-1 shadow-[0_4px_12px_rgba(23,157,143,0.1)]"
                   title={activeConversation
                     ? `${activeAgent.name} · ${activeConversation.title}`
                     : activeAgent.name}
