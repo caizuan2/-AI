@@ -139,6 +139,21 @@ test("chat-only UI hides advanced navigation and knowledge save without removing
     "空闲发送按钮应缩小为 36px，生成中的停止按钮保持原尺寸"
   );
   assert.match(shell, /<SendHorizontal className="h-3\.5 w-3\.5"/);
+  assert.match(
+    shell,
+    /if \(!input\.trim\(\) && uploadedFiles\.length === 0\) \{[\s\S]*?textarea\.style\.height = "44px";[\s\S]*?textarea\.style\.overflowY = "hidden";[\s\S]*?textarea\.scrollTop = 0;/,
+    "空输入必须立即恢复 44px 单行高度，不能保留上一条多行提示词的高度"
+  );
+  assert.match(
+    shell,
+    /\}, \[activeConversationId, input, uploadedFiles\.length\]\);/,
+    "切换对话时也必须重新校正输入框高度"
+  );
+  assert.match(
+    shell,
+    /rounded-\[24px\] border border-\[#c9f0eb\] bg-\[#e9fbf9\] px-4 py-3 text-\[#174c47\] shadow-sm/,
+    "管理员投喂版自己发送的文字气泡必须使用 Logo 同色系浅绿色"
+  );
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(actions, /title="复制"/);
   assert.match(actions, /title=\{isParsing \? "生成中" : "重新生成"\}/);
