@@ -56,6 +56,13 @@ export type DoubaoAdminIngestProgressEvent =
       attempt: number;
     }
   | {
+      type: "reasoning_activity";
+      phase: "visible" | "continuation";
+      model?: string;
+      responseId?: string;
+      reasoningChars: number;
+    }
+  | {
       type: "visible_reply";
       replyMarkdown: string;
       model: string;
@@ -743,6 +750,9 @@ type DoubaoStreamAccumulator = {
   model: string;
   created?: number;
   content: string;
+  reasoningChars: number;
+  firstReasoningAtMs?: number;
+  firstContentAtMs?: number;
   usage?: unknown;
   receivedEvent: boolean;
   eventCount: number;
@@ -862,7 +872,15 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
     accumulator.finishReason = finishReason;
   }
 
+  if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) {
+    accumulator.firstReasoningAtMs ??= Date.now();
+    accumulator.reasoningChars += delta.reasoning_content.length;
+  }
+
   if (typeof delta.content === "string") {
+    if (delta.content.length > 0) {
+      accumulator.firstContentAtMs ??= Date.now();
+    }
     accumulator.content += delta.content;
   }
 }
@@ -917,6 +935,11 @@ async function collectDoubaoSseCompletion(input: {
     model?: string;
     responseId?: string;
   }) => void;
+  onReasoningActivity?: (event: {
+    reasoningChars: number;
+    model?: string;
+    responseId?: string;
+  }) => void;
 }) {
   const reader = input.response.body?.getReader();
 
@@ -932,6 +955,7 @@ async function collectDoubaoSseCompletion(input: {
     responseId: "",
     model: "",
     content: "",
+    reasoningChars: 0,
     receivedEvent: false,
     eventCount: 0,
     done: false
@@ -972,8 +996,17 @@ async function collectDoubaoSseCompletion(input: {
 
       for (const block of blocks) {
         const contentLengthBeforeParse = accumulator.content.length;
+        const reasoningCharsBeforeParse = accumulator.reasoningChars;
         parseDoubaoSseEvent(block, accumulator);
         const delta = accumulator.content.slice(contentLengthBeforeParse);
+
+        if (accumulator.reasoningChars > reasoningCharsBeforeParse) {
+          input.onReasoningActivity?.({
+            reasoningChars: accumulator.reasoningChars,
+            model: accumulator.model || undefined,
+            responseId: accumulator.responseId || undefined
+          });
+        }
 
         if (delta) {
           input.onContentDelta?.({
@@ -997,8 +1030,17 @@ async function collectDoubaoSseCompletion(input: {
     if (!accumulator.done && buffer.trim()) {
       const eventCountBeforeParse = accumulator.eventCount;
       const contentLengthBeforeParse = accumulator.content.length;
+      const reasoningCharsBeforeParse = accumulator.reasoningChars;
       parseDoubaoSseEvent(buffer, accumulator);
       const delta = accumulator.content.slice(contentLengthBeforeParse);
+
+      if (accumulator.reasoningChars > reasoningCharsBeforeParse) {
+        input.onReasoningActivity?.({
+          reasoningChars: accumulator.reasoningChars,
+          model: accumulator.model || undefined,
+          responseId: accumulator.responseId || undefined
+        });
+      }
 
       if (delta) {
         input.onContentDelta?.({
@@ -1108,7 +1150,18 @@ async function collectDoubaoSseCompletion(input: {
         content: accumulator.content
       }
     }],
-    usage: accumulator.usage
+    usage: accumulator.usage,
+    doubao_stream_diagnostics: {
+      reasoning_chars: accumulator.reasoningChars,
+      first_reasoning_latency_ms: accumulator.firstReasoningAtMs === undefined
+        ? null
+        : accumulator.firstReasoningAtMs - phaseStartedAt,
+      first_content_latency_ms: accumulator.firstContentAtMs === undefined
+        ? null
+        : accumulator.firstContentAtMs - phaseStartedAt,
+      event_count: accumulator.eventCount,
+      finish_reason: accumulator.finishReason ?? null
+    }
   };
 }
 
@@ -1120,10 +1173,16 @@ async function callDoubaoStreaming(payload: {
   temperature: number;
   maxTokens: number;
   signal: AbortSignal;
+  enableThinking?: boolean;
   visiblePrefix?: string;
   onContentDelta?: (event: {
     delta: string;
     replyMarkdown: string;
+    model?: string;
+    responseId?: string;
+  }) => void;
+  onReasoningActivity?: (event: {
+    reasoningChars: number;
     model?: string;
     responseId?: string;
   }) => void;
@@ -1150,9 +1209,15 @@ async function callDoubaoStreaming(payload: {
           model: payload.model,
           messages: payload.messages,
           temperature: payload.temperature,
-          max_tokens: payload.maxTokens,
           stream: true,
-          stream_options: { include_usage: true }
+          stream_options: { include_usage: true },
+          ...(payload.enableThinking
+            ? {
+                thinking: { type: "enabled" as const },
+                reasoning_effort: "low" as const,
+                max_completion_tokens: payload.maxTokens
+              }
+            : { max_tokens: payload.maxTokens })
         }),
         signal: controller.signal,
         cache: "no-store"
@@ -1202,7 +1267,8 @@ async function callDoubaoStreaming(payload: {
       firstEventTimeoutMs: timeouts.firstEventMs,
       idleTimeoutMs: timeouts.idleMs,
       visiblePrefix: payload.visiblePrefix,
-      onContentDelta: payload.onContentDelta
+      onContentDelta: payload.onContentDelta,
+      onReasoningActivity: payload.onReasoningActivity
     });
   } finally {
     payload.signal.removeEventListener("abort", forwardAbort);
@@ -1285,6 +1351,9 @@ async function callDoubaoChatCompletions(input: {
         ]
       : [])
   ];
+  const thinkingPhase = input.phase === "visible" || input.phase === "continuation"
+    ? input.phase
+    : null;
   let retryCount = 0;
   let value: unknown;
 
@@ -1302,7 +1371,17 @@ async function callDoubaoChatCompletions(input: {
           temperature: input.temperature ?? 0.7,
           maxTokens: input.maxTokens ?? 6000,
           signal: input.signal,
+          enableThinking: thinkingPhase !== null,
           visiblePrefix: input.visiblePrefix,
+          onReasoningActivity: thinkingPhase
+            ? (event) => {
+                input.onProgressEvent?.({
+                  type: "reasoning_activity",
+                  phase: thinkingPhase,
+                  ...event
+                });
+              }
+            : undefined,
           onContentDelta: input.phase === "visible"
             || input.phase === "continuation"
             ? (event) => {
@@ -1372,6 +1451,11 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = typeof record.model === "string" ? record.model.trim() : "";
   const finishReason = typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason.trim() : "";
+  const streamDiagnostics = record.doubao_stream_diagnostics
+    && typeof record.doubao_stream_diagnostics === "object"
+    && !Array.isArray(record.doubao_stream_diagnostics)
+    ? record.doubao_stream_diagnostics as Record<string, unknown>
+    : {};
 
   if (!actualModel) {
     throw new DoubaoIngestError(
@@ -1398,7 +1482,11 @@ function parseDoubaoPayload(payload: unknown, fallbackModel: string) {
     rawResponseType: normalized.rawResponseType,
     normalized: normalized.normalized,
     parserUsed: normalized.parserUsed,
-    finishReason
+    finishReason,
+    reasoningChars: readNumber(streamDiagnostics.reasoning_chars) ?? 0,
+    firstReasoningLatencyMs: readNumber(streamDiagnostics.first_reasoning_latency_ms),
+    firstContentLatencyMs: readNumber(streamDiagnostics.first_content_latency_ms),
+    streamEventCount: readNumber(streamDiagnostics.event_count) ?? 0
   };
 }
 
@@ -1800,7 +1888,11 @@ async function runDoubaoVisiblePhase(input: {
     continuationCount: responses.length - 1,
     usage: mergeDoubaoUsage(...responses.map((item) => item.usage)),
     responseLatency: responses.reduce((total, item) => total + item.responseLatency, 0),
-    retryCount: responses.reduce((total, item) => total + item.retryCount, 0)
+    retryCount: responses.reduce((total, item) => total + item.retryCount, 0),
+    reasoningChars: responses.reduce((total, item) => total + item.reasoningChars, 0),
+    firstReasoningLatencyMs: responses[0]?.firstReasoningLatencyMs,
+    firstContentLatencyMs: responses[0]?.firstContentLatencyMs,
+    streamEventCount: responses.reduce((total, item) => total + item.streamEventCount, 0)
   };
 }
 
@@ -2024,6 +2116,12 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:responseLatency:${visiblePhase.responseLatency + (metadataResponse?.responseLatency ?? 0)}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
+        "doubao:thinkingEnabled:true",
+        `doubao:reasoningActivityChars:${visiblePhase.reasoningChars}`,
+        `doubao:firstReasoningLatencyMs:${visiblePhase.firstReasoningLatencyMs ?? -1}`,
+        `doubao:firstContentLatencyMs:${visiblePhase.firstContentLatencyMs ?? -1}`,
+        `doubao:streamEventCount:${visiblePhase.streamEventCount}`,
+        `doubao:visibleFinishReason:${visiblePhase.final.finishReason || "none"}`,
         "doubao:twoPhaseOutput:true",
         `doubao:visibleContinuationCount:${visiblePhase.continuationCount}`,
         `doubao:metadataDeferred:${input.deferMetadata ? "true" : "false"}`,
