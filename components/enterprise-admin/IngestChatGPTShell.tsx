@@ -2510,17 +2510,17 @@ export function IngestChatGPTShell({
                   aria-label={activeConversation
                     ? `当前 Agent：${activeAgent.name}，当前对话：${activeConversation.title}`
                     : `当前 Agent：${activeAgent.name}`}
-                  className="w-full max-w-[180px] overflow-hidden rounded-xl border border-[#e8e5df] bg-[#fffdfa] px-4 py-2 shadow-[0_2px_10px_rgba(55,45,35,0.06)]"
+                  className="w-full max-w-[164px] overflow-hidden rounded-[13px] border border-[#e6e0d7] bg-[#fffaf3] px-2.5 py-1 shadow-[0_4px_12px_rgba(55,45,35,0.08)]"
                   title={activeConversation
                     ? `${activeAgent.name} · ${activeConversation.title}`
                     : activeAgent.name}
                 >
                   <span className="block min-w-0">
-                    <span className="block truncate text-center text-[14px] font-semibold leading-[18px] tracking-[0.01em] text-[#282521]">
+                    <span className="mx-auto block w-fit max-w-full truncate rounded-[9px] border border-[#ebe5dc] bg-white px-2.5 py-0.5 text-center text-[13px] font-semibold leading-[16px] tracking-[0.01em] text-[#282521] shadow-[0_2px_6px_rgba(55,45,35,0.1)]">
                       {activeAgent.name}
                     </span>
                     {activeConversation ? (
-                      <span className="mt-0.5 block truncate text-center text-[11px] font-normal leading-[15px] tracking-[0.02em] text-[#817c74]">
+                      <span className="mt-0.5 block truncate text-center text-[10px] font-normal leading-[13px] tracking-[0.02em] text-[#817c74]">
                         {activeConversation.title}
                       </span>
                     ) : null}
