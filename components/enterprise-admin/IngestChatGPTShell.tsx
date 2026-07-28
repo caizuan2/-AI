@@ -1073,6 +1073,14 @@ export function IngestChatGPTShell({
     () => new Map(agents.map((agent) => [agent.id, agent])),
     [agents]
   );
+  const agentVisualIndexById = useMemo(
+    () => new Map(
+      [...agents]
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map((agent, index) => [agent.id, index])
+    ),
+    [agents]
+  );
   const hasMessages = messages.length > 0;
   const isExpertMarketplace = activeRailKey === "experts";
   const shouldShowScrollToBottom = !isExpertMarketplace && (hasMessages || isParsing) && !isNearBottom;
@@ -2464,7 +2472,12 @@ export function IngestChatGPTShell({
                   >
                     {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
                     <div className="flex min-h-[56px] items-center gap-3">
-                      <IngestAgentAvatar profile={agentProfile} size="sm" assetSlotKey={`agent:${agent.id}`} />
+                      <IngestAgentAvatar
+                        profile={agentProfile}
+                        size="sm"
+                        assetSlotKey={`agent:${agent.id}`}
+                        assetSelectionIndex={agentVisualIndexById.get(agent.id)}
+                      />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
                           <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#202020]"].join(" ")}>{agent.name}</span>
@@ -2666,6 +2679,7 @@ export function IngestChatGPTShell({
                     profile={activeDisplayProfile}
                     canIngest={canIngest}
                     assetSlotKey={`agent:${activeAgent.id}`}
+                    assetSelectionIndex={agentVisualIndexById.get(activeAgent.id)}
                     onOpenExperts={() => onRailChange?.("experts")}
                   />
                   <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
@@ -2876,7 +2890,12 @@ export function IngestChatGPTShell({
                         : "px-1 py-3 text-[#303030]"
                     ].join(" ")}>
                       <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
-                        <IngestAgentAvatar profile={messageProfile} size="xs" assetSlotKey={`agent:${messageAgent.id}`} />
+                        <IngestAgentAvatar
+                          profile={messageProfile}
+                          size="xs"
+                          assetSlotKey={`agent:${messageAgent.id}`}
+                          assetSelectionIndex={agentVisualIndexById.get(messageAgent.id)}
+                        />
                         <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
                       </div>
                       <IngestBehaviorTracker
