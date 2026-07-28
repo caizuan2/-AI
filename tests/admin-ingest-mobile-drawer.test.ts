@@ -96,7 +96,7 @@ assert.match(
 assert.ok(mobileHeaderCardSource, "管理员 APK 顶部 Agent 卡片应存在");
 assert.match(
   mobileHeaderCardSource,
-  /rounded-\[13px\] border border-\[#e6e0d7\] bg-\[#fffaf3\] px-2\.5 py-1[\s\S]*shadow-\[0_4px_12px_rgba\(55,45,35,0\.08\)\]/
+  /rounded-\[13px\] border border-\[#c9f0eb\] bg-\[#e9fbf9\] px-2\.5 py-1[\s\S]*shadow-\[0_4px_12px_rgba\(23,157,143,0\.1\)\]/
 );
 assert.doesNotMatch(
   mobileHeaderCardSource,
