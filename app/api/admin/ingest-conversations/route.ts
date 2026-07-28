@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth";
 import {
   AdminIngestConversationSyncRevisionConflictError,
+  readAdminIngestConversationRuntimeStatusSnapshot,
   readAdminIngestConversationSyncSnapshot,
   writeAdminIngestConversationSyncState
 } from "@/lib/enterprise/admin-ingest-conversation-sync-store";
+import {
+  mergeAdminIngestConversationRuntimeStatusMaps
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import {
   createAdminIngestHistoryScope,
   matchesAdminIngestHistoryScope
@@ -79,17 +83,26 @@ function readBaseRevision(value: unknown) {
 export async function GET() {
   try {
     const { actor, access } = await requireAdminIngestChatAccess();
-    const result = await readAdminIngestConversationSyncSnapshot(actor.id);
+    const [result, runtimeResult] = await Promise.all([
+      readAdminIngestConversationSyncSnapshot(actor.id),
+      readAdminIngestConversationRuntimeStatusSnapshot(actor.id)
+    ]);
     const historyScope = createAdminIngestHistoryScope(actor.id);
     const state = normalizeAdminIngestConversationSyncSnapshot(result.state, {
       includeDrafts: access.accessTier === "full_ingest"
     });
+    state.conversationRuntimeStatusById =
+      mergeAdminIngestConversationRuntimeStatusMaps(
+        state.conversationRuntimeStatusById,
+        runtimeResult.statusById
+      );
 
     return NextResponse.json({
       ok: true,
       success: true,
       historyScope,
       revision: result.revision,
+      runtimeRevision: runtimeResult.revision,
       state
     }, {
       headers: {
@@ -152,15 +165,23 @@ export async function PUT(request: Request) {
         includeDrafts: access.accessTier === "full_ingest"
       }
     );
+    const runtimeResult =
+      await readAdminIngestConversationRuntimeStatusSnapshot(actor.id);
     const state = normalizeAdminIngestConversationSyncSnapshot(storedState, {
       includeDrafts: access.accessTier === "full_ingest"
     });
+    state.conversationRuntimeStatusById =
+      mergeAdminIngestConversationRuntimeStatusMaps(
+        state.conversationRuntimeStatusById,
+        runtimeResult.statusById
+      );
 
     return NextResponse.json({
       ok: true,
       success: true,
       historyScope,
       revision: storedState.revision,
+      runtimeRevision: runtimeResult.revision,
       state
     }, {
       headers: {

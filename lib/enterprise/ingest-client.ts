@@ -177,6 +177,7 @@ interface GptIngestResponse {
   sourceResponseId?: string | null;
   metadataResponseId?: string | null;
   metadataState?: "ready" | "unavailable";
+  runtimeRevision?: number | null;
   trainingRecord?: AdminTrainingRecordResponse | null;
   records?: AdminTrainingRecordResponse[];
   provider: IngestModelProvider;
@@ -1381,6 +1382,7 @@ export async function sendCoreIngest(input: {
   platform?: IngestPlatform;
   streaming?: IngestStreamingOptions;
   requestId?: string;
+  requestStartedAt?: number;
   conversationId?: string;
   knowledgeBaseId?: string | null;
   contextSummary?: string;
@@ -1479,6 +1481,7 @@ export async function sendCoreIngest(input: {
         sourceApp: "admin_ingest",
         ...agentKnowledgeScope,
         conversationId: input.conversationId,
+        requestStartedAt: input.requestStartedAt,
         knowledgeBaseId: input.knowledgeBaseId ?? agentKnowledgeScope.knowledgeBaseId,
         knowledgeVersion: "v1",
         expertId: input.agent.expertId ?? null,
@@ -1712,6 +1715,7 @@ export async function sendCoreIngest(input: {
       fallbackUsed: normalizedData.fallbackUsed === true,
       modelDiagnostics: normalizedData.modelDiagnostics,
       responseId: normalizedData.responseId,
+      runtimeRevision: normalizedData.runtimeRevision,
       usage: normalizedData.usage,
       gptProof: normalizedData.gptProof,
       diagnostics: normalizedData.diagnostics ?? [],
@@ -1761,6 +1765,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
   userId?: string | null;
   platform?: IngestPlatform;
   signal?: AbortSignal;
+  preserveInitialMetadataProfile?: boolean;
 }) {
   const jobId = input.draft.jobId?.trim() ?? "";
   const sourceResponseId = input.sourceResponseId.trim();
@@ -1809,6 +1814,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
       syncTarget: [...ingestSyncTarget],
       modelProvider: "doubao-pro",
       modelMode: "highest",
+      deferMetadata: input.preserveInitialMetadataProfile === true,
       preferredModel: doubaoOption.defaultModel,
       selectedModelLabel: doubaoOption.label,
       modelDisplayName: doubaoOption.label
