@@ -1,9 +1,9 @@
 {
-  "version": "1.0.26",
-  "build": 126,
-  "minimum_build": 126,
+  "version": "1.0.27",
+  "build": 127,
+  "minimum_build": 127,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.26-build.126",
+  "release_tag": "release/admin-ingest-1.0.27-build.127",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,9 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "优化投喂端移动顶部 Agent 卡片、蓝色发送气泡、Agent 分割线与未启用入口显示",
-    "投喂端 APK 新增可拖动历史提示词圆圈，可查看并定位当前对话最近提示词",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.26 Build 126",
+    "新增小董AI投喂端独立 iOS IPA 与 macOS Universal DMG 打包、签名、公证流水线",
+    "Apple 端麦克风录音复用既有云转写协议，并保持 Web、EXE、APK 现有语音链路不变",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.27 Build 127",
     "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
