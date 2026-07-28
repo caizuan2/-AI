@@ -6,7 +6,8 @@ function readBuildMetadata() {
   const fallback = {
     version: "0.0.0",
     build: 0,
-    webReleaseSha: ""
+    webReleaseSha: "",
+    platform: process.platform === "darwin" ? "macos" : "exe"
   };
 
   try {
@@ -26,6 +27,7 @@ contextBridge.exposeInMainWorld("aiKnowledge", {
   appVersion: buildMetadata.version,
   appBuild: buildMetadata.build,
   webReleaseSha: buildMetadata.webReleaseSha,
+  platform: buildMetadata.platform,
   downloadAndInstallUpdate: (payload) => ipcRenderer.invoke("admin-ingest:download-update", payload),
   onUpdateDownloadProgress: (callback) => {
     if (typeof callback !== "function") {

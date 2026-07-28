@@ -24,7 +24,13 @@ export const defaultAdminIngestPlatformContext: AdminIngestPlatformContext = {
 };
 
 export function normalizeAdminIngestPlatform(value?: string | null): AdminIngestPlatform | null {
-  if (value === "web" || value === "exe" || value === "apk") {
+  if (
+    value === "web"
+    || value === "exe"
+    || value === "apk"
+    || value === "ios"
+    || value === "macos"
+  ) {
     return value;
   }
 
@@ -35,7 +41,9 @@ export function getAdminIngestPlatformLabel(platform: AdminIngestPlatform) {
   const labels: Record<AdminIngestPlatform, string> = {
     web: "Web",
     exe: "EXE",
-    apk: "APK"
+    apk: "APK",
+    ios: "iOS",
+    macos: "macOS"
   };
 
   return labels[platform];
@@ -57,6 +65,27 @@ export function resolveAdminIngestPlatformContext(options: {
   }
 
   const userAgent = options.userAgent?.toLowerCase() ?? "";
+
+  if (
+    userAgent.includes("admin-ingest-ios")
+    || userAgent.includes("iphone")
+    || userAgent.includes("ipad")
+  ) {
+    return {
+      ...defaultAdminIngestPlatformContext,
+      platform: "ios"
+    };
+  }
+
+  if (
+    userAgent.includes("admin-ingest-macos")
+    || (userAgent.includes("macintosh") && userAgent.includes("electron"))
+  ) {
+    return {
+      ...defaultAdminIngestPlatformContext,
+      platform: "macos"
+    };
+  }
 
   if (userAgent.includes("electron") || userAgent.includes("admin-ingest-exe")) {
     return {

@@ -7,6 +7,9 @@ node_modules/
 out/
 dist/
 dist-app/
+ios-admin-ingest/
+artifacts/admin-ingest/ios/
+artifacts/admin-ingest/macos/
 android/app/build/
 public/downloads/
 public/uploads/
@@ -36,5 +39,8 @@ pnpm-debug.log*
 *.pfx
 *.mobileprovision
 *.provisionprofile
+*.ipa
+*.dmg
+*.xcarchive
 
 test-license.ps1

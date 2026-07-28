@@ -1,0 +1,29 @@
+appId: com.aiknowledge.ingestadmin.desktop
+productName: 小董AI
+electronVersion: 42.3.3
+directories:
+  output: dist-app/admin-ingest/macos
+files:
+  - electron/admin-ingest/**
+  - package.json
+extraMetadata:
+  main: electron/admin-ingest/main.js
+mac:
+  category: public.app-category.productivity
+  icon: assets/admin-ingest/web-logo.png
+  target:
+    - target: dmg
+      arch:
+        - universal
+  artifactName: "admin-ingest-${version}-universal.${ext}"
+  hardenedRuntime: true
+  entitlements: electron/admin-ingest/entitlements.macos.plist
+  entitlementsInherit: electron/admin-ingest/entitlements.macos.inherit.plist
+  notarize: true
+  extendInfo:
+    NSMicrophoneUsageDescription: "小董AI需要使用麦克风录制投喂内容并转换为文字。"
+    NSCameraUsageDescription: "小董AI需要使用相机拍摄并上传投喂资料。"
+    NSPhotoLibraryUsageDescription: "小董AI需要访问照片以选择并上传投喂资料。"
+dmg:
+  title: "小董AI ${version}"
+  sign: true

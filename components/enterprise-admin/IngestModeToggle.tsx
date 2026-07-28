@@ -49,6 +49,12 @@ import {
   type AdminIngestPlatformContext
 } from "@/lib/enterprise/admin-ingest-platform";
 import {
+  isAdminIngestApplePlatform,
+  startAdminIngestAppleVoiceRecording,
+  supportsAdminIngestAppleVoiceRecording,
+  type AdminIngestAppleVoiceController
+} from "@/lib/enterprise/admin-ingest-apple-voice";
+import {
   createAgentConversation,
   deriveConversationTitle,
   type IngestAgentConversation
@@ -777,6 +783,7 @@ export function IngestModeToggle({
   registeredAccount = ""
 }: IngestModeToggleProps = {}) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const appleVoiceRecorderRef = useRef<AdminIngestAppleVoiceController | null>(null);
   const nativeVoiceTranscriptionAbortControllerRef = useRef<AbortController | null>(null);
   const nativeVoiceSnapshotAbortControllerRef = useRef<AbortController | null>(null);
   const nativeVoiceSnapshotPendingRef = useRef<NativeSpeechEventDetail | null>(null);
@@ -2274,6 +2281,8 @@ export function IngestModeToggle({
     const speechWindow = window as SpeechWindow;
     const SpeechRecognition = speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
     const hasNativeSpeech = typeof speechWindow.AndroidBridge?.startSpeechRecognition === "function";
+    const hasAppleVoice = isAdminIngestApplePlatform(platformContext.platform)
+      && supportsAdminIngestAppleVoiceRecording();
     const showNativeVoiceError = (message: string) => {
       setVoiceState((current) => ({
         ...current,
@@ -2602,6 +2611,7 @@ export function IngestModeToggle({
       }
 
       if (detail.state === "audio") {
+        appleVoiceRecorderRef.current = null;
         void transcribeNativeAudio(detail);
         return;
       }
@@ -2620,6 +2630,7 @@ export function IngestModeToggle({
       }
 
       if (detail.state === "cancelled") {
+        appleVoiceRecorderRef.current = null;
         const preservedTranscript = preserveNativeVoiceInput();
         clearNativeVoiceSession();
         setVoiceState((current) => ({
@@ -2638,6 +2649,7 @@ export function IngestModeToggle({
       }
 
       if (detail.state === "error") {
+        appleVoiceRecorderRef.current = null;
         const message = detail.error?.trim() || "手机语音识别失败，请检查麦克风权限后重试。";
         const preservedTranscript = preserveNativeVoiceInput();
         clearNativeVoiceSession();
@@ -2667,7 +2679,7 @@ export function IngestModeToggle({
 
     setVoiceState((current) => ({
       ...current,
-      isVoiceSupported: Boolean(SpeechRecognition) || hasNativeSpeech
+      isVoiceSupported: Boolean(SpeechRecognition) || hasNativeSpeech || hasAppleVoice
     }));
     window.addEventListener(ADMIN_INGEST_NATIVE_SPEECH_EVENT, handleNativeSpeechEvent);
 
@@ -2679,9 +2691,11 @@ export function IngestModeToggle({
       nativeVoiceTranscriptionAbortControllerRef.current?.abort();
       nativeVoiceTranscriptionAbortControllerRef.current = null;
       speechWindow.AndroidBridge?.cancelSpeechRecognition?.();
+      appleVoiceRecorderRef.current?.cancel();
+      appleVoiceRecorderRef.current = null;
       clearNativeVoiceSession();
     };
-  }, []);
+  }, [platformContext.platform]);
 
   useEffect(() => {
     nativeVoiceSnapshotGenerationRef.current += 1;
@@ -2706,6 +2720,8 @@ export function IngestModeToggle({
       )
     ) {
       (window as SpeechWindow).AndroidBridge?.cancelSpeechRecognition?.();
+      appleVoiceRecorderRef.current?.cancel();
+      appleVoiceRecorderRef.current = null;
       nativeVoiceBaseInputRef.current = "";
       nativeVoiceLastMeaningfulTranscriptRef.current = "";
       nativeVoiceSessionIdRef.current = "";
@@ -6008,6 +6024,64 @@ export function IngestModeToggle({
         nativeVoiceHistoryScopeRef.current = "";
         nativeVoiceConversationScopeRef.current = "";
         const message = "无法启动手机麦克风，请检查麦克风权限后重试。";
+
+        setVoiceState((current) => ({
+          ...current,
+          isVoiceSupported: true,
+          isRecording: false,
+          error: message
+        }));
+        setErrorMessage(message);
+        setNoticeMessage(message);
+        showActionToast({
+          type: "warning",
+          title: "语音输入不可用",
+          description: message
+        });
+      }
+      return;
+    }
+
+    if (isAdminIngestApplePlatform(platformContext.platform)) {
+      if (voiceState.isRecording && appleVoiceRecorderRef.current) {
+        setNoticeMessage("正在结束录音并准备转写...");
+        appleVoiceRecorderRef.current.stop();
+        return;
+      }
+
+      try {
+        const sessionId = `apple-voice-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        nativeVoiceSnapshotGenerationRef.current += 1;
+        nativeVoiceSnapshotPendingRef.current = null;
+        nativeVoiceSnapshotAbortControllerRef.current?.abort();
+        nativeVoiceSnapshotAbortControllerRef.current = null;
+        nativeVoiceTranscriptionAbortControllerRef.current?.abort();
+        nativeVoiceTranscriptionAbortControllerRef.current = null;
+        nativeVoiceBaseInputRef.current = input;
+        nativeVoiceLastMeaningfulTranscriptRef.current = "";
+        nativeVoiceSessionIdRef.current = sessionId;
+        nativeVoiceHistoryScopeRef.current = historyScopeRef.current;
+        nativeVoiceConversationScopeRef.current = [
+          historyScopeRef.current,
+          activeAgentIdRef.current,
+          activeConversationIdRef.current
+        ].join("|");
+        setErrorMessage("");
+        setNoticeMessage("正在打开麦克风...");
+        appleVoiceRecorderRef.current = await startAdminIngestAppleVoiceRecording({
+          sessionId,
+          eventName: ADMIN_INGEST_NATIVE_SPEECH_EVENT
+        });
+      } catch (error) {
+        appleVoiceRecorderRef.current = null;
+        nativeVoiceBaseInputRef.current = "";
+        nativeVoiceLastMeaningfulTranscriptRef.current = "";
+        nativeVoiceSessionIdRef.current = "";
+        nativeVoiceHistoryScopeRef.current = "";
+        nativeVoiceConversationScopeRef.current = "";
+        const message = error instanceof DOMException && error.name === "NotAllowedError"
+          ? "麦克风权限被拒绝，请在系统设置中允许小董AI使用麦克风。"
+          : "无法启动 Apple 设备麦克风，请检查系统权限后重试。";
 
         setVoiceState((current) => ({
           ...current,

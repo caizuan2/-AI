@@ -1,0 +1,148 @@
+name: Admin Ingest Apple Packaging
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: HTTPS production /admin-ingest URL
+        required: true
+        type: string
+      build_ios:
+        description: Build signed iOS IPA
+        required: true
+        default: true
+        type: boolean
+      build_macos:
+        description: Build signed and notarized Universal DMG
+        required: true
+        default: true
+        type: boolean
+      ios_export_method:
+        description: iOS export method
+        required: true
+        default: app-store-connect
+        type: choice
+        options:
+          - app-store-connect
+          - ad-hoc
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    if: ${{ inputs.build_ios }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      ADMIN_INGEST_APP_URL: ${{ inputs.app_url }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      IOS_EXPORT_METHOD: ${{ inputs.ios_export_method }}
+      IOS_SIGNING_STYLE: manual
+      IOS_PROVISIONING_PROFILE: ${{ secrets.ADMIN_INGEST_IOS_PROVISIONING_PROFILE_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Import iOS signing materials
+        env:
+          P12_BASE64: ${{ secrets.ADMIN_INGEST_IOS_DISTRIBUTION_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.ADMIN_INGEST_IOS_DISTRIBUTION_P12_PASSWORD }}
+          PROFILE_BASE64: ${{ secrets.ADMIN_INGEST_IOS_PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$P12_BASE64"
+          test -n "$P12_PASSWORD"
+          test -n "$PROFILE_BASE64"
+          test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/admin-ingest-ios.p12"
+          PROFILE_PATH="$RUNNER_TEMP/admin-ingest.mobileprovision"
+          KEYCHAIN_PATH="$RUNNER_TEMP/admin-ingest-ios.keychain-db"
+          printf '%s' "$P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          printf '%s' "$PROFILE_BASE64" | base64 -D > "$PROFILE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$PROFILE_PATH" "$HOME/Library/MobileDevice/Provisioning Profiles/admin-ingest.mobileprovision"
+
+      - name: Build signed IPA
+        run: pnpm admin-ingest:ios
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-ingest-ios
+          path: artifacts/admin-ingest/ios/
+          if-no-files-found: error
+
+  build-macos:
+    if: ${{ inputs.build_macos }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      ADMIN_INGEST_APP_URL: ${{ inputs.app_url }}
+      APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      CSC_IDENTITY_AUTO_DISCOVERY: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.12.4
+          run_install: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Import Developer ID certificate
+        env:
+          P12_BASE64: ${{ secrets.ADMIN_INGEST_MAC_DEVELOPER_ID_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.ADMIN_INGEST_MAC_DEVELOPER_ID_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.APPLE_BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          test -n "$P12_BASE64"
+          test -n "$P12_PASSWORD"
+          test -n "$KEYCHAIN_PASSWORD"
+          CERTIFICATE_PATH="$RUNNER_TEMP/admin-ingest-macos.p12"
+          KEYCHAIN_PATH="$RUNNER_TEMP/admin-ingest-macos.keychain-db"
+          printf '%s' "$P12_BASE64" | base64 -D > "$CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERTIFICATE_PATH" -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      - name: Build signed and notarized Universal DMG
+        run: pnpm admin-ingest:macos
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-ingest-macos
+          path: artifacts/admin-ingest/macos/
+          if-no-files-found: error
