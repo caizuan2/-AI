@@ -1,9 +1,9 @@
 {
-  "version": "1.0.25",
-  "build": 125,
-  "minimum_build": 125,
+  "version": "1.0.26",
+  "build": 126,
+  "minimum_build": 126,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.25-build.125",
+  "release_tag": "release/admin-ingest-1.0.26-build.126",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,10 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "豆包深度思考整轮最多等待 120 秒开始显示原文正文，无正文时仅提供同模型重试",
-    "修复停止请求后自动重发、迟到事件覆盖新请求及跨对话停止串扰",
-    "稳定投喂端抽屉 Agent 同步，加载和弱网期间保留上一次成功列表",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.25 Build 125",
+    "优化投喂端移动顶部 Agent 卡片、蓝色发送气泡、Agent 分割线与未启用入口显示",
+    "投喂端 APK 新增可拖动历史提示词圆圈，可查看并定位当前对话最近提示词",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.26 Build 126",
     "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
