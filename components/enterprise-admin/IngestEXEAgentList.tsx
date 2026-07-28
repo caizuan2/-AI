@@ -142,7 +142,7 @@ export function IngestEXEAgentList({
                 >
                   {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
                   <div className="flex min-h-[56px] items-center gap-3">
-                    <IngestAgentAvatar profile={agentProfile} size="sm" />
+                    <IngestAgentAvatar profile={agentProfile} size="sm" assetSlotKey={`agent:${agent.id}`} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-2">
                         <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#1f1f1f]"].join(" ")}>{agent.name}</span>

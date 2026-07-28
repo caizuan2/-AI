@@ -1,5 +1,6 @@
 "use client";
 
+import { IngestStableLibraryImage } from "@/components/enterprise-admin/IngestStableLibraryImage";
 import type { AdminIngestDisplayProfile } from "@/lib/enterprise/admin-ingest-profile";
 
 const avatarSizeClasses = {
@@ -13,9 +14,15 @@ type IngestAgentAvatarProps = {
   profile: AdminIngestDisplayProfile;
   size?: keyof typeof avatarSizeClasses;
   className?: string;
+  assetSlotKey?: string;
 };
 
-export function IngestAgentAvatar({ profile, size = "md", className = "" }: IngestAgentAvatarProps) {
+export function IngestAgentAvatar({
+  profile,
+  size = "md",
+  className = "",
+  assetSlotKey,
+}: IngestAgentAvatarProps) {
   const baseClasses = [
     "relative flex shrink-0 items-center justify-center overflow-hidden border border-white/80 shadow-sm",
     avatarSizeClasses[size],
@@ -23,6 +30,32 @@ export function IngestAgentAvatar({ profile, size = "md", className = "" }: Inge
   ]
     .filter(Boolean)
     .join(" ");
+
+  if (assetSlotKey) {
+    const fallback = profile.avatarUrl ? (
+      <span
+        aria-hidden="true"
+        className="h-full w-full bg-cover bg-center"
+        style={{ backgroundImage: `url("${profile.avatarUrl}")` }}
+      />
+    ) : (
+      <span aria-hidden="true" className="flex h-full w-full items-center justify-center drop-shadow-sm" style={{ background: profile.avatarGradient }}>
+        {profile.avatarEmoji}
+      </span>
+    );
+
+    return (
+      <span aria-label={profile.avatarLabel} className={baseClasses}>
+        <IngestStableLibraryImage
+          slotKey={assetSlotKey}
+          alt=""
+          className="h-full w-full object-cover"
+          fallback={fallback}
+          size={size === "lg" ? 176 : 96}
+        />
+      </span>
+    );
+  }
 
   if (profile.avatarUrl) {
     return (

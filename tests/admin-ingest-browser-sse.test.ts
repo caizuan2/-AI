@@ -294,6 +294,13 @@ async function main() {
       includeVisibleReply: true,
       statusEvents: [
         { type: "queue_wait", phase: "visible", queueDepth: 1 },
+        {
+          type: "reasoning_activity",
+          phase: "visible",
+          actualModel: "doubao-seed-2-1-pro-260628",
+          responseId: "doubao-browser-sse-success",
+          reasoningChars: 128
+        },
         { type: "metadata_status", phase: "metadata", state: "pending" },
         { type: "metadata_status", phase: "metadata", state: "completed" }
       ]
@@ -327,6 +334,12 @@ async function main() {
           assert.equal(event.metadataPending, true);
         },
         onStatus(event) {
+          if (event.type === "reasoning_activity") {
+            assert.equal(event.phase, "visible");
+            assert.equal(event.actualModel, "doubao-seed-2-1-pro-260628");
+            assert.equal(event.responseId, "doubao-browser-sse-success");
+            assert.equal(event.reasoningChars, 128);
+          }
           successEventOrder.push(`${event.type}:${event.state ?? event.phase ?? ""}`);
         }
       }
@@ -338,6 +351,7 @@ async function main() {
       "queue_wait:visible",
       "visible_delta",
       "visible",
+      "reasoning_activity:visible",
       "metadata_status:pending",
       "metadata_status:completed",
       "final"
