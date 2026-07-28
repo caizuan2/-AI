@@ -2459,7 +2459,7 @@ export function IngestChatGPTShell({
                       "group relative w-full cursor-pointer rounded-2xl border px-2.5 py-2 text-left transition",
                       isActive
                         ? "border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white shadow-sm"
-                        : "border-transparent bg-transparent hover:bg-[#f5f3ef]"
+                        : "border-[#e4e8e5] bg-[#f7f9f8] shadow-[0_2px_8px_rgba(36,49,42,0.06)] hover:border-[#d9dfdb] hover:bg-white hover:shadow-[0_4px_12px_rgba(36,49,42,0.09)]"
                     ].join(" ")}
                   >
                     {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
