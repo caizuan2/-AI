@@ -7,7 +7,9 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from "react";
+import NextImage from "next/image";
 import { Clock3, FileText, MessageSquareText, X } from "lucide-react";
+import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 
 export type IngestPromptHistoryItem = {
   id: string;
@@ -29,11 +31,13 @@ function truncatePrompt(value: string) {
 }
 
 const tickIndexes = Array.from({ length: 13 }, (_, index) => index);
-const MOBILE_ORB_SIZE = 52;
+const MOBILE_ORB_SIZE = 40;
 const MOBILE_ORB_MARGIN = 12;
 const MOBILE_ORB_TOP_INSET = 84;
 const MOBILE_ORB_BOTTOM_INSET = 112;
 const MOBILE_ORB_POSITION_KEY = "admin-ingest-prompt-history-orb-position-v1";
+const MOBILE_LOGO_BOUNCE_INTERVAL_MS = 9_000;
+const MOBILE_LOGO_BOUNCE_DURATION_MS = 1_000;
 
 type MobileOrbPosition = {
   x: number;
@@ -130,6 +134,7 @@ export function IngestPromptHistoryHoverRail({
   const [open, setOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileOrbPosition, setMobileOrbPosition] = useState<MobileOrbPosition | null>(null);
+  const [mobileLogoBouncing, setMobileLogoBouncing] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const mobileOrbDragRef = useRef<MobileOrbDragState | null>(null);
   const suppressMobileOrbClickRef = useRef(false);
@@ -160,6 +165,7 @@ export function IngestPromptHistoryHoverRail({
   useEffect(() => {
     if (!mobileFloating) {
       setMobileOpen(false);
+      setMobileLogoBouncing(false);
       return;
     }
 
@@ -176,6 +182,27 @@ export function IngestPromptHistoryHoverRail({
     return () => {
       window.removeEventListener("resize", syncPositionToViewport);
       window.visualViewport?.removeEventListener("resize", syncPositionToViewport);
+    };
+  }, [mobileFloating]);
+
+  useEffect(() => {
+    if (!mobileFloating) {
+      return;
+    }
+
+    let bounceResetTimer: ReturnType<typeof setTimeout> | null = null;
+    const bounceInterval = setInterval(() => {
+      setMobileLogoBouncing(true);
+      bounceResetTimer = setTimeout(() => {
+        setMobileLogoBouncing(false);
+      }, MOBILE_LOGO_BOUNCE_DURATION_MS);
+    }, MOBILE_LOGO_BOUNCE_INTERVAL_MS);
+
+    return () => {
+      clearInterval(bounceInterval);
+      if (bounceResetTimer) {
+        clearTimeout(bounceResetTimer);
+      }
     };
   }, [mobileFloating]);
 
@@ -392,14 +419,18 @@ export function IngestPromptHistoryHoverRail({
                 right: `${MOBILE_ORB_MARGIN}px`,
                 top: "54%"
               }}
-          className="fixed z-[55] flex h-[52px] w-[52px] touch-none select-none items-center justify-center rounded-full border border-white/55 bg-[#555]/75 shadow-[0_8px_24px_rgba(15,23,42,0.24)] backdrop-blur-md transition-transform active:scale-95"
+          className="fixed z-[55] flex h-[40px] w-[40px] touch-none select-none items-center justify-center bg-transparent p-0 transition-transform active:scale-95"
         >
-          <span
+          <NextImage
+            src={adminIngestLogo}
+            alt=""
             aria-hidden="true"
-            className="flex h-9 w-9 items-center justify-center rounded-full border-[3px] border-white/35 bg-white/10 shadow-inner"
-          >
-            <span className="h-5 w-5 rounded-full bg-white/75 shadow-[inset_0_0_0_2px_rgba(255,255,255,0.45)]" />
-          </span>
+            draggable={false}
+            className={[
+              "pointer-events-none h-9 w-9 object-contain",
+              mobileLogoBouncing ? "animate-bounce motion-reduce:animate-none" : ""
+            ].join(" ")}
+          />
         </button>
       ) : null}
 

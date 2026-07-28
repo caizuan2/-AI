@@ -9,6 +9,9 @@ const promptHistorySource = readFileSync(
   "components/enterprise-admin/IngestPromptHistoryHoverRail.tsx",
   "utf8"
 );
+const mobileFloatingButtonSource = promptHistorySource.match(
+  /\{mobileFloating \? \([\s\S]*?<\/button>\s*\) : null\}/
+)?.[0] ?? "";
 
 assert.match(
   shellSource,
@@ -25,6 +28,11 @@ assert.match(
 assert.match(
   promptHistorySource,
   /MOBILE_ORB_POSITION_KEY = "admin-ingest-prompt-history-orb-position-v1"/
+);
+assert.match(promptHistorySource, /const MOBILE_ORB_SIZE = 40/);
+assert.match(
+  promptHistorySource,
+  /MOBILE_LOGO_BOUNCE_INTERVAL_MS = 9_000[\s\S]*MOBILE_LOGO_BOUNCE_DURATION_MS = 1_000/
 );
 assert.match(
   promptHistorySource,
@@ -43,8 +51,28 @@ assert.match(
   /saveMobileOrbPosition\(current\)/
 );
 assert.match(
+  mobileFloatingButtonSource,
+  /aria-label="打开历史提示词"[\s\S]*h-\[40px\] w-\[40px\][\s\S]*touch-none/
+);
+assert.match(
+  mobileFloatingButtonSource,
+  /src=\{adminIngestLogo\}[\s\S]*h-9 w-9 object-contain/
+);
+assert.match(
   promptHistorySource,
-  /aria-label="打开历史提示词"[\s\S]*h-\[52px\] w-\[52px\][\s\S]*touch-none/
+  /setInterval\([\s\S]*setMobileLogoBouncing\(true\)[\s\S]*MOBILE_LOGO_BOUNCE_INTERVAL_MS/
+);
+assert.match(
+  mobileFloatingButtonSource,
+  /mobileLogoBouncing \? "animate-bounce motion-reduce:animate-none" : ""/
+);
+assert.match(
+  mobileFloatingButtonSource,
+  /bg-transparent p-0/
+);
+assert.doesNotMatch(
+  mobileFloatingButtonSource,
+  /rounded-full|border-white|bg-\[#555\]|shadow-\[|backdrop-blur|bg-white\/75/
 );
 assert.match(
   promptHistorySource,
