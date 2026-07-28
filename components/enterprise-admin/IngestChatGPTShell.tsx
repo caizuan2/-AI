@@ -1046,6 +1046,7 @@ export function IngestChatGPTShell({
 
   const navItems = useMemo(
     () => ingestPrimaryRailFeatures
+      .filter((item) => item.enabled !== false)
       .filter((item) => showTrainingEntries || (item.key !== "tasks" && item.key !== "memory"))
       .map((item) => ({
         ...item,
@@ -2403,7 +2404,7 @@ export function IngestChatGPTShell({
                 没有找到相关 Agent 或对话
               </div>
             ) : null}
-            {filteredAgentResults.map(({ agent, conversations, hasConversationMatches }) => {
+            {filteredAgentResults.map(({ agent, conversations, hasConversationMatches }, agentIndex) => {
               const isActive = activeAgent.id === agent.id;
               const isExpanded = expandedAgentIds.includes(agent.id);
               const isPinned = pinnedAgentIds.includes(agent.id);
@@ -2424,7 +2425,15 @@ export function IngestChatGPTShell({
               });
 
               return (
-                <div key={agent.id} className="mx-2">
+                <div
+                  key={agent.id}
+                  className={[
+                    "mx-2 pb-2",
+                    agentIndex < filteredAgentResults.length - 1
+                      ? "mb-1.5 border-b border-[#e3e3df]"
+                      : ""
+                  ].join(" ")}
+                >
                   <div
                     role="button"
                     tabIndex={0}
@@ -2570,7 +2579,7 @@ export function IngestChatGPTShell({
                   aria-label={activeConversation
                     ? `当前 Agent：${activeAgent.name}，当前对话：${activeConversation.title}`
                     : `当前 Agent：${activeAgent.name}`}
-                  className="w-full max-w-[164px] overflow-hidden rounded-[13px] border border-[#c9f0eb] bg-[#e9fbf9] px-2.5 py-1 shadow-[0_4px_12px_rgba(23,157,143,0.1)]"
+                  className="w-full max-w-[164px] overflow-hidden px-1 py-0.5"
                   title={activeConversation
                     ? `${activeAgent.name} · ${activeConversation.title}`
                     : activeAgent.name}
@@ -2777,7 +2786,7 @@ export function IngestChatGPTShell({
                         className={["flex w-full justify-end transition", highlightClass].join(" ")}
                       >
                         <div className="flex max-w-[82%] flex-col items-end gap-2 text-sm leading-6">
-                          <div className="rounded-[24px] border border-[#c9f0eb] bg-[#e9fbf9] px-4 py-3 text-[#174c47] shadow-sm">
+                          <div className="rounded-[24px] border border-[#008FFF] bg-[#008FFF] px-4 py-3 text-white shadow-sm">
                             <p className="whitespace-pre-wrap">{message.content}</p>
                           </div>
 
@@ -2997,6 +3006,7 @@ export function IngestChatGPTShell({
           <IngestPromptHistoryHoverRail
             items={promptHistoryItems}
             onSelect={handlePromptHistorySelect}
+            mobileFloating={isAdminApk}
           />
         ) : null}
 

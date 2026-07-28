@@ -96,7 +96,11 @@ assert.match(
 assert.ok(mobileHeaderCardSource, "管理员 APK 顶部 Agent 卡片应存在");
 assert.match(
   mobileHeaderCardSource,
-  /rounded-\[13px\] border border-\[#c9f0eb\] bg-\[#e9fbf9\] px-2\.5 py-1[\s\S]*shadow-\[0_4px_12px_rgba\(23,157,143,0\.1\)\]/
+  /className="w-full max-w-\[164px\] overflow-hidden px-1 py-0\.5"/
+);
+assert.doesNotMatch(
+  mobileHeaderCardSource,
+  /rounded-\[13px\]|border-\[#c9f0eb\]|bg-\[#e9fbf9\]|shadow-\[0_4px_12px_rgba\(23,157,143,0\.1\)\]/
 );
 assert.doesNotMatch(
   mobileHeaderCardSource,
@@ -109,6 +113,18 @@ assert.match(
 assert.match(
   shellSource,
   /activeConversation[\s\S]*当前 Agent：\$\{activeAgent\.name\}，当前对话：\$\{activeConversation\.title\}/
+);
+assert.match(
+  shellSource,
+  /agentIndex < filteredAgentResults\.length - 1[\s\S]*"mb-1\.5 border-b border-\[#e3e3df\]"/
+);
+assert.match(
+  shellSource,
+  /<IngestPromptHistoryHoverRail[\s\S]*mobileFloating=\{isAdminApk\}/
+);
+assert.match(
+  shellSource,
+  /ingestPrimaryRailFeatures[\s\S]*\.filter\(\(item\) => item\.enabled !== false\)/
 );
 assert.match(
   resizableSidebarSource,

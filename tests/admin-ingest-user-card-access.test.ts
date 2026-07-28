@@ -151,8 +151,8 @@ test("chat-only UI hides advanced navigation and knowledge save without removing
   );
   assert.match(
     shell,
-    /rounded-\[24px\] border border-\[#c9f0eb\] bg-\[#e9fbf9\] px-4 py-3 text-\[#174c47\] shadow-sm/,
-    "管理员投喂版自己发送的文字气泡必须使用 Logo 同色系浅绿色"
+    /rounded-\[24px\] border border-\[#008FFF\] bg-\[#008FFF\] px-4 py-3 text-white shadow-sm/,
+    "管理员投喂版自己发送的文字气泡必须使用指定的系统蓝色"
   );
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(actions, /title="复制"/);
