@@ -120,6 +120,10 @@ assert.match(
 );
 assert.match(
   shellSource,
+  /isActive[\s\S]*border-orange-200 bg-gradient-to-r from-orange-50 via-amber-50 to-white shadow-sm[\s\S]*border-\[#e4e8e5\] bg-\[#f7f9f8\] shadow-\[0_2px_8px_rgba\(36,49,42,0\.06\)\] hover:border-\[#d9dfdb\] hover:bg-white hover:shadow-\[0_4px_12px_rgba\(36,49,42,0\.09\)\]/
+);
+assert.match(
+  shellSource,
   /<IngestPromptHistoryHoverRail[\s\S]*mobileFloating=\{isAdminApk\}/
 );
 assert.match(
