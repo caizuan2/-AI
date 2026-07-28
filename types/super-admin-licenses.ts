@@ -1,5 +1,7 @@
 import type { LicenseKeyStatus } from "@prisma/client";
 
+export const SUPER_ADMIN_DEFAULT_RESET_PASSWORD = "123456789";
+
 export type UnifiedLicenseProduct = "user_app" | "ingest_admin" | "team_os";
 
 // Historical records may still contain this value, but new cards are only
@@ -69,6 +71,13 @@ export type SuperAdminLicenseActivationRecord = {
 export type SuperAdminLicenseRevealResult = {
   id: string;
   key: string;
+};
+
+export type SuperAdminLicensePasswordResetResult = {
+  licenseId: string;
+  userId: string;
+  userAccount: string;
+  resetAt: string;
 };
 
 export type SuperAdminLicenseSummary = {

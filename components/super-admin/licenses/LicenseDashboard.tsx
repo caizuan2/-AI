@@ -17,15 +17,18 @@ import {
   fetchSuperAdminLicenses,
   generateSuperAdminLicenses,
   revealSuperAdminLicense,
+  resetSuperAdminLicenseUserPassword,
   searchSuperAdminLicenses,
   renewSuperAdminLicense
 } from "@/lib/super-admin/license-admin-client";
+import { SUPER_ADMIN_DEFAULT_RESET_PASSWORD } from "@/types/super-admin-licenses";
 import type {
   SuperAdminGeneratedLicense,
   SuperAdminLicenseActivationRecord,
   SuperAdminLicenseAppType,
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
+  SuperAdminLicensePasswordResetResult,
   SuperAdminLicensePlan,
   SuperAdminLicenseRecord,
   UnifiedLicenseProduct
@@ -467,7 +470,8 @@ function LicenseTable({
   disablingId,
   renewingId,
   onDisable,
-  onRenew
+  onRenew,
+  onResetPassword
 }: {
   appType: UnifiedLicenseProduct;
   title: string;
@@ -478,6 +482,7 @@ function LicenseTable({
   renewingId: string | null;
   onDisable: (id: string) => Promise<SuperAdminLicenseRecord | null>;
   onRenew: (id: string) => Promise<void>;
+  onResetPassword: (license: SuperAdminLicenseRecord) => Promise<SuperAdminLicensePasswordResetResult | null>;
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
@@ -487,6 +492,7 @@ function LicenseTable({
   const [currentPage, setCurrentPage] = useState(1);
   const [copiedLicenseId, setCopiedLicenseId] = useState<string | null>(null);
   const [revealingLicenseId, setRevealingLicenseId] = useState<string | null>(null);
+  const [resettingPasswordLicenseId, setResettingPasswordLicenseId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const normalizedQuery = activeQuery.trim().toLocaleLowerCase("zh-CN");
   const filteredLicenses = useMemo(() => {
@@ -585,6 +591,26 @@ function LicenseTable({
     ));
   }
 
+  async function handleResetPassword(license: SuperAdminLicenseRecord) {
+    const account = license.redeemedByUserAccount ?? license.redeemedByUserLabel ?? "该用户";
+    const confirmed = window.confirm(
+      `确认将账号 ${account} 的登录密码重置为 ${SUPER_ADMIN_DEFAULT_RESET_PASSWORD}？\n\n` +
+      "此操作只修改登录密码，不会改变卡密状态、角色、企业或历史数据。"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setResettingPasswordLicenseId(license.id);
+
+    try {
+      await onResetPassword(license);
+    } finally {
+      setResettingPasswordLicenseId(null);
+    }
+  }
+
   if (licenses.length === 0) {
     return <EmptyState message={`${title}暂无卡密记录。`} />;
   }
@@ -611,13 +637,13 @@ function LicenseTable({
           }}
         >
           <label className="sr-only" htmlFor={`${title}-license-search`}>
-            搜索卡密、激活用户或账号
+            搜索卡密、手机号、激活用户或账号
           </label>
           <input
             id={`${title}-license-search`}
             value={draftQuery}
             onChange={(event) => setDraftQuery(event.target.value)}
-            placeholder="搜索卡密 / 激活用户 / 账号"
+            placeholder="搜索卡密 / 手机号 / 激活用户 / 账号"
             className="h-10 min-w-0 flex-1 rounded-lg border border-slate-200 px-3 text-sm text-slate-800 outline-none placeholder:text-slate-400 focus:border-teal-400 focus:ring-2 focus:ring-teal-100"
           />
           <button
@@ -717,6 +743,22 @@ function LicenseTable({
                             ? "复制"
                             : "旧卡不可恢复"}
                     </button>
+                    {license.redeemedByUserId ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleResetPassword(license)}
+                        disabled={resettingPasswordLicenseId === license.id}
+                        title="将该用户登录密码重置为默认密码"
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {resettingPasswordLicenseId === license.id ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <KeyRound className="h-3.5 w-3.5" />
+                        )}
+                        {resettingPasswordLicenseId === license.id ? "重置中" : "重置密码"}
+                      </button>
+                    ) : null}
                   </div>
                 </td>
               </tr>
@@ -911,6 +953,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
   const [disablingId, setDisablingId] = useState<string | null>(null);
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [passwordResetNotice, setPasswordResetNotice] = useState<string | null>(null);
 
   async function reload() {
     setError(null);
@@ -1000,6 +1043,22 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
     }
   }
 
+  async function handleResetPassword(license: SuperAdminLicenseRecord) {
+    setError(null);
+    setPasswordResetNotice(null);
+
+    try {
+      const result = await resetSuperAdminLicenseUserPassword(license.id);
+      setPasswordResetNotice(
+        `账号 ${result.userAccount} 的密码已重置为 ${SUPER_ADMIN_DEFAULT_RESET_PASSWORD}，请通知用户登录后尽快修改。`
+      );
+      return result;
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "用户密码重置失败。");
+      return null;
+    }
+  }
+
   if (loading) {
     return <LoadingState title="正在加载卡密授权中心" />;
   }
@@ -1016,6 +1075,14 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
   return (
     <div className="space-y-6">
       {error ? <ErrorState message={error} /> : null}
+      {passwordResetNotice ? (
+        <div
+          role="status"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800"
+        >
+          {passwordResetNotice}
+        </div>
+      ) : null}
       <SummaryCards data={data} />
       <div className="grid gap-6 xl:grid-cols-3">
         {!initialAppType || initialAppType === "user_app" ? (
@@ -1063,6 +1130,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             renewingId={renewingId}
             onDisable={handleDisable}
             onRenew={handleRenew}
+            onResetPassword={handleResetPassword}
           />
         ) : null}
         {!initialAppType || initialAppType === "ingest_admin" ? (
@@ -1076,6 +1144,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             renewingId={renewingId}
             onDisable={handleDisable}
             onRenew={handleRenew}
+            onResetPassword={handleResetPassword}
           />
         ) : null}
         {!initialAppType || initialAppType === "team_os" ? (
@@ -1089,6 +1158,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             renewingId={renewingId}
             onDisable={handleDisable}
             onRenew={handleRenew}
+            onResetPassword={handleResetPassword}
           />
         ) : null}
       </div>
