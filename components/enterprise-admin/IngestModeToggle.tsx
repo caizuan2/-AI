@@ -183,6 +183,7 @@ import {
   normalizeAdminIngestHistoryScope,
   readAdminIngestHistoryScopeFromApiResponse,
   readAdminIngestScopedLocalSnapshot,
+  reconcileAdminIngestConversationMessageCounts,
   writeAdminIngestScopedLocalSnapshot,
   type AdminIngestConversationSyncResponse,
   type AdminIngestConversationSyncSnapshot,
@@ -1570,6 +1571,19 @@ export function IngestModeToggle({
     historyLoaded,
     historyStorageKeys
   ]);
+
+  useEffect(() => {
+    if (!historyLoaded) {
+      return;
+    }
+
+    setAgentConversations((current) => (
+      reconcileAdminIngestConversationMessageCounts(
+        current,
+        conversationMessagesById
+      )
+    ));
+  }, [conversationMessagesById, historyLoaded]);
 
   useEffect(() => {
     if (
@@ -3625,8 +3639,7 @@ export function IngestModeToggle({
         ...conversation,
         title: conversation.title === "新对话" ? nextTitle : conversation.title,
         updatedAt: now,
-        updatedLabel: "刚刚",
-        messageCount: Math.max(conversation.messageCount + 2, 2)
+        updatedLabel: "刚刚"
       }
       : conversation));
   }
