@@ -306,11 +306,14 @@ export interface IngestStreamingOptions {
     responseId?: string;
   }) => void;
   onStatus?: (event: {
-    type: "queue_wait" | "rate_limit_wait" | "metadata_status";
+    type: "queue_wait" | "rate_limit_wait" | "reasoning_activity" | "metadata_status";
     phase?: "visible" | "continuation" | "metadata" | "health";
     queueDepth?: number;
     retryAfterMs?: number;
     attempt?: number;
+    reasoningChars?: number;
+    actualModel?: string;
+    responseId?: string;
     state?: "pending" | "completed" | "deferred";
     failureCode?: string;
   }) => void;
@@ -671,7 +674,12 @@ function parseAdminIngestSseBlock(
   if (eventName === "status") {
     const type = readString(envelope.type);
 
-    if (type === "queue_wait" || type === "rate_limit_wait" || type === "metadata_status") {
+    if (
+      type === "queue_wait"
+      || type === "rate_limit_wait"
+      || type === "reasoning_activity"
+      || type === "metadata_status"
+    ) {
       const phase = readString(envelope.phase);
       const state = readString(envelope.state);
       callbacks.onStatus?.({
@@ -688,6 +696,12 @@ function parseAdminIngestSseBlock(
         attempt: Number.isSafeInteger(Number(envelope.attempt)) && Number(envelope.attempt) >= 0
           ? Number(envelope.attempt)
           : undefined,
+        reasoningChars: Number.isSafeInteger(Number(envelope.reasoningChars))
+          && Number(envelope.reasoningChars) >= 0
+          ? Number(envelope.reasoningChars)
+          : undefined,
+        actualModel: readString(envelope.actualModel),
+        responseId: readString(envelope.responseId),
         state: state === "pending" || state === "completed" || state === "deferred"
           ? state
           : undefined,

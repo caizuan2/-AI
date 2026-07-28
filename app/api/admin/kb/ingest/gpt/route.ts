@@ -294,6 +294,19 @@ function createDoubaoBrowserSseResponse(input: {
           return;
         }
 
+        if (event.type === "reasoning_activity") {
+          enqueue("status", {
+            type: event.type,
+            requestId: input.requestId,
+            phase: event.phase,
+            actualModel: event.model,
+            responseId: event.responseId,
+            reasoningChars: event.reasoningChars,
+            fallbackUsed: false
+          });
+          return;
+        }
+
         enqueue("status", {
           type: event.type,
           requestId: input.requestId,

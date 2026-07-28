@@ -51,9 +51,18 @@ function createChunkedSseResponse(input: {
   model: string;
   content: string;
   responseId?: string;
+  reasoningContent?: string;
 }) {
   const splitAt = Math.floor(input.content.length / 2);
   const sse = [
+    input.reasoningContent
+      ? `data: ${JSON.stringify({
+          id: input.responseId ?? "doubao-stream-contract-test",
+          model: input.model,
+          created: 1_786_000_000,
+          choices: [{ delta: { role: "assistant", reasoning_content: input.reasoningContent } }]
+        })}\n\n`
+      : "",
     `data: ${JSON.stringify({
       id: input.responseId ?? "doubao-stream-contract-test",
       model: input.model,
@@ -316,9 +325,11 @@ try {
     capturedRequestBodies.push(capturedRequestBody);
 
     if (capturedRequestBody.stream === true) {
+      const phase = readRequestPhase(init);
       return createChunkedSseResponse({
         model: "ep-doubao-provider-test",
-        content: readRequestPhase(init) === "metadata" ? providerMetadataContent : exactReplyMarkdown,
+        content: phase === "metadata" ? providerMetadataContent : exactReplyMarkdown,
+        reasoningContent: phase === "metadata" ? undefined : "HIDDEN_REASONING_SENTINEL",
         responseId: "doubao-response-contract-test"
       });
     }
@@ -401,8 +412,26 @@ try {
   assert.equal(capturedRequestBodies.length, 2, "Doubao must separate visible Markdown and background metadata into two calls.");
   const visibleRequestBody = capturedRequestBodies[0];
   const metadataRequestBody = capturedRequestBodies[1];
-  assert.equal(visibleRequestBody.max_tokens, 6000);
+  assert.equal(
+    "max_tokens" in visibleRequestBody,
+    false,
+    "Deep-thinking requests must use the provider completion budget that includes reasoning and final content."
+  );
+  assert.equal(visibleRequestBody.max_completion_tokens, 6000);
+  assert.equal(visibleRequestBody.reasoning_effort, "low");
   assert.equal(metadataRequestBody.max_tokens, 1500);
+  assert.equal("max_completion_tokens" in metadataRequestBody, false);
+  assert.equal("reasoning_effort" in metadataRequestBody, false);
+  assert.deepEqual(
+    visibleRequestBody.thinking,
+    { type: "enabled" },
+    "Visible Doubao requests must explicitly enable the provider deep-thinking protocol."
+  );
+  assert.equal(
+    "thinking" in metadataRequestBody,
+    false,
+    "Metadata extraction must remain outside the visible deep-thinking phase."
+  );
   const messages = visibleRequestBody.messages as Array<{ role: string; content: string }>;
   assert.equal(messages.length, 2);
   const finalPrompt = messages.map((message) => message.content).join("\n");
@@ -440,6 +469,11 @@ try {
     "The cumulative delta stream must end at the exact provider Markdown."
   );
   assert.equal(result.replyMarkdown, exactReplyMarkdown, "Provider replyMarkdown must pass through byte-for-byte as a JS string.");
+  assert.doesNotMatch(
+    result.replyMarkdown,
+    /HIDDEN_REASONING_SENTINEL/,
+    "Provider reasoning_content must never be rendered or appended to the final raw Markdown body."
+  );
   assert.equal(
     result.knowledgeDraft.standardAnswer,
     exactReplyMarkdown,
@@ -452,6 +486,13 @@ try {
   ]);
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
+  assert.ok(result.diagnostics.includes("doubao:thinkingEnabled:true"));
+  assert.ok(result.diagnostics.includes("doubao:reasoningActivityChars:25"));
+  assert.ok(
+    progressEvents.indexOf("reasoning_activity") >= 0
+      && progressEvents.indexOf("reasoning_activity") < progressEvents.indexOf("visible_delta"),
+    "Reasoning activity must be acknowledged before the first final-body content delta."
+  );
   assert.ok(result.diagnostics.includes("doubao:twoPhaseOutput:true"));
   assert.ok(result.diagnostics.includes("doubao:metadataCompleted:true"));
 
@@ -473,7 +514,8 @@ try {
     "Deferred metadata must return immediately after the unchanged visible request."
   );
   assert.equal(deferredVisibleRequestBody.model, visibleRequestBody.model);
-  assert.equal(deferredVisibleRequestBody.max_tokens, 6000);
+  assert.equal(deferredVisibleRequestBody.max_completion_tokens, 6000);
+  assert.equal(deferredVisibleRequestBody.reasoning_effort, "low");
   assert.equal(
     deferredVisibleRequestBody.temperature,
     visibleRequestBody.temperature
@@ -487,10 +529,10 @@ try {
     deferredMessages.map((message) => message.content).join("\n"),
     /CURRENT_INPUT_SENTINEL/
   );
-  assert.equal(
-    "thinking" in deferredVisibleRequestBody,
-    false,
-    "The strongest default deep-thinking profile must not be disabled."
+  assert.deepEqual(
+    deferredVisibleRequestBody.thinking,
+    { type: "enabled" },
+    "Deferred metadata must not disable deep thinking for the unchanged visible request."
   );
   assert.equal(
     deferredResult.replyMarkdown,
@@ -505,7 +547,9 @@ try {
   const deferredProgressEvents = progressEvents.slice(deferredProgressStart);
   assert.ok(deferredProgressEvents.includes("visible_delta"));
   assert.deepEqual(
-    deferredProgressEvents.filter((event) => event !== "visible_delta"),
+    deferredProgressEvents.filter((event) => (
+      event !== "visible_delta" && event !== "reasoning_activity"
+    )),
     [
     "visible_reply",
     "metadata_status:pending",

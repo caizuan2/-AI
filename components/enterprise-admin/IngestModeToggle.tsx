@@ -4523,6 +4523,12 @@ export function IngestModeToggle({
                   return;
                 }
 
+                if (event.type === "reasoning_activity") {
+                  setRequestNoticeMessage("豆包正在深度思考，最终正文将在生成后按原文显示...");
+                  setRequestErrorMessage("");
+                  return;
+                }
+
                 if (
                   event.type === "metadata_status"
                   && event.state === "deferred"
