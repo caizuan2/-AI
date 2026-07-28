@@ -1,9 +1,9 @@
 {
-  "version": "1.0.28",
-  "build": 128,
-  "minimum_build": 128,
+  "version": "1.0.29",
+  "build": 129,
+  "minimum_build": 129,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.28-build.128",
+  "release_tag": "release/admin-ingest-1.0.29-build.129",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,10 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "新增小董AI投喂端独立 iOS IPA 与 macOS Universal DMG 打包、签名、公证流水线",
-    "Apple 端麦克风录音复用既有云转写协议，并保持 Web、EXE、APK 现有语音链路不变",
-    "投喂端未激活智能体卡片增加清晰层次与边框，并保留原有交互和移动端布局",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.28 Build 128",
+    "投喂端新增 30 张小董AI图片，Agent 图片池扩充到 51 张并统一优化为 WebP",
+    "每次刷新允许重新随机换图，同一次刷新内所有 Agent 保持不同图片与颜色",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.29 Build 129",
     "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
