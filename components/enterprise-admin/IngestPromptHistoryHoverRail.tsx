@@ -1,7 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Clock3, FileText, MessageSquareText } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from "react";
+import { Clock3, FileText, MessageSquareText, X } from "lucide-react";
 
 export type IngestPromptHistoryItem = {
   id: string;
@@ -13,6 +19,7 @@ export type IngestPromptHistoryItem = {
 interface IngestPromptHistoryHoverRailProps {
   items: IngestPromptHistoryItem[];
   onSelect: (messageId: string) => void;
+  mobileFloating?: boolean;
 }
 
 function truncatePrompt(value: string) {
@@ -22,13 +29,110 @@ function truncatePrompt(value: string) {
 }
 
 const tickIndexes = Array.from({ length: 13 }, (_, index) => index);
+const MOBILE_ORB_SIZE = 52;
+const MOBILE_ORB_MARGIN = 12;
+const MOBILE_ORB_TOP_INSET = 84;
+const MOBILE_ORB_BOTTOM_INSET = 112;
+const MOBILE_ORB_POSITION_KEY = "admin-ingest-prompt-history-orb-position-v1";
+
+type MobileOrbPosition = {
+  x: number;
+  y: number;
+};
+
+type MobileOrbDragState = {
+  pointerId: number;
+  pointerStartX: number;
+  pointerStartY: number;
+  orbStartX: number;
+  orbStartY: number;
+  moved: boolean;
+};
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), Math.max(minimum, maximum));
+}
+
+function clampMobileOrbPosition(position: MobileOrbPosition): MobileOrbPosition {
+  if (typeof window === "undefined") {
+    return position;
+  }
+
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+
+  return {
+    x: clamp(
+      position.x,
+      MOBILE_ORB_MARGIN,
+      viewportWidth - MOBILE_ORB_SIZE - MOBILE_ORB_MARGIN
+    ),
+    y: clamp(
+      position.y,
+      MOBILE_ORB_TOP_INSET,
+      viewportHeight - MOBILE_ORB_SIZE - MOBILE_ORB_BOTTOM_INSET
+    )
+  };
+}
+
+function getDefaultMobileOrbPosition(): MobileOrbPosition {
+  if (typeof window === "undefined") {
+    return { x: MOBILE_ORB_MARGIN, y: 260 };
+  }
+
+  const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
+  const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+
+  return clampMobileOrbPosition({
+    x: viewportWidth - MOBILE_ORB_SIZE - MOBILE_ORB_MARGIN,
+    y: viewportHeight * 0.54
+  });
+}
+
+function readStoredMobileOrbPosition(): MobileOrbPosition | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(MOBILE_ORB_POSITION_KEY) ?? "null") as {
+      x?: unknown;
+      y?: unknown;
+    } | null;
+
+    if (typeof stored?.x === "number" && typeof stored.y === "number") {
+      return clampMobileOrbPosition({ x: stored.x, y: stored.y });
+    }
+  } catch {
+    // Invalid local UI state should fall back to the safe default position.
+  }
+
+  return null;
+}
+
+function saveMobileOrbPosition(position: MobileOrbPosition) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(MOBILE_ORB_POSITION_KEY, JSON.stringify(position));
+  } catch {
+    // The floating control remains usable when WebView storage is unavailable.
+  }
+}
 
 export function IngestPromptHistoryHoverRail({
   items,
-  onSelect
+  onSelect,
+  mobileFloating = false
 }: IngestPromptHistoryHoverRailProps) {
   const [open, setOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileOrbPosition, setMobileOrbPosition] = useState<MobileOrbPosition | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mobileOrbDragRef = useRef<MobileOrbDragState | null>(null);
+  const suppressMobileOrbClickRef = useRef(false);
   const visibleItems = items.slice(0, 24);
 
   const clearCloseTimer = useCallback(() => {
@@ -53,10 +157,113 @@ export function IngestPromptHistoryHoverRail({
 
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
 
+  useEffect(() => {
+    if (!mobileFloating) {
+      setMobileOpen(false);
+      return;
+    }
+
+    const syncPositionToViewport = () => {
+      setMobileOrbPosition((current) => clampMobileOrbPosition(
+        current ?? readStoredMobileOrbPosition() ?? getDefaultMobileOrbPosition()
+      ));
+    };
+
+    syncPositionToViewport();
+    window.addEventListener("resize", syncPositionToViewport);
+    window.visualViewport?.addEventListener("resize", syncPositionToViewport);
+
+    return () => {
+      window.removeEventListener("resize", syncPositionToViewport);
+      window.visualViewport?.removeEventListener("resize", syncPositionToViewport);
+    };
+  }, [mobileFloating]);
+
+  useEffect(() => {
+    if (!mobileOpen) {
+      return;
+    }
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileOpen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [mobileOpen]);
+
+  const handleMobileOrbPointerDown = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const currentPosition = mobileOrbPosition ?? { x: rect.left, y: rect.top };
+
+    mobileOrbDragRef.current = {
+      pointerId: event.pointerId,
+      pointerStartX: event.clientX,
+      pointerStartY: event.clientY,
+      orbStartX: currentPosition.x,
+      orbStartY: currentPosition.y,
+      moved: false
+    };
+    suppressMobileOrbClickRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }, [mobileOrbPosition]);
+
+  const handleMobileOrbPointerMove = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = mobileOrbDragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    const deltaX = event.clientX - drag.pointerStartX;
+    const deltaY = event.clientY - drag.pointerStartY;
+
+    if (!drag.moved && Math.hypot(deltaX, deltaY) >= 5) {
+      drag.moved = true;
+    }
+
+    if (!drag.moved) {
+      return;
+    }
+
+    event.preventDefault();
+    setMobileOrbPosition(clampMobileOrbPosition({
+      x: drag.orbStartX + deltaX,
+      y: drag.orbStartY + deltaY
+    }));
+  }, []);
+
+  const finishMobileOrbDrag = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    const drag = mobileOrbDragRef.current;
+
+    if (!drag || drag.pointerId !== event.pointerId) {
+      return;
+    }
+
+    suppressMobileOrbClickRef.current = drag.moved;
+    mobileOrbDragRef.current = null;
+
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+
+    setMobileOrbPosition((current) => {
+      if (current) {
+        saveMobileOrbPosition(current);
+      }
+
+      return current;
+    });
+  }, []);
+
   return (
     <>
       <div
-        className="fixed bottom-[180px] right-10 top-[220px] z-40 hidden w-8 lg:block"
+        className={mobileFloating
+          ? "hidden"
+          : "fixed bottom-[180px] right-10 top-[220px] z-40 hidden w-8 lg:block"}
         aria-label="历史提示词快速定位热区"
         onMouseEnter={openPanel}
         onMouseLeave={scheduleClose}
@@ -92,7 +299,7 @@ export function IngestPromptHistoryHoverRail({
         </div>
       </div>
 
-      {open ? (
+      {open && !mobileFloating ? (
         <div
           className="fixed bottom-[180px] right-[76px] top-[220px] z-50 hidden w-[330px] lg:block"
           onMouseEnter={openPanel}
@@ -157,6 +364,126 @@ export function IngestPromptHistoryHoverRail({
           </div>
         </div>
       </div>
+      ) : null}
+
+      {mobileFloating ? (
+        <button
+          type="button"
+          aria-label="打开历史提示词"
+          aria-expanded={mobileOpen}
+          onPointerDown={handleMobileOrbPointerDown}
+          onPointerMove={handleMobileOrbPointerMove}
+          onPointerUp={finishMobileOrbDrag}
+          onPointerCancel={finishMobileOrbDrag}
+          onClick={() => {
+            if (suppressMobileOrbClickRef.current) {
+              suppressMobileOrbClickRef.current = false;
+              return;
+            }
+
+            setMobileOpen(true);
+          }}
+          style={mobileOrbPosition
+            ? {
+                left: `${mobileOrbPosition.x}px`,
+                top: `${mobileOrbPosition.y}px`
+              }
+            : {
+                right: `${MOBILE_ORB_MARGIN}px`,
+                top: "54%"
+              }}
+          className="fixed z-[55] flex h-[52px] w-[52px] touch-none select-none items-center justify-center rounded-full border border-white/55 bg-[#555]/75 shadow-[0_8px_24px_rgba(15,23,42,0.24)] backdrop-blur-md transition-transform active:scale-95"
+        >
+          <span
+            aria-hidden="true"
+            className="flex h-9 w-9 items-center justify-center rounded-full border-[3px] border-white/35 bg-white/10 shadow-inner"
+          >
+            <span className="h-5 w-5 rounded-full bg-white/75 shadow-[inset_0_0_0_2px_rgba(255,255,255,0.45)]" />
+          </span>
+        </button>
+      ) : null}
+
+      {mobileFloating && mobileOpen ? (
+        <div
+          className="fixed inset-0 z-[85] flex items-end bg-black/30 px-3 pt-16"
+          style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+          onClick={() => setMobileOpen(false)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="历史提示词"
+            onClick={(event) => event.stopPropagation()}
+            className="mx-auto flex max-h-[70dvh] w-full max-w-md flex-col overflow-hidden rounded-[24px] border border-neutral-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.25)]"
+          >
+            <div className="flex items-center justify-between border-b border-[#f0f0ed] px-4 py-3">
+              <div className="flex items-center gap-2">
+                <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#eef6ff] text-[#0A84FF]">
+                  <MessageSquareText className="h-4 w-4" aria-hidden="true" />
+                </span>
+                <div>
+                  <p className="text-sm font-semibold text-[#202020]">历史提示词</p>
+                  <p className="text-[11px] text-[#8a8a84]">点击定位原消息，不会重新发送</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="rounded-full bg-[#f6f6f4] px-2 py-1 text-[11px] font-semibold text-[#777]">
+                  {items.length}
+                </span>
+                <button
+                  type="button"
+                  aria-label="关闭历史提示词"
+                  onClick={() => setMobileOpen(false)}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-[#777] transition hover:bg-[#f4f4f2] hover:text-[#202020]"
+                >
+                  <X className="h-4 w-4" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2">
+              {visibleItems.length ? (
+                visibleItems.map((item, index) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      onSelect(item.id);
+                      setMobileOpen(false);
+                    }}
+                    className="flex w-full items-start gap-3 rounded-2xl px-3 py-3 text-left transition hover:bg-[#f7f7f5] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#0A84FF]/20"
+                    title={item.title}
+                  >
+                    <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-[#eef6ff] text-[11px] font-semibold text-[#0A84FF]">
+                      {index + 1}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium text-[#242424]">
+                        {truncatePrompt(item.title)}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-[#8a8a84]">
+                        <span className="inline-flex items-center gap-1">
+                          <Clock3 className="h-3 w-3" aria-hidden="true" />
+                          {item.time || "刚刚"}
+                        </span>
+                        {item.attachmentsCount ? (
+                          <span className="inline-flex items-center gap-1">
+                            <FileText className="h-3 w-3" aria-hidden="true" />
+                            {item.attachmentsCount} 个附件
+                          </span>
+                        ) : null}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="px-4 py-10 text-center text-sm text-[#888]">
+                  暂无历史提示词
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       ) : null}
     </>
   );
