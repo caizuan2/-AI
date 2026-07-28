@@ -1,9 +1,9 @@
 {
-  "version": "1.0.29",
-  "build": 129,
-  "minimum_build": 129,
+  "version": "1.0.30",
+  "build": 130,
+  "minimum_build": 130,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.29-build.129",
+  "release_tag": "release/admin-ingest-1.0.30-build.130",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,9 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端新增 30 张小董AI图片，Agent 图片池扩充到 51 张并统一优化为 WebP",
-    "每次刷新允许重新随机换图，同一次刷新内所有 Agent 保持不同图片与颜色",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.29 Build 129",
+    "展开或收起 Agent 时，投喂端 Web、Windows EXE 与 Android APK 同步显示选中态",
+    "Android APK 历史提示词入口改为透明小董AI Logo，并以低频轻跳减少正文遮挡",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.30 Build 130",
     "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
