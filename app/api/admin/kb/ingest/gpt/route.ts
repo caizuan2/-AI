@@ -37,6 +37,9 @@ import {
 } from "@/lib/enterprise/admin-ingest-auth";
 import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import {
+  markAdminIngestConversationRequestVisibleCompleted
+} from "@/lib/enterprise/admin-ingest-conversation-sync-store";
+import {
   hasCanonicalAdminIngestGroundingScope,
   retrieveAdminIngestGrounding,
   shouldUseStrictAdminIngestGrounding,
@@ -1086,6 +1089,13 @@ function readRequest(body: unknown) {
     jobId: readString(body.jobId) || null,
     messageId: readString(body.messageId) || null,
     attemptId: readString(body.attemptId) || null,
+    conversationId: readString(body.conversationId) || null,
+    requestStartedAt: typeof body.requestStartedAt === "number"
+      && Number.isSafeInteger(body.requestStartedAt)
+      && body.requestStartedAt > 0
+      ? body.requestStartedAt
+      : null,
+    deferMetadata: body.deferMetadata === true,
     attachments: readAttachments(body.attachments),
     agentId: readString(body.agentId) || null,
     knowledgeBaseId: readString(body.knowledgeBaseId) || null,
@@ -1264,6 +1274,7 @@ export async function POST(request: Request) {
           replyMarkdown: claimedJob.replyMarkdown,
           sourceResponseId: claimedJob.visibleResponseId ?? input.sourceResponseId,
           requestId,
+          deferMetadata: input.deferMetadata,
           signal: request.signal
         });
 
@@ -1548,6 +1559,8 @@ export async function POST(request: Request) {
       autonomous: input.autonomous,
       requestId,
       signal,
+      deferMetadata: modelOption.provider === "doubao-pro"
+        && Boolean(onDoubaoProgressEvent),
       onProgressEvent: onDoubaoProgressEvent
         ? (event) => {
             if (
@@ -1622,6 +1635,23 @@ export async function POST(request: Request) {
         ...publishedMemoryContext.warnings.map((warning) => `adminIngestPublishedMemory:warning:${warning}`)
       ]
     };
+    const doubaoVisibleCompletion = rawResult.provider === "doubao"
+      && rawResult.diagnostics.includes("doubao:metadataDeferred:true")
+      && actor
+      && input.conversationId
+      ? await markAdminIngestConversationRequestVisibleCompleted(actor.id, {
+          conversationId: input.conversationId,
+          requestId,
+          completedAt: Date.now()
+        }).catch((error) => {
+          console.warn("[admin-ingest:runtime-status:visible-completion]", {
+            requestId,
+            conversationId: input.conversationId,
+            message: error instanceof Error ? error.message : String(error ?? "")
+          });
+          return null;
+        })
+      : null;
     const structuredForTrainingLog = buildStructuredKnowledgeForTrainingLog({
       rawResult,
       userInput: input.input,
@@ -1691,6 +1721,7 @@ export async function POST(request: Request) {
         strictKnowledgeGrounding
       ),
       responseId: rawResult.responseId,
+      runtimeRevision: doubaoVisibleCompletion?.revision ?? null,
       jobId: trainingLog?.job.id ?? null,
       trainingRecord: trainingLog?.record ?? null,
       records: trainingRecords,

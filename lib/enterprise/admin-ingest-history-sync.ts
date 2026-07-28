@@ -27,6 +27,7 @@ export type AdminIngestConversationSyncResponse = {
   success?: boolean;
   historyScope?: string;
   revision?: number;
+  runtimeRevision?: number;
   state?: AdminIngestConversationSyncSnapshot;
   errorCode?: string;
   message?: string;

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
   markAdminIngestConversationGenerating,
+  markAdminIngestConversationVisibleCompleted,
+  mergeAdminIngestConversationRuntimeStatusMaps,
   normalizeAdminIngestConversationRuntimeStatusMap
 } from "../lib/enterprise/admin-ingest-conversation-runtime-status";
 import {
@@ -79,6 +81,38 @@ function testStaleRuntimeStatusIsNotRestoredForever() {
   assert.equal(normalized.stale, undefined);
 }
 
+function testVisibleCompletionCannotRegressToGenerating() {
+  const generating = markAdminIngestConversationGenerating({}, {
+    conversationId: "conversation-a",
+    requestId: "request-a",
+    now: 1_000
+  });
+  const completed = markAdminIngestConversationVisibleCompleted(generating, {
+    conversationId: "conversation-a",
+    requestId: "request-a",
+    now: 2_000
+  });
+  const merged = mergeAdminIngestConversationRuntimeStatusMaps(
+    completed,
+    generating
+  );
+
+  assert.deepEqual(merged["conversation-a"], {
+    state: "visible_completed",
+    requestId: "request-a",
+    updatedAt: 2_000
+  });
+  assert.equal(
+    markAdminIngestConversationGenerating(completed, {
+      conversationId: "conversation-a",
+      requestId: "request-a",
+      now: 3_000
+    }),
+    completed,
+    "the same request must never move from a visible terminal state back to generating"
+  );
+}
+
 function testProductionWiring() {
   const toggleSource = readFileSync(
     "components/enterprise-admin/IngestModeToggle.tsx",
@@ -103,7 +137,19 @@ function testProductionWiring() {
   );
   assert.match(
     toggleSource,
-    /conversationRuntimeStatusById:\s*remoteState\.conversationRuntimeStatusById/
+    /conversationRuntimeRevisionRef/
+  );
+  assert.match(
+    toggleSource,
+    /status\.state !== "visible_completed"[\s\S]*completeAssistantMessage/
+  );
+  assert.match(
+    toggleSource,
+    /onVisibleReply:[\s\S]*completeAssistantMessage[\s\S]*metadataState: "pending"/
+  );
+  assert.match(
+    toggleSource,
+    /preserveInitialMetadataProfile: true/
   );
   assert.match(
     toggleSource,
@@ -126,5 +172,6 @@ function testProductionWiring() {
 testRequestStartTimeSurvivesConversationSwitches();
 testRuntimeStatusRoundTripsThroughAccountSnapshot();
 testStaleRuntimeStatusIsNotRestoredForever();
+testVisibleCompletionCannotRegressToGenerating();
 testProductionWiring();
 console.log("admin-ingest cross-client runtime sync tests passed");

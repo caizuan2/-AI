@@ -104,6 +104,7 @@ export interface DoubaoAdminIngestInput {
   requestId?: string;
   signal?: AbortSignal;
   onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
+  deferMetadata?: boolean;
 }
 
 export interface DoubaoAdminIngestResult {
@@ -1621,6 +1622,8 @@ async function runDoubaoMetadataPhase(input: {
   signal: AbortSignal;
   maxStructureAttempts: 1 | 2;
   retryRateLimited: boolean;
+  temperature?: number;
+  maxTokens?: number;
 }) {
   const startedAt = Date.now();
   let lastError: DoubaoIngestError | null = null;
@@ -1644,8 +1647,8 @@ async function runDoubaoMetadataPhase(input: {
       phase: "metadata",
       onProgressEvent: input.ingestInput.onProgressEvent,
       retryRateLimited: input.retryRateLimited,
-      temperature: 0,
-      maxTokens: 1000
+      temperature: input.temperature ?? 0,
+      maxTokens: input.maxTokens ?? 1000
     });
 
     if (response.model !== input.expectedModel) {
@@ -1856,83 +1859,93 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       state: "pending"
     });
 
-    try {
-      metadataResponse = await callDoubaoChatCompletions({
-        chatCompletionsUrl: resolved.chatCompletionsUrl,
-        apiKey: resolved.apiKey,
-        model: resolved.model,
-        systemPrompt: buildDoubaoMetadataSystemPrompt(),
-        userPrompt: buildDoubaoMetadataUserPrompt(input, replyMarkdown),
-        signal: controller.signal,
-        phase: "metadata",
-        onProgressEvent: input.onProgressEvent,
-        retryRateLimited: false,
-        temperature: 0.2,
-        maxTokens: 1500
-      });
-      if (metadataResponse.model !== response.model) {
-        throw new DoubaoIngestError(
-          "DOUBAO_RESPONSE_PARSE_FAILED",
-          "豆包后台元数据返回的模型标识不一致。",
-          { receivedContent: true, parseStage: "model_identity", receivedChars: metadataResponse.text.length }
-        );
-      }
-      const metadataPayload = extractJsonObject(metadataResponse.text);
-      if (
-        !metadataPayload
-        || !hasValidDoubaoMetadataPayload(metadataPayload)
-        || metadataResponse.finishReason === "length"
-      ) {
-        throw new DoubaoIngestError(
-          "DOUBAO_RESPONSE_PARSE_FAILED",
-          metadataResponse.finishReason === "length"
-            ? "豆包后台元数据达到长度上限，未完整返回。"
-            : "豆包后台元数据缺少有效 knowledgeDraft 核心字段。",
-          {
-            receivedContent: Boolean(metadataResponse.text),
-            parseStage: metadataResponse.finishReason === "length" ? "finish_reason" : "reply_json",
-            finishReason: metadataResponse.finishReason,
-            receivedChars: metadataResponse.text.length
-          }
-        );
-      }
-      normalized = normalizeGptOutput({
-        rawText: JSON.stringify({
-          ...metadataPayload,
-          replyMarkdown
-        }),
-        originalInput: input.input,
-        fallbackCategory: input.category ?? "",
-        strictReply: true
-      });
-      normalized = bindDoubaoVisibleReplyToMetadata(normalized, replyMarkdown);
-      metadataCompleted = true;
-      input.onProgressEvent?.({
-        type: "metadata_status",
-        state: "completed"
-      });
-    } catch (error) {
-      if (
-        error
-        && typeof error === "object"
-        && (error as { name?: string }).name === "AbortError"
-      ) {
-        throw error;
-      }
-
-      metadataFailureCode = error instanceof DoubaoIngestError ? error.code : "DOUBAO_METADATA_FAILED";
+    if (input.deferMetadata) {
+      metadataFailureCode = "DOUBAO_METADATA_DEFERRED";
       normalized = withDoubaoMetadataFallback(normalized, replyMarkdown);
       input.onProgressEvent?.({
         type: "metadata_status",
         state: "deferred",
         failureCode: metadataFailureCode
       });
-      logger.warn("enterprise_admin_ingest.doubao_metadata_failed", {
-        requestId: input.requestId,
-        model: response.model,
-        errorCode: metadataFailureCode,
-        visibleReplyPreserved: true
-      });
+    } else {
+      try {
+        metadataResponse = await callDoubaoChatCompletions({
+          chatCompletionsUrl: resolved.chatCompletionsUrl,
+          apiKey: resolved.apiKey,
+          model: resolved.model,
+          systemPrompt: buildDoubaoMetadataSystemPrompt(),
+          userPrompt: buildDoubaoMetadataUserPrompt(input, replyMarkdown),
+          signal: controller.signal,
+          phase: "metadata",
+          onProgressEvent: input.onProgressEvent,
+          retryRateLimited: false,
+          temperature: 0.2,
+          maxTokens: 1500
+        });
+        if (metadataResponse.model !== response.model) {
+          throw new DoubaoIngestError(
+            "DOUBAO_RESPONSE_PARSE_FAILED",
+            "豆包后台元数据返回的模型标识不一致。",
+            { receivedContent: true, parseStage: "model_identity", receivedChars: metadataResponse.text.length }
+          );
+        }
+        const metadataPayload = extractJsonObject(metadataResponse.text);
+        if (
+          !metadataPayload
+          || !hasValidDoubaoMetadataPayload(metadataPayload)
+          || metadataResponse.finishReason === "length"
+        ) {
+          throw new DoubaoIngestError(
+            "DOUBAO_RESPONSE_PARSE_FAILED",
+            metadataResponse.finishReason === "length"
+              ? "豆包后台元数据达到长度上限，未完整返回。"
+              : "豆包后台元数据缺少有效 knowledgeDraft 核心字段。",
+            {
+              receivedContent: Boolean(metadataResponse.text),
+              parseStage: metadataResponse.finishReason === "length" ? "finish_reason" : "reply_json",
+              finishReason: metadataResponse.finishReason,
+              receivedChars: metadataResponse.text.length
+            }
+          );
+        }
+        normalized = normalizeGptOutput({
+          rawText: JSON.stringify({
+            ...metadataPayload,
+            replyMarkdown
+          }),
+          originalInput: input.input,
+          fallbackCategory: input.category ?? "",
+          strictReply: true
+        });
+        normalized = bindDoubaoVisibleReplyToMetadata(normalized, replyMarkdown);
+        metadataCompleted = true;
+        input.onProgressEvent?.({
+          type: "metadata_status",
+          state: "completed"
+        });
+      } catch (error) {
+        if (
+          error
+          && typeof error === "object"
+          && (error as { name?: string }).name === "AbortError"
+        ) {
+          throw error;
+        }
+
+        metadataFailureCode = error instanceof DoubaoIngestError ? error.code : "DOUBAO_METADATA_FAILED";
+        normalized = withDoubaoMetadataFallback(normalized, replyMarkdown);
+        input.onProgressEvent?.({
+          type: "metadata_status",
+          state: "deferred",
+          failureCode: metadataFailureCode
+        });
+        logger.warn("enterprise_admin_ingest.doubao_metadata_failed", {
+          requestId: input.requestId,
+          model: response.model,
+          errorCode: metadataFailureCode,
+          visibleReplyPreserved: true
+        });
+      }
     }
 
     const knowledgeDraft = normalized.knowledgeDraft;
@@ -2013,6 +2026,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         "doubao:replyMarkdownPassthrough:true",
         "doubao:twoPhaseOutput:true",
         `doubao:visibleContinuationCount:${visiblePhase.continuationCount}`,
+        `doubao:metadataDeferred:${input.deferMetadata ? "true" : "false"}`,
         `doubao:metadataCompleted:${metadataCompleted ? "true" : "false"}`,
         `doubao:metadataFailureCode:${metadataFailureCode || "none"}`,
         `doubao:saveRequiresReview:${metadataCompleted ? "false" : "true"}`,
@@ -2115,8 +2129,10 @@ export async function runDoubaoMetadataRecovery(
       replyMarkdown: input.replyMarkdown,
       expectedModel: resolved.model,
       signal: controller.signal,
-      maxStructureAttempts: 2,
-      retryRateLimited: true
+      maxStructureAttempts: input.deferMetadata ? 1 : 2,
+      retryRateLimited: input.deferMetadata !== true,
+      temperature: input.deferMetadata ? 0.2 : 0,
+      maxTokens: input.deferMetadata ? 1500 : 1000
     });
     const { response, normalized } = metadataPhase;
 

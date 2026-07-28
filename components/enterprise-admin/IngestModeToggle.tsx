@@ -128,10 +128,10 @@ import {
 import {
   countActiveIngestConversationRequests,
   ensureConversationState,
-  isCurrentIngestConversationRequest,
   isIngestConversationRequestActive,
   MAX_CONCURRENT_INGEST_CONVERSATIONS,
   markRequestActive,
+  shouldAcceptRequestEvent,
   type IngestConversationMessage,
   type IngestConversationState
 } from "@/lib/enterprise/ingest-conversation-state";
@@ -140,6 +140,8 @@ import {
   markAdminIngestConversationCompleted,
   markAdminIngestConversationGenerating,
   markAdminIngestConversationRead,
+  markAdminIngestConversationVisibleCompleted,
+  mergeAdminIngestConversationRuntimeStatusMaps,
   removeAdminIngestConversationRuntimeStatus,
   type AdminIngestConversationRuntimeStatusMap
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
@@ -872,6 +874,7 @@ export function IngestModeToggle({
   const lastConversationSyncPayloadRef = useRef("");
   const historyScopeRef = useRef("");
   const conversationSyncRevisionRef = useRef(0);
+  const conversationRuntimeRevisionRef = useRef(0);
   const conversationSyncTimeoutRef = useRef<number | null>(null);
   const conversationHydrationAbortControllerRef = useRef<AbortController | null>(null);
   const conversationSyncAbortControllersRef = useRef<Set<AbortController>>(new Set());
@@ -1076,6 +1079,7 @@ export function IngestModeToggle({
     pendingConversationSyncRef.current = null;
     historyScopeRef.current = "";
     conversationSyncRevisionRef.current = 0;
+    conversationRuntimeRevisionRef.current = 0;
     lastConversationSyncPayloadRef.current = "";
     restoredInitialConversationRef.current = false;
     setHistoryScope("");
@@ -1121,6 +1125,11 @@ export function IngestModeToggle({
           && payload.revision >= 0
           ? payload.revision
           : null;
+        const nextRuntimeRevision = typeof payload.runtimeRevision === "number"
+          && Number.isSafeInteger(payload.runtimeRevision)
+          && payload.runtimeRevision >= 0
+          ? payload.runtimeRevision
+          : 0;
         const storageKeys = createAdminIngestHistoryStorageKeys(
           nextHistoryScope
         );
@@ -1151,6 +1160,11 @@ export function IngestModeToggle({
           ? localSnapshot?.state
             ?? createEmptyAdminIngestConversationSyncSnapshot()
           : remoteState;
+        selectedState.conversationRuntimeStatusById =
+          mergeAdminIngestConversationRuntimeStatusMaps(
+            selectedState.conversationRuntimeStatusById,
+            remoteState.conversationRuntimeStatusById
+          );
         const hydratedAgents = selectedState.agents.map((agent) => ({
           ...agent,
           platform: hydrationContext.platform,
@@ -1210,6 +1224,7 @@ export function IngestModeToggle({
 
         historyScopeRef.current = nextHistoryScope;
         conversationSyncRevisionRef.current = nextRevision;
+        conversationRuntimeRevisionRef.current = nextRuntimeRevision;
         activeConversationIdRef.current = hydratedState.activeConversationId;
         conversationMessagesByIdRef.current = hydratedState.conversationMessagesById;
         conversationDraftsByIdRef.current = hydratedState.conversationDraftsById;
@@ -1574,6 +1589,7 @@ export function IngestModeToggle({
     requestQueueRef.current = createIngestQueueState();
     historyScopeRef.current = "";
     conversationSyncRevisionRef.current = 0;
+    conversationRuntimeRevisionRef.current = 0;
     lastConversationSyncPayloadRef.current = "";
     restoredInitialConversationRef.current = false;
     activeAgentIdRef.current = "";
@@ -1875,11 +1891,6 @@ export function IngestModeToggle({
         disposed
         || document.visibilityState === "hidden"
         || conversationPullInFlightRef.current
-        || conversationSyncInFlightRef.current
-        || pendingConversationSyncRef.current
-        || countActiveIngestConversationRequests(
-          conversationStateByIdRef.current
-        ) > 0
       ) {
         return;
       }
@@ -1909,18 +1920,25 @@ export function IngestModeToggle({
           && payload.revision >= 0
           ? payload.revision
           : null;
+        const nextRuntimeRevision = typeof payload.runtimeRevision === "number"
+          && Number.isSafeInteger(payload.runtimeRevision)
+          && payload.runtimeRevision >= 0
+          ? payload.runtimeRevision
+          : 0;
+        const hasConversationUpdate = nextRevision !== null
+          && nextRevision > conversationSyncRevisionRef.current;
+        const hasRuntimeUpdate =
+          nextRuntimeRevision > conversationRuntimeRevisionRef.current;
+        const canApplyConversationUpdate = hasConversationUpdate
+          && !conversationSyncInFlightRef.current
+          && !pendingConversationSyncRef.current;
 
         if (
           disposed
           || abortController.signal.aborted
           || nextHistoryScope !== historyScopeRef.current
           || nextRevision === null
-          || nextRevision <= conversationSyncRevisionRef.current
-          || conversationSyncInFlightRef.current
-          || pendingConversationSyncRef.current
-          || countActiveIngestConversationRequests(
-            conversationStateByIdRef.current
-          ) > 0
+          || (!canApplyConversationUpdate && !hasRuntimeUpdate)
         ) {
           return;
         }
@@ -1931,6 +1949,59 @@ export function IngestModeToggle({
             includeDrafts: capabilities.saveKnowledge
           }
         );
+        conversationRuntimeRevisionRef.current = Math.max(
+          conversationRuntimeRevisionRef.current,
+          nextRuntimeRevision
+        );
+
+        for (const [conversationId, status] of Object.entries(
+          remoteState.conversationRuntimeStatusById
+        )) {
+          const localConversationState =
+            conversationStateByIdRef.current[conversationId];
+
+          if (
+            status.state !== "visible_completed"
+            || !localConversationState?.activeRequestId
+            || localConversationState.activeRequestId !== status.requestId
+          ) {
+            continue;
+          }
+
+          const currentMessages =
+            conversationMessagesByIdRef.current[conversationId] ?? [];
+          const completedMessage = [...currentMessages].reverse().find(
+            (message) =>
+              message.role === "assistant"
+              && message.id === `assistant-result-${status.requestId}`
+          );
+
+          conversationStateByIdRef.current[conversationId] =
+            completeAssistantMessage(localConversationState, {
+              requestId: status.requestId,
+              messageId: completedMessage?.id,
+              content: completedMessage?.content || undefined,
+              meta: {
+                metadataState: completedMessage?.metadataState ?? "pending"
+              }
+            });
+        }
+
+        setIsParsing(
+          countActiveIngestConversationRequests(
+            conversationStateByIdRef.current
+          ) > 0
+        );
+
+        if (!canApplyConversationUpdate) {
+          setConversationRuntimeStatusById((current) => (
+            mergeAdminIngestConversationRuntimeStatusMaps(
+              current,
+              remoteState.conversationRuntimeStatusById
+            )
+          ));
+          return;
+        }
         const nextAgents = remoteState.agents.map((agent) => ({
           ...agent,
           platform: platformContext.platform,
@@ -1968,10 +2039,53 @@ export function IngestModeToggle({
               && conversation.status !== "archived"
             ))?.id
             ?? "";
-        const nextMessagesById = remoteState.conversationMessagesById;
+        const nextMessagesById = {
+          ...remoteState.conversationMessagesById
+        };
         const nextDraftsById = capabilities.saveKnowledge
-          ? remoteState.conversationDraftsById
+          ? {
+              ...remoteState.conversationDraftsById
+            }
           : {};
+        const nextRuntimeStatusById = {
+          ...remoteState.conversationRuntimeStatusById
+        };
+
+        for (const [conversationId, localConversationState] of Object.entries(
+          conversationStateByIdRef.current
+        )) {
+          if (!isIngestConversationRequestActive(localConversationState)) {
+            continue;
+          }
+
+          const remoteStatus =
+            remoteState.conversationRuntimeStatusById[conversationId];
+
+          if (
+            remoteStatus?.state === "visible_completed"
+            && remoteStatus.requestId === localConversationState.activeRequestId
+          ) {
+            continue;
+          }
+
+          nextMessagesById[conversationId] =
+            conversationMessagesByIdRef.current[conversationId] ?? [];
+
+          if (
+            capabilities.saveKnowledge
+            && conversationDraftsByIdRef.current[conversationId]
+          ) {
+            nextDraftsById[conversationId] =
+              conversationDraftsByIdRef.current[conversationId];
+          }
+
+          const localRuntimeStatus =
+            conversationRuntimeStatusById[conversationId];
+
+          if (localRuntimeStatus) {
+            nextRuntimeStatusById[conversationId] = localRuntimeStatus;
+          }
+        }
         const nextLocalSnapshot: AdminIngestConversationSyncSnapshot = {
           agents: nextAgents,
           agentConversations: nextConversations,
@@ -1980,13 +2094,17 @@ export function IngestModeToggle({
           conversationMessagesById: nextMessagesById,
           conversationDraftsById: nextDraftsById,
           conversationRuntimeStatusById:
-            remoteState.conversationRuntimeStatusById,
+            nextRuntimeStatusById,
           pinnedAgentIds: remoteState.pinnedAgentIds,
           expandedAgentIds,
           expandedConversationAgentIds
         };
 
         conversationSyncRevisionRef.current = nextRevision;
+        conversationRuntimeRevisionRef.current = Math.max(
+          conversationRuntimeRevisionRef.current,
+          nextRuntimeRevision
+        );
         lastConversationSyncPayloadRef.current =
           JSON.stringify(nextLocalSnapshot);
         activeAgentIdRef.current = nextActiveAgentId;
@@ -2001,7 +2119,7 @@ export function IngestModeToggle({
         setConversationMessagesById(nextMessagesById);
         setConversationDraftsById(nextDraftsById);
         setConversationRuntimeStatusById(
-          remoteState.conversationRuntimeStatusById
+          nextRuntimeStatusById
         );
         setPinnedAgentIds(remoteState.pinnedAgentIds);
 
@@ -2069,6 +2187,7 @@ export function IngestModeToggle({
     };
   }, [
     capabilities.saveKnowledge,
+    conversationRuntimeStatusById,
     conversationSyncLoaded,
     expandedAgentIds,
     expandedConversationAgentIds,
@@ -3964,9 +4083,8 @@ export function IngestModeToggle({
     };
     const isCurrentRequest = () => (
       activeIngestRequestIdByConversationRef.current[conversationId] === requestId
-      && isCurrentIngestConversationRequest(
-        conversationStateByIdRef.current,
-        conversationId,
+      && shouldAcceptRequestEvent(
+        conversationStateByIdRef.current[conversationId],
         requestId
       )
       && !shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId)
@@ -4022,6 +4140,11 @@ export function IngestModeToggle({
     let successRendered = false;
     let visibleReplyRendered = false;
     let visibleReplySnapshot = "";
+    let deferredDoubaoMetadataRecovery: {
+      draft: IngestKnowledgeDraft;
+      replyMarkdown: string;
+      sourceResponseId: string;
+    } | null = null;
     let resumableUploads = composerUploads;
     let outgoingAttachments: IngestUploadState[] = draftAttachments;
 
@@ -4247,7 +4370,7 @@ export function IngestModeToggle({
 
                 visibleReplySnapshot = event.replyMarkdown;
                 visibleReplyRendered = true;
-                conversationStateByIdRef.current[conversationId] = updateAssistantMessage(
+                conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
                   conversationStateByIdRef.current[conversationId],
                   {
                     requestId,
@@ -4283,13 +4406,24 @@ export function IngestModeToggle({
                     metadataState: "pending",
                     isRestored: false,
                     isHistorical: false,
-                    isStreaming: true,
-                    isGenerating: true,
+                    isStreaming: false,
+                    isGenerating: false,
                     typing: false,
-                    status: "streaming"
+                    status: "completed"
                   }
                 ));
-                setRequestNoticeMessage("正文已生成，正在用同一个豆包模型整理知识草稿...");
+                setConversationRuntimeStatusById((current) => (
+                  markAdminIngestConversationVisibleCompleted(current, {
+                    conversationId,
+                    requestId
+                  })
+                ));
+                setIsParsing(
+                  countActiveIngestConversationRequests(
+                    conversationStateByIdRef.current
+                  ) > 0
+                );
+                setRequestNoticeMessage("豆包深度思考正文已完整生成，后台正在用同一个模型整理知识草稿...");
                 setRequestErrorMessage("");
               },
               onStatus: (event) => {
@@ -4329,6 +4463,7 @@ export function IngestModeToggle({
               }
             },
             requestId,
+            requestStartedAt,
             conversationId: contextPayload.conversationId,
             knowledgeBaseId: contextPayload.knowledgeBaseId
           });
@@ -4384,6 +4519,13 @@ export function IngestModeToggle({
 
       const nextRecords = mergeTrainingRecords(result.records, records);
       const successAt = Date.now();
+      if (
+        typeof result.runtimeRevision === "number"
+        && Number.isSafeInteger(result.runtimeRevision)
+        && result.runtimeRevision > conversationRuntimeRevisionRef.current
+      ) {
+        conversationRuntimeRevisionRef.current = result.runtimeRevision;
+      }
       const fallbackActualModel = result.fallbackUsed
         ? getIngestModelOptionByProvider(result.actualProvider ?? result.provider)
         : null;
@@ -4396,8 +4538,14 @@ export function IngestModeToggle({
       const isDoubaoResult = result.provider === "doubao" || result.provider === "doubao-pro";
       const metadataInferencePaused = isDoubaoResult
         && result.diagnostics.includes("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED");
+      const metadataDeferred = isDoubaoResult
+        && result.diagnostics.includes("doubao:metadataDeferred:true");
       const metadataState: IngestChatMessage["metadataState"] = isDoubaoResult
-        ? result.diagnostics.includes("doubao:metadataCompleted:true") ? "ready" : "unavailable"
+        ? result.diagnostics.includes("doubao:metadataCompleted:true")
+          ? "ready"
+          : metadataDeferred
+            ? "pending"
+            : "unavailable"
         : undefined;
       const metadataPausedNotice = "正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。";
 
@@ -4529,6 +4677,18 @@ export function IngestModeToggle({
           status: "completed"
         }
       ));
+      if (
+        metadataDeferred
+        && result.draft.jobId
+        && result.responseId
+        && assistantContent === result.replyMarkdown
+      ) {
+        deferredDoubaoMetadataRecovery = {
+          draft: result.draft,
+          replyMarkdown: assistantContent,
+          sourceResponseId: result.responseId
+        };
+      }
       successRendered = true;
       console.info("[admin-ingest:gpt:success]", {
         provider: result.provider,
@@ -4551,7 +4711,11 @@ export function IngestModeToggle({
               ? `${outgoingAttachments.length} 个附件已完成解析，回答已生成。`
               : "回答已生成。")
       });
-      if (capabilities.trainingMemory && metadataState !== "unavailable" && !isWechatConversationReply) {
+      if (
+        capabilities.trainingMemory
+        && metadataState !== "unavailable" && !isWechatConversationReply
+        && (!isDoubaoResult || metadataState === "ready")
+      ) {
         void triggerMemoryExtraction({
           conversationId,
           agentId: activeAgent.id,
@@ -4873,6 +5037,177 @@ export function IngestModeToggle({
       setIsParsing(
         countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
       );
+      if (deferredDoubaoMetadataRecovery && !abortController.signal.aborted) {
+        const pendingRecovery = deferredDoubaoMetadataRecovery;
+        const recoveryController = new AbortController();
+        accountScopedMutationAbortControllersRef.current.add(
+          recoveryController
+        );
+
+        const updateDeferredMessageMetadata = (
+          metadataState: "ready" | "unavailable",
+          saveSuggestion?: boolean
+        ) => {
+          const currentMessages =
+            conversationMessagesByIdRef.current[conversationId] ?? [];
+          const targetMessage = currentMessages.find(
+            (message) => message.id === assistantMessageId
+          );
+
+          if (
+            !targetMessage
+            || targetMessage.content !== pendingRecovery.replyMarkdown
+            || targetMessage.metadataState !== "pending"
+          ) {
+            return false;
+          }
+
+          const nextMessages = currentMessages.map((message) =>
+            message.id === assistantMessageId
+              ? {
+                  ...message,
+                  metadataState,
+                  saveSuggestion: saveSuggestion ?? message.saveSuggestion
+                }
+              : message
+          );
+
+          conversationMessagesByIdRef.current = {
+            ...conversationMessagesByIdRef.current,
+            [conversationId]: nextMessages
+          };
+          setConversationMessagesById((current) => ({
+            ...current,
+            [conversationId]: nextMessages
+          }));
+
+          if (isRequestConversationVisible()) {
+            messagesRef.current = nextMessages;
+            setMessages(nextMessages);
+          }
+
+          const conversationState =
+            conversationStateByIdRef.current[conversationId];
+
+          if (conversationState) {
+            conversationStateByIdRef.current[conversationId] = {
+              ...conversationState,
+              messages: conversationState.messages.map((message) =>
+                message.id === assistantMessageId
+                  ? {
+                      ...message,
+                      meta: {
+                        ...message.meta,
+                        metadataState,
+                        saveSuggestion:
+                          saveSuggestion ?? message.meta?.saveSuggestion
+                      },
+                      updatedAt: Date.now()
+                    }
+                  : message
+              ),
+              updatedAt: Date.now()
+            };
+          }
+
+          return true;
+        };
+
+        void retryDoubaoKnowledgeDraftMetadata({
+          originalInput: effectiveInput,
+          replyMarkdown: pendingRecovery.replyMarkdown,
+          sourceResponseId: pendingRecovery.sourceResponseId,
+          messageId: assistantMessageId,
+          draft: pendingRecovery.draft,
+          agent: activeAgent,
+          historyScope: requestHistoryScope,
+          tenantId,
+          userId,
+          platform: platformContext.platform,
+          signal: recoveryController.signal,
+          preserveInitialMetadataProfile: true
+        }).then((metadataResult) => {
+          if (
+            historyScopeRef.current !== requestHistoryScope
+            || metadataResult.jobId !== pendingRecovery.draft.jobId
+            || metadataResult.sourceResponseId
+              !== pendingRecovery.sourceResponseId
+            || metadataResult.replyMarkdown
+              !== pendingRecovery.replyMarkdown
+            || !updateDeferredMessageMetadata(
+              "ready",
+              metadataResult.draft.recommendation === "建议入库"
+            )
+          ) {
+            return;
+          }
+
+          conversationDraftsByIdRef.current = {
+            ...conversationDraftsByIdRef.current,
+            [conversationId]: metadataResult.draft
+          };
+          setConversationDraftsById((current) => ({
+            ...current,
+            [conversationId]: metadataResult.draft
+          }));
+
+          if (
+            isRequestConversationVisible()
+            && activeAgentIdRef.current === activeAgent.id
+          ) {
+            draftRef.current = metadataResult.draft;
+            setDraft(metadataResult.draft);
+            setRecords((current) =>
+              mergeTrainingRecords(metadataResult.records, current)
+            );
+            setNoticeMessage(
+              "豆包深度思考正文保持不变，后台知识草稿已整理完成。"
+            );
+          }
+
+          if (capabilities.trainingMemory && !isWechatConversationReply) {
+            const completedConversationState =
+              conversationStateByIdRef.current[conversationId];
+
+            if (completedConversationState) {
+              void triggerMemoryExtraction({
+                conversationId,
+                agentId: activeAgent.id,
+                knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+                messages: completedConversationState.messages,
+                latestAssistantReply: pendingRecovery.replyMarkdown,
+                userInstruction: effectiveInput,
+                historyScope: requestHistoryScope
+              });
+            }
+          }
+        }).catch((error) => {
+          if (
+            recoveryController.signal.aborted
+            || historyScopeRef.current !== requestHistoryScope
+          ) {
+            return;
+          }
+
+          updateDeferredMessageMetadata("unavailable");
+
+          if (isRequestConversationVisible()) {
+            setNoticeMessage(
+              "豆包深度思考正文已完整保留；后台知识草稿暂未完成，可稍后重新整理。"
+            );
+            console.warn("[admin-ingest:doubao:metadata-background]", {
+              requestId,
+              message: error instanceof Error
+                ? error.message
+                : String(error ?? "")
+            });
+          }
+        }).finally(() => {
+          accountScopedMutationAbortControllersRef.current.delete(
+            recoveryController
+          );
+        });
+      }
     }
   }
 

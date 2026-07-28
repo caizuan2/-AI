@@ -169,6 +169,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   });
   const providerSignal = input.signal;
   const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
+  const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata;
   const baseInput = { ...input };
   const actualModel = resolveIngestActualModel(provider);
   const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
@@ -182,6 +183,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
   delete (baseInput as { signal?: unknown }).signal;
   delete (baseInput as { onProgressEvent?: unknown }).onProgressEvent;
+  delete (baseInput as { deferMetadata?: unknown }).deferMetadata;
 
   const payload = {
     ...baseInput,
@@ -206,7 +208,8 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     return runDoubaoAdminIngest({
       ...payload,
       signal: providerSignal,
-      onProgressEvent: doubaoProgressEvent
+      onProgressEvent: doubaoProgressEvent,
+      deferMetadata: deferDoubaoMetadata
     } as DoubaoAdminIngestInput);
   }
 

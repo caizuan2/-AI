@@ -9,6 +9,11 @@ export type AdminIngestConversationRuntimeStatus =
     state: "completed_unread";
     requestId: string;
     updatedAt: number;
+  }
+  | {
+    state: "visible_completed";
+    requestId: string;
+    updatedAt: number;
   };
 
 export type AdminIngestConversationRuntimeStatusMap = Record<
@@ -16,7 +21,7 @@ export type AdminIngestConversationRuntimeStatusMap = Record<
   AdminIngestConversationRuntimeStatus
 >;
 
-const MAX_GENERATING_STATUS_AGE_MS = 15 * 60 * 1000;
+const MAX_GENERATING_STATUS_AGE_MS = 5 * 60 * 1000;
 const MAX_COMPLETED_STATUS_AGE_MS = 24 * 60 * 60 * 1000;
 
 function readTimestamp(value: unknown) {
@@ -79,12 +84,12 @@ export function normalizeAdminIngestConversationRuntimeStatusMap(
     }
 
     if (
-      status.state === "completed_unread"
+      (status.state === "completed_unread" || status.state === "visible_completed")
       && requestId
       && now - updatedAt <= MAX_COMPLETED_STATUS_AGE_MS
     ) {
       next[conversationId] = {
-        state: "completed_unread",
+        state: status.state,
         requestId,
         updatedAt
       };
@@ -125,12 +130,66 @@ export function markAdminIngestConversationGenerating(
     return current;
   }
 
+  if (
+    previous
+    && previous.state !== "generating"
+    && previous.requestId === input.requestId
+  ) {
+    return current;
+  }
+
   return {
     ...current,
     [input.conversationId]: {
       state: "generating" as const,
       requestId: input.requestId,
       startedAt: now,
+      updatedAt: now
+    }
+  };
+}
+
+export function markAdminIngestConversationVisibleCompleted(
+  current: AdminIngestConversationRuntimeStatusMap,
+  input: {
+    conversationId: string;
+    requestId: string;
+    now?: number;
+  }
+) {
+  const previous = current[input.conversationId];
+  const now = input.now ?? Date.now();
+
+  if (
+    previous?.state === "generating"
+    && previous.requestId
+    && previous.requestId !== input.requestId
+  ) {
+    return current;
+  }
+
+  if (
+    previous?.state === "visible_completed"
+    && previous.requestId === input.requestId
+    && previous.updatedAt >= now
+  ) {
+    return current;
+  }
+
+  if (
+    previous
+    && previous.state !== "generating"
+    && previous.requestId !== input.requestId
+    && previous.updatedAt >= now
+  ) {
+    return current;
+  }
+
+  return {
+    ...current,
+    [input.conversationId]: {
+      state: "visible_completed" as const,
+      requestId: input.requestId,
       updatedAt: now
     }
   };
@@ -156,7 +215,11 @@ export function markAdminIngestConversationCompleted(
   }
 
   if (input.isVisible) {
-    return withoutConversation(current, input.conversationId);
+    return markAdminIngestConversationVisibleCompleted(current, {
+      conversationId: input.conversationId,
+      requestId: input.requestId,
+      now: input.now
+    });
   }
 
   return {
@@ -204,4 +267,52 @@ export function removeAdminIngestConversationRuntimeStatus(
   conversationId: string
 ) {
   return withoutConversation(current, conversationId);
+}
+
+export function mergeAdminIngestConversationRuntimeStatusMaps(
+  current: AdminIngestConversationRuntimeStatusMap,
+  incoming: AdminIngestConversationRuntimeStatusMap
+) {
+  const next: AdminIngestConversationRuntimeStatusMap = {
+    ...incoming
+  };
+
+  for (const [conversationId, currentStatus] of Object.entries(current)) {
+    const incomingStatus = incoming[conversationId];
+
+    if (!incomingStatus) {
+      if (currentStatus.state === "visible_completed") {
+        next[conversationId] = currentStatus;
+      }
+      continue;
+    }
+
+    if (
+      currentStatus.state !== "generating"
+      && incomingStatus.state === "generating"
+      && currentStatus.requestId === incomingStatus.requestId
+    ) {
+      next[conversationId] = currentStatus;
+      continue;
+    }
+
+    if (
+      currentStatus.state === "generating"
+      && incomingStatus.state !== "generating"
+      && currentStatus.requestId !== incomingStatus.requestId
+    ) {
+      next[conversationId] = currentStatus;
+      continue;
+    }
+
+    if (
+      currentStatus.state !== "generating"
+      && incomingStatus.state !== "generating"
+      && currentStatus.updatedAt > incomingStatus.updatedAt
+    ) {
+      next[conversationId] = currentStatus;
+    }
+  }
+
+  return next;
 }

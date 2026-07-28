@@ -456,6 +456,69 @@ try {
   assert.ok(result.diagnostics.includes("doubao:metadataCompleted:true"));
 
   const successfulProviderFetch = globalThis.fetch;
+  const deferredRequestStart = capturedRequestBodies.length;
+  const deferredProgressStart = progressEvents.length;
+  const deferredResult = await runDoubaoAdminIngest({
+    ...doubaoInput,
+    deferMetadata: true
+  });
+  const deferredRequestBodies = capturedRequestBodies.slice(
+    deferredRequestStart
+  );
+  const deferredVisibleRequestBody = deferredRequestBodies[0];
+
+  assert.equal(
+    deferredRequestBodies.length,
+    1,
+    "Deferred metadata must return immediately after the unchanged visible request."
+  );
+  assert.equal(deferredVisibleRequestBody.model, visibleRequestBody.model);
+  assert.equal(deferredVisibleRequestBody.max_tokens, 6000);
+  assert.equal(
+    deferredVisibleRequestBody.temperature,
+    visibleRequestBody.temperature
+  );
+  const deferredMessages = deferredVisibleRequestBody.messages as Array<{
+    role: string;
+    content: string;
+  }>;
+  assert.equal(deferredMessages[0]?.content, messages[0]?.content);
+  assert.match(
+    deferredMessages.map((message) => message.content).join("\n"),
+    /CURRENT_INPUT_SENTINEL/
+  );
+  assert.equal(
+    "thinking" in deferredVisibleRequestBody,
+    false,
+    "The strongest default deep-thinking profile must not be disabled."
+  );
+  assert.equal(
+    deferredResult.replyMarkdown,
+    exactReplyMarkdown,
+    "Provider raw Markdown must remain byte-for-byte identical when metadata moves to the background."
+  );
+  assert.equal(
+    visibleDeltaSnapshots.at(-1),
+    deferredResult.replyMarkdown,
+    "Provider raw Markdown, accumulated stream, and returned Markdown must be identical."
+  );
+  const deferredProgressEvents = progressEvents.slice(deferredProgressStart);
+  assert.ok(deferredProgressEvents.includes("visible_delta"));
+  assert.deepEqual(
+    deferredProgressEvents.filter((event) => event !== "visible_delta"),
+    [
+    "visible_reply",
+    "metadata_status:pending",
+    "metadata_status:deferred"
+    ]
+  );
+  assert.ok(
+    deferredResult.diagnostics.includes("doubao:metadataDeferred:true")
+  );
+  assert.ok(
+    deferredResult.diagnostics.includes("doubao:metadataCompleted:false")
+  );
+
   const recoveredPartialMarkdown = "\n# 已完整生成的豆包正文\n\n只损坏结构化元数据尾部，正文必须原样保留。  \n";
   const malformedStructuredTail = `{"replyMarkdown":${JSON.stringify(recoveredPartialMarkdown)},"knowledgeDraft":{"title":"未闭合"`;
   globalThis.fetch = async (_url, init) => createChunkedSseResponse({

@@ -6,6 +6,12 @@ import {
   normalizeAdminIngestConversationSyncSnapshot,
   type AdminIngestConversationSyncSnapshot
 } from "@/lib/enterprise/admin-ingest-history-sync";
+import {
+  markAdminIngestConversationVisibleCompleted,
+  mergeAdminIngestConversationRuntimeStatusMaps,
+  normalizeAdminIngestConversationRuntimeStatusMap,
+  type AdminIngestConversationRuntimeStatusMap
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 
 export type AdminIngestConversationSyncState = AdminIngestConversationSyncSnapshot & {
   source: "admin-ingest-conversation-sync-v2";
@@ -584,6 +590,11 @@ export async function writeAdminIngestConversationSyncState(
         ...current.state.conversationDraftsById
       };
     }
+    snapshot.conversationRuntimeStatusById =
+      mergeAdminIngestConversationRuntimeStatusMaps(
+        current.state.conversationRuntimeStatusById,
+        snapshot.conversationRuntimeStatusById
+      );
     const nextRevision = current.revision + 1;
     const normalized: AdminIngestConversationSyncState = {
       source: "admin-ingest-conversation-sync-v2",
@@ -607,4 +618,113 @@ export async function writeAdminIngestConversationSyncState(
 
     return normalized;
   }));
+}
+
+async function getConversationRuntimeStatusFilePath(ownerUserId: string) {
+  return `${await getConversationSyncFilePath(ownerUserId)}.runtime.json`;
+}
+
+export async function markAdminIngestConversationRequestVisibleCompleted(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    requestId: string;
+    completedAt?: number;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+  const requestId = input.requestId.trim();
+
+  if (!conversationId || !requestId) {
+    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
+  }
+
+  return withOwnerWriteLock(ownerUserId, () => withOwnerFileLock(ownerUserId, async () => {
+    const current = await readAdminIngestConversationRuntimeStatusSnapshot(
+      ownerUserId
+    );
+    const nextRuntimeStatusById =
+      markAdminIngestConversationVisibleCompleted(
+        current.statusById,
+        {
+          conversationId,
+          requestId,
+          now: input.completedAt
+        }
+      );
+
+    if (
+      nextRuntimeStatusById === current.statusById
+    ) {
+      return current;
+    }
+
+    const normalized = {
+      source: "admin-ingest-conversation-runtime-v1" as const,
+      version: 1 as const,
+      ownerUserId,
+      revision: current.revision + 1,
+      updatedAt: Math.max(Date.now(), current.updatedAt + 1),
+      statusById: nextRuntimeStatusById
+    };
+    const filePath = await getConversationRuntimeStatusFilePath(ownerUserId);
+    const serializedState = `${JSON.stringify(normalized, null, 2)}\n`;
+
+    await replaceFileAtomically(filePath, serializedState);
+
+    return normalized;
+  }));
+}
+
+export async function readAdminIngestConversationRuntimeStatusSnapshot(
+  ownerUserId: string
+): Promise<{
+  revision: number;
+  updatedAt: number;
+  statusById: AdminIngestConversationRuntimeStatusMap;
+}> {
+  const fs = await import("node:fs/promises");
+
+  try {
+    const raw = await fs.readFile(
+      await getConversationRuntimeStatusFilePath(ownerUserId),
+      "utf8"
+    );
+    const parsed = JSON.parse(raw) as {
+      ownerUserId?: unknown;
+      revision?: unknown;
+      updatedAt?: unknown;
+      statusById?: unknown;
+    };
+
+    if (parsed.ownerUserId !== ownerUserId) {
+      throw new Error("INGEST_HISTORY_OWNER_MISMATCH");
+    }
+
+    return {
+      revision: typeof parsed.revision === "number"
+        && Number.isSafeInteger(parsed.revision)
+        && parsed.revision >= 0
+        ? parsed.revision
+        : 0,
+      updatedAt: typeof parsed.updatedAt === "number"
+        && Number.isFinite(parsed.updatedAt)
+        && parsed.updatedAt >= 0
+        ? parsed.updatedAt
+        : 0,
+      statusById: normalizeAdminIngestConversationRuntimeStatusMap(
+        parsed.statusById
+      )
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        revision: 0,
+        updatedAt: 0,
+        statusById: {}
+      };
+    }
+
+    throw error;
+  }
 }
