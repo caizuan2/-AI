@@ -75,6 +75,10 @@ import {
 import type {
   AdminIngestConversationRuntimeStatusMap
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
+import {
+  resolveAdminIngestHistoryDisplayState,
+  type AdminIngestHistoryLoadState
+} from "@/lib/enterprise/admin-ingest-history-load-state";
 import { shouldShowAdminIngestAnswerActions } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import type {
   IngestConnectionStatus,
@@ -190,6 +194,8 @@ interface IngestChatGPTShellProps {
   onAgentChange?: (agentId: string) => void;
   agentConversations?: IngestAgentConversation[];
   conversationRuntimeStatusById?: AdminIngestConversationRuntimeStatusMap;
+  agentHistoryLoadState?: AdminIngestHistoryLoadState;
+  onRetryAgentHistory?: () => void;
   activeConversationId?: string;
   expandedAgentIds?: string[];
   expandedConversationAgentIds?: string[];
@@ -819,6 +825,8 @@ export function IngestChatGPTShell({
   onAgentChange,
   agentConversations = [],
   conversationRuntimeStatusById = {},
+  agentHistoryLoadState = "ready",
+  onRetryAgentHistory,
   activeConversationId = "",
   expandedAgentIds = [],
   expandedConversationAgentIds = [],
@@ -1050,6 +1058,10 @@ export function IngestChatGPTShell({
     () => searchIngestAgentSidebar(agents, agentConversations, searchKeyword),
     [agentConversations, agents, searchKeyword]
   );
+  const agentHistoryDisplayState = resolveAdminIngestHistoryDisplayState({
+    loadState: agentHistoryLoadState,
+    agentCount: agents.length
+  });
   const hasSearchResults = filteredAgentResults.length > 0;
   const agentLabelById = useMemo(
     () => new Map(agents.map((agent) => [agent.id, `${agent.name} · ${agent.role}`])),
@@ -2331,7 +2343,48 @@ export function IngestChatGPTShell({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
           <div className="space-y-1.5">
-            {agents.length === 0 ? (
+            {agents.length > 0 && agentHistoryLoadState !== "ready" ? (
+              <div className="mx-2 mb-2 flex items-center justify-between rounded-xl bg-[#f6faff] px-3 py-2 text-xs font-normal text-[#5f7190]">
+                <span>
+                  {agentHistoryLoadState === "loading"
+                    ? "正在后台同步 Agent 和历史记录..."
+                    : "同步失败，已保留上次成功记录。"}
+                </span>
+                {agentHistoryLoadState === "error" ? (
+                  <button
+                    type="button"
+                    onClick={onRetryAgentHistory}
+                    className="ml-2 shrink-0 text-[#3b8df5] hover:text-[#2478e5]"
+                  >
+                    重试
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+            {agentHistoryDisplayState === "loading" ? (
+              <div className="mx-2 rounded-2xl border border-[#e6e6e2] bg-white px-3 py-5 text-center">
+                <Loader2
+                  className="mx-auto h-5 w-5 animate-spin text-[#3b8df5]"
+                  aria-hidden="true"
+                />
+                <p className="mt-2 text-xs font-normal text-[#6f6f6b]">
+                  正在同步 Agent 和历史记录...
+                </p>
+              </div>
+            ) : agentHistoryDisplayState === "error" ? (
+              <div className="mx-2 rounded-2xl border border-[#e6e6e2] bg-white px-3 py-5 text-center">
+                <p className="text-xs font-normal leading-5 text-[#6f6f6b]">
+                  Agent 列表同步失败，没有显示错误的空列表。
+                </p>
+                <button
+                  type="button"
+                  onClick={onRetryAgentHistory}
+                  className="mt-3 h-8 rounded-full border border-[#dceaff] bg-[#f6faff] px-3 text-xs font-normal text-[#3b8df5] hover:bg-[#edf6ff]"
+                >
+                  重新同步
+                </button>
+              </div>
+            ) : agentHistoryDisplayState === "empty" ? (
               <div className="mx-2 rounded-2xl border border-dashed border-[#d9d9d5] bg-white px-3 py-5 text-center">
                 <p className="text-xs font-semibold text-[#202020]">暂无 Agent，请到专家广场添加专家。</p>
                 <button

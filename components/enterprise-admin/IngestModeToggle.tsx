@@ -150,6 +150,14 @@ import {
   shouldShowAdminIngestParsingProgress
 } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import {
+  ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
+  createAdminIngestDoubaoVisibleTimeoutError,
+  shouldApplyAdminIngestDoubaoVisibleBudget
+} from "@/lib/enterprise/admin-ingest-doubao-visible-budget";
+import type {
+  AdminIngestHistoryLoadState
+} from "@/lib/enterprise/admin-ingest-history-load-state";
+import {
   appendAssistantPlaceholder,
   appendUserMessage,
   completeAssistantMessage,
@@ -859,6 +867,7 @@ export function IngestModeToggle({
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
   const abortControllerByConversationRef = useRef<Record<string, AbortController>>({});
   const activeIngestRequestIdByConversationRef = useRef<Record<string, string>>({});
+  const cancelledIngestRequestIdsRef = useRef<Set<string>>(new Set());
   const preparingConversationIdsRef = useRef<Record<string, true>>({});
   const ingestSuccessLockByConversationRef = useRef<Record<string, boolean>>({});
   const lastSuccessfulIngestAtByConversationRef = useRef<Record<string, number>>({});
@@ -869,6 +878,9 @@ export function IngestModeToggle({
   const [isUrlIngesting, setIsUrlIngesting] = useState(false);
   const [autonomousEnabled, setAutonomousEnabled] = useState(false);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoadState, setHistoryLoadState] =
+    useState<AdminIngestHistoryLoadState>("loading");
+  const [historyLoadRetryVersion, setHistoryLoadRetryVersion] = useState(0);
   const [conversationSyncLoaded, setConversationSyncLoaded] = useState(false);
   const [historyScope, setHistoryScope] = useState("");
   const lastConversationSyncPayloadRef = useRef("");
@@ -877,6 +889,8 @@ export function IngestModeToggle({
   const conversationRuntimeRevisionRef = useRef(0);
   const conversationSyncTimeoutRef = useRef<number | null>(null);
   const conversationHydrationAbortControllerRef = useRef<AbortController | null>(null);
+  const conversationHydrationVersionRef = useRef(0);
+  const preserveHistoryDuringHydrationRef = useRef(false);
   const conversationSyncAbortControllersRef = useRef<Set<AbortController>>(new Set());
   const accountScopedMutationAbortControllersRef = useRef<Set<AbortController>>(new Set());
   const conversationSyncInFlightRef = useRef(false);
@@ -1065,8 +1079,12 @@ export function IngestModeToggle({
       userAgent: navigator.userAgent
     });
     const abortController = new AbortController();
+    const hydrationVersion = conversationHydrationVersionRef.current + 1;
+    const preserveCurrentHistory = preserveHistoryDuringHydrationRef.current;
     let cancelled = false;
 
+    preserveHistoryDuringHydrationRef.current = false;
+    conversationHydrationVersionRef.current = hydrationVersion;
     isAccountTransitioningRef.current = true;
     conversationHydrationAbortControllerRef.current?.abort();
     conversationHydrationAbortControllerRef.current = abortController;
@@ -1077,29 +1095,32 @@ export function IngestModeToggle({
     conversationSyncAbortControllersRef.current.forEach((controller) => controller.abort());
     conversationSyncAbortControllersRef.current.clear();
     pendingConversationSyncRef.current = null;
-    historyScopeRef.current = "";
-    conversationSyncRevisionRef.current = 0;
-    conversationRuntimeRevisionRef.current = 0;
-    lastConversationSyncPayloadRef.current = "";
-    restoredInitialConversationRef.current = false;
-    setHistoryScope("");
-    setHistoryLoaded(false);
-    setConversationSyncLoaded(false);
-    setAgents([]);
-    setAgentConversations([]);
-    setActiveAgentId("");
-    setActiveConversationScope("");
-    setConversationMessagesById({});
-    conversationMessagesByIdRef.current = {};
-    setConversationDraftsById({});
-    conversationDraftsByIdRef.current = {};
-    setConversationRuntimeStatusById({});
-    conversationLastInputByIdRef.current = {};
-    setPinnedAgentIds([]);
-    setExpandedAgentIds([]);
-    setExpandedConversationAgentIds([]);
-    setMessages([]);
-    setDraft(ingestChatInitialDraft);
+    setHistoryLoadState("loading");
+    if (!preserveCurrentHistory) {
+      historyScopeRef.current = "";
+      conversationSyncRevisionRef.current = 0;
+      conversationRuntimeRevisionRef.current = 0;
+      lastConversationSyncPayloadRef.current = "";
+      restoredInitialConversationRef.current = false;
+      setHistoryScope("");
+      setHistoryLoaded(false);
+      setConversationSyncLoaded(false);
+      setAgents([]);
+      setAgentConversations([]);
+      setActiveAgentId("");
+      setActiveConversationScope("");
+      setConversationMessagesById({});
+      conversationMessagesByIdRef.current = {};
+      setConversationDraftsById({});
+      conversationDraftsByIdRef.current = {};
+      setConversationRuntimeStatusById({});
+      conversationLastInputByIdRef.current = {};
+      setPinnedAgentIds([]);
+      setExpandedAgentIds([]);
+      setExpandedConversationAgentIds([]);
+      setMessages([]);
+      setDraft(ingestChatInitialDraft);
+    }
 
     async function hydrateAccountHistory() {
       try {
@@ -1218,7 +1239,11 @@ export function IngestModeToggle({
             selectedState.expandedConversationAgentIds
         };
 
-        if (cancelled || abortController.signal.aborted) {
+        if (
+          cancelled
+          || abortController.signal.aborted
+          || conversationHydrationVersionRef.current !== hydrationVersion
+        ) {
           return;
         }
 
@@ -1264,16 +1289,23 @@ export function IngestModeToggle({
           : JSON.stringify(hydratedState);
         isAccountTransitioningRef.current = false;
         setHistoryLoaded(true);
+        setHistoryLoadState("ready");
         setConversationSyncLoaded(true);
         setErrorMessage("");
       } catch (error) {
-        if (cancelled || abortController.signal.aborted) {
+        if (
+          cancelled
+          || abortController.signal.aborted
+          || conversationHydrationVersionRef.current !== hydrationVersion
+        ) {
           return;
         }
 
         console.warn("[admin-ingest:conversation-sync:load]", error);
+        isAccountTransitioningRef.current = false;
+        setHistoryLoadState("error");
         setNoticeMessage("");
-        setErrorMessage("当前账号的历史记录加载失败，请刷新页面后重试。");
+        setErrorMessage("当前账号的 Agent 和历史记录同步失败，请在抽屉中点击重试。");
       }
     }
 
@@ -1287,7 +1319,7 @@ export function IngestModeToggle({
         conversationHydrationAbortControllerRef.current = null;
       }
     };
-  }, [accessTier, capabilities.saveKnowledge]);
+  }, [accessTier, capabilities.saveKnowledge, historyLoadRetryVersion]);
 
   useEffect(() => {
     if (!historyLoaded || !hasActiveAgent) {
@@ -1554,6 +1586,7 @@ export function IngestModeToggle({
 
   const stopAccountHistoryActivity = useCallback(() => {
     isAccountTransitioningRef.current = true;
+    setHistoryLoadState("loading");
     conversationHydrationAbortControllerRef.current?.abort();
     conversationHydrationAbortControllerRef.current = null;
 
@@ -4147,6 +4180,36 @@ export function IngestModeToggle({
     } | null = null;
     let resumableUploads = composerUploads;
     let outgoingAttachments: IngestUploadState[] = draftAttachments;
+    let doubaoVisibleBudgetTimedOut = false;
+    let doubaoVisibleBudgetTimeout: number | null = null;
+    const isRequestCancelled = () => (
+      cancelledIngestRequestIdsRef.current.has(requestId)
+    );
+    const clearDoubaoVisibleBudget = () => {
+      if (doubaoVisibleBudgetTimeout === null) {
+        return;
+      }
+
+      window.clearTimeout(doubaoVisibleBudgetTimeout);
+      doubaoVisibleBudgetTimeout = null;
+    };
+
+    if (shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)) {
+      doubaoVisibleBudgetTimeout = window.setTimeout(() => {
+        if (
+          visibleReplyRendered
+          || isRequestCancelled()
+          || !isCurrentRequest()
+        ) {
+          return;
+        }
+
+        doubaoVisibleBudgetTimedOut = true;
+        abortController.abort(
+          createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
+        );
+      }, ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS);
+    }
 
     try {
       if (composerUploads.length > 0) {
@@ -4165,7 +4228,11 @@ export function IngestModeToggle({
           signal: abortController.signal,
           pageBatchSize: 4,
           onProgress: (progress) => {
-            if (!isCurrentRequest()) {
+            if (
+              !isCurrentRequest()
+              || isRequestCancelled()
+              || doubaoVisibleBudgetTimedOut
+            ) {
               return;
             }
 
@@ -4203,7 +4270,11 @@ export function IngestModeToggle({
           effectiveInput = buildEffectiveInput(true);
         }
 
-        if (!isCurrentRequest()) {
+        if (
+          !isCurrentRequest()
+          || isRequestCancelled()
+          || doubaoVisibleBudgetTimedOut
+        ) {
           return null;
         }
 
@@ -4302,6 +4373,8 @@ export function IngestModeToggle({
                 if (
                   event.requestId !== requestId
                   || !isCurrentRequest()
+                  || isRequestCancelled()
+                  || doubaoVisibleBudgetTimedOut
                   || shouldIgnoreRequestResult(
                     conversationStateByIdRef.current[conversationId],
                     requestId
@@ -4310,6 +4383,7 @@ export function IngestModeToggle({
                   return;
                 }
 
+                clearDoubaoVisibleBudget();
                 conversationStateByIdRef.current[conversationId] =
                   updateAssistantMessage(
                     conversationStateByIdRef.current[conversationId],
@@ -4363,11 +4437,14 @@ export function IngestModeToggle({
                 if (
                   event.requestId !== requestId
                   || !isCurrentRequest()
+                  || isRequestCancelled()
+                  || doubaoVisibleBudgetTimedOut
                   || shouldIgnoreRequestResult(conversationStateByIdRef.current[conversationId], requestId)
                 ) {
                   return;
                 }
 
+                clearDoubaoVisibleBudget();
                 visibleReplySnapshot = event.replyMarkdown;
                 visibleReplyRendered = true;
                 conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
@@ -4427,7 +4504,11 @@ export function IngestModeToggle({
                 setRequestErrorMessage("");
               },
               onStatus: (event) => {
-                if (!isCurrentRequest()) {
+                if (
+                  !isCurrentRequest()
+                  || isRequestCancelled()
+                  || doubaoVisibleBudgetTimedOut
+                ) {
                   return;
                 }
 
@@ -4485,6 +4566,8 @@ export function IngestModeToggle({
           const canRetry = attempt < 1
             && !abortController.signal.aborted
             && isCurrentRequest()
+            && !isRequestCancelled()
+            && !doubaoVisibleBudgetTimedOut
             && isRetryableIngestError(retryError)
             && (canRetryWechatTimeout || !isStrictSelectedModelFailure(retryError));
 
@@ -4507,6 +4590,18 @@ export function IngestModeToggle({
           });
           await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
         }
+      }
+
+      if (doubaoVisibleBudgetTimedOut) {
+        throw createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel);
+      }
+
+      if (isRequestCancelled()) {
+        if (!options?.preserveComposer && isRequestConversationVisible()) {
+          setInput((current) => current || value);
+          setUploadedFiles((current) => current.length > 0 ? current : resumableUploads);
+        }
+        return null;
       }
 
       if (!isCurrentRequest()) {
@@ -4732,19 +4827,33 @@ export function IngestModeToggle({
         records: nextRecords
       };
     } catch (error) {
-      if (shouldIgnoreRequestError(conversationStateByIdRef.current[conversationId], requestId) || !isCurrentRequest()) {
+      const requestWasCancelled = isRequestCancelled();
+
+      if (
+        !requestWasCancelled
+        && (
+          shouldIgnoreRequestError(conversationStateByIdRef.current[conversationId], requestId)
+          || !isCurrentRequest()
+        )
+      ) {
         return null;
       }
 
-      const requestError = readAdminIngestRequestError(error);
-      const stateDomain = getStateDomain(error);
-      const errorCode = requestError?.errorCode ?? (error instanceof Error ? error.name : undefined);
+      const handledError = doubaoVisibleBudgetTimedOut
+        ? createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
+        : error;
+      const requestError = readAdminIngestRequestError(handledError);
+      const stateDomain = getStateDomain(handledError);
+      const errorCode = requestError?.errorCode
+        ?? (handledError instanceof Error ? handledError.name : undefined);
       const causeCode = requestError?.causeCode;
       const responseStatus = requestError?.status;
-      const rawErrorMessage = error instanceof Error ? error.message : String(error ?? "");
-      const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(error);
+      const rawErrorMessage = handledError instanceof Error
+        ? handledError.message
+        : String(handledError ?? "");
+      const attachmentEvidenceMessage = readAttachmentEvidenceErrorMessage(handledError);
 
-      if (isAdminIngestHistoryScopeMismatch(error)) {
+      if (isAdminIngestHistoryScopeMismatch(handledError)) {
         reloadForAccountHistoryChange();
         return null;
       }
@@ -4820,7 +4929,7 @@ export function IngestModeToggle({
         return null;
       }
 
-      if (abortController.signal.aborted) {
+      if (abortController.signal.aborted && !doubaoVisibleBudgetTimedOut) {
         setRequestFallbackToast(null);
         setRequestNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
         setRequestErrorMessage("");
@@ -4860,7 +4969,10 @@ export function IngestModeToggle({
         retryable: requestError?.retryable
       });
 
-      if (successRendered || shouldSuppress) {
+      if (
+        successRendered
+        || (shouldSuppress && !doubaoVisibleBudgetTimedOut)
+      ) {
         console.warn("[admin-ingest:gpt:toast-suppressed]", {
           reason: rawErrorMessage,
           status: responseStatus,
@@ -4875,12 +4987,14 @@ export function IngestModeToggle({
         return null;
       }
 
-      const authAccessMessage = getAuthAccessErrorMessage(error);
+      const authAccessMessage = getAuthAccessErrorMessage(handledError);
 
       if (authAccessMessage) {
         console.warn("[admin-ingest:auth-access:error]", {
           message: authAccessMessage,
-          rawMessage: error instanceof Error ? error.message : String(error ?? ""),
+          rawMessage: handledError instanceof Error
+            ? handledError.message
+            : String(handledError ?? ""),
           requestId
         });
         setRequestFallbackToast(null);
@@ -4893,12 +5007,14 @@ export function IngestModeToggle({
         return null;
       }
 
-      const modelHealthMessage = getModelHealthWarningMessage(error);
+      const modelHealthMessage = getModelHealthWarningMessage(handledError);
 
       if (modelHealthMessage) {
         console.warn("[admin-ingest:model-health:warning]", {
           message: modelHealthMessage,
-          rawMessage: error instanceof Error ? error.message : String(error ?? ""),
+          rawMessage: handledError instanceof Error
+            ? handledError.message
+            : String(handledError ?? ""),
           requestId
         });
         setRequestFallbackToast(null);
@@ -4911,7 +5027,14 @@ export function IngestModeToggle({
         return null;
       }
 
-      const failurePresentation = buildAdminIngestFailurePresentation(error, currentModelLabel);
+      const failurePresentation = doubaoVisibleBudgetTimedOut
+        ? {
+            title: "豆包深度思考等待超时",
+            message: `${currentModelLabel} 深度思考已达到 120 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`,
+            retryable: true,
+            retryAfterMs: undefined
+          }
+        : buildAdminIngestFailurePresentation(handledError, currentModelLabel);
       const message = failurePresentation.message;
 
       console.error("[admin-ingest:gpt:error]", {
@@ -4922,22 +5045,27 @@ export function IngestModeToggle({
         message,
         provider: requestModelOption.provider,
         model: currentModelLabel,
-        fallbackUsed: requestError?.fallbackUsed,
+        fallbackUsed: doubaoVisibleBudgetTimedOut
+          ? false
+          : requestError?.fallbackUsed,
         requestId
       });
-      const realIngestFailure = isRealIngestFailure({
-        reason: error instanceof Error ? error.message : String(error ?? ""),
-        stateDomain,
-        requestId,
-        activeRequestId: activeIngestRequestIdByConversationRef.current[conversationId],
-        hasCurrentSuccess: successRendered || Boolean(ingestSuccessLockByConversationRef.current[conversationId]),
-        lastSuccessfulAt: lastSuccessfulIngestAtByConversationRef.current[conversationId] ?? 0,
-        suppressUntil: suppressFallbackToastUntilByConversationRef.current[conversationId] ?? 0,
-        status: responseStatus,
-        errorCode,
-        causeCode,
-        retryable: failurePresentation.retryable
-      });
+      const realIngestFailure = doubaoVisibleBudgetTimedOut
+        || isRealIngestFailure({
+          reason: handledError instanceof Error
+            ? handledError.message
+            : String(handledError ?? ""),
+          stateDomain,
+          requestId,
+          activeRequestId: activeIngestRequestIdByConversationRef.current[conversationId],
+          hasCurrentSuccess: successRendered || Boolean(ingestSuccessLockByConversationRef.current[conversationId]),
+          lastSuccessfulAt: lastSuccessfulIngestAtByConversationRef.current[conversationId] ?? 0,
+          suppressUntil: suppressFallbackToastUntilByConversationRef.current[conversationId] ?? 0,
+          status: responseStatus,
+          errorCode,
+          causeCode,
+          retryable: failurePresentation.retryable
+        });
 
       if (!realIngestFailure) {
         console.warn("[admin-ingest:gpt:error:ignored]", {
@@ -4981,9 +5109,15 @@ export function IngestModeToggle({
             errorCode,
             causeCode,
             retryable: failurePresentation.retryable,
-            requestedModel: requestError?.requestedModel,
-            actualModel: requestError?.actualModel,
-            fallbackUsed: requestError?.fallbackUsed,
+            requestedModel: doubaoVisibleBudgetTimedOut
+              ? currentModelLabel
+              : requestError?.requestedModel,
+            actualModel: doubaoVisibleBudgetTimedOut
+              ? currentModelLabel
+              : requestError?.actualModel,
+            fallbackUsed: doubaoVisibleBudgetTimedOut
+              ? false
+              : requestError?.fallbackUsed,
             retryAfterMs: failurePresentation.retryAfterMs,
             retryAt: typeof failurePresentation.retryAfterMs === "number"
               ? Date.now() + failurePresentation.retryAfterMs
@@ -5001,6 +5135,7 @@ export function IngestModeToggle({
       setRequestErrorMessage(message);
       return null;
     } finally {
+      clearDoubaoVisibleBudget();
       if (successRendered) {
         requestQueueRef.current = completeRequest(requestQueueRef.current, conversationId, requestId);
       } else {
@@ -5034,6 +5169,7 @@ export function IngestModeToggle({
       if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
         delete activeIngestRequestIdByConversationRef.current[conversationId];
       }
+      cancelledIngestRequestIdsRef.current.delete(requestId);
       setIsParsing(
         countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
       );
@@ -5457,6 +5593,15 @@ export function IngestModeToggle({
       return;
     }
 
+    if (
+      cancelledIngestRequestIdsRef.current.has(requestId)
+      || controller.signal.aborted
+    ) {
+      setNoticeMessage("正在停止本轮附件识别与生成...");
+      return;
+    }
+
+    cancelledIngestRequestIdsRef.current.add(requestId);
     requestQueueRef.current = cancelRequest(
       requestQueueRef.current,
       conversationId,
@@ -6396,6 +6541,13 @@ export function IngestModeToggle({
     onAgentConversationToggleArchived: handleToggleAgentConversationArchived,
     onAgentConversationDelete: handleDeleteAgentConversation,
     conversationRuntimeStatusById,
+    agentHistoryLoadState: historyLoadState,
+    onRetryAgentHistory: () => {
+      setErrorMessage("");
+      setNoticeMessage("正在重新同步 Agent 和历史记录...");
+      preserveHistoryDuringHydrationRef.current = true;
+      setHistoryLoadRetryVersion((current) => current + 1);
+    },
     onAgentTogglePinned: handleToggleAgentPinned,
     activeRailKey: effectiveRailKey,
     onRailChange: handleRailChange,
