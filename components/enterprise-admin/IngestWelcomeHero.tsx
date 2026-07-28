@@ -6,14 +6,26 @@ import { IngestAgentAvatar } from "./IngestAgentAvatar";
 type IngestWelcomeHeroProps = {
   profile: AdminIngestDisplayProfile;
   canIngest: boolean;
+  assetSlotKey?: string;
   onOpenExperts?: () => void;
   compact?: boolean;
 };
 
-export function IngestWelcomeHero({ profile, canIngest, onOpenExperts, compact = false }: IngestWelcomeHeroProps) {
+export function IngestWelcomeHero({
+  profile,
+  canIngest,
+  assetSlotKey,
+  onOpenExperts,
+  compact = false
+}: IngestWelcomeHeroProps) {
   return (
     <div className="flex flex-col items-center text-center">
-      <IngestAgentAvatar profile={profile} size="lg" className={compact ? "h-20 w-20 rounded-[26px]" : ""} />
+      <IngestAgentAvatar
+        profile={profile}
+        size="lg"
+        className={compact ? "h-20 w-20 rounded-[26px]" : ""}
+        assetSlotKey={assetSlotKey}
+      />
       <h1 className="mt-5 text-[34px] font-black tracking-[0px] text-[#101010]">
         Hi，我是{profile.assistantTitle}
       </h1>

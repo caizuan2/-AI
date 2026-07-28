@@ -39,6 +39,7 @@ import { IngestExpertMarketplace } from "@/components/enterprise-admin/IngestExp
 import { IngestGPTModelPicker } from "@/components/enterprise-admin/IngestGPTModelPicker";
 import { IngestResizableSidebar } from "@/components/enterprise-admin/IngestResizableSidebar";
 import { IngestAgentAvatar } from "@/components/enterprise-admin/IngestAgentAvatar";
+import { IngestStableLibraryImage } from "@/components/enterprise-admin/IngestStableLibraryImage";
 import { IngestAnswerFeedbackActions } from "@/components/enterprise-admin/IngestAnswerFeedbackActions";
 import {
   IngestBehaviorTracker,
@@ -2276,7 +2277,17 @@ export function IngestChatGPTShell({
                 }}
               >
                 <span className={["relative flex h-8 w-8 items-center justify-center rounded-xl transition", isActive ? "bg-[#191919] text-white shadow-sm" : isDisabled ? "text-[#aaa]" : "text-[#222] group-hover:bg-white"].join(" ")}>
-                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {item.key === "chat" || item.key === "experts" ? (
+                    <IngestStableLibraryImage
+                      slotKey={`rail:${item.key}`}
+                      alt=""
+                      className="h-7 w-7 rounded-lg object-cover"
+                      fallback={<Icon className="h-4 w-4" aria-hidden="true" />}
+                      size={56}
+                    />
+                  ) : (
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  )}
                   {item.badge && !isDisabled ? <span className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full bg-[#20b25b] px-1 text-[10px] leading-4 text-white">{item.badge}</span> : null}
                 </span>
                 <span>{item.label}</span>
@@ -2453,7 +2464,7 @@ export function IngestChatGPTShell({
                   >
                     {isActive ? <span aria-hidden="true" className="absolute inset-y-2 left-0 w-[3px] rounded-r-full bg-gradient-to-b from-orange-400 to-amber-400" /> : null}
                     <div className="flex min-h-[56px] items-center gap-3">
-                      <IngestAgentAvatar profile={agentProfile} size="sm" />
+                      <IngestAgentAvatar profile={agentProfile} size="sm" assetSlotKey={`agent:${agent.id}`} />
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2">
                           <span className={["block min-w-0 flex-1 truncate text-sm font-semibold", isActive ? "text-[#2f1f0f]" : "text-[#202020]"].join(" ")}>{agent.name}</span>
@@ -2654,6 +2665,7 @@ export function IngestChatGPTShell({
                   <IngestWelcomeHero
                     profile={activeDisplayProfile}
                     canIngest={canIngest}
+                    assetSlotKey={`agent:${activeAgent.id}`}
                     onOpenExperts={() => onRailChange?.("experts")}
                   />
                   <div className="mt-24 grid w-full max-w-2xl gap-3 sm:grid-cols-2">
@@ -2864,7 +2876,7 @@ export function IngestChatGPTShell({
                         : "px-1 py-3 text-[#303030]"
                     ].join(" ")}>
                       <div className="mb-3 flex items-center gap-2 text-[11px] font-semibold text-[#666]">
-                        <IngestAgentAvatar profile={messageProfile} size="xs" />
+                        <IngestAgentAvatar profile={messageProfile} size="xs" assetSlotKey={`agent:${messageAgent.id}`} />
                         <span className="truncate">{message.expertName ?? messageProfile.expertName}</span>
                       </div>
                       <IngestBehaviorTracker

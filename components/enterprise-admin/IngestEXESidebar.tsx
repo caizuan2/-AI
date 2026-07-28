@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import { Bell, BotMessageSquare, Database, FileStack, ListChecks, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { getIngestRailFeature } from "@/components/enterprise-admin/IngestRailConfig";
+import { IngestStableLibraryImage } from "@/components/enterprise-admin/IngestStableLibraryImage";
 import type { IngestEXENavId, IngestEXENavItem } from "@/lib/enterprise/mock-ingest";
 
 type IngestRailKey = "chat" | "experts" | "tasks" | "files" | "connections" | "memory" | "lab" | "notifications" | "settings";
@@ -79,7 +80,17 @@ export function IngestEXESidebar({
               ].join(" ")}
             >
               <span className={["relative flex h-8 w-8 items-center justify-center rounded-xl transition", isActive ? "bg-[#191919] text-white shadow-sm" : isDisabled ? "text-[#aaa]" : "text-[#222] group-hover:bg-white"].join(" ")}>
-                <Icon className="h-4 w-4" aria-hidden="true" />
+                {railKey === "chat" || railKey === "experts" ? (
+                  <IngestStableLibraryImage
+                    slotKey={`rail:${railKey}`}
+                    alt=""
+                    className="h-7 w-7 rounded-lg object-cover"
+                    fallback={<Icon className="h-4 w-4" aria-hidden="true" />}
+                    size={56}
+                  />
+                ) : (
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                )}
                 {item.count && !isDisabled ? <span className="absolute -right-1 -top-1 h-4 min-w-4 rounded-full bg-[#20b25b] px-1 text-[10px] leading-4 text-white">{item.count}</span> : null}
               </span>
               <span>{label}</span>
