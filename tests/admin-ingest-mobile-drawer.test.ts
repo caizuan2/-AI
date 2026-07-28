@@ -91,12 +91,12 @@ assert.match(
 );
 assert.match(
   shellSource,
-  /left-\[72px\] right-\[72px\][\s\S]*max-w-\[180px\]/
+  /left-\[72px\] right-\[72px\][\s\S]*max-w-\[164px\]/
 );
 assert.ok(mobileHeaderCardSource, "管理员 APK 顶部 Agent 卡片应存在");
 assert.match(
   mobileHeaderCardSource,
-  /rounded-xl border border-\[#e8e5df\] bg-\[#fffdfa\][\s\S]*shadow-\[0_2px_10px_rgba\(55,45,35,0\.06\)\]/
+  /rounded-\[13px\] border border-\[#e6e0d7\] bg-\[#fffaf3\] px-2\.5 py-1[\s\S]*shadow-\[0_4px_12px_rgba\(55,45,35,0\.08\)\]/
 );
 assert.doesNotMatch(
   mobileHeaderCardSource,
@@ -104,7 +104,7 @@ assert.doesNotMatch(
 );
 assert.match(
   mobileHeaderCardSource,
-  /truncate text-center text-\[14px\] font-semibold[\s\S]*\{activeAgent\.name\}[\s\S]*truncate text-center text-\[11px\] font-normal[\s\S]*\{activeConversation\.title\}/
+  /rounded-\[9px\] border border-\[#ebe5dc\] bg-white px-2\.5 py-0\.5[\s\S]*text-\[13px\] font-semibold[\s\S]*shadow-\[0_2px_6px_rgba\(55,45,35,0\.1\)\][\s\S]*\{activeAgent\.name\}[\s\S]*truncate text-center text-\[10px\] font-normal[\s\S]*\{activeConversation\.title\}/
 );
 assert.match(
   shellSource,
