@@ -1,9 +1,9 @@
 {
-  "version": "1.0.23",
-  "build": 123,
-  "minimum_build": 123,
+  "version": "1.0.24",
+  "build": 124,
+  "minimum_build": 124,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.23-build.123",
+  "release_tag": "release/admin-ingest-1.0.24-build.124",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,8 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端 Windows 安装程序、快捷方式和卸载列表统一显示“小董AI”",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.23 Build 123",
+    "统一收录投喂端三端运行状态、豆包正文终态与计时稳定性修复",
+    "修复移动端空输入栏高度残留，并将发送消息与 Agent 卡片统一为 Logo 浅绿色",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.24 Build 124",
     "用户端、超级管理员、DeepSeek、豆包及模型原文输出保持不变"
   ]
 }
