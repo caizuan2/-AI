@@ -4,6 +4,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { LicenseKeyStatus, Prisma } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
 import { getAcceptedLicenseHashes, hashLicenseKey, normalizeLicenseKey } from "@/lib/auth/license";
+import { hashPassword } from "@/lib/auth/password";
 import { initializeTeamOsStandardPlans } from "@/apps/team-os/features/licensing/services/team-os-license-repository";
 import type { RbacUser } from "@/lib/auth/rbac";
 import { NotFoundError, ValidationError } from "@/lib/errors";
@@ -13,6 +14,7 @@ import {
   encryptLicenseKey,
   LICENSE_KEY_ENCRYPTION_VERSION
 } from "@/lib/super-admin/license-key-crypto";
+import { SUPER_ADMIN_DEFAULT_RESET_PASSWORD } from "@/types/super-admin-licenses";
 import type {
   SuperAdminGeneratedLicense,
   SuperAdminLicenseActivationRecord,
@@ -21,6 +23,7 @@ import type {
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
   SuperAdminLicenseGenerationResult,
+  SuperAdminLicensePasswordResetResult,
   SuperAdminLicensePlan,
   SuperAdminLicenseRecord,
   SuperAdminLicenseRevealResult,
@@ -43,7 +46,11 @@ const LICENSE_METADATA_ACTIONS = [
   "SUPER_ADMIN_LICENSE_GENERATE",
   "SUPER_ADMIN_LICENSE_DISABLE"
 ];
-const LICENSE_AUDIT_ACTIONS = [...LICENSE_METADATA_ACTIONS, "reveal_license_key"];
+const LICENSE_AUDIT_ACTIONS = [
+  ...LICENSE_METADATA_ACTIONS,
+  "reveal_license_key",
+  "reset_license_user_password"
+];
 const PLAIN_LICENSE_KEY_PATTERN = /^XT-(?:(?:USER|INGEST|SUPER)(?:-[A-Z0-9]{4}){3}|TEAM(?:-[A-Z0-9]{4}){3,4})$/;
 const LICENSE_SEARCH_IGNORABLE_CHARACTERS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/g;
 const LICENSE_SEARCH_BATCH_SIZE = 250;
@@ -869,6 +876,78 @@ export async function revealSuperAdminLicense(
     id: license.id,
     key: plainKey
   };
+}
+
+export async function resetSuperAdminLicenseUserPassword(
+  actor: Pick<RbacUser, "id" | "role">,
+  licenseId: string,
+  request?: Request
+): Promise<SuperAdminLicensePasswordResetResult> {
+  const passwordHash = await hashPassword(SUPER_ADMIN_DEFAULT_RESET_PASSWORD);
+
+  return prisma.$transaction(async (transaction) => {
+    const license = await transaction.licenseKey.findUnique({
+      where: { id: licenseId },
+      include: {
+        redeemedByUser: {
+          select: {
+            id: true,
+            phone: true,
+            email: true,
+            name: true
+          }
+        }
+      }
+    });
+
+    if (!license) {
+      throw new NotFoundError("卡密不存在。");
+    }
+
+    if (!license.redeemedByUserId || !license.redeemedByUser) {
+      throw new ValidationError("这张卡密尚未绑定用户，无法重置密码。");
+    }
+
+    const metadata = await getLicenseMetadataForUpdate(transaction, license.id);
+
+    if (!GENERATABLE_LICENSE_APP_TYPES.includes(metadata.appType as UnifiedLicenseProduct)) {
+      throw new ValidationError("该卡密类型不支持在统一授权中心重置用户密码。");
+    }
+
+    const updatedUser = await transaction.user.update({
+      where: { id: license.redeemedByUserId },
+      data: { passwordHash },
+      select: {
+        id: true,
+        phone: true,
+        email: true
+      }
+    });
+    const resetAt = new Date();
+    const userAccount = updatedUser.phone || updatedUser.email || updatedUser.id;
+
+    await createLicenseAuditLog({
+      actor,
+      action: "reset_license_user_password",
+      licenseId: license.id,
+      request,
+      transaction,
+      metadata: {
+        ...metadata,
+        targetUserId: updatedUser.id,
+        targetUserAccount: userAccount,
+        passwordResetAt: resetAt.toISOString(),
+        defaultPasswordApplied: true
+      }
+    });
+
+    return {
+      licenseId: license.id,
+      userId: updatedUser.id,
+      userAccount,
+      resetAt: resetAt.toISOString()
+    };
+  });
 }
 
 export async function disableSuperAdminLicense(

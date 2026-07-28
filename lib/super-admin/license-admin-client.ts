@@ -2,6 +2,7 @@ import type {
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
   SuperAdminLicenseGenerationResult,
+  SuperAdminLicensePasswordResetResult,
   SuperAdminLicenseRecord,
   SuperAdminLicenseRenewalInput,
   SuperAdminLicenseRevealResult,
@@ -86,4 +87,13 @@ export function renewSuperAdminLicense(id: string, input: SuperAdminLicenseRenew
     method: "POST",
     body: JSON.stringify(input)
   });
+}
+
+export function resetSuperAdminLicenseUserPassword(id: string) {
+  return requestSuperAdmin<SuperAdminLicensePasswordResetResult>(
+    `/api/super-admin/licenses/${encodeURIComponent(id)}/reset-password`,
+    {
+      method: "POST"
+    }
+  );
 }
