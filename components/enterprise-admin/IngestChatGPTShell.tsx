@@ -1247,11 +1247,18 @@ export function IngestChatGPTShell({
       return;
     }
 
+    if (!input.trim() && uploadedFiles.length === 0) {
+      textarea.style.height = "44px";
+      textarea.style.overflowY = "hidden";
+      textarea.scrollTop = 0;
+      return;
+    }
+
     textarea.style.height = "auto";
     const nextHeight = Math.min(Math.max(textarea.scrollHeight, 44), 160);
     textarea.style.height = `${nextHeight}px`;
     textarea.style.overflowY = textarea.scrollHeight > 160 ? "auto" : "hidden";
-  }, [input, uploadedFiles.length]);
+  }, [activeConversationId, input, uploadedFiles.length]);
 
   useEffect(() => {
     requestAnimationFrame(() => {
@@ -2717,7 +2724,7 @@ export function IngestChatGPTShell({
                         className={["flex w-full justify-end transition", highlightClass].join(" ")}
                       >
                         <div className="flex max-w-[82%] flex-col items-end gap-2 text-sm leading-6">
-                          <div className="rounded-[24px] bg-[#202020] px-4 py-3 text-white shadow-sm">
+                          <div className="rounded-[24px] border border-[#c9f0eb] bg-[#e9fbf9] px-4 py-3 text-[#174c47] shadow-sm">
                             <p className="whitespace-pre-wrap">{message.content}</p>
                           </div>
 
