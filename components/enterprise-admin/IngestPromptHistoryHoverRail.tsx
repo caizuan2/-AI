@@ -426,6 +426,7 @@ export function IngestPromptHistoryHoverRail({
             alt=""
             aria-hidden="true"
             draggable={false}
+            unoptimized
             className={[
               "pointer-events-none h-9 w-9 object-contain",
               mobileLogoBouncing ? "animate-bounce motion-reduce:animate-none" : ""

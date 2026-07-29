@@ -39,7 +39,12 @@ assert.match(
 );
 assert.match(
   shellSource,
-  /aria-label="打开左侧功能"[\s\S]*<NextImage[\s\S]*src=\{adminIngestLogo\}/
+  /aria-label="打开左侧功能"[\s\S]*<NextImage[\s\S]*src=\{adminIngestLogo\}[\s\S]*unoptimized/
+);
+assert.equal(
+  shellSource.match(/src=\{adminIngestLogo\}[\s\S]{0,220}?unoptimized/g)?.length,
+  2,
+  "两个移动端左侧功能入口都必须绕过不可用的图片优化接口"
 );
 assert.doesNotMatch(shellSource, /<Menu className=/);
 assert.match(

@@ -56,7 +56,7 @@ assert.match(
 );
 assert.match(
   mobileFloatingButtonSource,
-  /src=\{adminIngestLogo\}[\s\S]*h-9 w-9 object-contain/
+  /src=\{adminIngestLogo\}[\s\S]*unoptimized[\s\S]*h-9 w-9 object-contain/
 );
 assert.match(
   promptHistorySource,
