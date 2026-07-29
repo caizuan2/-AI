@@ -42,5 +42,9 @@ assert.match(dashboardSource, /: "重置密码"/);
 assert.match(dashboardSource, /window\.confirm/);
 assert.match(dashboardSource, /不会改变卡密状态、角色、企业或历史数据/);
 assert.match(dashboardSource, /登录后尽快修改/);
+assert.match(dashboardSource, /reset_license_user_password/);
+assert.match(dashboardSource, /setRecentlyResetLicenseIds/);
+assert.match(dashboardSource, /已重置/);
+assert.match(dashboardSource, /再次重置/);
 
 console.log("super admin license password reset tests passed");
