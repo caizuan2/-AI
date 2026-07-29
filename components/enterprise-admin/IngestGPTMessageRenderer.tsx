@@ -2,6 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PauseCircle, PlayCircle, Square } from "lucide-react";
+import { IngestCustomerScriptCard } from "@/components/enterprise-admin/IngestCustomerScriptCard";
+import { extractAdminIngestCustomerScriptTargets } from "@/lib/enterprise/admin-ingest-customer-script";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 
@@ -37,11 +39,12 @@ export function prepareIngestMessageMarkdown(content: string, provider?: string 
   }).output;
 }
 
-type MarkdownSegment =
+export type IngestMarkdownSegment =
   | { type: "line"; content: string; key: string }
   | { type: "space"; key: string }
   | { type: "code"; language: string; content: string; key: string }
-  | { type: "table"; rows: string[][]; key: string };
+  | { type: "table"; rows: string[][]; key: string }
+  | { type: "customer-script"; content: string; key: string };
 
 function renderInline(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
@@ -88,14 +91,35 @@ function parseTableRows(lines: string[]) {
       .map((cell) => cell.trim()));
 }
 
-function splitMarkdownSegments(content: string): MarkdownSegment[] {
+export function buildIngestMarkdownSegments(
+  content: string,
+  enableCustomerScriptCards: boolean
+): IngestMarkdownSegment[] {
   const lines = content.split("\n");
-  const segments: MarkdownSegment[] = [];
+  const segments: IngestMarkdownSegment[] = [];
+  const customerScriptTargets = enableCustomerScriptCards
+    ? new Map(
+        extractAdminIngestCustomerScriptTargets(content)
+          .map((target) => [target.startLineIndex, target] as const)
+      )
+    : new Map<number, ReturnType<typeof extractAdminIngestCustomerScriptTargets>[number]>();
   let codeLanguage = "";
   let codeLines: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    const customerScriptTarget = customerScriptTargets.get(index);
+
+    if (customerScriptTarget) {
+      segments.push({
+        type: "customer-script",
+        content: customerScriptTarget.copyText,
+        key: `customer-script-${index}`
+      });
+      index = customerScriptTarget.endLineIndex - 1;
+      continue;
+    }
+
     const fenceMatch = line.match(/^```(\w+)?\s*$/);
 
     if (fenceMatch) {
@@ -140,7 +164,7 @@ function splitMarkdownSegments(content: string): MarkdownSegment[] {
             type: tableLine.trim() ? "line" : "space",
             content: tableLine,
             key: `line-${index}-${tableIndex}`
-          } as MarkdownSegment);
+          } as IngestMarkdownSegment);
         });
       }
       continue;
@@ -166,8 +190,14 @@ function splitMarkdownSegments(content: string): MarkdownSegment[] {
   return segments;
 }
 
-function MarkdownBubbleContent({ content }: { content: string }) {
-  const segments = splitMarkdownSegments(content);
+function MarkdownBubbleContent({
+  content,
+  enableCustomerScriptCards
+}: {
+  content: string;
+  enableCustomerScriptCards: boolean;
+}) {
+  const segments = buildIngestMarkdownSegments(content, enableCustomerScriptCards);
 
   return (
     <div className="space-y-3 text-[15px] leading-7 text-slate-800">
@@ -201,6 +231,15 @@ function MarkdownBubbleContent({ content }: { content: string }) {
                 </tbody>
               </table>
             </div>
+          );
+        }
+
+        if (segment.type === "customer-script") {
+          return (
+            <IngestCustomerScriptCard
+              key={segment.key}
+              content={segment.content}
+            />
           );
         }
 
@@ -428,6 +467,12 @@ export function IngestGPTMessageRenderer({
 
   const streaming = shouldAnimate && phase !== "done";
   const renderedContent = shouldAnimate ? visibleContent || "" : fullMarkdown;
+  const enableCustomerScriptCards = !streaming
+    && message?.status !== "pending"
+    && message?.status !== "streaming"
+    && message?.isGenerating !== true
+    && message?.isStreaming !== true
+    && message?.typing !== true;
 
   const handlePauseToggle = () => {
     setPaused((current) => !current);
@@ -464,7 +509,10 @@ export function IngestGPTMessageRenderer({
 
       <div className="animate-[gpt-message-in_240ms_ease-out_both] rounded-[18px] border border-neutral-100 bg-[#f7f7f8] px-5 py-4 shadow-none">
         {renderedContent ? (
-          <MarkdownBubbleContent content={renderedContent} />
+          <MarkdownBubbleContent
+            content={renderedContent}
+            enableCustomerScriptCards={enableCustomerScriptCards}
+          />
         ) : (
           <p className="text-[15px] leading-7 text-slate-500">正在准备回答...</p>
         )}
