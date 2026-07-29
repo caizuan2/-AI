@@ -467,6 +467,7 @@ function LicenseTable({
   description,
   licenses,
   generatedKeyById,
+  resetPasswordLicenseIds,
   disablingId,
   renewingId,
   onDisable,
@@ -478,6 +479,7 @@ function LicenseTable({
   description: string;
   licenses: SuperAdminLicenseRecord[];
   generatedKeyById: Map<string, string>;
+  resetPasswordLicenseIds: Set<string>;
   disablingId: string | null;
   renewingId: string | null;
   onDisable: (id: string) => Promise<SuperAdminLicenseRecord | null>;
@@ -744,20 +746,32 @@ function LicenseTable({
                             : "旧卡不可恢复"}
                     </button>
                     {license.redeemedByUserId ? (
-                      <button
-                        type="button"
-                        onClick={() => void handleResetPassword(license)}
-                        disabled={resettingPasswordLicenseId === license.id}
-                        title="将该用户登录密码重置为默认密码"
-                        className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {resettingPasswordLicenseId === license.id ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <KeyRound className="h-3.5 w-3.5" />
-                        )}
-                        {resettingPasswordLicenseId === license.id ? "重置中" : "重置密码"}
-                      </button>
+                      <>
+                        {resetPasswordLicenseIds.has(license.id) ? (
+                          <span className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700">
+                            <Check className="h-3.5 w-3.5" />
+                            已重置
+                          </span>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => void handleResetPassword(license)}
+                          disabled={resettingPasswordLicenseId === license.id}
+                          title="将该用户登录密码重置为默认密码"
+                          className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {resettingPasswordLicenseId === license.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <KeyRound className="h-3.5 w-3.5" />
+                          )}
+                          {resettingPasswordLicenseId === license.id
+                            ? "重置中"
+                            : resetPasswordLicenseIds.has(license.id)
+                              ? "再次重置"
+                              : "重置密码"}
+                        </button>
+                      </>
                     ) : null}
                   </div>
                 </td>
@@ -954,6 +968,9 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
   const [renewingId, setRenewingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [passwordResetNotice, setPasswordResetNotice] = useState<string | null>(null);
+  const [recentlyResetLicenseIds, setRecentlyResetLicenseIds] = useState<Set<string>>(
+    () => new Set()
+  );
 
   async function reload() {
     setError(null);
@@ -1049,6 +1066,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
 
     try {
       const result = await resetSuperAdminLicenseUserPassword(license.id);
+      setRecentlyResetLicenseIds((currentIds) => new Set(currentIds).add(result.licenseId));
       setPasswordResetNotice(
         `账号 ${result.userAccount} 的密码已重置为 ${SUPER_ADMIN_DEFAULT_RESET_PASSWORD}，请通知用户登录后尽快修改。`
       );
@@ -1071,6 +1089,12 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
   const ingestAdminLicenses = data.licenses.filter((license) => license.appType === "ingest_admin");
   const generatedKeyById = new Map(generated.map((license) => [license.id, license.key]));
   const teamOsLicenses = data.licenses.filter((license) => license.appType === "team_os");
+  const resetPasswordLicenseIds = new Set([
+    ...data.audit
+      .filter((item) => item.action === "reset_license_user_password" && item.targetId)
+      .map((item) => item.targetId as string),
+    ...Array.from(recentlyResetLicenseIds)
+  ]);
 
   return (
     <div className="space-y-6">
@@ -1126,6 +1150,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             description="刷新后仅展示脱敏标识；本次生成的 XT-USER 明文卡密可在当前行复制。"
             licenses={userAppLicenses}
             generatedKeyById={generatedKeyById}
+            resetPasswordLicenseIds={resetPasswordLicenseIds}
             disablingId={disablingId}
             renewingId={renewingId}
             onDisable={handleDisable}
@@ -1140,6 +1165,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             description="刷新后仅展示脱敏标识；本次生成的 XT-INGEST 明文卡密可在当前行复制。"
             licenses={ingestAdminLicenses}
             generatedKeyById={generatedKeyById}
+            resetPasswordLicenseIds={resetPasswordLicenseIds}
             disablingId={disablingId}
             renewingId={renewingId}
             onDisable={handleDisable}
@@ -1154,6 +1180,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             description="统一 LicenseKey 存储；支持禁用、续期、企业绑定和激活记录查询。"
             licenses={teamOsLicenses}
             generatedKeyById={generatedKeyById}
+            resetPasswordLicenseIds={resetPasswordLicenseIds}
             disablingId={disablingId}
             renewingId={renewingId}
             onDisable={handleDisable}
