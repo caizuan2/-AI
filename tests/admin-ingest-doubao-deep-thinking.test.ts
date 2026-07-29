@@ -27,6 +27,13 @@ async function main() {
   assert.match(doubaoClient, /thinking:\s*\{\s*type:\s*"enabled"/);
   assert.match(doubaoClient, /reasoning_effort:\s*"low"/);
   assert.match(doubaoClient, /max_completion_tokens:\s*payload\.maxTokens/);
+  assert.match(doubaoClient, /豆包专用可见正文协议/);
+  assert.match(doubaoClient, /不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
+  assert.doesNotMatch(
+    doubaoClient,
+    /buildGptIngestBrainSystemPrompt|buildGptIngestBrainUserPrompt/,
+    "Doubao visible output must not inherit unrelated backend JSON and autonomous-loop instructions."
+  );
   assert.match(doubaoClient, /delta\.reasoning_content/);
   assert.match(doubaoClient, /type:\s*"reasoning_activity"/);
   assert.match(

@@ -100,6 +100,14 @@ async function testProductionWiringAndFrozenProviderBoundary() {
     "components/enterprise-admin/IngestChatGPTShell.tsx",
     "utf8"
   );
+  const ingestClient = await readFile(
+    "lib/enterprise/ingest-client.ts",
+    "utf8"
+  );
+  const ingestRoute = await readFile(
+    "app/api/admin/kb/ingest/gpt/route.ts",
+    "utf8"
+  );
   const changedFiles = [
     "components/enterprise-admin/IngestModeToggle.tsx",
     "components/enterprise-admin/IngestChatGPTShell.tsx",
@@ -152,10 +160,35 @@ async function testProductionWiringAndFrozenProviderBoundary() {
     modeToggle,
     /if \(!preserveCurrentHistory\) \{\s*historyScopeRef\.current = ""/
   );
+  assert.match(
+    modeToggle,
+    /requestModelOption\.provider !== "doubao-pro"\s*&& !await verifyCurrentAccountHistoryScope\(\)/,
+    "Doubao must not wait on the redundant WebView history preflight before starting inference."
+  );
+  assert.match(
+    ingestClient,
+    /"x-admin-ingest-history-scope": input\.historyScope/,
+    "The Doubao POST must still send the current account history scope."
+  );
+  assert.match(
+    ingestRoute,
+    /matchesAdminIngestHistoryScope\([\s\S]*?request\.headers\.get\("x-admin-ingest-history-scope"\)/,
+    "The server must reject a mismatched account history scope before inference."
+  );
   assert.match(shell, /正在同步 Agent 和历史记录/);
   assert.match(shell, /同步失败，已保留上次成功记录/);
   assert.match(shell, /Agent 列表同步失败/);
   assert.match(shell, /重新同步/);
+  assert.match(
+    shell,
+    /type="button"[\s\S]*?event\.preventDefault\(\);[\s\S]*?event\.stopPropagation\(\);[\s\S]*?if \(isParsing\) \{[\s\S]*?onCancel\?\.\(\);[\s\S]*?return;[\s\S]*?event\.currentTarget\.form\?\.requestSubmit\(\);/,
+    "The shared send/stop control must stay a non-submit button for the entire pointer event."
+  );
+  assert.doesNotMatch(
+    shell,
+    /type=\{isParsing \? "button" : "submit"\}/,
+    "Stopping must not allow the same click to become a form submission after the parsing state changes."
+  );
 
   for (const file of changedFiles) {
     assert.doesNotMatch(file, /provider|deepseek|doubao.*route|prisma/i);

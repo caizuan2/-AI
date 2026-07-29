@@ -16,6 +16,11 @@ import {
   type DoubaoAdminIngestProgressEvent,
   type DoubaoMetadataRecoveryResult
 } from "@/lib/enterprise/doubao-ingest-client";
+import {
+  beginAdminIngestDoubaoProgress,
+  readAdminIngestDoubaoProgress,
+  updateAdminIngestDoubaoProgress
+} from "@/lib/enterprise/admin-ingest-doubao-progress-store";
 import type { EnterpriseStructuredKnowledge } from "@/lib/enterprise/ai-ingest-service";
 import {
   normalizeAdminIngestPlatform,
@@ -161,6 +166,12 @@ function createDoubaoBrowserSseResponse(input: {
   requestId: string;
   selectedModelLabel: string;
   requestedModel: string;
+  onProgressSnapshot: (event: {
+    phase: "reasoning" | "visible" | "completed" | "failed" | "cancelled";
+    replyMarkdown?: string;
+    actualModel?: string;
+    responseId?: string;
+  }) => void;
   producer: (
     signal: AbortSignal,
     onProgressEvent: (event: DoubaoAdminIngestProgressEvent) => void
@@ -246,6 +257,12 @@ function createDoubaoBrowserSseResponse(input: {
         }
 
         if (event.type === "visible_delta") {
+          input.onProgressSnapshot({
+            phase: "visible",
+            replyMarkdown: event.replyMarkdown,
+            actualModel: event.model,
+            responseId: event.responseId
+          });
           enqueue("visible_delta", {
             type: "visible_delta",
             requestId: input.requestId,
@@ -254,12 +271,17 @@ function createDoubaoBrowserSseResponse(input: {
             responseId: event.responseId,
             fallbackUsed: false,
             delta: event.delta,
-            replyMarkdown: event.replyMarkdown
           });
           return;
         }
 
         if (event.type === "visible_reply") {
+          input.onProgressSnapshot({
+            phase: "visible",
+            replyMarkdown: event.replyMarkdown,
+            actualModel: event.model,
+            responseId: event.responseId
+          });
           enqueue("visible", {
             type: "visible",
             requestId: input.requestId,
@@ -295,6 +317,11 @@ function createDoubaoBrowserSseResponse(input: {
         }
 
         if (event.type === "reasoning_activity") {
+          input.onProgressSnapshot({
+            phase: "reasoning",
+            actualModel: event.model,
+            responseId: event.responseId
+          });
           enqueue("status", {
             type: event.type,
             requestId: input.requestId,
@@ -343,6 +370,7 @@ function createDoubaoBrowserSseResponse(input: {
           status: response.status,
           payload
         });
+        input.onProgressSnapshot({ phase: response.ok ? "completed" : "failed" });
         close();
       }).catch(() => {
         if (providerController.signal.aborted || closed) {
@@ -370,6 +398,7 @@ function createDoubaoBrowserSseResponse(input: {
             message: `${input.selectedModelLabel} 暂时不可用，系统未切换其他模型。`
           }
         });
+        input.onProgressSnapshot({ phase: "failed" });
         close();
       });
     },
@@ -377,6 +406,7 @@ function createDoubaoBrowserSseResponse(input: {
       closed = true;
       cleanup();
       abortProvider();
+      input.onProgressSnapshot({ phase: "cancelled" });
     }
   });
 
@@ -1141,6 +1171,7 @@ function readRequest(body: unknown) {
 }
 
 export async function POST(request: Request) {
+  const requestReceivedAt = Date.now();
   const requestId = getRequestIdFromHeaders(request.headers);
   let actor: RbacUser | null = null;
   let hasFullIngestAccess = false;
@@ -1471,6 +1502,7 @@ export async function POST(request: Request) {
   const strictWechatGrounding = wechatGroundingRequest.strictKnowledgeMode
     && (groundingModelProvider === "deepseek-pro" || groundingModelProvider === "doubao-pro");
   const strictKnowledgeGrounding = strictDoubaoGrounding || strictWechatGrounding;
+  const groundingStartedAt = Date.now();
   const [grounding, publishedMemoryContext] = await Promise.all([
     retrieveAdminIngestGrounding({
       query: wechatGroundingRequest.query,
@@ -1539,6 +1571,25 @@ export async function POST(request: Request) {
       preferredModel: input.preferredModel
     });
     const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
+    const selectedModelStartedAt = Date.now();
+
+    if (modelOption.provider === "doubao-pro") {
+      console.info("[admin-ingest:doubao-request-stage]", {
+        requestId,
+        stage: "selected_model_start",
+        serverPreModelMs: selectedModelStartedAt - requestReceivedAt,
+        accessParseAndStreamSetupMs: groundingStartedAt - requestReceivedAt,
+        groundingAndMemoryMs: selectedModelStartedAt - groundingStartedAt,
+        clientToModelMs: input.requestStartedAt
+          ? Math.max(0, selectedModelStartedAt - input.requestStartedAt)
+          : null,
+        groundingApplied: grounding.applied,
+        groundingSourceCount: grounding.sources.length,
+        memoryContextCount: publishedMemoryContext.usedMemoryIds.length,
+        recentMessageCount: input.recentMessages.length
+      });
+    }
+
     const result = await runAdminIngestWithSelectedModel({
       input: wechatGroundingRequest.modelInput,
       attachments: input.attachments,
@@ -1587,6 +1638,19 @@ export async function POST(request: Request) {
           }
         : undefined
     });
+
+    if (modelOption.provider === "doubao-pro") {
+      console.info("[admin-ingest:doubao-request-stage]", {
+        requestId,
+        stage: "selected_model_completed",
+        selectedModelMs: Date.now() - selectedModelStartedAt,
+        serverTotalToModelCompletionMs: Date.now() - requestReceivedAt,
+        requestedModel: result.requestedModel,
+        actualModel: result.actualModel,
+        fallbackUsed: result.fallbackUsed === true,
+        replyLength: result.replyMarkdown.length
+      });
+    }
 
     const unsupportedClaim = findUnsupportedAdminIngestAttachmentClaim(
       result.replyMarkdown || "",
@@ -1940,18 +2004,74 @@ export async function POST(request: Request) {
   });
 
   if (
-    input.platform === "web"
+    (input.platform === "web" || input.platform === "apk" || input.platform === "ios")
     && streamModelOption.provider === "doubao-pro"
     && browserAcceptsAdminIngestSse(request)
   ) {
+    const progressActorId = actor?.id ?? input.userId ?? "local-admin-ingest-dev";
+    const progressHistoryScope = request.headers.get("x-admin-ingest-history-scope") ?? "";
+
+    beginAdminIngestDoubaoProgress({
+      requestId,
+      actorId: progressActorId,
+      historyScope: progressHistoryScope
+    });
+
     return createDoubaoBrowserSseResponse({
       request,
       requestId,
       selectedModelLabel: streamModelRuntime.displayModelLabel,
       requestedModel: streamModelRuntime.actualModel,
+      onProgressSnapshot: (progress) => {
+        updateAdminIngestDoubaoProgress(requestId, progress);
+      },
       producer: executeRequest
     });
   }
 
   return executeRequest(request.signal);
+}
+
+export async function GET(request: Request) {
+  const requestId = new URL(request.url).searchParams.get("requestId")?.trim() ?? "";
+
+  if (!requestId || requestId.length > 200) {
+    return jsonUtf8({ ok: false, message: "缺少有效的豆包进度请求标识。" }, 400);
+  }
+
+  let actor: RbacUser | null = null;
+
+  try {
+    const chatAccess = await requireAdminIngestChatAccess();
+    actor = chatAccess.actor;
+  } catch (error) {
+    if (!isLocalDevWithoutDatabase(request)) {
+      return apiError(error);
+    }
+  }
+
+  const historyScope = request.headers.get("x-admin-ingest-history-scope") ?? "";
+  const actorId = actor?.id ?? "local-admin-ingest-dev";
+
+  if (actor && !matchesAdminIngestHistoryScope(actor.id, historyScope)) {
+    return jsonUtf8({
+      ok: false,
+      code: "INGEST_HISTORY_SCOPE_MISMATCH",
+      message: "账号已切换，旧页面不能读取当前投喂进度。"
+    }, 409);
+  }
+
+  const progress = readAdminIngestDoubaoProgress({
+    requestId,
+    actorId,
+    historyScope
+  });
+
+  return jsonUtf8({
+    ok: true,
+    state: progress?.phase ?? "pending",
+    replyMarkdown: progress?.replyMarkdown ?? "",
+    actualModel: progress?.actualModel,
+    responseId: progress?.responseId
+  });
 }

@@ -65,8 +65,15 @@ function createBrowserSseResponse(input: {
         provider: "doubao-pro",
         actualModel: "doubao-seed-2-1-pro-260628",
         responseId: "doubao-browser-sse-success",
-        delta: rawMarkdown,
-        replyMarkdown: rawMarkdown
+        delta: rawMarkdown.slice(0, 12)
+      })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId: input.requestId,
+        provider: "doubao-pro",
+        actualModel: "doubao-seed-2-1-pro-260628",
+        responseId: "doubao-browser-sse-success",
+        delta: rawMarkdown.slice(12)
       })}\n\n`
     ] : []),
     ...(input.includeVisibleReply ? [
@@ -309,6 +316,7 @@ async function main() {
 
   try {
     const successEventOrder: string[] = [];
+    const visibleDeltas: string[] = [];
     let visibleDelta = "";
     let visibleReply = "";
     const success = await sendCoreIngest({
@@ -323,8 +331,8 @@ async function main() {
       streaming: {
         onVisibleDelta(event) {
           successEventOrder.push("visible_delta");
+          visibleDeltas.push(event.delta);
           visibleDelta = event.replyMarkdown;
-          assert.equal(event.delta, rawMarkdown);
           assert.equal(event.requestId, "browser-sse-success");
         },
         onVisibleReply(event) {
@@ -346,9 +354,11 @@ async function main() {
     });
     successEventOrder.push("final");
     assert.equal(visibleDelta, rawMarkdown, "The incremental Doubao event must preserve the exact Markdown.");
+    assert.equal(visibleDeltas.join(""), rawMarkdown, "Delta-only SSE frames must reassemble the provider Markdown byte-for-byte.");
     assert.equal(visibleReply, rawMarkdown, "The early visible event must preserve the exact Doubao Markdown.");
     assert.deepEqual(successEventOrder, [
       "queue_wait:visible",
+      "visible_delta",
       "visible_delta",
       "visible",
       "reasoning_activity:visible",
@@ -505,6 +515,12 @@ async function main() {
   assert.match(routeSource, /response\.ok \? "final" : "error"/);
   assert.match(routeSource, /producer: executeRequest/);
   assert.match(routeSource, /onProgressEvent: onDoubaoProgressEvent/);
+  assert.match(routeSource, /input\.platform === "apk"/);
+  assert.match(
+    readFileSync("lib/enterprise/ingest-client.ts", "utf8"),
+    /platform === "apk"/,
+    "The Android WebView must opt into the resilient Doubao transport."
+  );
   assert.match(providerSource, /signal: providerSignal/);
 
   console.log("Admin ingest browser SSE transport tests passed.");

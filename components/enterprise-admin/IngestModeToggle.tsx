@@ -3846,7 +3846,14 @@ export function IngestModeToggle({
       return null;
     }
 
-    if (!await verifyCurrentAccountHistoryScope()) {
+    // The long-running Doubao transport sends the current history scope in
+    // every POST and progress poll, and the server rejects a mismatched actor
+    // before inference. Avoid serializing the model request behind the same
+    // WebView account probe; other providers keep their existing preflight.
+    if (
+      requestModelOption.provider !== "doubao-pro"
+      && !await verifyCurrentAccountHistoryScope()
+    ) {
       return null;
     }
 
