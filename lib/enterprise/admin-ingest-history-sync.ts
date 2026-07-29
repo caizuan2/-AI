@@ -5,6 +5,7 @@ import type {
 } from "@/lib/enterprise/mock-chat";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import {
+  mergeAdminIngestConversationRuntimeStatusMaps,
   normalizeAdminIngestConversationRuntimeStatusMap,
   type AdminIngestConversationRuntimeStatusMap
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
@@ -27,6 +28,7 @@ export type AdminIngestConversationSyncResponse = {
   success?: boolean;
   historyScope?: string;
   revision?: number;
+  currentRevision?: number;
   runtimeRevision?: number;
   state?: AdminIngestConversationSyncSnapshot;
   errorCode?: string;
@@ -37,6 +39,13 @@ export type AdminIngestConversationSyncWriteRequest = {
   historyScope: string;
   baseRevision: number;
   state: AdminIngestConversationSyncSnapshot;
+};
+
+export type AdminIngestConversationMessageMergeRequest = {
+  operation: "merge_conversation_messages";
+  historyScope: string;
+  conversationId: string;
+  messages: IngestChatMessage[];
 };
 
 export type AdminIngestHistoryStorageKeys = {
@@ -547,6 +556,288 @@ export function reconcileAdminIngestConversationMessageCounts(
   });
 
   return changed ? reconciled : conversations;
+}
+
+function serializedValuesMatch(left: unknown, right: unknown) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function isCompletedMessageWithContent(message: IngestChatMessage) {
+  return message.status === "completed"
+    && typeof message.content === "string"
+    && message.content.trim().length > 0;
+}
+
+function hasValidMessageIdentity(
+  message: IngestChatMessage
+): message is IngestChatMessage {
+  return Boolean(
+    message
+    && typeof message === "object"
+    && typeof message.id === "string"
+    && message.id.trim()
+    && typeof message.content === "string"
+  );
+}
+
+function chooseConcurrentMessage(
+  local: IngestChatMessage,
+  remote: IngestChatMessage
+) {
+  const localIsCompleted = isCompletedMessageWithContent(local);
+  const remoteIsCompleted = isCompletedMessageWithContent(remote);
+
+  if (localIsCompleted !== remoteIsCompleted) {
+    return localIsCompleted ? local : remote;
+  }
+
+  const localHasContent = typeof local.content === "string"
+    && local.content.trim().length > 0;
+  const remoteHasContent = typeof remote.content === "string"
+    && remote.content.trim().length > 0;
+
+  if (localHasContent !== remoteHasContent) {
+    return localHasContent ? local : remote;
+  }
+
+  /*
+   * When two completed copies disagree, keep the already-persisted remote
+   * original. A base-aware merge below still accepts a legitimate local
+   * completion when the remote copy is unchanged from the shared base.
+   */
+  return remote;
+}
+
+export function mergeAdminIngestConversationMessages(
+  remoteMessages: readonly IngestChatMessage[],
+  localMessages: readonly IngestChatMessage[],
+  baseMessages: readonly IngestChatMessage[] = []
+) {
+  const safeBaseMessages = baseMessages.filter(hasValidMessageIdentity);
+  const safeLocalMessages = localMessages.filter(hasValidMessageIdentity);
+  const safeRemoteMessages = remoteMessages.filter(hasValidMessageIdentity);
+  const baseById = new Map(
+    safeBaseMessages.map((message) => [message.id, message])
+  );
+  const localById = new Map(
+    safeLocalMessages.map((message) => [message.id, message])
+  );
+  const remoteById = new Map(
+    safeRemoteMessages.map((message) => [message.id, message])
+  );
+  const orderedIds = [
+    ...safeRemoteMessages.map((message) => message.id),
+    ...safeLocalMessages.map((message) => message.id)
+  ].filter((id, index, values) => values.indexOf(id) === index);
+
+  return orderedIds.flatMap((id) => {
+    const local = localById.get(id);
+    const remote = remoteById.get(id);
+
+    if (!local) {
+      return remote ? [remote] : [];
+    }
+
+    if (!remote) {
+      return [local];
+    }
+
+    if (serializedValuesMatch(local, remote)) {
+      return [local];
+    }
+
+    const base = baseById.get(id);
+
+    if (base && serializedValuesMatch(local, base)) {
+      return [remote];
+    }
+
+    if (base && serializedValuesMatch(remote, base)) {
+      return [local];
+    }
+
+    return [chooseConcurrentMessage(local, remote)];
+  });
+}
+
+function mergeEntityArrayById<T extends { id: string }>(
+  base: readonly T[],
+  local: readonly T[],
+  remote: readonly T[]
+) {
+  const baseById = new Map(base.map((item) => [item.id, item]));
+  const localById = new Map(local.map((item) => [item.id, item]));
+  const remoteById = new Map(remote.map((item) => [item.id, item]));
+  const orderedIds = [
+    ...local.map((item) => item.id),
+    ...remote.map((item) => item.id)
+  ].filter((id, index, values) => values.indexOf(id) === index);
+
+  return orderedIds.flatMap((id) => {
+    const baseItem = baseById.get(id);
+    const localItem = localById.get(id);
+    const remoteItem = remoteById.get(id);
+
+    if (baseItem && (!localItem || !remoteItem)) {
+      return [];
+    }
+
+    if (!localItem) {
+      return remoteItem ? [remoteItem] : [];
+    }
+
+    if (!remoteItem) {
+      return [localItem];
+    }
+
+    if (baseItem && serializedValuesMatch(localItem, baseItem)) {
+      return [remoteItem];
+    }
+
+    if (baseItem && serializedValuesMatch(remoteItem, baseItem)) {
+      return [localItem];
+    }
+
+    return [localItem];
+  });
+}
+
+function mergeRecordThreeWay<T>(
+  base: Record<string, T>,
+  local: Record<string, T>,
+  remote: Record<string, T>
+) {
+  const result: Record<string, T> = {};
+  const keys = new Set([
+    ...Object.keys(base),
+    ...Object.keys(local),
+    ...Object.keys(remote)
+  ]);
+
+  for (const key of Array.from(keys)) {
+    const baseValue = base[key];
+    const localValue = local[key];
+    const remoteValue = remote[key];
+
+    if (baseValue !== undefined && (
+      localValue === undefined || remoteValue === undefined
+    )) {
+      continue;
+    }
+
+    if (localValue === undefined) {
+      if (remoteValue !== undefined) {
+        result[key] = remoteValue;
+      }
+      continue;
+    }
+
+    if (remoteValue === undefined) {
+      result[key] = localValue;
+      continue;
+    }
+
+    result[key] = baseValue !== undefined
+      && serializedValuesMatch(localValue, baseValue)
+      ? remoteValue
+      : localValue;
+  }
+
+  return result;
+}
+
+export function mergeAdminIngestConversationSyncConflict(input: {
+  base: AdminIngestConversationSyncSnapshot;
+  local: AdminIngestConversationSyncSnapshot;
+  remote: AdminIngestConversationSyncSnapshot;
+  includeDrafts: boolean;
+}) {
+  const base = normalizeAdminIngestConversationSyncSnapshot(input.base, {
+    includeDrafts: input.includeDrafts
+  });
+  const local = normalizeAdminIngestConversationSyncSnapshot(input.local, {
+    includeDrafts: input.includeDrafts
+  });
+  const remote = normalizeAdminIngestConversationSyncSnapshot(input.remote, {
+    includeDrafts: input.includeDrafts
+  });
+  const agentConversations = mergeEntityArrayById(
+    base.agentConversations,
+    local.agentConversations,
+    remote.agentConversations
+  );
+  const agents = mergeEntityArrayById(base.agents, local.agents, remote.agents);
+  const activeAgentId = agents.some(
+    (agent) => agent.id === local.activeAgentId
+  )
+    ? local.activeAgentId
+    : agents.some((agent) => agent.id === remote.activeAgentId)
+      ? remote.activeAgentId
+      : agents[0]?.id ?? "";
+  const activeConversationId = agentConversations.some(
+    (conversation) => (
+      conversation.id === local.activeConversationId
+      && conversation.status !== "archived"
+    )
+  )
+    ? local.activeConversationId
+    : agentConversations.some((conversation) => (
+        conversation.id === remote.activeConversationId
+        && conversation.status !== "archived"
+      ))
+      ? remote.activeConversationId
+      : agentConversations.find((conversation) => (
+          conversation.agentId === activeAgentId
+          && conversation.status !== "archived"
+        ))?.id ?? "";
+  const validConversationIds = new Set(
+    agentConversations.map((conversation) => conversation.id)
+  );
+  const conversationMessagesById: Record<string, IngestChatMessage[]> = {};
+
+  for (const conversationId of Array.from(validConversationIds)) {
+    const mergedMessages = mergeAdminIngestConversationMessages(
+      remote.conversationMessagesById[conversationId] ?? [],
+      local.conversationMessagesById[conversationId] ?? [],
+      base.conversationMessagesById[conversationId] ?? []
+    );
+
+    if (mergedMessages.length > 0) {
+      conversationMessagesById[conversationId] = mergedMessages;
+    }
+  }
+
+  return normalizeAdminIngestConversationSyncSnapshot({
+    agents,
+    agentConversations,
+    activeAgentId,
+    activeConversationId,
+    conversationMessagesById,
+    conversationDraftsById: input.includeDrafts
+      ? mergeRecordThreeWay(
+          base.conversationDraftsById,
+          local.conversationDraftsById,
+          remote.conversationDraftsById
+        )
+      : {},
+    conversationRuntimeStatusById:
+      mergeAdminIngestConversationRuntimeStatusMaps(
+        remote.conversationRuntimeStatusById,
+        local.conversationRuntimeStatusById
+      ),
+    pinnedAgentIds: Array.from(new Set([
+      ...remote.pinnedAgentIds,
+      ...local.pinnedAgentIds
+    ])),
+    /*
+     * Expansion is a per-device presentation choice. Keep the current page
+     * stable instead of letting another device open or close its drawers.
+     */
+    expandedAgentIds: local.expandedAgentIds,
+    expandedConversationAgentIds: local.expandedConversationAgentIds
+  }, {
+    includeDrafts: input.includeDrafts
+  });
 }
 
 export function normalizeAdminIngestConversationSyncSnapshot(

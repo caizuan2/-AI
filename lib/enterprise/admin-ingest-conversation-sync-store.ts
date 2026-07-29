@@ -3,9 +3,12 @@ import "server-only";
 import { createHash, randomUUID } from "node:crypto";
 import {
   createEmptyAdminIngestConversationSyncSnapshot,
+  mergeAdminIngestConversationMessages,
   normalizeAdminIngestConversationSyncSnapshot,
+  reconcileAdminIngestConversationMessageCounts,
   type AdminIngestConversationSyncSnapshot
 } from "@/lib/enterprise/admin-ingest-history-sync";
+import type { IngestChatMessage } from "@/lib/enterprise/mock-chat";
 import {
   markAdminIngestConversationVisibleCompleted,
   mergeAdminIngestConversationRuntimeStatusMaps,
@@ -603,6 +606,80 @@ export async function writeAdminIngestConversationSyncState(
       revision: nextRevision,
       updatedAt: Math.max(Date.now(), current.state.updatedAt + 1),
       ...snapshot
+    };
+    const filePath = await getConversationSyncFilePath(ownerUserId);
+    const serializedState = `${JSON.stringify(normalized, null, 2)}\n`;
+
+    if (isRollbackCompatibleLegacyOwner(ownerUserId)) {
+      await replaceFileAtomically(
+        await getLegacyConversationSyncFilePath(ownerUserId),
+        serializedState
+      );
+    }
+
+    await replaceFileAtomically(filePath, serializedState);
+
+    return normalized;
+  }));
+}
+
+export async function mergeAdminIngestConversationSyncMessages(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    messages: IngestChatMessage[];
+    includeDrafts?: boolean;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+
+  if (!conversationId || !Array.isArray(input.messages)) {
+    throw new Error("INGEST_HISTORY_MESSAGE_MERGE_INVALID");
+  }
+
+  return withOwnerWriteLock(ownerUserId, () => withOwnerFileLock(ownerUserId, async () => {
+    const current = await readStateFromDisk(ownerUserId);
+    const sanitized = normalizeAdminIngestConversationSyncSnapshot({
+      conversationMessagesById: {
+        [conversationId]: input.messages
+      }
+    }, {
+      includeDrafts: false
+    });
+    const incomingMessages =
+      sanitized.conversationMessagesById[conversationId] ?? [];
+    const nextMessages = mergeAdminIngestConversationMessages(
+      current.state.conversationMessagesById[conversationId] ?? [],
+      incomingMessages
+    );
+    const messagesUnchanged = JSON.stringify(nextMessages)
+      === JSON.stringify(
+        current.state.conversationMessagesById[conversationId] ?? []
+      );
+
+    if (messagesUnchanged) {
+      return current.state;
+    }
+
+    const conversationMessagesById = {
+      ...current.state.conversationMessagesById,
+      [conversationId]: nextMessages
+    };
+    const agentConversations =
+      reconcileAdminIngestConversationMessageCounts(
+        current.state.agentConversations,
+        conversationMessagesById
+      );
+    const nextRevision = current.revision + 1;
+    const normalized: AdminIngestConversationSyncState = {
+      ...current.state,
+      source: "admin-ingest-conversation-sync-v2",
+      version: 2,
+      ownerUserId,
+      revision: nextRevision,
+      updatedAt: Math.max(Date.now(), current.state.updatedAt + 1),
+      agentConversations,
+      conversationMessagesById
     };
     const filePath = await getConversationSyncFilePath(ownerUserId);
     const serializedState = `${JSON.stringify(normalized, null, 2)}\n`;
