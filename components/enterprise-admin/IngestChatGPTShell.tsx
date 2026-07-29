@@ -2580,6 +2580,7 @@ export function IngestChatGPTShell({
               className="h-7 w-7 rounded-full object-contain"
               aria-hidden="true"
               priority
+              unoptimized
             />
           </button>
         ) : null}
@@ -2599,6 +2600,7 @@ export function IngestChatGPTShell({
                   className="h-7 w-7 rounded-full object-contain"
                   aria-hidden="true"
                   priority
+                  unoptimized
                 />
               </button>
             ) : null}
