@@ -1,9 +1,9 @@
 {
-  "version": "1.0.32",
-  "build": 132,
-  "minimum_build": 132,
+  "version": "1.0.33",
+  "build": 133,
+  "minimum_build": 133,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.32-build.132",
+  "release_tag": "release/admin-ingest-1.0.33-build.133",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,10 +11,10 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "豆包正文等待预算调整为 180 秒，超时立即结束思考状态并提供同模型重试",
-    "停止按钮立即终止当前界面生成状态，恢复本轮输入和附件，旧请求不会覆盖新请求",
-    "Android APK 历史提示词改为从右侧展开，不再占用底部输入区",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.32 Build 132",
+    "管理员投喂版在正文原位置识别客户沟通话术，并显示浅绿色复制卡片",
+    "每段话术支持独立一键复制，普通引用、资料来源、警告和代码块保持原样",
+    "话术卡片仅在正文完成后启用，流式生成期间保持现有 Markdown 显示",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.33 Build 133",
     "用户端、超级管理员、DeepSeek、豆包 Provider 与模型原文输出保持不变"
   ]
 }
