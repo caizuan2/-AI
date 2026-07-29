@@ -6,6 +6,7 @@ import { getRequestIdFromHeaders } from "@/lib/logger";
 import {
   type OpenAIAdminIngestAttachment
 } from "@/lib/enterprise/openai-ingest-client";
+import { OPENAI_REGION_UNSUPPORTED_ERROR_CODE } from "@/lib/enterprise/openai-gateway-readiness";
 import {
   AdminIngestModelAffinityError,
   resolveAdminIngestModelProvider,
@@ -605,6 +606,10 @@ function toGptFallbackErrorCode(error: unknown) {
 
   if (code === "KIMI_API_KEY_MISSING" || message.includes("kimi api key") || message.includes("kimi_api_key")) {
     return "KIMI_API_KEY_MISSING" as const;
+  }
+
+  if (code === OPENAI_REGION_UNSUPPORTED_ERROR_CODE || message.includes("unsupported_country_region_territory")) {
+    return OPENAI_REGION_UNSUPPORTED_ERROR_CODE;
   }
 
   if (code === "OPENAI_API_KEY_MISSING" || code === "MISSING_AI_API_KEY" || message.includes("openai api key") || message.includes("openai_api_key")) {
@@ -1776,6 +1781,7 @@ export async function POST(request: Request) {
     const affinityMismatch = error instanceof AdminIngestModelAffinityError ? error.details : null;
     const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "DOUBAO_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
     const isMissingKey = errorCode === "OPENAI_API_KEY_MISSING" || errorCode === "DEEPSEEK_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_MISSING" || errorCode === "DOUBAO_API_KEY_INVALID" || errorCode === "QWEN_API_KEY_MISSING" || errorCode === "KIMI_API_KEY_MISSING";
+    const isOpenAIRegionUnsupported = errorCode === OPENAI_REGION_UNSUPPORTED_ERROR_CODE;
     const isSafetyRejection = errorCode === "DOUBAO_SAFETY_REJECTED";
     const isClientCancelled = errorCode === "DOUBAO_REQUEST_CANCELLED";
     const isRateLimited = errorCode === "DOUBAO_RATE_LIMITED";
@@ -1799,7 +1805,7 @@ export async function POST(request: Request) {
     const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
     const strictFailureRetryable = modelOption.provider === "doubao-pro"
       ? !affinityMismatch && isRetryableDoubaoStrictModelFailure(errorCode)
-      : !affinityMismatch && !isMissingKey && !isSafetyRejection && !isClientCancelled;
+      : !affinityMismatch && !isMissingKey && !isOpenAIRegionUnsupported && !isSafetyRejection && !isClientCancelled;
     const modelDiagnostics = buildModelDiagnostics({
       provider: modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash" ? "deepseek" : modelOption.provider,
       requestedProvider: modelOption.provider,
@@ -1832,6 +1838,8 @@ export async function POST(request: Request) {
     if (strictModelAffinity) {
       const strictMessage = affinityMismatch
         ? `${modelRuntime.displayModelLabel} 返回的模型身份与当前选择不一致，系统已拒绝该结果且未切换其他模型。您的输入和附件已保留。`
+        : isOpenAIRegionUnsupported
+          ? "GPT 服务出口地区不受 OpenAI 支持，系统未切换其他模型。您的输入和附件已保留，请联系管理员配置合规 GPT 网关。"
         : isInferenceLimitPaused
           ? `${modelRuntime.displayModelLabel} 推理限额已达到，模型服务已暂停。系统未切换其他模型。您的输入和附件已保留。`
         : `${modelRuntime.displayModelLabel} 暂时不可用，系统未切换其他模型。您的输入和附件已保留，请稍后重试或手动切换模型。`;
@@ -1905,14 +1913,14 @@ export async function POST(request: Request) {
       provider: modelOption.provider,
       diagnostics: [
         `apiResilience:errorCode:${errorCode}`,
-        `apiResilience:retryable:${isMissingKey || isSafetyRejection ? "false" : "true"}`
+        `apiResilience:retryable:${isMissingKey || isOpenAIRegionUnsupported || isSafetyRejection ? "false" : "true"}`
       ]
     });
 
     return jsonUtf8({
       ...fallback,
       ok: false,
-      retryable: isMissingKey || isSafetyRejection ? false : fallback.retryable,
+      retryable: isMissingKey || isOpenAIRegionUnsupported || isSafetyRejection ? false : fallback.retryable,
       errorCode,
       provider: modelOption.provider,
       selectedModelLabel: modelRuntime.displayModelLabel,

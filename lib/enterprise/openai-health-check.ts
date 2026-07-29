@@ -3,6 +3,11 @@ import "server-only";
 import { ProxyAgent } from "undici";
 import { getGptModelSelectionByDisplayName } from "@/lib/enterprise/gpt-model-options";
 import { extractResponsesText } from "@/lib/enterprise/gpt-output-normalizer";
+import {
+  isOpenAIRegionUnsupportedResponse,
+  OPENAI_REGION_UNSUPPORTED_ERROR_CODE,
+  validateOpenAIGatewayBaseUrl
+} from "@/lib/enterprise/openai-gateway-readiness";
 import { OPENAI_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
 import {
   resolveIngestActualModel,
@@ -18,6 +23,7 @@ const WINDOWS_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
 type OpenAIHealthErrorCode =
   | "OPENAI_API_KEY_MISSING"
   | "OPENAI_BASE_URL_INVALID"
+  | typeof OPENAI_REGION_UNSUPPORTED_ERROR_CODE
   | "OPENAI_RESPONSES_REQUEST_FAILED"
   | "OPENAI_RESPONSES_PARSE_FAILED"
   | "OPENAI_TIMEOUT";
@@ -215,6 +221,24 @@ export async function checkOpenAIIngestHealth(input: {
     };
   }
 
+  const gatewayValidation = validateOpenAIGatewayBaseUrl(baseUrl, {
+    allowLocalHttp: process.env.NODE_ENV !== "production"
+  });
+
+  if (!gatewayValidation.ok) {
+    return {
+      ...status,
+      configured: true,
+      requestTested: false,
+      message: gatewayValidation.message,
+      errorCode: "OPENAI_BASE_URL_INVALID",
+      diagnostics: [
+        "GPT 网关未通过安全地址校验。",
+        "生产环境必须使用 HTTPS，且 OPENAI_BASE_URL 必须以 /v1 结尾。"
+      ]
+    };
+  }
+
   const responsesUrl = buildResponsesUrl(baseUrl);
 
   if (!responsesUrl) {
@@ -287,6 +311,21 @@ export async function checkOpenAIIngestHealth(input: {
         message: "OpenAI Responses API 返回解析失败",
         errorCode: "OPENAI_RESPONSES_PARSE_FAILED",
         diagnostics: ["OpenAI Responses API 已返回，但未找到 output_text 或 message.content.text。"]
+      };
+    }
+
+    if (isOpenAIRegionUnsupportedResponse(response.status, bodyText)) {
+      return {
+        ...status,
+        configured: true,
+        requestTested: true,
+        message: "当前服务器出口地区不受 OpenAI 支持",
+        errorCode: OPENAI_REGION_UNSUPPORTED_ERROR_CODE,
+        diagnostics: [
+          "OpenAI 已返回 unsupported_country_region_territory。",
+          "请保持 GPT 投喂入口关闭，并将 OPENAI_BASE_URL 指向经过真实验收的合规 HTTPS 网关。",
+          "不要通过随机代理或不明中转绕过地区限制。"
+        ]
       };
     }
 

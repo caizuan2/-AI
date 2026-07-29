@@ -27,6 +27,7 @@ import {
 } from "@/lib/enterprise/doubao-ingest-client";
 import {
   getIngestModelOptionByProvider,
+  normalizeIngestModelProvider,
   normalizeIngestModelSelection,
   resolveIngestActualModel,
   type IngestModelProvider
@@ -103,6 +104,10 @@ export function resolveAdminIngestModelProvider(input: {
   chineseContent?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
 }) {
+  if (normalizeIngestModelProvider(input.modelProvider) === "openai") {
+    return getIngestModelOptionByProvider("openai");
+  }
+
   return getIngestModelOptionByProvider(routeModel({
     input: input.input,
     selectedModelLabel: input.selectedModelLabel,
@@ -220,7 +225,8 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   }
 
   return runOpenAIAdminIngest({
-    ...payload
+    ...payload,
+    signal: providerSignal
   } as OpenAIAdminIngestInput);
 }
 

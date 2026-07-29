@@ -88,6 +88,9 @@
     "admin-ingest:smoke:web": "node scripts/admin-ingest-smoke.mjs",
     "admin-ingest:smoke:exe": "node scripts/admin-ingest-exe-smoke.mjs",
     "admin-ingest:smoke": "npm run admin-ingest:smoke:web && npm run admin-ingest:smoke:exe",
+    "admin-ingest:openai-gateway:verify": "tsx scripts/qa/verify-admin-ingest-openai-gateway.ts",
+    "admin-ingest:openai-gateway:background-verify": "tsx scripts/qa/verify-admin-ingest-openai-background.ts",
+    "admin-ingest:openai-gateway:test": "node --import tsx tests/admin-ingest-openai-netlify-gateway.test.ts && node --conditions=react-server --import tsx tests/admin-ingest-openai-background-response.test.ts && node --conditions=react-server --import tsx tests/admin-ingest-openai-gateway-readiness.test.ts && node --import tsx tests/admin-ingest-openai-gateway-preflight.test.ts",
     "test:admin-ingest:apple": "tsx tests/admin-ingest-apple-packaging.test.ts"
   },
   "prisma": {

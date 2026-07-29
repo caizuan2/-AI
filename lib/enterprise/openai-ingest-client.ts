@@ -7,6 +7,11 @@ import {
   type GptStructuredKnowledge
 } from "@/lib/enterprise/gpt-output-normalizer";
 import type { AdminIngestPlatform } from "@/lib/enterprise/admin-ingest-app-config";
+import {
+  isOpenAIRegionUnsupportedResponse,
+  OPENAI_REGION_UNSUPPORTED_ERROR_CODE,
+  validateOpenAIGatewayBaseUrl
+} from "@/lib/enterprise/openai-gateway-readiness";
 import { OPENAI_PLACEHOLDER_API_KEY } from "@/lib/server-config-core";
 import {
   buildGptIngestBrainSystemPrompt,
@@ -106,6 +111,7 @@ export interface OpenAIAdminIngestInput {
   recentTrainingRecords?: GptIngestMemoryRecord[];
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
+  signal?: AbortSignal;
 }
 
 export interface OpenAIAdminIngestResult {
@@ -148,8 +154,9 @@ export interface OpenAIAdminIngestResult {
 }
 
 const REQUEST_TIMEOUT_MS = 420_000;
-const HIGH_QUALITY_REQUEST_TIMEOUT_MS = 75_000;
+const HIGH_QUALITY_REQUEST_TIMEOUT_MS = 150_000;
 const COMPATIBLE_REQUEST_TIMEOUT_MS = 120_000;
+const BACKGROUND_POLL_INTERVAL_MS = 1_200;
 const DEFAULT_BASE_URL = "https://api.openai.com/v1";
 const DEFAULT_MODEL = "gpt-5.5";
 const DEFAULT_MODEL_LABEL = "GPT-5.5 超高";
@@ -158,6 +165,7 @@ const WINDOWS_LOCAL_PROXY_URL = "http://127.0.0.1:7897";
 type OpenAIResponsesErrorCode =
   | "OPENAI_API_KEY_MISSING"
   | "OPENAI_BASE_URL_INVALID"
+  | typeof OPENAI_REGION_UNSUPPORTED_ERROR_CODE
   | "OPENAI_RESPONSES_REQUEST_FAILED"
   | "OPENAI_RESPONSES_PARSE_FAILED"
   | "OPENAI_RATE_LIMIT"
@@ -168,6 +176,7 @@ type OpenAIResponsesErrorCode =
 type OpenAIIngestHealthErrorCode =
   | "API_KEY_MISSING"
   | "MODEL_NOT_FOUND"
+  | typeof OPENAI_REGION_UNSUPPORTED_ERROR_CODE
   | "OPENAI_TIMEOUT"
   | "OPENAI_RATE_LIMIT"
   | "OPENAI_BAD_REQUEST"
@@ -325,11 +334,18 @@ function resolveResponsesConfig(input: OpenAIAdminIngestInput) {
   const modelMode = fixedModel || preferredModel ? "fixed" as const : "highest" as const;
   const selectedModelLabel = input.selectedModelLabel || input.modelDisplayName || DEFAULT_MODEL_LABEL;
   const baseUrl = normalizeBaseUrl(readEnv("OPENAI_BASE_URL"));
+  const gatewayValidation = validateOpenAIGatewayBaseUrl(baseUrl, {
+    allowLocalHttp: process.env.NODE_ENV !== "production"
+  });
+
+  if (!gatewayValidation.ok) {
+    throw new OpenAIResponsesError("OPENAI_BASE_URL_INVALID", gatewayValidation.message);
+  }
 
   return {
     apiKey: readOpenAIKey(),
-    baseUrl,
-    responsesUrl: buildResponsesUrl(baseUrl),
+    baseUrl: gatewayValidation.normalizedBaseUrl,
+    responsesUrl: buildResponsesUrl(gatewayValidation.normalizedBaseUrl),
     model,
     modelMode,
     selectedModelLabel
@@ -346,6 +362,10 @@ function resolveHealthModel(input: {
 
 function mapHealthStatus(status: number, bodyText: string): OpenAIIngestHealthErrorCode {
   const lower = bodyText.toLowerCase();
+
+  if (isOpenAIRegionUnsupportedResponse(status, bodyText)) {
+    return OPENAI_REGION_UNSUPPORTED_ERROR_CODE;
+  }
 
   if (status === 401 || status === 403) {
     return "API_KEY_MISSING";
@@ -380,6 +400,10 @@ function mapHealthError(error: unknown): OpenAIIngestHealthErrorCode {
     return "API_KEY_MISSING";
   }
 
+  if (code === OPENAI_REGION_UNSUPPORTED_ERROR_CODE) {
+    return OPENAI_REGION_UNSUPPORTED_ERROR_CODE;
+  }
+
   if (name === "AbortError" || code === "OPENAI_TIMEOUT" || message.includes("timeout") || message.includes("超时")) {
     return "OPENAI_TIMEOUT";
   }
@@ -403,7 +427,22 @@ export async function checkOpenAIIngestHealth(input: {
   try {
     const apiKey = readOpenAIKey();
     const baseUrl = normalizeBaseUrl(readEnv("OPENAI_BASE_URL"));
-    const responsesUrl = buildResponsesUrl(baseUrl);
+    const gatewayValidation = validateOpenAIGatewayBaseUrl(baseUrl, {
+      allowLocalHttp: process.env.NODE_ENV !== "production"
+    });
+
+    if (!gatewayValidation.ok) {
+      return {
+        ok: false,
+        provider: "openai",
+        requestedModel,
+        hasOutputText: false,
+        errorCode: "OPENAI_BAD_REQUEST",
+        errorMessage: gatewayValidation.message
+      };
+    }
+
+    const responsesUrl = buildResponsesUrl(gatewayValidation.normalizedBaseUrl);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 25_000);
 
@@ -492,7 +531,9 @@ export async function checkOpenAIIngestHealth(input: {
       requestedModel,
       hasOutputText: false,
       errorCode,
-      errorMessage: errorCode === "API_KEY_MISSING"
+      errorMessage: errorCode === OPENAI_REGION_UNSUPPORTED_ERROR_CODE
+        ? "OpenAI rejected the server egress region"
+        : errorCode === "API_KEY_MISSING"
         ? "OPENAI_API_KEY is missing or placeholder"
         : "OpenAI ingest health check failed"
     };
@@ -677,8 +718,16 @@ export function buildCompactGPTOSInput(input: OpenAIAdminIngestInput, gptOS?: Gp
   };
 }
 
-function normalizeOpenAIResponseError(status: number, bodyText: string) {
+export function normalizeOpenAIResponseError(status: number, bodyText: string) {
   const lower = bodyText.toLowerCase();
+
+  if (isOpenAIRegionUnsupportedResponse(status, bodyText)) {
+    return new OpenAIResponsesError(
+      OPENAI_REGION_UNSUPPORTED_ERROR_CODE,
+      "当前服务器出口地区不受 OpenAI 支持，请联系管理员配置合规 GPT 网关。",
+      { status }
+    );
+  }
 
   if (status === 401 || status === 403) {
     return new OpenAIResponsesError("OPENAI_API_KEY_MISSING", "AI服务授权暂不可用，请稍后再试。", { status });
@@ -735,7 +784,7 @@ function buildResponsesBody(input: {
           effort: "high"
         },
         text: {
-          verbosity: "high"
+          verbosity: "medium"
         }
       }
       : {}),
@@ -803,6 +852,182 @@ async function fetchResponsesWithBody(input: {
     clearTimeout(timeout);
     input.signal.removeEventListener("abort", abort);
   }
+}
+
+function readBackgroundResponseState(bodyText: string) {
+  try {
+    const payload = bodyText ? JSON.parse(bodyText) as unknown : null;
+
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      return { id: "", status: "" };
+    }
+
+    const record = payload as Record<string, unknown>;
+
+    return {
+      id: typeof record.id === "string" ? record.id.trim() : "",
+      status: typeof record.status === "string" ? record.status.trim().toLowerCase() : ""
+    };
+  } catch {
+    return { id: "", status: "" };
+  }
+}
+
+function isPendingBackgroundStatus(status: string) {
+  return status === "queued" || status === "in_progress";
+}
+
+function isTerminalBackgroundFailure(status: string) {
+  return status === "failed"
+    || status === "cancelled"
+    || status === "incomplete";
+}
+
+function isValidOpenAIResponseId(value: string) {
+  return /^resp_[A-Za-z0-9_-]{8,200}$/.test(value);
+}
+
+function waitForPollInterval(delayMs: number, signal: AbortSignal) {
+  if (signal.aborted) {
+    return Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delayMs);
+    const abort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
+
+async function cancelBackgroundResponse(input: {
+  responsesUrl: string;
+  responseId: string;
+  apiKey: string;
+}) {
+  try {
+    await fetchOpenAIResponses(`${input.responsesUrl}/${encodeURIComponent(input.responseId)}/cancel`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store"
+      },
+      signal: AbortSignal.timeout(5_000),
+      cache: "no-store"
+    });
+  } catch {
+    // Cancellation is best effort; the caller still stops immediately.
+  }
+}
+
+export async function waitForOpenAIBackgroundResponse(input: {
+  initialBodyText: string;
+  responsesUrl: string;
+  apiKey: string;
+  signal: AbortSignal;
+  timeoutMs: number;
+  pollIntervalMs?: number;
+}) {
+  const initial = readBackgroundResponseState(input.initialBodyText);
+
+  if (!isPendingBackgroundStatus(initial.status)) {
+    return input.initialBodyText;
+  }
+
+  if (!isValidOpenAIResponseId(initial.id)) {
+    throw new OpenAIResponsesError(
+      "OPENAI_RESPONSES_PARSE_FAILED",
+      "OpenAI 后台响应缺少合法 response ID。"
+    );
+  }
+
+  const startedAt = Date.now();
+  const pollIntervalMs = input.pollIntervalMs ?? BACKGROUND_POLL_INTERVAL_MS;
+
+  while (Date.now() - startedAt < input.timeoutMs) {
+    try {
+      await waitForPollInterval(pollIntervalMs, input.signal);
+    } catch (error) {
+      await cancelBackgroundResponse({
+        responsesUrl: input.responsesUrl,
+        responseId: initial.id,
+        apiKey: input.apiKey
+      });
+      throw error;
+    }
+
+    let response: Response;
+    let bodyText: string;
+
+    try {
+      response = await fetchOpenAIResponses(`${input.responsesUrl}/${encodeURIComponent(initial.id)}`, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+          "Cache-Control": "no-store"
+        },
+        signal: input.signal,
+        cache: "no-store"
+      });
+      bodyText = await response.text();
+    } catch (error) {
+      if (input.signal.aborted) {
+        await cancelBackgroundResponse({
+          responsesUrl: input.responsesUrl,
+          responseId: initial.id,
+          apiKey: input.apiKey
+        });
+      }
+
+      throw error;
+    }
+
+    if (!response.ok) {
+      throw normalizeOpenAIResponseError(response.status, bodyText);
+    }
+
+    const state = readBackgroundResponseState(bodyText);
+
+    if (state.id && state.id !== initial.id) {
+      throw new OpenAIResponsesError(
+        "OPENAI_RESPONSES_PARSE_FAILED",
+        "OpenAI 后台响应 ID 不一致。"
+      );
+    }
+
+    if (isPendingBackgroundStatus(state.status)) {
+      continue;
+    }
+
+    if (isTerminalBackgroundFailure(state.status)) {
+      throw new OpenAIResponsesError(
+        "OPENAI_RESPONSES_REQUEST_FAILED",
+        `OpenAI 后台响应未完成：${state.status}。`,
+        {
+          diagnostics: {
+            responseId: initial.id,
+            status: state.status
+          }
+        }
+      );
+    }
+
+    return bodyText;
+  }
+
+  await cancelBackgroundResponse({
+    responsesUrl: input.responsesUrl,
+    responseId: initial.id,
+    apiKey: input.apiKey
+  });
+  throw new OpenAIResponsesError("OPENAI_TIMEOUT", "GPT 后台响应超时，请稍后重试。");
 }
 
 async function callResponsesApi(input: {
@@ -947,6 +1172,13 @@ async function callResponsesApi(input: {
       }
 
       bodyText = await response.text();
+      bodyText = await waitForOpenAIBackgroundResponse({
+        initialBodyText: bodyText,
+        responsesUrl: input.responsesUrl,
+        apiKey: input.apiKey,
+        signal: input.signal,
+        timeoutMs: input.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
+      });
 
       return {
         ...parseResponsesPayload(bodyText, input.model),
@@ -961,6 +1193,13 @@ async function callResponsesApi(input: {
   }
 
   bodyText = await response.text();
+  bodyText = await waitForOpenAIBackgroundResponse({
+    initialBodyText: bodyText,
+    responsesUrl: input.responsesUrl,
+    apiKey: input.apiKey,
+    signal: input.signal,
+    timeoutMs: input.requestTimeoutMs ?? REQUEST_TIMEOUT_MS
+  });
 
   return {
     ...parseResponsesPayload(bodyText, input.model),
@@ -1253,6 +1492,10 @@ async function callResponsesApiWithCompatibleFallback(input: {
       compatibleRequestSize: input.compatibleRequestSize
     });
   } catch (highQualityError) {
+    if (input.signal.aborted) {
+      throw highQualityError;
+    }
+
     if (!shouldRetryWithCompatibleRequest(highQualityError)) {
       throw highQualityError;
     }
@@ -1289,6 +1532,10 @@ async function callResponsesApiWithCompatibleFallback(input: {
         compatibleRequestSize: input.compatibleRequestSize
       });
     } catch (compatibleError) {
+      if (input.signal.aborted) {
+        throw compatibleError;
+      }
+
       logger.warn("enterprise_admin_ingest.openai_full_request_failed", {
         model: input.model,
         highQualityErrorCode,
@@ -1310,6 +1557,14 @@ async function callResponsesApiWithCompatibleFallback(input: {
 
 export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promise<OpenAIAdminIngestResult> {
   const controller = new AbortController();
+  const abortFromCaller = () => controller.abort();
+
+  if (input.signal?.aborted) {
+    controller.abort();
+  } else {
+    input.signal?.addEventListener("abort", abortFromCaller, { once: true });
+  }
+
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const startedAt = Date.now();
 
@@ -1608,5 +1863,6 @@ export async function runOpenAIAdminIngest(input: OpenAIAdminIngestInput): Promi
     throw error;
   } finally {
     clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", abortFromCaller);
   }
 }

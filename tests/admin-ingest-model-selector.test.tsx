@@ -117,12 +117,17 @@ function testPickerPlacementAndProviderIdentity() {
     process.cwd(),
     "lib/enterprise/doubao-health-check.ts"
   ), "utf8");
-  const headerPosition = shellSource.indexOf('className="flex h-16 shrink-0 items-center justify-end');
+  const headerPosition = shellSource.indexOf('className={["relative flex h-16 shrink-0 items-center border-b');
   const pickerPosition = shellSource.indexOf("<IngestGPTModelPicker", headerPosition);
   const composerPosition = shellSource.indexOf("<form onSubmit={handleSubmit}");
   const voicePosition = shellSource.indexOf("<Mic", composerPosition);
 
   assert.ok(headerPosition > -1, "the Web chat header must expose the top-right model selector area");
+  assert.match(
+    shellSource.slice(headerPosition, pickerPosition),
+    /isAdminApk \? "justify-between" : "justify-end"/,
+    "the header must keep the model selector on the Web right side while reserving APK navigation space"
+  );
   assert.ok(pickerPosition > headerPosition, "the Web chat header must render the model selector");
   assert.ok(composerPosition > pickerPosition, "the model selector must render above the Web composer");
   assert.equal(
@@ -192,7 +197,7 @@ function testPickerPlacementAndProviderIdentity() {
   assert.match(modeToggleSource, /const doubaoPauseVersionAtStart = healthModelOption\.provider === "doubao-pro"[\s\S]*doubaoHealthRequestVersionRef\.current/);
   assert.match(modeToggleSource, /doubaoPauseVersionAtStart !== null[\s\S]*doubaoPauseVersionAtStart !== doubaoHealthRequestVersionRef\.current[\s\S]*return nextStatus/);
   assert.match(modeToggleSource, /result\.diagnostics\.includes\("doubao:metadataFailureCode:DOUBAO_INFERENCE_LIMIT_PAUSED"\)/);
-  assert.match(modeToggleSource, /setNoticeMessage\(metadataInferencePaused[\s\S]*metadataPausedNotice/);
+  assert.match(modeToggleSource, /setRequestNoticeMessage\(metadataInferencePaused[\s\S]*metadataPausedNotice/);
   assert.match(modeToggleSource, /title: metadataInferencePaused[\s\S]*"豆包正文已保留，推理服务已暂停"/);
   assert.match(shellSource, /检查豆包连接/);
   assert.match(shellSource, /inferenceLimitPaused/);
@@ -280,7 +285,7 @@ function testFallbackMetadataAndRawBodyBoundary() {
   assert.match(routeSource, /strictModelAffinity/);
   assert.match(routeSource, /ADMIN_INGEST_MODEL_AFFINITY_MISMATCH/);
   assert.match(routeSource, /系统已拒绝该结果且未切换其他模型/);
-  assert.match(routeSource, /retryable:\s*isMissingKey \|\| isSafetyRejection \? false : fallback\.retryable/);
+  assert.match(routeSource, /retryable:\s*isMissingKey \|\| isOpenAIRegionUnsupported \|\| isSafetyRejection \? false : fallback\.retryable/);
 
   const rendererRawMarkdown = "\n# 模型原文\n\n解析失败只是正文内容，不得被通用错误清洗替换。  \n\n```text\nRENDERER_RAW_SENTINEL\n```\n";
   assert.equal(
