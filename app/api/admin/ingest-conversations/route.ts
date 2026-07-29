@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth";
 import {
   AdminIngestConversationSyncRevisionConflictError,
+  mergeAdminIngestConversationSyncMessages,
   readAdminIngestConversationRuntimeStatusSnapshot,
   readAdminIngestConversationSyncSnapshot,
   writeAdminIngestConversationSyncState
@@ -180,6 +181,82 @@ export async function PUT(request: Request) {
       ok: true,
       success: true,
       historyScope,
+      revision: storedState.revision,
+      runtimeRevision: runtimeResult.revision,
+      state
+    }, {
+      headers: {
+        "Cache-Control": "no-store"
+      }
+    });
+  } catch (error) {
+    return jsonError(error);
+  }
+}
+
+export async function PATCH(request: Request) {
+  try {
+    const { actor, access } = await requireAdminIngestChatAccess();
+    const parsedBody = await request.json() as unknown;
+
+    if (
+      !parsedBody
+      || typeof parsedBody !== "object"
+      || Array.isArray(parsedBody)
+    ) {
+      return jsonHistoryError(
+        "INGEST_HISTORY_REQUEST_INVALID",
+        "历史消息保存请求无效，请稍后重试。",
+        400
+      );
+    }
+
+    const body = parsedBody as Record<string, unknown>;
+
+    if (!matchesAdminIngestHistoryScope(actor.id, body.historyScope)) {
+      return jsonHistoryError(
+        "INGEST_HISTORY_SCOPE_MISMATCH",
+        "账号已切换，旧页面不能写入当前账号的历史记录。",
+        409
+      );
+    }
+
+    if (
+      body.operation !== "merge_conversation_messages"
+      || typeof body.conversationId !== "string"
+      || !body.conversationId.trim()
+      || !Array.isArray(body.messages)
+    ) {
+      return jsonHistoryError(
+        "INGEST_HISTORY_REQUEST_INVALID",
+        "历史消息保存请求无效，请稍后重试。",
+        400
+      );
+    }
+
+    const storedState = await mergeAdminIngestConversationSyncMessages(
+      actor.id,
+      {
+        conversationId: body.conversationId,
+        messages: body.messages,
+        includeDrafts: access.accessTier === "full_ingest"
+      }
+    );
+    const runtimeResult =
+      await readAdminIngestConversationRuntimeStatusSnapshot(actor.id);
+    const state = normalizeAdminIngestConversationSyncSnapshot(storedState, {
+      includeDrafts: access.accessTier === "full_ingest"
+    });
+    state.conversationRuntimeStatusById =
+      mergeAdminIngestConversationRuntimeStatusMaps(
+        state.conversationRuntimeStatusById,
+        runtimeResult.statusById
+      );
+
+    return NextResponse.json({
+      ok: true,
+      success: true,
+      historyScope: createAdminIngestHistoryScope(actor.id),
       revision: storedState.revision,
       runtimeRevision: runtimeResult.revision,
       state

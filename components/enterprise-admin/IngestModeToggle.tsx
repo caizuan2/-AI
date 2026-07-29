@@ -180,6 +180,7 @@ import type {
 import {
   createEmptyAdminIngestConversationSyncSnapshot,
   createAdminIngestHistoryStorageKeys,
+  mergeAdminIngestConversationSyncConflict,
   normalizeAdminIngestConversationSyncSnapshot,
   normalizeAdminIngestHistoryScope,
   readAdminIngestHistoryScopeFromApiResponse,
@@ -189,6 +190,7 @@ import {
   type AdminIngestConversationSyncResponse,
   type AdminIngestConversationSyncSnapshot,
   type AdminIngestConversationSyncWriteRequest,
+  type AdminIngestConversationMessageMergeRequest,
   type AdminIngestHistoryStorageKeys
 } from "@/lib/enterprise/admin-ingest-history-sync";
 import {
@@ -370,6 +372,20 @@ const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
 const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
 const INGEST_REMOTE_SYNC_DEBOUNCE_MS = 800;
 const INGEST_REMOTE_SYNC_POLL_INTERVAL_MS = 2_000;
+
+function readConfirmedAdminIngestSyncSnapshot(
+  serialized: string,
+  includeDrafts: boolean
+) {
+  try {
+    return normalizeAdminIngestConversationSyncSnapshot(
+      serialized ? JSON.parse(serialized) : null,
+      { includeDrafts }
+    );
+  } catch {
+    return createEmptyAdminIngestConversationSyncSnapshot();
+  }
+}
 
 function isAdminIngestHistoryScopeMismatch(error: unknown) {
   return readAdminIngestRequestError(error)?.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
@@ -1684,6 +1700,82 @@ export function IngestModeToggle({
     window.location.reload();
   }, [stopAccountHistoryActivity]);
 
+  const persistConversationMessagesAtomically = useCallback(async (input: {
+    historyScope: string;
+    conversationId: string;
+    messages: IngestChatMessage[];
+  }) => {
+    const requestBody: AdminIngestConversationMessageMergeRequest = {
+      operation: "merge_conversation_messages",
+      historyScope: input.historyScope,
+      conversationId: input.conversationId,
+      messages: input.messages
+    };
+
+    try {
+      const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+        method: "PATCH",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody)
+      });
+      const payload =
+        await response.json() as AdminIngestConversationSyncResponse;
+      const responseHistoryScope = normalizeAdminIngestHistoryScope(
+        payload.historyScope
+      );
+
+      if (
+        payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+        || (
+          responseHistoryScope
+          && responseHistoryScope !== input.historyScope
+        )
+      ) {
+        reloadForAccountHistoryChange();
+        return false;
+      }
+
+      if (!response.ok) {
+        console.warn("[admin-ingest:conversation-sync:message-merge]", {
+          errorCode: payload.errorCode
+            ?? "INGEST_HISTORY_MESSAGE_MERGE_FAILED",
+          status: response.status
+        });
+        return false;
+      }
+
+      if (
+        typeof payload.revision === "number"
+        && Number.isSafeInteger(payload.revision)
+        && payload.revision >= conversationSyncRevisionRef.current
+      ) {
+        conversationSyncRevisionRef.current = payload.revision;
+      }
+
+      if (
+        typeof payload.runtimeRevision === "number"
+        && Number.isSafeInteger(payload.runtimeRevision)
+      ) {
+        conversationRuntimeRevisionRef.current = Math.max(
+          conversationRuntimeRevisionRef.current,
+          payload.runtimeRevision
+        );
+      }
+
+      return true;
+    } catch (error) {
+      console.warn(
+        "[admin-ingest:conversation-sync:message-merge]",
+        error
+      );
+      return false;
+    }
+  }, [reloadForAccountHistoryChange]);
+
   const flushConversationSync = useCallback(
     async function flushConversationSyncRequest() {
     if (
@@ -1744,12 +1836,161 @@ export function IngestModeToggle({
       }
 
       if (!response.ok) {
+        if (payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH") {
+          reloadForAccountHistoryChange();
+          return;
+        }
+
         if (
           response.status === 409
-          || payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
           || payload.errorCode === "INGEST_HISTORY_REVISION_CONFLICT"
         ) {
-          reloadForAccountHistoryChange();
+          const recoveryResponse = await fetch(
+            INGEST_CONVERSATION_SYNC_ENDPOINT,
+            {
+              method: "GET",
+              credentials: "include",
+              cache: "no-store",
+              signal: abortController.signal
+            }
+          );
+          const recoveryPayload =
+            await recoveryResponse.json() as AdminIngestConversationSyncResponse;
+          const recoveryHistoryScope = normalizeAdminIngestHistoryScope(
+            recoveryPayload.historyScope
+          );
+          const recoveryRevision =
+            typeof recoveryPayload.revision === "number"
+            && Number.isSafeInteger(recoveryPayload.revision)
+            && recoveryPayload.revision >= 0
+              ? recoveryPayload.revision
+              : null;
+
+          if (
+            recoveryPayload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+            || (
+              recoveryHistoryScope
+              && recoveryHistoryScope !== pending.historyScope
+            )
+          ) {
+            reloadForAccountHistoryChange();
+            return;
+          }
+
+          if (!recoveryResponse.ok || recoveryRevision === null) {
+            const retryCount = pending.retryCount + 1;
+            nextSyncDelayMs = Math.min(
+              30_000,
+              1_000 * (2 ** Math.min(retryCount, 5))
+            );
+            pendingConversationSyncRef.current ??= {
+              ...pending,
+              retryCount
+            };
+            return;
+          }
+
+          const remoteState =
+            normalizeAdminIngestConversationSyncSnapshot(
+              recoveryPayload.state,
+              {
+                includeDrafts: capabilities.saveKnowledge
+              }
+            );
+          const baseState = readConfirmedAdminIngestSyncSnapshot(
+            lastConversationSyncPayloadRef.current,
+            capabilities.saveKnowledge
+          );
+          const mergedState = mergeAdminIngestConversationSyncConflict({
+            base: baseState,
+            local: pending.state,
+            remote: remoteState,
+            includeDrafts: capabilities.saveKnowledge
+          });
+          const serializedMergedState = JSON.stringify(mergedState);
+
+          conversationSyncRevisionRef.current = recoveryRevision;
+          if (
+            typeof recoveryPayload.runtimeRevision === "number"
+            && Number.isSafeInteger(recoveryPayload.runtimeRevision)
+          ) {
+            conversationRuntimeRevisionRef.current = Math.max(
+              conversationRuntimeRevisionRef.current,
+              recoveryPayload.runtimeRevision
+            );
+          }
+          /*
+           * Keep the remote snapshot as the three-way base until the merged
+           * state is acknowledged. The current page continues showing its
+           * local completed answer throughout this recovery.
+           */
+          lastConversationSyncPayloadRef.current =
+            JSON.stringify(remoteState);
+          conversationMessagesByIdRef.current =
+            mergedState.conversationMessagesById;
+          conversationDraftsByIdRef.current =
+            mergedState.conversationDraftsById;
+          activeAgentIdRef.current = mergedState.activeAgentId;
+          activeConversationIdRef.current =
+            mergedState.activeConversationId;
+
+          setAgents(mergedState.agents);
+          setAgentConversations(mergedState.agentConversations);
+          setActiveAgentId(mergedState.activeAgentId);
+          setActiveConversationScope(mergedState.activeConversationId);
+          setConversationMessagesById(
+            mergedState.conversationMessagesById
+          );
+          setConversationDraftsById(
+            mergedState.conversationDraftsById
+          );
+          setConversationRuntimeStatusById(
+            mergedState.conversationRuntimeStatusById
+          );
+          setPinnedAgentIds(mergedState.pinnedAgentIds);
+          setExpandedAgentIds(mergedState.expandedAgentIds);
+          setExpandedConversationAgentIds(
+            mergedState.expandedConversationAgentIds
+          );
+          setMessages(
+            mergedState.conversationMessagesById[
+              mergedState.activeConversationId
+            ] ?? []
+          );
+          if (
+            capabilities.saveKnowledge
+            && mergedState.conversationDraftsById[
+              mergedState.activeConversationId
+            ]
+          ) {
+            const nextDraft =
+              mergedState.conversationDraftsById[
+                mergedState.activeConversationId
+              ];
+            draftRef.current = nextDraft;
+            setDraft(nextDraft);
+          }
+
+          try {
+            writeAdminIngestScopedLocalSnapshot({
+              storage: window.localStorage,
+              historyScope: pending.historyScope,
+              keys: pending.storageKeys,
+              revision: recoveryRevision,
+              state: mergedState,
+              markSynced: false
+            });
+          } catch {
+            // The in-memory merge remains authoritative for this open page.
+          }
+
+          pendingConversationSyncRef.current = {
+            ...pending,
+            serialized: serializedMergedState,
+            state: mergedState,
+            retryCount: pending.retryCount + 1
+          };
+          nextSyncDelayMs = 100;
           return;
         }
 
@@ -1783,6 +2024,16 @@ export function IngestModeToggle({
         || nextRevision === null
       ) {
         reloadForAccountHistoryChange();
+        return;
+      }
+
+      if (nextRevision < conversationSyncRevisionRef.current) {
+        /*
+         * An atomic completed-message PATCH may have advanced the revision
+         * while this older full-snapshot PUT was in flight. Never let that
+         * delayed acknowledgement roll the client back or mark stale data as
+         * the latest confirmed snapshot.
+         */
         return;
       }
 
@@ -1838,7 +2089,7 @@ export function IngestModeToggle({
       }
     }
     },
-    [reloadForAccountHistoryChange]
+    [capabilities.saveKnowledge, reloadForAccountHistoryChange]
   );
 
   useEffect(() => {
@@ -4853,55 +5104,79 @@ export function IngestModeToggle({
       setRequestNoticeMessage(metadataInferencePaused
         ? metadataPausedNotice
         : fallbackDescription || `${result.message} · 当前模型：${result.model ?? currentModelLabel} · 已携带 Web / EXE / APK 同步字段`);
-      commitRequestMessages((current) => replaceIngestRetryOutcome(
-        current.map(markMessageCompleted),
+      const completedAssistantMessage: IngestChatMessage = {
+        id: assistantMessageId,
+        role: "assistant",
+        content: assistantContent,
+        time: new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit"
+        }),
+        source: "admin_ingest",
+        platform: platformContext.platform,
+        syncTarget: [...platformContext.syncTarget],
+        tenantId,
+        userId,
+        agentId: activeAgent.id,
+        expertId: activeAgent.expertId ?? null,
+        conversationId,
+        agentName: activeAgent.name,
+        expertName: activeAgent.expertId ? activeAgent.name : null,
+        model: result.model ?? currentModelLabel,
+        provider: result.provider,
+        metadataState,
+        saveSuggestion: result.saveSuggestion,
+        gptProof: result.gptProof,
+        gptOS: result.draft.gptOS,
+        ...({
+          memoryV2: {
+            usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
+            recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds
+              ?? memoryV2Preview?.retrievedMemories?.map(
+                (item) => item.memory.id
+              )
+              ?? [],
+            memoryParticipated:
+              memoryV2Preview?.debug?.memoryParticipated
+              ?? Boolean(memoryV2Preview?.usedMemoryIds?.length),
+            appliedPolicies: memoryV2Preview?.appliedPolicies ?? [],
+            warnings: [
+              ...memoryV2Trace.warnings,
+              ...(memoryV2Preview?.warnings ?? [])
+            ]
+          }
+        } as Partial<IngestChatMessage> & {
+          memoryV2: {
+            usedMemoryIds: string[];
+            recalledMemoryIds: string[];
+            memoryParticipated: boolean;
+            appliedPolicies: string[];
+            warnings: string[];
+          };
+        }),
+        isRestored: false,
+        isHistorical: false,
+        isStreaming: false,
+        isGenerating: false,
+        typing: false,
+        status: "completed"
+      };
+      const finalizedMessages = replaceIngestRetryOutcome(
+        requestMessagesSnapshot.map(markMessageCompleted),
         options?.failedMessageId,
-        {
-          id: assistantMessageId,
-          role: "assistant",
-          content: assistantContent,
-          time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
-          source: "admin_ingest",
-          platform: platformContext.platform,
-          syncTarget: [...platformContext.syncTarget],
-          tenantId,
-          userId,
-          agentId: activeAgent.id,
-          expertId: activeAgent.expertId ?? null,
-          conversationId,
-          agentName: activeAgent.name,
-          expertName: activeAgent.expertId ? activeAgent.name : null,
-          model: result.model ?? currentModelLabel,
-          provider: result.provider,
-          metadataState,
-          saveSuggestion: result.saveSuggestion,
-          gptProof: result.gptProof,
-          gptOS: result.draft.gptOS,
-          ...({
-            memoryV2: {
-              usedMemoryIds: memoryV2Preview?.usedMemoryIds ?? [],
-              recalledMemoryIds: memoryV2Preview?.debug?.recalledMemoryIds ?? memoryV2Preview?.retrievedMemories?.map((item) => item.memory.id) ?? [],
-              memoryParticipated: memoryV2Preview?.debug?.memoryParticipated ?? Boolean(memoryV2Preview?.usedMemoryIds?.length),
-              appliedPolicies: memoryV2Preview?.appliedPolicies ?? [],
-              warnings: [...memoryV2Trace.warnings, ...(memoryV2Preview?.warnings ?? [])]
-            }
-          } as Partial<IngestChatMessage> & {
-            memoryV2: {
-              usedMemoryIds: string[];
-              recalledMemoryIds: string[];
-              memoryParticipated: boolean;
-              appliedPolicies: string[];
-              warnings: string[];
-            };
-          }),
-          isRestored: false,
-          isHistorical: false,
-          isStreaming: false,
-          isGenerating: false,
-          typing: false,
-          status: "completed"
-        }
-      ));
+        completedAssistantMessage
+      );
+      /*
+       * Persist the exact completed provider body before the normal debounced
+       * full snapshot. This idempotent merge closes the refresh-loss window
+       * without changing the model request or its original output.
+       */
+      await persistConversationMessagesAtomically({
+        historyScope: requestHistoryScope,
+        conversationId,
+        messages: finalizedMessages
+      });
+      commitRequestMessages(() => finalizedMessages);
       if (
         metadataDeferred
         && result.draft.jobId
