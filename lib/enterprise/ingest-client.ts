@@ -567,6 +567,7 @@ type AdminIngestBrowserSseTerminal = {
 
 type AdminIngestBrowserSseCallbacks = {
   expectedRequestId: string;
+  visibleReplyMarkdown: string;
   onVisibleDelta?: IngestStreamingOptions["onVisibleDelta"];
   onVisibleReply?: IngestStreamingOptions["onVisibleReply"];
   onStatus?: IngestStreamingOptions["onStatus"];
@@ -625,11 +626,13 @@ function parseAdminIngestSseBlock(
     const delta = typeof envelope.delta === "string"
       ? envelope.delta
       : "";
-    const replyMarkdown = typeof envelope.replyMarkdown === "string"
+    const legacyReplyMarkdown = typeof envelope.replyMarkdown === "string"
       ? envelope.replyMarkdown
       : "";
+    const replyMarkdown = legacyReplyMarkdown || `${callbacks.visibleReplyMarkdown}${delta}`;
 
-    if (eventRequestId && delta && replyMarkdown) {
+    if (eventRequestId && delta) {
+      callbacks.visibleReplyMarkdown = replyMarkdown;
       callbacks.onVisibleDelta?.({
         requestId: eventRequestId,
         delta,
@@ -772,6 +775,10 @@ async function readAdminIngestResponse(
   const decoder = new TextDecoder();
   let buffer = "";
   let streamAcknowledged = false;
+  const statefulCallbacks: AdminIngestBrowserSseCallbacks = {
+    ...callbacks,
+    visibleReplyMarkdown: ""
+  };
 
   try {
     while (true) {
@@ -797,7 +804,7 @@ async function readAdminIngestResponse(
           streamAcknowledged = true;
         }
 
-        const terminal = parseAdminIngestSseBlock(block, callbacks);
+        const terminal = parseAdminIngestSseBlock(block, statefulCallbacks);
 
         if (terminal) {
           return terminal;
@@ -806,7 +813,7 @@ async function readAdminIngestResponse(
     }
 
     if (buffer.trim()) {
-      const terminal = parseAdminIngestSseBlock(buffer, callbacks);
+      const terminal = parseAdminIngestSseBlock(buffer, statefulCallbacks);
 
       if (terminal) {
         return terminal;
@@ -861,6 +868,94 @@ async function readAdminIngestResponse(
       // The reader can already be released by the browser after abort.
     }
   }
+}
+
+type DoubaoProgressPollResponse = {
+  ok?: boolean;
+  state?: "pending" | "reasoning" | "visible" | "completed" | "failed" | "cancelled";
+  replyMarkdown?: string;
+  actualModel?: string;
+  responseId?: string;
+};
+
+function startAdminIngestDoubaoProgressPolling(input: {
+  requestId: string;
+  historyScope: string;
+  signal?: AbortSignal;
+  onVisibleDelta?: IngestStreamingOptions["onVisibleDelta"];
+}) {
+  let stopped = false;
+  let previousReplyMarkdown = "";
+  const controller = new AbortController();
+  const forwardAbort = () => controller.abort();
+
+  if (input.signal?.aborted) {
+    controller.abort();
+  } else {
+    input.signal?.addEventListener("abort", forwardAbort, { once: true });
+  }
+
+  const task = (async () => {
+    while (!stopped && !controller.signal.aborted) {
+      try {
+        const response = await fetch(
+          `/api/admin/kb/ingest/gpt?requestId=${encodeURIComponent(input.requestId)}`,
+          {
+            credentials: "include",
+            signal: controller.signal,
+            headers: {
+              Accept: "application/json",
+              "x-admin-ingest-history-scope": input.historyScope
+            }
+          }
+        );
+
+        if (response.status === 401 || response.status === 403 || response.status === 409) {
+          return;
+        }
+
+        const payload = await response.json().catch(() => null) as DoubaoProgressPollResponse | null;
+        const replyMarkdown = typeof payload?.replyMarkdown === "string"
+          ? payload.replyMarkdown
+          : "";
+
+        if (replyMarkdown && replyMarkdown !== previousReplyMarkdown) {
+          const delta = replyMarkdown.startsWith(previousReplyMarkdown)
+            ? replyMarkdown.slice(previousReplyMarkdown.length)
+            : replyMarkdown;
+          previousReplyMarkdown = replyMarkdown;
+          input.onVisibleDelta?.({
+            requestId: input.requestId,
+            delta,
+            replyMarkdown,
+            actualModel: payload?.actualModel,
+            responseId: payload?.responseId
+          });
+        }
+
+        if (
+          payload?.state === "completed"
+          || payload?.state === "failed"
+          || payload?.state === "cancelled"
+        ) {
+          return;
+        }
+      } catch {
+        if (controller.signal.aborted) {
+          return;
+        }
+      }
+
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 750));
+    }
+  })();
+
+  return () => {
+    stopped = true;
+    controller.abort();
+    input.signal?.removeEventListener("abort", forwardAbort);
+    void task;
+  };
 }
 
 function readGptResponseContent(data: GptIngestResponse) {
@@ -1435,7 +1530,10 @@ export async function sendCoreIngest(input: {
   });
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
   const requestId = input.requestId ?? runtimeResult.requestId;
-  const useDoubaoBrowserSse = platform === "web" && modelProvider === "doubao-pro";
+  // APK/iOS shells are still browser runtimes.  They need the same resilient
+  // transport as Web because WebView can buffer a long-lived SSE response.
+  const useDoubaoBrowserSse = (platform === "web" || platform === "apk" || platform === "ios")
+    && modelProvider === "doubao-pro";
 
   if (shouldRunAdminIngestHealthPreflight({
     modelProvider,
@@ -1477,6 +1575,15 @@ export async function sendCoreIngest(input: {
       });
     }
   }
+
+  const stopDoubaoProgressPolling = useDoubaoBrowserSse && typeof window !== "undefined"
+    ? startAdminIngestDoubaoProgressPolling({
+        requestId,
+        historyScope: input.historyScope,
+        signal: input.streaming?.signal,
+        onVisibleDelta: input.streaming?.onVisibleDelta
+      })
+    : null;
 
   try {
     const response = await fetch("/api/admin/kb/ingest/gpt", {
@@ -1538,6 +1645,7 @@ export async function sendCoreIngest(input: {
     });
     const transportResult = await readAdminIngestResponse(response, input.streaming?.signal, {
       expectedRequestId: requestId,
+      visibleReplyMarkdown: "",
       onVisibleDelta: input.streaming?.onVisibleDelta,
       onVisibleReply: input.streaming?.onVisibleReply,
       onStatus: input.streaming?.onStatus
@@ -1764,6 +1872,8 @@ export async function sendCoreIngest(input: {
     throw new Error(sanitizeGptOSUserMessage(error instanceof Error
       ? error.message
       : "AI服务暂时不稳定，请稍后再试。"));
+  } finally {
+    stopDoubaoProgressPolling?.();
   }
 }
 

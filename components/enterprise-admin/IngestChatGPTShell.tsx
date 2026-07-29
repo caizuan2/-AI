@@ -3220,9 +3220,19 @@ export function IngestChatGPTShell({
                   <Mic className="h-4 w-4" aria-hidden="true" />
                 </button>
                 <button
-                  type={isParsing ? "button" : "submit"}
+                  type="button"
                   disabled={isParsing ? !onCancel : !canIngest || (!input.trim() && uploadedFiles.length === 0)}
-                  onClick={isParsing ? onCancel : undefined}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    if (isParsing) {
+                      onCancel?.();
+                      return;
+                    }
+
+                    event.currentTarget.form?.requestSubmit();
+                  }}
                   title={isParsing ? "停止本轮识别与生成" : "发送"}
                   aria-label={isParsing ? "停止本轮识别与生成" : "发送"}
                   className={[

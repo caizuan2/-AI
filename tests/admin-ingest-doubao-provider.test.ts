@@ -457,6 +457,13 @@ try {
   assert.match(finalPrompt, /专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts/);
   assert.match(finalPrompt, /历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据/);
   assert.match(finalPrompt, /不得跨 Agent、跨知识库或使用通用模型知识替代/);
+  assert.match(finalPrompt, /豆包专用可见正文协议/);
+  assert.match(finalPrompt, /不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
+  assert.doesNotMatch(
+    finalPrompt,
+    /Continuous Reasoning Loop|Autonomous Business Growth OS|你必须返回一个 JSON 对象/,
+    "The visible Doubao call must not spend deep-thinking time reconciling unrelated backend orchestration and JSON-output instructions."
+  );
 
   assert.equal(result.provider, "doubao");
   assert.ok(
@@ -487,6 +494,7 @@ try {
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
   assert.ok(result.diagnostics.includes("doubao:thinkingEnabled:true"));
+  assert.ok(result.diagnostics.includes("doubao:visiblePromptProfile:focused-v1"));
   assert.ok(result.diagnostics.includes("doubao:reasoningActivityChars:25"));
   assert.ok(
     progressEvents.indexOf("reasoning_activity") >= 0
@@ -1631,6 +1639,51 @@ try {
     )
   );
   assert.equal(roleOnlyIdleCalls, 2, "A zero-content idle timeout may retry the same Doubao model once.");
+  delete process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS;
+  delete process.env.DOUBAO_HARD_TIMEOUT_MS;
+
+  process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS = "15";
+  process.env.DOUBAO_HARD_TIMEOUT_MS = "1000";
+  let reasoningOnlyIdleCalls = 0;
+  globalThis.fetch = async () => {
+    reasoningOnlyIdleCalls += 1;
+    const reasoningEvent = `data: ${JSON.stringify({
+      id: `doubao-reasoning-only-${reasoningOnlyIdleCalls}`,
+      model: "ep-doubao-provider-test",
+      choices: [{ delta: { reasoning_content: "正在进行深度思考" } }]
+    })}\n\n`;
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode(reasoningEvent));
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" }
+    });
+  };
+  await assert.rejects(
+    () => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(
+      error
+      && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_TIMEOUT"
+      && (error as {
+        details?: {
+          timeoutStage?: unknown;
+          receivedReasoning?: unknown;
+          reasoningChars?: unknown;
+        };
+      }).details?.timeoutStage === "idle"
+      && (error as { details?: { receivedReasoning?: unknown } }).details?.receivedReasoning === true
+      && Number((error as { details?: { reasoningChars?: unknown } }).details?.reasoningChars) > 0
+    )
+  );
+  assert.equal(
+    reasoningOnlyIdleCalls,
+    1,
+    "A stream that already produced Doubao deep-thinking activity must not silently restart another full request."
+  );
   delete process.env.DOUBAO_STREAM_IDLE_TIMEOUT_MS;
   delete process.env.DOUBAO_HARD_TIMEOUT_MS;
 

@@ -1,18 +1,17 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { logger } from "@/lib/logger";
 import {
   normalizeGptOutput,
   type GptStructuredKnowledge
 } from "@/lib/enterprise/gpt-output-normalizer";
 import {
-  buildGptIngestBrainSystemPrompt,
-  buildGptIngestBrainUserPrompt
-} from "@/lib/enterprise/gpt-ingest-brain-prompt";
-import type {
-  GptIngestKnowledgeContext,
-  GptIngestMemoryMessage,
-  GptIngestMemoryRecord
+  buildGptIngestMemoryPrompt,
+  type GptIngestKnowledgeContext,
+  type GptIngestMemoryMessage,
+  type GptIngestMemoryRecord
 } from "@/lib/enterprise/gpt-ingest-memory";
 import type {
   GptKnowledgeDraft,
@@ -209,6 +208,8 @@ export class DoubaoIngestError extends Error {
     message: string,
     public readonly details: {
       receivedContent?: boolean;
+      receivedReasoning?: boolean;
+      reasoningChars?: number;
       timeoutStage?: "connect" | "first_event" | "idle" | "hard";
       abortSource?: "client" | "hard_timeout";
       parseStage?: DoubaoParseStage;
@@ -508,11 +509,25 @@ function buildGptOSRouteInput(input: DoubaoAdminIngestInput) {
   };
 }
 
-function buildUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult) {
-  return buildGptIngestBrainUserPrompt({
-    currentInput: input.input,
-    gptOS,
-    memory: {
+function buildDoubaoVisibleSystemPrompt() {
+  return [
+    "你是“小董AI投喂端”当前管理员明确选择的豆包模型。",
+    "## 豆包专用可见正文协议",
+    "请对当前问题进行高质量深度思考，但只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
+    "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
+    "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
+    "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
+    "准确保留管理员给出的事实，不要虚构经历、承诺结果或声称已执行外部动作。",
+    "直接回答本轮问题；可按需要给出判断、引导思路、执行步骤和自然话术，但不要机械套固定模板。",
+    "如果适合直接发给客户或沟通对象，可以给出“可直接复制”的自然话术。",
+    "只输出最终自然 Markdown 正文，不要输出 JSON、代码围栏、字段名、内部推理或后台元数据。",
+    "答案应完整、专业、温和、可执行；不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容。"
+  ].join("\n");
+}
+
+function buildDoubaoVisibleUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult) {
+  return [
+    buildGptIngestMemoryPrompt({
       currentInput: input.input,
       currentAgent: {
         agentId: input.agentId,
@@ -534,31 +549,20 @@ function buildUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult
       selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
       platform: input.platform,
       syncTarget: input.syncTarget
-    }
-  });
-}
-
-function buildDoubaoVisibleSystemPrompt() {
-  return [
-    buildGptIngestBrainSystemPrompt(),
+    }),
     "",
-    "## Doubao 可见正文阶段（最终覆盖规则）",
-    "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
-    "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
-    "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
-    "当前调用只生成用户可见正文。以上关于外层 JSON、knowledgeDraft、userClientCallPlan、diagnostics 的输出要求在本阶段全部暂停。",
-    "只输出最终自然 Markdown 正文，不要输出 JSON、代码围栏、字段名、内部推理或后台元数据。",
-    "必须继续完整理解以上 Agent、最近对话、长期记忆、固定知识库、附件正文和专项方向规则；其中只有当前 knowledgeContexts 可以提供专业依据，其余内容只用于理解场景和组织表达。",
-    "正文必须直接来自你的最终表达，禁止为适配系统而缩写、裁剪、改写或套固定模板。"
-  ].join("\n");
-}
-
-function buildDoubaoVisibleUserPrompt(input: DoubaoAdminIngestInput, gptOS?: GptOSRouteResult) {
-  return [
-    buildUserPrompt(input, gptOS),
+    "## 本轮私有任务信号",
+    `intent: ${gptOS?.planner.intent || "general"}`,
+    `complexity: ${gptOS?.planner.complexity || "medium"}`,
+    `selectedAgent: ${gptOS?.selectedAgent.label || input.agentName || "当前 Agent"}`,
+    `agentBehavior: ${gptOS?.selectedAgent.promptModifier || "围绕管理员当前问题自然回答"}`,
+    `personaStyle: ${gptOS?.memory.style || "专业、自然、清晰"}`,
     "",
-    "## 本阶段唯一输出",
-    "现在只回答管理员当前问题，并只输出用户可见的自然 Markdown 正文。",
+    "## 本次管理员问题",
+    input.input,
+    "",
+    "## 唯一输出",
+    "请基于以上上下文完成深度思考，并只输出用户可见的最终自然 Markdown 正文。",
     "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。"
   ].join("\n");
 }
@@ -762,7 +766,8 @@ type DoubaoStreamAccumulator = {
 
 function makeDoubaoTimeoutError(
   stage: "connect" | "first_event" | "idle" | "hard",
-  receivedContent: boolean
+  receivedContent: boolean,
+  reasoningChars = 0
 ) {
   const labels = {
     connect: "连接",
@@ -774,7 +779,12 @@ function makeDoubaoTimeoutError(
   return new DoubaoIngestError(
     "DOUBAO_TIMEOUT",
     `豆包${labels[stage]}超时，请稍后重试。`,
-    { receivedContent, timeoutStage: stage }
+    {
+      receivedContent,
+      receivedReasoning: reasoningChars > 0,
+      reasoningChars,
+      timeoutStage: stage
+    }
   );
 }
 
@@ -813,6 +823,8 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
       "豆包流式返回解析失败。",
       {
         receivedContent: accumulator.content.length > 0,
+        receivedReasoning: accumulator.reasoningChars > 0,
+        reasoningChars: accumulator.reasoningChars,
         parseStage: "sse_event",
         eventCount: accumulator.eventCount,
         receivedChars: accumulator.content.length
@@ -826,6 +838,8 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
       "豆包流式请求返回错误。",
       {
         receivedContent: accumulator.content.length > 0,
+        receivedReasoning: accumulator.reasoningChars > 0,
+        reasoningChars: accumulator.reasoningChars,
         parseStage: "provider_error",
         eventCount: accumulator.eventCount,
         receivedChars: accumulator.content.length
@@ -845,6 +859,8 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
         "豆包流式返回的模型标识不一致。",
         {
           receivedContent: accumulator.content.length > 0,
+          receivedReasoning: accumulator.reasoningChars > 0,
+          reasoningChars: accumulator.reasoningChars,
           parseStage: "model_identity",
           eventCount: accumulator.eventCount,
           receivedChars: accumulator.content.length
@@ -928,6 +944,7 @@ async function collectDoubaoSseCompletion(input: {
   controller: AbortController;
   firstEventTimeoutMs: number;
   idleTimeoutMs: number;
+  requestStartedAtMs: number;
   visiblePrefix?: string;
   onContentDelta?: (event: {
     delta: string;
@@ -974,14 +991,22 @@ async function collectDoubaoSseCompletion(input: {
 
       if (remainingTimeoutMs <= 0) {
         input.controller.abort();
-        throw makeDoubaoTimeoutError(timeoutStage, accumulator.content.length > 0);
+        throw makeDoubaoTimeoutError(
+          timeoutStage,
+          accumulator.content.length > 0,
+          accumulator.reasoningChars
+        );
       }
 
       const chunk = await readWithTimeout({
         promise: reader.read(),
         timeoutMs: remainingTimeoutMs,
         onTimeout: () => input.controller.abort(),
-        timeoutError: makeDoubaoTimeoutError(timeoutStage, accumulator.content.length > 0)
+        timeoutError: makeDoubaoTimeoutError(
+          timeoutStage,
+          accumulator.content.length > 0,
+          accumulator.reasoningChars
+        )
       });
 
       if (chunk.done) {
@@ -1066,6 +1091,8 @@ async function collectDoubaoSseCompletion(input: {
         `豆包流式返回未完整结束（finish_reason=${accumulator.finishReason}）。`,
         {
           receivedContent: accumulator.content.length > 0,
+          receivedReasoning: accumulator.reasoningChars > 0,
+          reasoningChars: accumulator.reasoningChars,
           parseStage: "finish_reason",
           finishReason: accumulator.finishReason,
           eventCount: accumulator.eventCount,
@@ -1080,6 +1107,8 @@ async function collectDoubaoSseCompletion(input: {
         "豆包流式返回提前结束，未保存不完整正文。",
         {
           receivedContent: accumulator.content.length > 0,
+          receivedReasoning: accumulator.reasoningChars > 0,
+          reasoningChars: accumulator.reasoningChars,
           parseStage: "stream_eof",
           finishReason: accumulator.finishReason,
           eventCount: accumulator.eventCount,
@@ -1094,6 +1123,8 @@ async function collectDoubaoSseCompletion(input: {
         "豆包返回缺少实际模型标识。",
         {
           receivedContent: accumulator.content.length > 0,
+          receivedReasoning: accumulator.reasoningChars > 0,
+          reasoningChars: accumulator.reasoningChars,
           parseStage: "model_identity",
           finishReason: accumulator.finishReason,
           eventCount: accumulator.eventCount,
@@ -1114,6 +1145,8 @@ async function collectDoubaoSseCompletion(input: {
       "豆包流式连接中断，请重新尝试。",
       {
         receivedContent: accumulator.content.length > 0,
+        receivedReasoning: accumulator.reasoningChars > 0,
+        reasoningChars: accumulator.reasoningChars,
         parseStage: "stream_eof",
         finishReason: accumulator.finishReason,
         eventCount: accumulator.eventCount,
@@ -1155,10 +1188,10 @@ async function collectDoubaoSseCompletion(input: {
       reasoning_chars: accumulator.reasoningChars,
       first_reasoning_latency_ms: accumulator.firstReasoningAtMs === undefined
         ? null
-        : accumulator.firstReasoningAtMs - phaseStartedAt,
+        : accumulator.firstReasoningAtMs - input.requestStartedAtMs,
       first_content_latency_ms: accumulator.firstContentAtMs === undefined
         ? null
-        : accumulator.firstContentAtMs - phaseStartedAt,
+        : accumulator.firstContentAtMs - input.requestStartedAtMs,
       event_count: accumulator.eventCount,
       finish_reason: accumulator.finishReason ?? null
     }
@@ -1190,6 +1223,7 @@ async function callDoubaoStreaming(payload: {
   const timeouts = resolveDoubaoStreamTimeouts();
   const controller = new AbortController();
   const forwardAbort = () => controller.abort();
+  const requestStartedAtMs = Date.now();
 
   if (payload.signal.aborted) {
     controller.abort();
@@ -1266,6 +1300,7 @@ async function callDoubaoStreaming(payload: {
       controller,
       firstEventTimeoutMs: timeouts.firstEventMs,
       idleTimeoutMs: timeouts.idleMs,
+      requestStartedAtMs,
       visiblePrefix: payload.visiblePrefix,
       onContentDelta: payload.onContentDelta,
       onReasoningActivity: payload.onReasoningActivity
@@ -1284,7 +1319,7 @@ function canRetryDoubaoCall(error: unknown, signal: AbortSignal) {
     return true;
   }
 
-  if (error.details.receivedContent) {
+  if (error.details.receivedContent || error.details.receivedReasoning) {
     return false;
   }
 
@@ -2070,10 +2105,18 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       requestId: input.requestId,
       model: response.model,
       requestedModel: resolved.model,
+      fallbackUsed: false,
       responseId: response.responseId,
       durationMs: Date.now() - startedAt,
+      inputTokens: combinedUsage.inputTokens,
       outputTokens: combinedUsage.outputTokens,
-      replyLength: replyMarkdown.length
+      reasoningTokens: combinedUsage.reasoningTokens,
+      replyLength: replyMarkdown.length,
+      replySha256: createHash("sha256").update(replyMarkdown, "utf8").digest("hex"),
+      firstReasoningLatencyMs: visiblePhase.firstReasoningLatencyMs,
+      firstContentLatencyMs: visiblePhase.firstContentLatencyMs,
+      visibleFinishReason: visiblePhase.final.finishReason,
+      visibleContinuationCount: visiblePhase.continuationCount
     });
 
     return {
@@ -2117,6 +2160,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
         "doubao:thinkingEnabled:true",
+        "doubao:visiblePromptProfile:focused-v1",
         `doubao:reasoningActivityChars:${visiblePhase.reasoningChars}`,
         `doubao:firstReasoningLatencyMs:${visiblePhase.firstReasoningLatencyMs ?? -1}`,
         `doubao:firstContentLatencyMs:${visiblePhase.firstContentLatencyMs ?? -1}`,
