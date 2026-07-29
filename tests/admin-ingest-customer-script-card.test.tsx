@@ -169,6 +169,14 @@ async function main() {
   assert.match(cardMarkup, /可直接发给客户/);
   assert.match(cardMarkup, /复制话术/);
   assert.match(cardMarkup, /姐，我跟你聊个事/);
+  assert.ok(cardMarkup.includes("border-[#e3e6ea] bg-[#f7f8fa]"));
+  assert.ok(cardMarkup.includes("text-[#52606d]"));
+  assert.ok(
+    cardMarkup.includes(
+      "border-[#a8dec7] text-[#0f7550] hover:bg-[#e7f8ef]"
+    )
+  );
+  assert.doesNotMatch(cardMarkup, /bg-\[#effbf5\]/);
 
   let clipboardValue = "";
   const copied = await copyAdminIngestText(targets[1]?.copyText ?? "", {

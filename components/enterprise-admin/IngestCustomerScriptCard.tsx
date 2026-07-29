@@ -34,10 +34,10 @@ export function IngestCustomerScriptCard({ content }: { content: string }) {
   return (
     <section
       data-admin-ingest-customer-script-card="true"
-      className="rounded-2xl border border-[#bde8d5] bg-[#effbf5] p-4 text-[#164d3a] shadow-[0_4px_14px_rgba(18,130,70,0.06)]"
+      className="rounded-2xl border border-[#e3e6ea] bg-[#f7f8fa] p-4 text-[#344054] shadow-[0_4px_14px_rgba(15,23,42,0.04)]"
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs font-semibold text-[#128246]">可直接发给客户</p>
+        <p className="text-xs font-semibold text-[#52606d]">可直接发给客户</p>
         <button
           type="button"
           onClick={() => void handleCopy()}
@@ -61,7 +61,7 @@ export function IngestCustomerScriptCard({ content }: { content: string }) {
               : "复制话术"}
         </button>
       </div>
-      <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-[#214b3d]">
+      <p className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-[#344054]">
         {content}
       </p>
     </section>
