@@ -436,8 +436,7 @@ export function IngestPromptHistoryHoverRail({
 
       {mobileFloating && mobileOpen ? (
         <div
-          className="fixed inset-0 z-[85] flex items-end bg-black/30 px-3 pt-16"
-          style={{ paddingBottom: "max(12px, env(safe-area-inset-bottom))" }}
+          className="fixed inset-0 z-[85] flex justify-end bg-black/30 pl-12"
           onClick={() => setMobileOpen(false)}
         >
           <div
@@ -445,7 +444,11 @@ export function IngestPromptHistoryHoverRail({
             aria-modal="true"
             aria-label="历史提示词"
             onClick={(event) => event.stopPropagation()}
-            className="mx-auto flex max-h-[70dvh] w-full max-w-md flex-col overflow-hidden rounded-[24px] border border-neutral-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.25)]"
+            style={{
+              paddingTop: "env(safe-area-inset-top)",
+              paddingBottom: "env(safe-area-inset-bottom)"
+            }}
+            className="ml-auto flex h-full w-[min(86vw,360px)] flex-col overflow-hidden rounded-l-[24px] border-l border-neutral-200 bg-white shadow-[-24px_0_80px_rgba(15,23,42,0.25)]"
           >
             <div className="flex items-center justify-between border-b border-[#f0f0ed] px-4 py-3">
               <div className="flex items-center gap-2">

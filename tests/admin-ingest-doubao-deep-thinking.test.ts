@@ -20,7 +20,7 @@ async function main() {
     readFile("lib/enterprise/deepseek-ingest-client.ts", "utf8")
   ]);
 
-  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 120_000);
+  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 180_000);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("doubao-pro"), true);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("deepseek-pro"), false);
 

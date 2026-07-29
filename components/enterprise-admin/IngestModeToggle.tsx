@@ -157,6 +157,7 @@ import {
 } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import {
   ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
+  ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
   createAdminIngestDoubaoVisibleTimeoutError,
   shouldApplyAdminIngestDoubaoVisibleBudget
 } from "@/lib/enterprise/admin-ingest-doubao-visible-budget";
@@ -4210,7 +4211,11 @@ export function IngestModeToggle({
     let resumableUploads = composerUploads;
     let outgoingAttachments: IngestUploadState[] = draftAttachments;
     let doubaoVisibleBudgetTimedOut = false;
+    let doubaoVisibleTimeoutCommitted = false;
     let doubaoVisibleBudgetTimeout: number | null = null;
+    const doubaoVisibleBudgetSeconds = Math.round(
+      ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS / 1_000
+    );
     const isRequestCancelled = () => (
       cancelledIngestRequestIdsRef.current.has(requestId)
     );
@@ -4221,6 +4226,88 @@ export function IngestModeToggle({
 
       window.clearTimeout(doubaoVisibleBudgetTimeout);
       doubaoVisibleBudgetTimeout = null;
+    };
+    const commitDoubaoVisibleTimeout = () => {
+      if (doubaoVisibleTimeoutCommitted || !isCurrentRequest()) {
+        return;
+      }
+
+      doubaoVisibleTimeoutCommitted = true;
+      const message = `${currentModelLabel} 深度思考已达到 ${doubaoVisibleBudgetSeconds} 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`;
+      conversationStateByIdRef.current[conversationId] = failAssistantMessage(
+        conversationStateByIdRef.current[conversationId],
+        {
+          requestId,
+          message
+        }
+      );
+      commitRequestMessages((current) => replaceIngestRetryOutcome(
+        current,
+        options?.failedMessageId,
+        {
+          id: `assistant-failed-${requestId}`,
+          role: "assistant",
+          content: message,
+          time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+          source: "admin_ingest",
+          platform: platformContext.platform,
+          syncTarget: [...platformContext.syncTarget],
+          tenantId,
+          userId,
+          agentId: activeAgent.id,
+          expertId: activeAgent.expertId ?? null,
+          conversationId,
+          agentName: activeAgent.name,
+          expertName: activeAgent.expertId ? activeAgent.name : null,
+          model: currentModelLabel,
+          provider: requestModelOption.provider,
+          failureMeta: {
+            title: "豆包深度思考等待超时",
+            errorCode: ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
+            retryable: true,
+            requestedModel: currentModelLabel,
+            actualModel: currentModelLabel,
+            fallbackUsed: false
+          },
+          isRestored: false,
+          isHistorical: false,
+          isStreaming: false,
+          isGenerating: false,
+          typing: false,
+          status: "failed"
+        }
+      ));
+      requestQueueRef.current = failRequest(
+        requestQueueRef.current,
+        conversationId,
+        requestId
+      );
+      setConversationRuntimeStatusById((current) => (
+        clearAdminIngestConversationRuntimeStatus(current, {
+          conversationId,
+          requestId
+        })
+      ));
+      if (abortControllerByConversationRef.current[conversationId] === abortController) {
+        delete abortControllerByConversationRef.current[conversationId];
+      }
+      if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
+        delete activeIngestRequestIdByConversationRef.current[conversationId];
+      }
+      if (!options?.preserveComposer && isRequestConversationVisible()) {
+        setInput((current) => current || value);
+        setUploadedFiles((current) => current.length > 0 ? current : resumableUploads);
+      }
+      setIsParsing(
+        countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+      );
+      setRequestFallbackToast(null);
+      setRequestNoticeMessage(message);
+      setRequestErrorMessage(message);
+      showRequestActionToast({
+        type: "warning",
+        title: "豆包本轮等待已结束，可使用同模型重试。"
+      });
     };
 
     if (shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)) {
@@ -4234,6 +4321,7 @@ export function IngestModeToggle({
         }
 
         doubaoVisibleBudgetTimedOut = true;
+        commitDoubaoVisibleTimeout();
         abortController.abort(
           createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
         );
@@ -4874,6 +4962,17 @@ export function IngestModeToggle({
         return null;
       }
 
+      const replacementRequestId =
+        activeIngestRequestIdByConversationRef.current[conversationId];
+
+      if (
+        requestWasCancelled
+        && replacementRequestId
+        && replacementRequestId !== requestId
+      ) {
+        return null;
+      }
+
       const handledError = doubaoVisibleBudgetTimedOut
         ? createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
         : error;
@@ -4907,7 +5006,13 @@ export function IngestModeToggle({
         ? error.files
         : resumableUploads;
 
-      if (!options?.preserveComposer && isRequestConversationVisible()) {
+      const activeRequestId =
+        activeIngestRequestIdByConversationRef.current[conversationId];
+      if (
+        !options?.preserveComposer
+        && isRequestConversationVisible()
+        && (!activeRequestId || activeRequestId === requestId)
+      ) {
         setInput((current) => current || value);
         setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
       }
@@ -4965,6 +5070,13 @@ export function IngestModeToggle({
       }
 
       if (abortController.signal.aborted && !doubaoVisibleBudgetTimedOut) {
+        const nextActiveRequestId =
+          activeIngestRequestIdByConversationRef.current[conversationId];
+
+        if (nextActiveRequestId && nextActiveRequestId !== requestId) {
+          return null;
+        }
+
         setRequestFallbackToast(null);
         setRequestNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
         setRequestErrorMessage("");
@@ -5065,7 +5177,7 @@ export function IngestModeToggle({
       const failurePresentation = doubaoVisibleBudgetTimedOut
         ? {
             title: "豆包深度思考等待超时",
-            message: `${currentModelLabel} 深度思考已达到 120 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`,
+            message: `${currentModelLabel} 深度思考已达到 ${doubaoVisibleBudgetSeconds} 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`,
             retryable: true,
             retryAfterMs: undefined
           }
@@ -5642,10 +5754,54 @@ export function IngestModeToggle({
       conversationId,
       requestId
     );
+    const conversationState = conversationStateByIdRef.current[conversationId];
+
+    if (conversationState) {
+      conversationStateByIdRef.current[conversationId] = failAssistantMessage(
+        conversationState,
+        {
+          requestId,
+          message: "用户已停止本轮附件识别与生成。"
+        }
+      );
+    }
+    setConversationRuntimeStatusById((current) => (
+      clearAdminIngestConversationRuntimeStatus(current, {
+        conversationId,
+        requestId
+      })
+    ));
+    if (abortControllerByConversationRef.current[conversationId] === controller) {
+      delete abortControllerByConversationRef.current[conversationId];
+    }
+    if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
+      delete activeIngestRequestIdByConversationRef.current[conversationId];
+    }
+    const lastSubmittedMessage = [...(
+      conversationMessagesByIdRef.current[conversationId] ?? []
+    )].reverse().find((message) => message.role === "user");
+
+    setInput((current) => (
+      current || conversationLastInputByIdRef.current[conversationId] || ""
+    ));
+    setUploadedFiles((current) => (
+      current.length > 0
+        ? current
+        : lastSubmittedMessage?.attachments ?? []
+    ));
+    setIsParsing(
+      countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+    );
     controller.abort(
       new DOMException("用户已停止本轮附件识别与生成。", "AbortError")
     );
-    setNoticeMessage("正在停止本轮附件识别与生成...");
+    setGptFallbackToast(null);
+    setErrorMessage("");
+    setNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
+    showActionToast({
+      type: "info",
+      title: "本轮投喂已停止，内容已保留。"
+    });
   }
 
   async function handleSave(): Promise<Awaited<ReturnType<typeof saveKnowledgeDraft>> | null> {

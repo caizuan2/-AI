@@ -80,6 +80,14 @@ assert.match(
 );
 assert.match(
   promptHistorySource,
+  /fixed inset-0 z-\[85\] flex justify-end[\s\S]*w-\[min\(86vw,360px\)\][\s\S]*rounded-l-\[24px\]/
+);
+assert.doesNotMatch(
+  promptHistorySource,
+  /fixed inset-0 z-\[85\] flex items-end/
+);
+assert.match(
+  promptHistorySource,
   /onSelect\(item\.id\);[\s\S]*setMobileOpen\(false\)/
 );
 assert.match(

@@ -19,14 +19,14 @@ import {
 } from "../lib/enterprise/ingest-request-queue";
 
 function testDoubaoVisibleAnswerBudget() {
-  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 120_000);
+  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 180_000);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("doubao-pro"), true);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("deepseek-pro"), false);
 
   const error = createAdminIngestDoubaoVisibleTimeoutError("Doubao Seed");
   assert.equal(error.name, ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE);
   assert.equal(isAdminIngestDoubaoVisibleTimeoutError(error), true);
-  assert.match(error.message, /120 秒/);
+  assert.match(error.message, /180 秒/);
 }
 
 function testCancelClearsOnlyTheMatchingConversationQueue() {
@@ -115,6 +115,18 @@ async function testProductionWiringAndFrozenProviderBoundary() {
   assert.match(
     modeToggle,
     /cancelledIngestRequestIdsRef\.current\.add\(requestId\)/
+  );
+  assert.match(
+    modeToggle,
+    /failAssistantMessage\([\s\S]*?requestId,[\s\S]*?message: "用户已停止本轮附件识别与生成。"/
+  );
+  assert.match(
+    modeToggle,
+    /clearAdminIngestConversationRuntimeStatus\([\s\S]*?conversationId,[\s\S]*?requestId/
+  );
+  assert.match(
+    modeToggle,
+    /requestWasCancelled[\s\S]*?replacementRequestId[\s\S]*?replacementRequestId !== requestId/
   );
   assert.match(
     modeToggle,
