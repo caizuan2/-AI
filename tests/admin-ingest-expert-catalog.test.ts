@@ -97,12 +97,19 @@ const modeSource = readFileSync(
   path.join(root, "components/enterprise-admin/IngestModeToggle.tsx"),
   "utf8"
 );
+const marketplaceSource = readFileSync(
+  path.join(root, "components/enterprise-admin/IngestExpertMarketplace.tsx"),
+  "utf8"
+);
 
 assert.match(tabsSource, /isAdded \? onRemoveExpert\(expert\) : onAddExpert\(expert\)/);
 assert.match(tabsSource, /isAdded \? "取消" : "添加"/);
 assert.match(modeSource, /agent\.source === "expert_marketplace"/);
 assert.match(modeSource, /handleRequestDeleteAgent\(existing\.id\)/);
+assert.match(modeSource, /handleRequestDeleteAgent[\s\S]*removeAgentFromWorkspace\(target\)/);
+assert.doesNotMatch(modeSource, /<IngestAgentDeleteDialog/);
 assert.match(modeSource, /agent\.name === expert\.name/);
+assert.match(marketplaceSource, />AI专家广场<\/h1>/);
 assert.doesNotMatch(
   modeSource,
   /handleExpertCatalogResolved[\s\S]*knowledgeBaseId:\s*expert\.knowledgeBaseId/

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Brain, GaugeCircle, MessageSquareText } from "lucide-react";
-import { IngestAgentDeleteDialog } from "@/components/enterprise-admin/IngestAgentDeleteDialog";
 import { IngestAgentDetailPanel } from "@/components/enterprise-admin/IngestAgentDetailPanel";
 import {
   IngestCreateAgentDialog,
@@ -183,6 +182,8 @@ import type {
   IngestCapabilities
 } from "@/lib/enterprise/ingest-access-policy";
 import {
+  countEffectiveAdminIngestHistoryMessages,
+  createAdminIngestFastConversationMessages,
   createEmptyAdminIngestConversationSyncSnapshot,
   createAdminIngestHistoryStorageKeys,
   mergeAdminIngestConversationSyncConflict,
@@ -663,7 +664,9 @@ function resolveRestoredConversationMessages({
 
   return shouldShowChatOnlyWelcome
     ? []
-    : createEmptyHistoryMessages({ conversation, agent, context });
+    : conversation.messageCount > 0
+      ? []
+      : createEmptyHistoryMessages({ conversation, agent, context });
 }
 
 function hasConversationDraft(draft: IngestKnowledgeDraft) {
@@ -842,7 +845,6 @@ export function IngestModeToggle({
     : activeRailKey;
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [isAgentDetailOpen, setIsAgentDetailOpen] = useState(false);
-  const [deleteCandidateAgent, setDeleteCandidateAgent] = useState<IngestChatAgent | null>(null);
   const [searchKeyword, setSearchKeyword] = useState("");
   const [selectedModel, setSelectedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
   const [resolvedModel, setResolvedModel] = useState(DEFAULT_INGEST_MODEL_OPTION.label);
@@ -1208,9 +1210,14 @@ export function IngestModeToggle({
           ? cachedState.conversationDraftsById
           : {};
 
+        historyScopeRef.current = cachedHistoryScope;
+        conversationSyncRevisionRef.current =
+          cachedDisplaySnapshot.revision ?? 0;
         activeConversationIdRef.current = cachedActiveConversationId;
         conversationMessagesByIdRef.current = cachedMessages;
         conversationDraftsByIdRef.current = cachedDrafts;
+        setHistoryScope(cachedHistoryScope);
+        setHistoryLoaded(true);
         setAgents(cachedAgents);
         setAgentConversations(cachedConversations);
         setActiveAgentId(cachedActiveAgentId);
@@ -1556,7 +1563,7 @@ export function IngestModeToggle({
           agentConversations,
           activeAgentId,
           activeConversationId,
-          conversationMessagesById: {},
+          conversationMessagesById,
           conversationDraftsById: {},
           conversationRuntimeStatusById: {},
           pinnedAgentIds,
@@ -1572,6 +1579,7 @@ export function IngestModeToggle({
     activeConversationId,
     agentConversations,
     agents,
+    conversationMessagesById,
     expandedAgentIds,
     expandedConversationAgentIds,
     historyLoaded,
@@ -3355,6 +3363,120 @@ export function IngestModeToggle({
     setLastInput(restoredLastInput);
   }
 
+  async function hydrateConversationBody(
+    conversation: IngestAgentConversation,
+    agent: IngestChatAgent
+  ) {
+    const cachedMessages =
+      conversationMessagesByIdRef.current[conversation.id]
+      ?? conversationMessagesById[conversation.id];
+
+    if (countEffectiveAdminIngestHistoryMessages(cachedMessages) > 0) {
+      return;
+    }
+
+    const expectedHistoryScope = historyScopeRef.current;
+    const abortController = new AbortController();
+    accountScopedMutationAbortControllersRef.current.add(abortController);
+    setNoticeMessage(`正在同步对话：${conversation.title}…`);
+
+    try {
+      const response = await fetch(
+        `${INGEST_CONVERSATION_SYNC_ENDPOINT}?conversationId=${encodeURIComponent(conversation.id)}`,
+        {
+          method: "GET",
+          credentials: "include",
+          cache: "no-store",
+          signal: abortController.signal
+        }
+      );
+      const payload =
+        await response.json() as AdminIngestConversationSyncResponse;
+
+      if (!response.ok) {
+        throw new Error(
+          `${payload.errorCode ?? "INGEST_CONVERSATION_BODY_LOAD_FAILED"}: ${
+            payload.message ?? "对话正文同步失败。"
+          }`
+        );
+      }
+
+      const nextHistoryScope = normalizeAdminIngestHistoryScope(
+        payload.historyScope
+      );
+
+      if (
+        !nextHistoryScope
+        || (expectedHistoryScope && nextHistoryScope !== expectedHistoryScope)
+        || payload.conversationId !== conversation.id
+      ) {
+        throw new Error(
+          "INGEST_HISTORY_SCOPE_MISMATCH: 当前账号的对话正文校验失败。"
+        );
+      }
+
+      const nextMessages = createAdminIngestFastConversationMessages(
+        payload.messages
+      );
+
+      if (
+        conversation.messageCount > 0
+        && countEffectiveAdminIngestHistoryMessages(nextMessages) === 0
+      ) {
+        throw new Error(
+          "INGEST_CONVERSATION_BODY_EMPTY: 服务器未返回该对话的有效正文。"
+        );
+      }
+
+      const nextMessagesById = {
+        ...conversationMessagesByIdRef.current,
+        [conversation.id]: nextMessages
+      };
+      const nextDraftsById = payload.draft && capabilities.saveKnowledge
+        ? {
+            ...conversationDraftsByIdRef.current,
+            [conversation.id]: payload.draft
+          }
+        : conversationDraftsByIdRef.current;
+
+      conversationMessagesByIdRef.current = nextMessagesById;
+      conversationDraftsByIdRef.current = nextDraftsById;
+      setConversationMessagesById(nextMessagesById);
+
+      if (payload.draft && capabilities.saveKnowledge) {
+        setConversationDraftsById(nextDraftsById);
+      }
+
+      if (activeConversationIdRef.current === conversation.id) {
+        setMessages(resolveRestoredConversationMessages({
+          restoredMessages: nextMessages,
+          accessTier,
+          conversation,
+          agent,
+          context: platformContext
+        }));
+        setDraft(
+          nextDraftsById[conversation.id] ?? ingestChatInitialDraft
+        );
+      }
+
+      setErrorMessage("");
+      setNoticeMessage(`已同步对话：${conversation.title}。`);
+    } catch (error) {
+      if (abortController.signal.aborted) {
+        return;
+      }
+
+      console.warn("[admin-ingest:conversation-body:load]", error);
+      setNoticeMessage("");
+      setErrorMessage(
+        "该对话正文同步失败，已保留本机上次成功正文；请点击会话重试。"
+      );
+    } finally {
+      accountScopedMutationAbortControllersRef.current.delete(abortController);
+    }
+  }
+
   function clearConversationState() {
     if (!shouldRestoreToastFromHistory()) {
       setGptFallbackToast(null);
@@ -3504,18 +3626,11 @@ export function IngestModeToggle({
       return;
     }
 
-    setDeleteCandidateAgent(target);
+    removeAgentFromWorkspace(target);
   }
 
-  function handleConfirmDeleteAgent() {
-    const target = deleteCandidateAgent;
-
-    if (!target) {
-      return;
-    }
-
+  function removeAgentFromWorkspace(target: IngestChatAgent) {
     if (target.deletableByIngestAdmin !== true) {
-      setDeleteCandidateAgent(null);
       setNoticeMessage("系统分类由超级管理员配置，不能在投喂端删除。");
       return;
     }
@@ -3538,7 +3653,6 @@ export function IngestModeToggle({
       setMessages([]);
     }
 
-    setDeleteCandidateAgent(null);
     setIsAgentDetailOpen(false);
     setNoticeMessage(`${target.name} 已从当前投喂工作台移除，已新增训练记录。`);
   }
@@ -3591,6 +3705,15 @@ export function IngestModeToggle({
     setActiveRailKey("chat");
     setMode("chat");
     setNoticeMessage(`已打开 ${targetAgent.name} 下的对话：${targetConversation.title}。`);
+    if (
+      targetConversation.messageCount > 0
+      && countEffectiveAdminIngestHistoryMessages(
+        conversationMessagesByIdRef.current[targetConversation.id]
+          ?? conversationMessagesById[targetConversation.id]
+      ) === 0
+    ) {
+      void hydrateConversationBody(targetConversation, targetAgent);
+    }
   }
 
   function handleCreateAgentConversation(agentId: string) {
@@ -7594,11 +7717,6 @@ export function IngestModeToggle({
         agent={activeAgent}
         records={records}
         onClose={() => setIsAgentDetailOpen(false)}
-      />
-      <IngestAgentDeleteDialog
-        agent={deleteCandidateAgent}
-        onClose={() => setDeleteCandidateAgent(null)}
-        onConfirm={handleConfirmDeleteAgent}
       />
       <UrlIngestDialog
         open={isUrlDialogOpen}

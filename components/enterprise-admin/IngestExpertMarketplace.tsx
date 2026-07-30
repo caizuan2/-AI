@@ -142,7 +142,7 @@ export function IngestExpertMarketplace({
         <h1 className={[
           "min-h-10 text-2xl font-semibold tracking-tight text-[#202020]",
           isAdminApk ? "pl-12 md:pl-0" : ""
-        ].join(" ")}>专家广场</h1>
+        ].join(" ")}>AI专家广场</h1>
         <div className="flex h-11 min-w-[min(360px,100%)] items-center gap-2 rounded-2xl bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
           <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
           <input

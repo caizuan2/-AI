@@ -15,6 +15,7 @@ import {
   matchesAdminIngestHistoryScope
 } from "@/lib/enterprise/admin-ingest-history-scope";
 import {
+  createAdminIngestFastConversationMessages,
   normalizeAdminIngestConversationSyncSnapshot
 } from "@/lib/enterprise/admin-ingest-history-sync";
 import { AppError } from "@/lib/errors";
@@ -81,7 +82,7 @@ function readBaseRevision(value: unknown) {
     : null;
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { actor, access } = await requireAdminIngestChatAccess();
     const [result, runtimeResult] = await Promise.all([
@@ -97,6 +98,42 @@ export async function GET() {
         state.conversationRuntimeStatusById,
         runtimeResult.statusById
       );
+    const conversationId = new URL(request.url).searchParams
+      .get("conversationId")
+      ?.trim() ?? "";
+
+    if (conversationId) {
+      const conversation = state.agentConversations.find(
+        (candidate) => candidate.id === conversationId
+      );
+
+      if (!conversation) {
+        return jsonHistoryError(
+          "INGEST_CONVERSATION_NOT_FOUND",
+          "该对话不存在或不属于当前账号。",
+          404
+        );
+      }
+
+      return NextResponse.json({
+        ok: true,
+        success: true,
+        historyScope,
+        revision: result.revision,
+        runtimeRevision: runtimeResult.revision,
+        conversationId,
+        messages: createAdminIngestFastConversationMessages(
+          state.conversationMessagesById[conversationId]
+        ),
+        draft: access.accessTier === "full_ingest"
+          ? state.conversationDraftsById[conversationId] ?? null
+          : null
+      }, {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
 
     return NextResponse.json({
       ok: true,

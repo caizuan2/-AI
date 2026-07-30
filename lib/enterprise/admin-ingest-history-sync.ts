@@ -31,6 +31,9 @@ export type AdminIngestConversationSyncResponse = {
   currentRevision?: number;
   runtimeRevision?: number;
   state?: AdminIngestConversationSyncSnapshot;
+  conversationId?: string;
+  messages?: IngestChatMessage[];
+  draft?: IngestKnowledgeDraft | null;
   errorCode?: string;
   message?: string;
 };
@@ -76,6 +79,7 @@ export type AdminIngestHistoryStorageWriter = AdminIngestHistoryStorageReader & 
 
 export type AdminIngestScopedLocalSnapshot = {
   keys: AdminIngestHistoryStorageKeys;
+  revision?: number;
   revisionMatches: boolean;
   hasUnsyncedChanges: boolean;
   state: AdminIngestConversationSyncSnapshot;
@@ -88,6 +92,8 @@ const ACCOUNT_SCOPE_INDEX_VERSION = "v1";
 const ACCOUNT_SCOPE_INDEX_KEY_BASE = "ai-kb-ingest-account-history-scope";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const EMPTY_HISTORY_MESSAGE_CONTENT = "暂无历史内容";
+const DISPLAY_MESSAGE_CACHE_MAX_TOTAL_CHARS = 900_000;
+const DISPLAY_MESSAGE_CACHE_MAX_CONVERSATION_CHARS = 500_000;
 
 const HISTORY_STORAGE_KEY_BASES = {
   displaySnapshotEnvelope: "ai-kb-ingest-history-display-snapshot",
@@ -303,6 +309,7 @@ export function readAdminIngestScopedLocalSnapshotForDisplay(input: {
       ) {
         return {
           keys,
+          revision: typeof revision === "number" ? revision : undefined,
           revisionMatches: true,
           hasUnsyncedChanges: false,
           state
@@ -353,19 +360,53 @@ function normalizeAdminIngestConversationDisplaySnapshot(
   const source = value && typeof value === "object" && !Array.isArray(value)
     ? value as Partial<AdminIngestConversationSyncSnapshot>
     : {};
+  const agentConversations = normalizeArray<IngestAgentConversation>(
+    source.agentConversations
+  );
+  const activeConversationId = typeof source.activeConversationId === "string"
+    ? source.activeConversationId
+    : "";
+  const sourceMessagesById = normalizeRecord<IngestChatMessage[]>(
+    source.conversationMessagesById
+  );
+  const prioritizedConversationIds = Array.from(new Set([
+    activeConversationId,
+    ...agentConversations.map((conversation) => conversation.id)
+  ].filter(Boolean)));
+  const conversationMessagesById: Record<string, IngestChatMessage[]> = {};
+  let cachedCharacterCount = 0;
+
+  for (const conversationId of prioritizedConversationIds) {
+    const messages = createAdminIngestFastConversationMessages(
+      sourceMessagesById[conversationId]
+    );
+
+    if (messages.length === 0) {
+      continue;
+    }
+
+    const serializedLength = JSON.stringify(messages).length;
+
+    if (
+      serializedLength > DISPLAY_MESSAGE_CACHE_MAX_CONVERSATION_CHARS
+      || cachedCharacterCount + serializedLength
+        > DISPLAY_MESSAGE_CACHE_MAX_TOTAL_CHARS
+    ) {
+      continue;
+    }
+
+    conversationMessagesById[conversationId] = messages;
+    cachedCharacterCount += serializedLength;
+  }
 
   return {
     agents: normalizeArray<IngestChatAgent>(source.agents),
-    agentConversations: normalizeArray<IngestAgentConversation>(
-      source.agentConversations
-    ),
+    agentConversations,
     activeAgentId: typeof source.activeAgentId === "string"
       ? source.activeAgentId
       : "",
-    activeConversationId: typeof source.activeConversationId === "string"
-      ? source.activeConversationId
-      : "",
-    conversationMessagesById: {},
+    activeConversationId,
+    conversationMessagesById,
     conversationDraftsById: {},
     conversationRuntimeStatusById: {},
     pinnedAgentIds: normalizeArray<string>(source.pinnedAgentIds),
@@ -374,6 +415,48 @@ function normalizeAdminIngestConversationDisplaySnapshot(
       source.expandedConversationAgentIds
     )
   };
+}
+
+export function createAdminIngestFastConversationMessages(
+  value: unknown
+): IngestChatMessage[] {
+  return normalizeArray<IngestChatMessage>(value)
+    .filter((message) => (
+      message
+      && typeof message === "object"
+      && typeof message.id === "string"
+      && message.id.trim()
+      && (message.role === "user" || message.role === "assistant")
+      && typeof message.content === "string"
+      && !message.id.startsWith(EMPTY_HISTORY_MESSAGE_PREFIX)
+      && message.content.trim() !== EMPTY_HISTORY_MESSAGE_CONTENT
+    ))
+    .map((message) => {
+      const compactMessage: IngestChatMessage = {
+        ...message
+      };
+
+      delete compactMessage.gptOS;
+      delete compactMessage.runtimeOrchestrator;
+
+      if (message.attachments?.length) {
+        compactMessage.attachments = message.attachments.map((attachment) => {
+          const compactAttachment = {
+            ...attachment
+          };
+
+          delete compactAttachment.extractedText;
+          delete compactAttachment.summary;
+          delete compactAttachment.pageSummaries;
+          delete compactAttachment.slideTexts;
+          delete compactAttachment.limitationNote;
+
+          return compactAttachment;
+        });
+      }
+
+      return compactMessage;
+    });
 }
 
 function fingerprintAdminIngestConversationDisplaySnapshot(input: {
@@ -517,6 +600,7 @@ export function readAdminIngestScopedLocalSnapshot(input: {
   if (envelopeIsValid && envelopeState) {
     return {
       keys,
+      revision: envelopeRevision,
       revisionMatches: true,
       hasUnsyncedChanges:
         typedEnvelope?.syncedFingerprint !== envelopeFingerprint,
@@ -605,6 +689,7 @@ export function readAdminIngestScopedLocalSnapshot(input: {
 
   return {
     keys,
+    revision: storedRevision,
     revisionMatches: fingerprintMatches,
     hasUnsyncedChanges: fingerprintMatches
       && storedSyncedFingerprint !== stateFingerprint,
