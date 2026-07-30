@@ -48,6 +48,6 @@ export async function enforceSuperAdminPageAccess() {
       redirect("/login?next=/super-admin");
     }
 
-    redirect("/no-access");
+    redirect("/no-access?next=/super-admin");
   }
 }
