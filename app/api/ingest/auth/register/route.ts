@@ -117,7 +117,11 @@ export async function POST(request: Request) {
     });
 
     if (existing) {
-      throw new AppError("VALIDATION_ERROR", "该手机号已注册，请直接登录。", 409);
+      throw new AppError(
+        "VALIDATION_ERROR",
+        "该手机号已注册。原卡已禁用或过期时，请登录原账号后使用新卡恢复；注册全新账号请使用新的手机号。",
+        409
+      );
     }
 
     const user = await prisma.user.create({
@@ -125,7 +129,10 @@ export async function POST(request: Request) {
         phone: input.phone,
         passwordHash: await hashPassword(input.password),
         name: input.name,
-        isActive: false,
+        // The shared redemption guard only accepts an active account. Access
+        // remains closed until the new card is redeemed because this account
+        // still has no valid license binding and licenseActivated is false.
+        isActive: true,
         licenseActivated: false
       },
       select: {

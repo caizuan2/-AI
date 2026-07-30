@@ -9,7 +9,7 @@ import React, {
   type RefObject
 } from "react";
 import { useRouter } from "next/navigation";
-import { KeyRound, LogOut, ShieldAlert } from "lucide-react";
+import { KeyRound, LogOut, ShieldAlert, UserPlus } from "lucide-react";
 import {
   createIngestLicenseGuardedFetch,
   startIngestLicenseStatusMonitor,
@@ -25,6 +25,7 @@ import {
 const useClientLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 export const INGEST_LICENSE_REACTIVATION_EVENT_KEY = "xt:ingest-license-reactivated";
 const SWITCH_ACCOUNT_HREF = `/ingest/login?app=ingest-admin&next=${encodeURIComponent("/ingest/activate")}`;
+const REGISTER_ACCOUNT_HREF = `/ingest/register?app=ingest-admin&next=${encodeURIComponent("/admin-ingest")}`;
 
 function getActivateHref(code: IngestLicenseInvalidCode | null) {
   const reason = code === "LICENSE_EXPIRED" ? "expired" : code === "LICENSE_DISABLED" ? "disabled" : "invalid";
@@ -52,12 +53,16 @@ export function IngestLicenseInvalidDialog({
   dialogRef,
   invalidCode = null,
   switchingAccount = false,
-  onSwitchAccount
+  registeringAccount = false,
+  onSwitchAccount,
+  onRegisterAccount
 }: {
   dialogRef?: RefObject<HTMLElement>;
   invalidCode?: IngestLicenseInvalidCode | null;
   switchingAccount?: boolean;
+  registeringAccount?: boolean;
   onSwitchAccount: () => void;
+  onRegisterAccount?: () => void;
 }) {
   const title = invalidCode === "LICENSE_EXPIRED"
     ? "卡密已过期"
@@ -91,6 +96,9 @@ export function IngestLicenseInvalidDialog({
         <p className="mt-2 text-sm leading-6 text-slate-600">
           如需恢复完整投喂端，请使用 XT-INGEST 卡密；XT-USER 只恢复聊天版权限。
         </p>
+        <p className="mt-2 text-sm leading-6 text-slate-600">
+          也可以切换账号后，用新手机号和新卡密注册全新账号；新账号不会继承原账号历史。
+        </p>
 
         <div className="mt-7 grid gap-3 sm:grid-cols-2">
           <a
@@ -102,12 +110,23 @@ export function IngestLicenseInvalidDialog({
           </a>
           <button
             type="button"
-            disabled={switchingAccount}
+            disabled={switchingAccount || registeringAccount}
             onClick={onSwitchAccount}
             className="inline-flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-500 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
           >
             <LogOut className="h-4 w-4" aria-hidden="true" />
             {switchingAccount ? "正在切换..." : "切换账号"}
+          </button>
+        </div>
+        <div className="mt-3 flex justify-end">
+          <button
+            type="button"
+            disabled={switchingAccount || registeringAccount}
+            onClick={onRegisterAccount}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-emerald-700 transition hover:bg-emerald-50 hover:text-emerald-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+          >
+            <UserPlus className="h-4 w-4" aria-hidden="true" />
+            {registeringAccount ? "正在进入注册..." : "注册新账号"}
           </button>
         </div>
       </section>
@@ -135,6 +154,7 @@ export function IngestLicenseInvalidGate({
   const dialogRef = useRef<HTMLElement>(null);
   const [invalidCode, setInvalidCode] = useState<IngestLicenseInvalidCode | null>(initialCode);
   const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [registeringAccount, setRegisteringAccount] = useState(false);
 
   useClientLayoutEffect(() => {
     let guardEnabled = true;
@@ -307,7 +327,7 @@ export function IngestLicenseInvalidGate({
   }, [invalidCode]);
 
   const switchAccount = async () => {
-    if (switchingAccount) {
+    if (switchingAccount || registeringAccount) {
       return;
     }
 
@@ -326,6 +346,26 @@ export function IngestLicenseInvalidGate({
     }
   };
 
+  const registerAccount = async () => {
+    if (switchingAccount || registeringAccount) {
+      return;
+    }
+
+    setRegisteringAccount(true);
+
+    try {
+      await window.fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "include"
+      });
+    } catch {
+      // Explicit registration must remain reachable even if logout cannot reach the server.
+    } finally {
+      router.replace(REGISTER_ACCOUNT_HREF);
+      router.refresh();
+    }
+  };
+
   return (
     <>
       {children}
@@ -334,8 +374,12 @@ export function IngestLicenseInvalidGate({
           dialogRef={dialogRef}
           invalidCode={invalidCode}
           switchingAccount={switchingAccount}
+          registeringAccount={registeringAccount}
           onSwitchAccount={() => {
             void switchAccount();
+          }}
+          onRegisterAccount={() => {
+            void registerAccount();
           }}
         />
       ) : null}
