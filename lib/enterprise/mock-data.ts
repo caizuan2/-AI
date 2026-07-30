@@ -56,6 +56,13 @@ export const superAdminMenus: SuperAdminMenuItem[] = [
     icon: "Database"
   },
   {
+    title: "Agent 与专区",
+    href: "/super-admin/expert-catalog",
+    description: "展示名称、专区与固定知识库绑定",
+    icon: "Bot",
+    badge: "New"
+  },
+  {
     title: "卡密授权",
     href: "/super-admin/licenses",
     description: "用户端、投喂端统一授权",
