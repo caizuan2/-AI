@@ -143,7 +143,11 @@ async function main() {
     shellSource,
     /files=\{uploadedFiles\}[\s\S]*?onRemove=\{onRemoveUpload\}[\s\S]*?imageOnly[\s\S]*?enableImagePreview[\s\S]*?composerThumbnailLayout/
   );
-  assert.match(modeToggleSource, /platformContext\.platform === "web"/);
+  assert.doesNotMatch(
+    modeToggleSource,
+    /platformContext\.platform === "web"\s*&&\s*composerUploads\.some/,
+    "图片永久保存不能只限 Web；管理员 APK 和 EXE 也必须先保存图片再写入历史。"
+  );
   assert.match(
     modeToggleSource,
     /await persistAdminIngestUploadImages\([\s\S]*?composerUploads,[\s\S]*?requestHistoryScope,[\s\S]*?imagePersistenceController\.signal/

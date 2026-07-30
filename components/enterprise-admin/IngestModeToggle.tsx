@@ -153,6 +153,7 @@ import {
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import {
   hasVisibleReplyForActiveIngestRequest,
+  hasVisibleReplyForActiveIngestProvider,
   shouldShowAdminIngestParsingProgress
 } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import {
@@ -4213,10 +4214,7 @@ export function IngestModeToggle({
       return null;
     }
 
-    if (
-      platformContext.platform === "web"
-      && composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl)
-    ) {
+    if (composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl)) {
       setIsParsing(true);
       preparingConversationIdsRef.current = {
         ...preparingConversationIdsRef.current,
@@ -7042,6 +7040,10 @@ export function IngestModeToggle({
   const hasVisibleReplyForActiveRequest = hasVisibleReplyForActiveIngestRequest(
     activeConversationRequestState
   );
+  const hasVisibleDeepSeekReplyForActiveRequest = hasVisibleReplyForActiveIngestProvider(
+    activeConversationRequestState,
+    ["deepseek", "deepseek-pro"]
+  );
   const hasFullIngestAccess = accessTier === "full_ingest";
   const sharedProps = {
     agents: visibleAgents,
@@ -7113,7 +7115,8 @@ export function IngestModeToggle({
       isParsing: activeConversationIsParsing,
       isRequestActive: activeConversationIsParsing,
       hasFullIngestAccess,
-      hasVisibleReply: hasVisibleReplyForActiveRequest
+      hasVisibleReply: hasVisibleReplyForActiveRequest,
+      hideWhenVisibleReply: hasVisibleDeepSeekReplyForActiveRequest
     }),
     isSaving,
     onOpenCreateAgent: () => handleRailChange("experts"),

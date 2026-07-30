@@ -197,7 +197,7 @@ export function IngestEXEInputBar({
 
     setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
     onToolAction(label);
-    setTimeout(() => fileInputRef.current?.click(), 0);
+    fileInputRef.current?.click();
   }
 
   function handleMoreTool(label: string) {

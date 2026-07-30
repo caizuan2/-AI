@@ -11,6 +11,10 @@ const modeToggle = readFileSync(
   "components/enterprise-admin/IngestModeToggle.tsx",
   "utf8"
 );
+const exeInput = readFileSync(
+  "components/enterprise-admin/IngestEXEInputBar.tsx",
+  "utf8"
+);
 const parseRoute = readFileSync(
   "app/api/admin/kb/ingest/files/parse/route.ts",
   "utf8"
@@ -54,6 +58,16 @@ assert.match(
 assert.match(
   shell,
   /ref=\{imageInputRef\}[\s\S]*accept="image\/\*"[\s\S]*multiple[\s\S]*handleFileChange\(event, "wechat_conversation"\)/
+);
+assert.match(shell, /function openUploadPicker[\s\S]*?inputRef\.current\?\.click\(\);/);
+assert.doesNotMatch(
+  shell.slice(shell.indexOf("function openUploadPicker"), shell.indexOf("async function handleMoreTool")),
+  /setTimeout\([^)]*inputRef\.current\?\.click/
+);
+assert.match(exeInput, /function openTypedUpload[\s\S]*?fileInputRef\.current\?\.click\(\);/);
+assert.doesNotMatch(
+  exeInput.slice(exeInput.indexOf("function openTypedUpload"), exeInput.indexOf("function handleMoreTool")),
+  /setTimeout\([^)]*fileInputRef\.current\?\.click/
 );
 assert.match(shell, /ref=\{documentInputRef\}[\s\S]*accept="\.pdf,.doc,.docx,.ppt,.pptx,.txt,.md"/);
 assert.doesNotMatch(
