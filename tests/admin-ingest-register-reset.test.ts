@@ -94,6 +94,7 @@ test("ingest password reset validates the original card and matching new passwor
 
 test("register route activates before session creation and compensates failed activation", () => {
   const route = readFileSync("app/api/ingest/auth/register/route.ts", "utf8");
+  const licenseCore = readFileSync("lib/auth/license.ts", "utf8");
   const createIndex = route.indexOf("prisma.user.create");
   const redeemIndex = route.indexOf("await redeemLicenseKey");
   const sessionIndex = route.indexOf("createSession(user.id");
@@ -101,10 +102,13 @@ test("register route activates before session creation and compensates failed ac
   assert.match(route, /appType !== "user_app" && appType !== "ingest_admin"/);
   assert.match(route, /namespace: "ingest-auth-register-activation"/);
   assert.match(route, /limit: 5/);
-  assert.match(route, /isActive: false/);
+  assert.match(route, /isActive: true/);
+  assert.doesNotMatch(route, /isActive: false/);
+  assert.match(licenseCore, /if \(!activationUser\.isActive\)/);
   assert.match(route, /appType,\s+ip:/);
   assert.match(route, /registrationActivationCompleted/);
   assert.match(route, /prisma\.user\.delete/);
+  assert.match(route, /原卡已禁用或过期时，请登录原账号后使用新卡恢复/);
   assert.ok(createIndex >= 0 && redeemIndex > createIndex);
   assert.ok(sessionIndex > redeemIndex, "a login session must only be created after license activation");
   assert.match(route, /redirectTarget: "\/admin-ingest\?app=ingest-admin&platform=web"/);
@@ -150,4 +154,24 @@ test("ingest auth UI exposes register activation and password recovery only in i
   assert.match(forgotPage, /IngestSaasAuthPortal mode="reset"/);
   assert.match(middleware, /publicExactPaths[\s\S]*"\/ingest\/forgot-password"/);
   assert.match(middleware, /isSafeNextPath[\s\S]*"\/ingest\/forgot-password"/);
+});
+
+test("invalid card dialog exposes original-account recovery and isolated new registration", () => {
+  const gate = readFileSync("components/enterprise-admin/IngestLicenseInvalidGate.tsx", "utf8");
+  const layout = readFileSync("app/admin-ingest/layout.tsx", "utf8");
+
+  assert.match(gate, /使用新卡重新激活/);
+  assert.match(gate, /用新手机号和新卡密注册全新账号/);
+  assert.match(gate, /新账号不会继承原账号历史/);
+  assert.match(gate, /切换账号/);
+  assert.match(gate, /注册新账号/);
+  assert.match(gate, /const REGISTER_ACCOUNT_HREF = `\/ingest\/register/);
+  assert.match(gate, /router\.replace\(REGISTER_ACCOUNT_HREF\)/);
+  assert.ok(
+    gate.indexOf("使用新卡重新激活") < gate.indexOf("注册新账号"),
+    "new-card recovery must remain the primary action before optional registration"
+  );
+  assert.match(layout, /if \(access\.invalidLicenseCode\) \{[\s\S]*?initialLicenseCode = access\.invalidLicenseCode/);
+  assert.match(layout, /<IngestLicenseInvalidGate[\s\S]*?initialCode=\{initialLicenseCode\}/);
+  assert.doesNotMatch(layout, /redirect\("\/ingest\/register/);
 });
