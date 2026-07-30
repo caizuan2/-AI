@@ -130,6 +130,6 @@ test("shell reuses the four-button action row and hides metadata status only for
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(modeToggle, /hasVisibleReplyForActiveIngestRequest\(/);
   assert.match(modeToggle, /hasVisibleReplyForActiveIngestProvider\([\s\S]*?\["deepseek", "deepseek-pro"\]/);
-  assert.match(modeToggle, /hideWhenVisibleReply: hasVisibleDeepSeekReplyForActiveRequest/);
+  assert.match(modeToggle, /hideWhenVisibleReply: hasVisibleDeepSeekTerminalReply/);
   assert.match(modeToggle, /shouldShowAdminIngestParsingProgress\(\{/);
 });

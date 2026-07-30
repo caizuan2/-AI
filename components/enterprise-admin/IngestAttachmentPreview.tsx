@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type SyntheticEvent
+} from "react";
 import { File, FileImage, FileText, Presentation, RotateCcw, X, ZoomIn, ZoomOut } from "lucide-react";
 import Image from "next/image";
 import type { IngestUploadState } from "@/lib/enterprise/ingest-client";
@@ -117,6 +124,31 @@ function getWrapperClass(fileCount: number, compact: boolean, imageOnly: boolean
   }
 
   return "grid max-h-[112px] grid-cols-2 gap-2 overflow-hidden md:grid-cols-4";
+}
+
+function retryAdminIngestAttachmentImage(
+  event: SyntheticEvent<HTMLImageElement>,
+  imageUrl: string
+) {
+  const image = event.currentTarget;
+  const retryCount = Number(image.dataset.ingestRetryCount ?? "0");
+
+  if (retryCount >= 2) {
+    image.style.opacity = "0";
+    return;
+  }
+
+  image.dataset.ingestRetryCount = String(retryCount + 1);
+  image.style.opacity = "0";
+  window.setTimeout(() => {
+    if (!image.isConnected) {
+      return;
+    }
+
+    const separator = imageUrl.includes("?") ? "&" : "?";
+    image.src = `${imageUrl}${separator}ingestImageRetry=${Date.now()}`;
+    image.style.opacity = "1";
+  }, 500 * (retryCount + 1));
 }
 
 export function IngestAttachmentPreview({
@@ -309,14 +341,16 @@ export function IngestAttachmentPreview({
                     composerThumbnailLayout ? "rounded-xl" : "rounded-2xl"
                   ].join(" ")}
                 >
+                  <FileImage className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 text-[#128246]" aria-hidden="true" />
                   <Image
                     src={imageUrl}
                     alt={file.fileName}
                     fill
                     sizes={compact ? "112px" : "80px"}
                     unoptimized
+                    onError={(event) => retryAdminIngestAttachmentImage(event, imageUrl)}
                     className={[
-                      "object-contain transition duration-200 group-hover:scale-[1.03]",
+                      "z-[1] bg-[#f3f3f1] object-contain transition duration-200 group-hover:scale-[1.03]",
                       composerThumbnailLayout ? "p-1.5" : ""
                     ].join(" ")}
                   />
@@ -327,14 +361,18 @@ export function IngestAttachmentPreview({
                   ) : null}
                 </button>
               ) : imageUrl ? (
-                <Image
-                  src={imageUrl}
-                  alt=""
-                  fill
-                  sizes={compact ? "112px" : "80px"}
-                  unoptimized
-                  className="object-contain"
-                />
+                <>
+                  <FileImage className="absolute left-1/2 top-1/2 h-6 w-6 -translate-x-1/2 -translate-y-1/2 text-[#128246]" aria-hidden="true" />
+                  <Image
+                    src={imageUrl}
+                    alt=""
+                    fill
+                    sizes={compact ? "112px" : "80px"}
+                    unoptimized
+                    onError={(event) => retryAdminIngestAttachmentImage(event, imageUrl)}
+                    className="z-[1] bg-[#f3f3f1] object-contain"
+                  />
+                </>
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-[#128246]">
                   <FileImage className="h-6 w-6" aria-hidden="true" />
@@ -380,20 +418,33 @@ export function IngestAttachmentPreview({
                     onClick={() => openImagePreview(file, imageUrl)}
                     className="group absolute inset-0 cursor-zoom-in overflow-hidden rounded-xl"
                   >
+                    <FileImage className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-[#128246]" aria-hidden="true" />
                     <Image
                       src={imageUrl}
                       alt={file.fileName}
                       fill
                       sizes={compact ? "44px" : "48px"}
                       unoptimized
-                      className="object-cover transition duration-200 group-hover:scale-105"
+                      onError={(event) => retryAdminIngestAttachmentImage(event, imageUrl)}
+                      className="z-[1] bg-[#f3f3f1] object-cover transition duration-200 group-hover:scale-105"
                     />
                     <span className="absolute inset-0 flex items-center justify-center bg-black/35 text-white opacity-0 transition group-hover:opacity-100 group-focus-visible:opacity-100">
                       <ZoomIn className="h-4 w-4" aria-hidden="true" />
                     </span>
                   </button>
                 ) : isImage && imageUrl ? (
-                  <Image src={imageUrl} alt={file.fileName} fill sizes={compact ? "44px" : "48px"} unoptimized className="object-cover" />
+                  <>
+                    <FileImage className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 text-[#128246]" aria-hidden="true" />
+                    <Image
+                      src={imageUrl}
+                      alt={file.fileName}
+                      fill
+                      sizes={compact ? "44px" : "48px"}
+                      unoptimized
+                      onError={(event) => retryAdminIngestAttachmentImage(event, imageUrl)}
+                      className="z-[1] bg-[#f3f3f1] object-cover"
+                    />
+                  </>
                 ) : (
                   <Icon className="h-5 w-5 text-current" aria-hidden="true" />
                 )}

@@ -157,6 +157,10 @@ import {
   shouldShowAdminIngestParsingProgress
 } from "@/lib/enterprise/admin-ingest-visible-answer-state";
 import {
+  hasRenderedAdminIngestReply,
+  normalizeAdminIngestVisibleReply
+} from "@/lib/enterprise/admin-ingest-visible-reply";
+import {
   ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
   ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
   createAdminIngestDoubaoVisibleTimeoutError,
@@ -5115,7 +5119,10 @@ export function IngestModeToggle({
       const fallbackDescription = fallbackActualModel
         ? `${currentModelLabel} 暂时不可用，本次已由 ${fallbackActualModel.label} 生成。`
         : "";
-      const assistantContent = result.replyMarkdown || (result.preview
+      const assistantContent = normalizeAdminIngestVisibleReply(
+        result.replyMarkdown ?? "",
+        result.provider
+      ) || (result.preview
         ? `${result.message} 已生成投喂大脑草稿：${result.draft.title}。`
         : `已完成统一投喂链路：AI解析 → 结构化为「${result.draft.title}」→ 分类到「${result.draft.category}」→ 训练记录已更新。`);
       const isDoubaoResult = result.provider === "doubao" || result.provider === "doubao-pro";
@@ -5274,16 +5281,29 @@ export function IngestModeToggle({
         completedAssistantMessage
       );
       /*
-       * Persist the exact completed provider body before the normal debounced
-       * full snapshot. This idempotent merge closes the refresh-loss window
-       * without changing the model request or its original output.
+       * Start persisting the exact completed visible reply before the normal
+       * debounced full snapshot, then commit the terminal UI immediately.
+       * Cloud history remains protected without keeping the stop/progress UI
+       * visible while the persistence request finishes.
        */
-      await persistConversationMessagesAtomically({
+      const completedMessagePersistence = persistConversationMessagesAtomically({
         historyScope: requestHistoryScope,
         conversationId,
         messages: finalizedMessages
       });
       commitRequestMessages(() => finalizedMessages);
+      if (
+        result.provider === "deepseek"
+        || result.provider === "deepseek-pro"
+      ) {
+        setConversationRuntimeStatusById((current) => (
+          markAdminIngestConversationVisibleCompleted(current, {
+            conversationId,
+            requestId
+          })
+        ));
+      }
+      await completedMessagePersistence;
       if (
         metadataDeferred
         && result.draft.jobId
@@ -7181,6 +7201,26 @@ export function IngestModeToggle({
     activeConversationRequestState,
     ["deepseek", "deepseek-pro"]
   );
+  const activeConversationRequestId =
+    activeConversationRequestState?.activeRequestId
+    ?? (
+      activeConversationRuntimeStatus?.state === "generating"
+        ? activeConversationRuntimeStatus.requestId
+        : undefined
+    );
+  const hasRenderedReplyForActiveRequest = hasRenderedAdminIngestReply({
+    messages,
+    requestId: activeConversationRequestId
+  });
+  const selectedProviderIsDeepSeek = (
+    selectedModelOption.provider === "deepseek"
+    || selectedModelOption.provider === "deepseek-pro"
+  );
+  const hasVisibleDeepSeekTerminalReply =
+    hasVisibleDeepSeekReplyForActiveRequest
+    || (selectedProviderIsDeepSeek && hasRenderedReplyForActiveRequest);
+  const activeConversationUiIsParsing = activeConversationIsParsing
+    && !hasVisibleDeepSeekTerminalReply;
   const hasFullIngestAccess = accessTier === "full_ingest";
   const sharedProps = {
     agents: visibleAgents,
@@ -7244,16 +7284,16 @@ export function IngestModeToggle({
     voiceState,
     notifications,
     settingsState,
-    isParsing: activeConversationIsParsing,
+    isParsing: activeConversationUiIsParsing,
     thinkingStartedAt: activeConversationRuntimeStatus?.state === "generating"
       ? activeConversationRuntimeStatus.startedAt
       : activeConversationRequestState?.requestStartedAt ?? null,
     showParsingProgress: shouldShowAdminIngestParsingProgress({
-      isParsing: activeConversationIsParsing,
-      isRequestActive: activeConversationIsParsing,
+      isParsing: activeConversationUiIsParsing,
+      isRequestActive: activeConversationUiIsParsing,
       hasFullIngestAccess,
       hasVisibleReply: hasVisibleReplyForActiveRequest,
-      hideWhenVisibleReply: hasVisibleDeepSeekReplyForActiveRequest
+      hideWhenVisibleReply: hasVisibleDeepSeekTerminalReply
     }),
     isSaving,
     onOpenCreateAgent: () => handleRailChange("experts"),
