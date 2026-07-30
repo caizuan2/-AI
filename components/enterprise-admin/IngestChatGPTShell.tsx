@@ -269,7 +269,6 @@ interface IngestChatGPTShellProps {
   welcomeVariant?: "chat_only" | "full_ingest";
 }
 
-type MoreToolKey = (typeof moreToolActions)[number]["key"];
 
 interface ApiEnvelope<T> {
   ok: boolean;
@@ -904,9 +903,6 @@ export function IngestChatGPTShell({
   userName,
   welcomeVariant = "full_ingest"
 }: IngestChatGPTShellProps = {}) {
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-  const imageInputRef = useRef<HTMLInputElement>(null);
-  const documentInputRef = useRef<HTMLInputElement>(null);
   const wechatUpload = uploadedFiles.find((file) => file.recognitionMode === "wechat_conversation");
   const wechatOutputMode = normalizeAdminIngestWechatOutputMode(wechatUpload?.wechatOutputMode);
   const inputTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -2175,39 +2171,12 @@ export function IngestChatGPTShell({
       setErrorMessage("");
     }
 
+    setIsMoreOpen(false);
     event.target.value = "";
   }
 
-  function openUploadPicker(tool: Exclude<MoreToolKey, "url">) {
-    if (!canIngest) {
-      setNoticeMessage("请先到专家广场添加专家 Agent。");
-      setErrorMessage("");
-      onRailChange?.("experts");
-      return;
-    }
-
-    if (tool === "file" && !canUseFullIngestTools) {
-      setErrorMessage("当前账号需要投喂端卡密才能上传文件。");
-      return;
-    }
-
-    const inputRef = tool === "camera"
-      ? cameraInputRef
-      : tool === "image"
-        ? imageInputRef
-        : documentInputRef;
-
-    onToolAction?.(tool === "file" ? "文件上传" : "图片识别·支持微信长截图");
-    inputRef.current?.click();
-  }
-
-  async function handleMoreTool(tool: MoreToolKey) {
+  function handleMoreTool() {
     setIsMoreOpen(false);
-
-    if (tool === "camera" || tool === "image" || tool === "file") {
-      openUploadPicker(tool);
-      return;
-    }
 
     if (!canUseFullIngestTools) {
       setErrorMessage("当前账号需要投喂端卡密才能使用网址投喂。");
@@ -3102,30 +3071,6 @@ export function IngestChatGPTShell({
                 ) : null}
               </div>
             ) : null}
-            <input
-              ref={cameraInputRef}
-              type="file"
-              className="hidden"
-              accept="image/*"
-              capture="environment"
-              onChange={(event) => handleFileChange(event, "wechat_conversation")}
-            />
-            <input
-              ref={imageInputRef}
-              type="file"
-              className="hidden"
-              accept="image/*"
-              multiple
-              onChange={(event) => handleFileChange(event, "wechat_conversation")}
-            />
-            <input
-              ref={documentInputRef}
-              type="file"
-              className="hidden"
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.md"
-              multiple
-              onChange={(event) => handleFileChange(event)}
-            />
             <div className="flex items-end gap-2">
               <div className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#555]">
                 {SHOW_INTERNAL_OS_UI ? (
@@ -3163,12 +3108,58 @@ export function IngestChatGPTShell({
                         canUseFullIngestTools || !action.requiresFullIngestAccess
                       )).map((action) => {
                         const Icon = action.icon;
+                        const isUploadAction = action.key === "camera"
+                          || action.key === "image"
+                          || action.key === "file";
 
-                        return (
+                        return isUploadAction ? (
+                          <label
+                            key={action.key}
+                            className="focus-ring relative flex w-full cursor-pointer items-center gap-4 overflow-hidden rounded-2xl px-2.5 py-3 text-left transition hover:bg-slate-50"
+                            onClick={(event) => {
+                              if (!canIngest) {
+                                event.preventDefault();
+                                setNoticeMessage("请先到专家广场添加专家 Agent。");
+                                setErrorMessage("");
+                                onRailChange?.("experts");
+                                return;
+                              }
+
+                              onToolAction?.(
+                                action.key === "file"
+                                  ? "文件上传"
+                                  : "图片识别·支持微信长截图"
+                              );
+                            }}
+                          >
+                            <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-950">
+                              <Icon className="h-5 w-5" aria-hidden="true" />
+                            </span>
+                            <span className="text-base font-normal text-slate-950">
+                              {action.label}
+                            </span>
+                            <input
+                              type="file"
+                              aria-label={action.label}
+                              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                              accept={action.key === "file"
+                                ? ".pdf,.doc,.docx,.ppt,.pptx,.txt,.md"
+                                : "image/*"}
+                              capture={action.key === "camera" ? "environment" : undefined}
+                              multiple={action.key !== "camera"}
+                              onChange={(event) => handleFileChange(
+                                event,
+                                action.key === "file"
+                                  ? undefined
+                                  : "wechat_conversation"
+                              )}
+                            />
+                          </label>
+                        ) : (
                           <button
                             key={action.key}
                             type="button"
-                            onClick={() => void handleMoreTool(action.key)}
+                            onClick={handleMoreTool}
                             className="focus-ring flex w-full items-center gap-4 rounded-2xl px-2.5 py-3 text-left transition hover:bg-slate-50"
                           >
                             <span className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-950">

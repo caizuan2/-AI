@@ -82,6 +82,8 @@ export type AdminIngestScopedLocalSnapshot = {
 
 const HISTORY_SCOPE_PATTERN = /^[a-zA-Z0-9_-]{20,80}$/;
 const HISTORY_STORAGE_VERSION = "v2";
+const ACCOUNT_SCOPE_INDEX_VERSION = "v1";
+const ACCOUNT_SCOPE_INDEX_KEY_BASE = "ai-kb-ingest-account-history-scope";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const EMPTY_HISTORY_MESSAGE_CONTENT = "暂无历史内容";
 
@@ -203,6 +205,87 @@ function fingerprintString(value: string) {
   }
 
   return `${(left >>> 0).toString(16).padStart(8, "0")}${(right >>> 0).toString(16).padStart(8, "0")}:${value.length}`;
+}
+
+function createAdminIngestAccountScopeIndexKey(registeredAccount: string) {
+  const normalizedAccount = registeredAccount.trim().toLowerCase();
+
+  if (!normalizedAccount) {
+    return "";
+  }
+
+  return `${ACCOUNT_SCOPE_INDEX_KEY_BASE}:${ACCOUNT_SCOPE_INDEX_VERSION}:${fingerprintString(normalizedAccount)}`;
+}
+
+export function readAdminIngestAccountHistoryScope(input: {
+  storage: AdminIngestHistoryStorageReader;
+  registeredAccount: string;
+}) {
+  const key = createAdminIngestAccountScopeIndexKey(input.registeredAccount);
+
+  return key
+    ? normalizeAdminIngestHistoryScope(readStoredString(input.storage, key))
+    : "";
+}
+
+export function writeAdminIngestAccountHistoryScope(input: {
+  storage: Pick<AdminIngestHistoryStorageWriter, "setItem">;
+  registeredAccount: string;
+  historyScope: string;
+}) {
+  const key = createAdminIngestAccountScopeIndexKey(input.registeredAccount);
+  const historyScope = normalizeAdminIngestHistoryScope(input.historyScope);
+
+  if (!key || !historyScope) {
+    return;
+  }
+
+  input.storage.setItem(key, historyScope);
+}
+
+export function readAdminIngestScopedLocalSnapshotForDisplay(input: {
+  historyScope: string;
+  includeDrafts: boolean;
+  storage: AdminIngestHistoryStorageReader;
+}): AdminIngestScopedLocalSnapshot | null {
+  const keys = createAdminIngestHistoryStorageKeys(input.historyScope);
+
+  if (!keys) {
+    return null;
+  }
+
+  const rawEnvelope = readStoredString(input.storage, keys.snapshotEnvelope);
+
+  if (!rawEnvelope) {
+    return null;
+  }
+
+  try {
+    const envelope = JSON.parse(rawEnvelope) as {
+      revision?: unknown;
+    };
+    const revision = envelope.revision;
+
+    if (
+      typeof revision !== "number"
+      || !Number.isSafeInteger(revision)
+      || revision < 0
+    ) {
+      return null;
+    }
+
+    const snapshot = readAdminIngestScopedLocalSnapshot({
+      historyScope: input.historyScope,
+      remoteRevision: revision,
+      includeDrafts: input.includeDrafts,
+      storage: input.storage,
+      allowMerge: false
+    });
+
+    return snapshot?.revisionMatches ? snapshot : null;
+  } catch {
+    return null;
+  }
 }
 
 export function fingerprintAdminIngestConversationSyncSnapshot(

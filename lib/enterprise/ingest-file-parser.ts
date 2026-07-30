@@ -10,8 +10,7 @@ import {
 import { extractChatImageText } from "@/lib/ai-chat/image-ocr";
 import {
   buildAdminIngestWechatReplyEvidence,
-  parseAdminIngestWechatRoleTranscript,
-  reconcileAdminIngestWechatRoleTranscripts
+  parseAdminIngestWechatRoleTranscript
 } from "@/lib/enterprise/ingest-wechat-transcript";
 import {
   detectAdminIngestWechatConversationImage
@@ -1089,7 +1088,44 @@ async function parseImage(input: { buffer: Buffer; signal?: AbortSignal }) {
   };
 }
 
-async function parseWechatConversationImage(input: { buffer: Buffer; signal?: AbortSignal }) {
+async function prepareWechatReplyScriptVisionBuffer(buffer: Buffer) {
+  const sharp = (await import("sharp")).default;
+  const normalized = await sharp(buffer, {
+    animated: false,
+    limitInputPixels: 60_000_000
+  })
+    .rotate()
+    .toBuffer({ resolveWithObject: true });
+  const maxTailHeight = 6_000;
+
+  if (normalized.info.height <= maxTailHeight) {
+    return {
+      buffer: normalized.data,
+      focusedOnRecentConversation: false
+    };
+  }
+
+  return {
+    buffer: await sharp(normalized.data, {
+      animated: false,
+      limitInputPixels: 60_000_000
+    })
+      .extract({
+        left: 0,
+        top: normalized.info.height - maxTailHeight,
+        width: normalized.info.width,
+        height: maxTailHeight
+      })
+      .toBuffer(),
+    focusedOnRecentConversation: true
+  };
+}
+
+async function parseWechatConversationImage(input: {
+  buffer: Buffer;
+  signal?: AbortSignal;
+  wechatOutputMode?: "reply_script" | "full_answer";
+}) {
   const detectedMimeType = detectImageMimeType(input.buffer);
 
   if (!detectedMimeType) {
@@ -1106,6 +1142,72 @@ async function parseWechatConversationImage(input: { buffer: Buffer; signal?: Ab
         successfulPages: [],
         failedPages: [1],
         lowConfidencePages: [],
+        deadlineReached: false
+      })
+    };
+  }
+
+  const visionInput = input.wechatOutputMode === "reply_script"
+    ? await prepareWechatReplyScriptVisionBuffer(input.buffer)
+    : {
+        buffer: input.buffer,
+        focusedOnRecentConversation: false
+      };
+  const visionResult = await extractChatImageText({
+    arrayBuffer: visionInput.buffer.buffer.slice(
+      visionInput.buffer.byteOffset,
+      visionInput.buffer.byteOffset + visionInput.buffer.byteLength
+    ) as ArrayBuffer,
+    filename: "wechat-conversation-image",
+    mimeType: detectedMimeType
+  });
+  const visionTranscript = visionResult.status === "ok" && visionResult.text
+    ? parseAdminIngestWechatRoleTranscript(visionResult.text)
+    : null;
+
+  if (visionTranscript?.transcript && visionTranscript.latestCustomerMessage) {
+    const visionSegmentCount = Math.max(1, visionResult.segmentCount ?? 1);
+    const visionRecognizedCount = Math.max(
+      1,
+      visionResult.recognizedSegmentCount ?? visionSegmentCount
+    );
+    const visionSuccessfulPages = Array.from(
+      { length: visionRecognizedCount },
+      (_, index) => index + 1
+    );
+    const visionFailedPages = Array.from(
+      { length: Math.max(0, visionSegmentCount - visionRecognizedCount) },
+      (_, index) => visionRecognizedCount + index + 1
+    );
+    const partial = visionRecognizedCount < visionSegmentCount;
+    const focusNote = visionInput.focusedOnRecentConversation
+      ? "为缩短精准回复等待时间，本轮只识别长截图底部最近对话区域；"
+      : "";
+
+    return {
+      extractedText: buildAdminIngestWechatReplyEvidence({
+        transcript: visionTranscript.transcript,
+        latestCustomerMessage: visionTranscript.latestCustomerMessage,
+        partial
+      }),
+      pageSummaries: [
+        `最近客户消息：${visionTranscript.latestCustomerMessage}`
+      ],
+      slideTexts: [],
+      limitationNote: partial
+        ? `${focusNote}已通过 ${visionResult.provider}/${visionResult.model} 进行分段角色识别；存在未识别片段，回答只能基于已识别对话正文。`
+        : `${focusNote}已通过 ${visionResult.provider}/${visionResult.model} 进行分段角色识别；左侧白色气泡为客户，右侧绿色气泡为用户本人。`,
+      parseStatus: partial ? "partial" as const : "parsed" as const,
+      ...buildParseCoverage({
+        totalPages: visionSegmentCount,
+        pageStart: 1,
+        processedPages: [
+          ...visionSuccessfulPages,
+          ...visionFailedPages
+        ],
+        successfulPages: visionSuccessfulPages,
+        failedPages: visionFailedPages,
+        lowConfidencePages: partial ? visionSuccessfulPages : [],
         deadlineReached: false
       })
     };
@@ -1149,57 +1251,6 @@ async function parseWechatConversationImage(input: { buffer: Buffer; signal?: Ab
         successfulPages,
         failedPages,
         lowConfidencePages: partial ? successfulPages : [],
-        deadlineReached: false
-      })
-    };
-  }
-
-  const visionResult = await extractChatImageText({
-    arrayBuffer: input.buffer.buffer.slice(
-      input.buffer.byteOffset,
-      input.buffer.byteOffset + input.buffer.byteLength
-    ) as ArrayBuffer,
-    filename: "wechat-conversation-image",
-    mimeType: detectedMimeType
-  });
-  const visionTranscript = visionResult.status === "ok" && visionResult.text
-    ? result.transcript
-      ? reconcileAdminIngestWechatRoleTranscripts({
-          visionTranscript: visionResult.text,
-          localTranscript: result.transcript
-        })
-      : parseAdminIngestWechatRoleTranscript(visionResult.text)
-    : null;
-
-  if (visionTranscript?.transcript && visionTranscript.latestCustomerMessage) {
-    const visionSegmentCount = Math.max(1, visionResult.segmentCount ?? 1);
-    const visionRecognizedCount = Math.max(1, visionResult.recognizedSegmentCount ?? visionSegmentCount);
-    const visionSuccessfulPages = Array.from({ length: visionRecognizedCount }, (_, index) => index + 1);
-    const visionFailedPages = Array.from(
-      { length: Math.max(0, visionSegmentCount - visionRecognizedCount) },
-      (_, index) => visionRecognizedCount + index + 1
-    );
-    const partial = visionRecognizedCount < visionSegmentCount;
-
-    return {
-      extractedText: buildAdminIngestWechatReplyEvidence({
-        transcript: visionTranscript.transcript,
-        latestCustomerMessage: visionTranscript.latestCustomerMessage,
-        partial
-      }),
-      pageSummaries: [`最近客户消息：${visionTranscript.latestCustomerMessage}`],
-      slideTexts: [],
-      limitationNote: partial
-        ? `已通过 ${visionResult.provider}/${visionResult.model} 对低置信度微信长截图进行分段复核；存在未识别片段，回答只能基于已识别对话正文。`
-        : `已通过 ${visionResult.provider}/${visionResult.model} 对低置信度微信长截图进行分段复核；左侧白色气泡为客户，右侧绿色气泡为用户本人。`,
-      parseStatus: partial ? "partial" as const : "parsed" as const,
-      ...buildParseCoverage({
-        totalPages: visionSegmentCount,
-        pageStart: 1,
-        processedPages: [...visionSuccessfulPages, ...visionFailedPages],
-        successfulPages: visionSuccessfulPages,
-        failedPages: visionFailedPages,
-        lowConfidencePages: partial ? visionSuccessfulPages : [],
         deadlineReached: false
       })
     };
@@ -1553,6 +1604,7 @@ export async function parseAdminIngestFile(input: {
   pageStart?: number;
   pageBatchSize?: number;
   recognitionMode?: "wechat_conversation";
+  wechatOutputMode?: "reply_script" | "full_answer";
   signal?: AbortSignal;
 }): Promise<IngestParsedFileResult> {
   const fileType = inferFileType(input.fileName, input.mimeType);
@@ -1600,7 +1652,11 @@ export async function parseAdminIngestFile(input: {
       ...base,
       recognitionMode,
       ...(recognitionMode === "wechat_conversation"
-        ? await parseWechatConversationImage({ buffer: input.buffer, signal: batch.signal })
+        ? await parseWechatConversationImage({
+            buffer: input.buffer,
+            signal: batch.signal,
+            wechatOutputMode: input.wechatOutputMode
+          })
         : await parseImage({ buffer: input.buffer, signal: batch.signal }))
     };
   }

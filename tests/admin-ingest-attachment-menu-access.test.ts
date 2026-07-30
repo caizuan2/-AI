@@ -50,29 +50,31 @@ assert.match(shell, /h-11 w-11[\s\S]*rounded-full bg-slate-100 text-slate-950/);
 assert.match(shell, /text-base font-normal text-slate-950/);
 assert.match(modeToggle, /canUseFullIngestTools: accessTier === "full_ingest"/);
 
-assert.match(shell, /ref=\{cameraInputRef\}[\s\S]*accept="image\/\*"[\s\S]*capture="environment"/);
+assert.match(shell, /action\.key === "camera" \? "environment" : undefined/);
 assert.match(
   shell,
-  /ref=\{cameraInputRef\}[\s\S]*handleFileChange\(event, "wechat_conversation"\)/
+  /className="absolute inset-0 h-full w-full cursor-pointer opacity-0"[\s\S]*handleFileChange\([\s\S]*"wechat_conversation"/
 );
 assert.match(
   shell,
-  /ref=\{imageInputRef\}[\s\S]*accept="image\/\*"[\s\S]*multiple[\s\S]*handleFileChange\(event, "wechat_conversation"\)/
+  /accept=\{action\.key === "file"[\s\S]*"image\/\*"[\s\S]*multiple=\{action\.key !== "camera"\}/
 );
-assert.match(shell, /function openUploadPicker[\s\S]*?inputRef\.current\?\.click\(\);/);
 assert.doesNotMatch(
-  shell.slice(shell.indexOf("function openUploadPicker"), shell.indexOf("async function handleMoreTool")),
-  /setTimeout\([^)]*inputRef\.current\?\.click/
+  shell,
+  /(?:cameraInputRef|imageInputRef|documentInputRef)\.current\?\.click/
 );
-assert.match(exeInput, /function openTypedUpload[\s\S]*?fileInputRef\.current\?\.click\(\);/);
 assert.doesNotMatch(
-  exeInput.slice(exeInput.indexOf("function openTypedUpload"), exeInput.indexOf("function handleMoreTool")),
-  /setTimeout\([^)]*fileInputRef\.current\?\.click/
+  exeInput,
+  /fileInputRef\.current\?\.click/
 );
-assert.match(shell, /ref=\{documentInputRef\}[\s\S]*accept="\.pdf,.doc,.docx,.ppt,.pptx,.txt,.md"/);
-assert.doesNotMatch(
-  shell.slice(shell.indexOf("ref={documentInputRef}"), shell.indexOf("<div className=\"flex items-end gap-2\">")),
-  /image\/\*/
+assert.match(
+  exeInput,
+  /aria-label=\{action\.label\}[\s\S]*accept=\{uploadAccept\}[\s\S]*onChange=\{handleFileChange\}/
+);
+assert.match(shell, /"\.pdf,.doc,.docx,.ppt,.pptx,.txt,.md"/);
+assert.match(
+  shell,
+  /action\.key === "file"[\s\S]*\? undefined[\s\S]*: "wechat_conversation"/
 );
 
 assert.match(parseRoute, /const chatAccess = await requireAdminIngestChatAccess\(\)/);
