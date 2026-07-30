@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
-  buildAdminIngestWechatGroundingRequest
+  buildAdminIngestWechatGroundingRequest,
+  shouldPreserveDeepSeekWechatReplyScript
 } from "../lib/enterprise/admin-ingest-wechat-grounding";
 import {
   createUploadState,
@@ -37,6 +38,22 @@ async function main() {
       wechatOutputMode: "reply_script"
     }]
   });
+  const deepSeekReply = buildAdminIngestWechatGroundingRequest({
+    input: "请根据这张微信对话截图回复客户。",
+    modelProvider: "deepseek-pro",
+    attachments: [{
+      ...attachmentBase,
+      wechatOutputMode: "reply_script"
+    }]
+  });
+  const doubaoReply = buildAdminIngestWechatGroundingRequest({
+    input: "请根据这张微信对话截图回复客户。",
+    modelProvider: "doubao-pro",
+    attachments: [{
+      ...attachmentBase,
+      wechatOutputMode: "reply_script"
+    }]
+  });
   const fullAnswer = buildAdminIngestWechatGroundingRequest({
     input: "请根据这张微信对话截图回复客户。",
     attachments: [{
@@ -55,6 +72,21 @@ async function main() {
   );
   assert.match(defaultReply.modelInput, /只输出一段可直接复制发给客户的正文/);
   assert.doesNotMatch(defaultReply.modelInput, /## 核心判断|## 接下来的推进节奏/);
+  assert.match(deepSeekReply.modelInput, /80 至 160 个中文字符/);
+  assert.match(deepSeekReply.modelInput, /达到可直接发送的完整意思后立即结束/);
+  assert.doesNotMatch(doubaoReply.modelInput, /80 至 160 个中文字符/);
+  assert.equal(shouldPreserveDeepSeekWechatReplyScript({
+    modelProvider: "deepseek-pro",
+    request: deepSeekReply
+  }), true);
+  assert.equal(shouldPreserveDeepSeekWechatReplyScript({
+    modelProvider: "doubao-pro",
+    request: doubaoReply
+  }), false);
+  assert.equal(shouldPreserveDeepSeekWechatReplyScript({
+    modelProvider: "deepseek-pro",
+    request: fullAnswer
+  }), false);
 
   assert.equal(
     fullAnswer.query,
@@ -150,6 +182,15 @@ async function main() {
   );
   assert.match(routeSource, /wechatOutputMode:\s*readString\(item\.wechatOutputMode\)/);
   assert.match(routeSource, /input:\s*wechatGroundingRequest\.modelInput/);
+  assert.match(routeSource, /shouldPreserveDeepSeekWechatReplyScript/);
+  assert.match(
+    routeSource,
+    /recentMessages:\s*preserveDeepSeekWechatReplyScript\s*\?\s*\[\]\s*:\s*input\.recentMessages/
+  );
+  assert.match(
+    routeSource,
+    /contextSummary:\s*preserveDeepSeekWechatReplyScript\s*\?\s*""\s*:\s*input\.contextSummary/
+  );
 
   console.log("Admin ingest WeChat output mode tests passed.");
 }

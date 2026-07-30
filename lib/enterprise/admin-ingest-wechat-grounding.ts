@@ -82,7 +82,8 @@ function buildConversationContext(
 
 function buildWechatReplyTask(
   latestCustomerMessage: string,
-  outputMode: AdminIngestWechatOutputMode
+  outputMode: AdminIngestWechatOutputMode,
+  modelProvider?: string | null
 ) {
   const replyTarget = latestCustomerMessage || "截图中可靠识别到的最后一条左侧客户消息";
   const sharedRules = [
@@ -107,13 +108,21 @@ function buildWechatReplyTask(
 
   return [
     ...sharedRules,
-    "只输出一段可直接复制发给客户的正文，不要输出标题、分析、识别说明、知识来源、角色标签或内部判断过程。"
+    "只输出一段可直接复制发给客户的正文，不要输出标题、分析、识别说明、知识来源、角色标签或内部判断过程。",
+    ...(modelProvider === "deepseek-pro"
+      ? [
+          "这是即时通讯中的“精准回复话术”短消息任务，不是长文分析、总结或完整方案。",
+          "正文控制在 80 至 160 个中文字符，最多一段、2 至 4 句；只保留自然承接、直接回应和一个必要的追问或下一步。",
+          "不要复述整段对话、逐项解释客户经历、堆叠赞美或连续扩写多个段落；达到可直接发送的完整意思后立即结束。"
+        ]
+      : [])
   ].join("\n");
 }
 
 export function buildAdminIngestWechatGroundingRequest(input: {
   input: string;
   attachments: AdminIngestWechatGroundingAttachment[];
+  modelProvider?: string | null;
 }) {
   const regularQuery = clean(input.input);
   const evidenceAttachments = input.attachments.filter((attachment) => (
@@ -153,8 +162,18 @@ export function buildAdminIngestWechatGroundingRequest(input: {
     isWechatConversation: true as const,
     strictKnowledgeMode: true as const,
     query,
-    modelInput: buildWechatReplyTask(latestCustomerMessage, outputMode),
+    modelInput: buildWechatReplyTask(latestCustomerMessage, outputMode, input.modelProvider),
     latestCustomerMessage: latestCustomerMessage || null,
     outputMode
   };
+}
+
+export function shouldPreserveDeepSeekWechatReplyScript(input: {
+  modelProvider?: string | null;
+  request: ReturnType<typeof buildAdminIngestWechatGroundingRequest>;
+}) {
+  return input.modelProvider === "deepseek-pro"
+    && input.request.isWechatConversation
+    && "outputMode" in input.request
+    && input.request.outputMode === "reply_script";
 }
