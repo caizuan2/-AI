@@ -2610,6 +2610,10 @@ export async function parseUploadedFileForGpt(
     formData.append("pageBatchSize", String(pageBatchSize));
     if (file.recognitionMode) {
       formData.append("recognitionMode", file.recognitionMode);
+      formData.append(
+        "wechatOutputMode",
+        file.wechatOutputMode ?? "reply_script"
+      );
     }
 
     if (modelAffinity) {
@@ -2735,6 +2739,13 @@ export async function parseUploadedFileForGpt(
     retryFormData.append("mimeType", file.mimeType || file.fileType || file.rawFile.type || "application/octet-stream");
     retryFormData.append("pageStart", String(retryPage));
     retryFormData.append("pageBatchSize", "1");
+    if (file.recognitionMode) {
+      retryFormData.append("recognitionMode", file.recognitionMode);
+      retryFormData.append(
+        "wechatOutputMode",
+        file.wechatOutputMode ?? "reply_script"
+      );
+    }
 
     if (modelAffinity) {
       retryFormData.append("modelProvider", modelAffinity.modelProvider);

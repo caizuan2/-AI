@@ -184,9 +184,12 @@ import {
   mergeAdminIngestConversationSyncConflict,
   normalizeAdminIngestConversationSyncSnapshot,
   normalizeAdminIngestHistoryScope,
+  readAdminIngestAccountHistoryScope,
   readAdminIngestHistoryScopeFromApiResponse,
   readAdminIngestScopedLocalSnapshot,
+  readAdminIngestScopedLocalSnapshotForDisplay,
   reconcileAdminIngestConversationMessageCounts,
+  writeAdminIngestAccountHistoryScope,
   writeAdminIngestScopedLocalSnapshot,
   type AdminIngestConversationSyncResponse,
   type AdminIngestConversationSyncSnapshot,
@@ -892,6 +895,8 @@ export function IngestModeToggle({
   const messagesRef = useRef<IngestChatMessage[]>([]);
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
   const abortControllerByConversationRef = useRef<Record<string, AbortController>>({});
+  const preparationAbortControllerByConversationRef =
+    useRef<Record<string, AbortController>>({});
   const activeIngestRequestIdByConversationRef = useRef<Record<string, string>>({});
   const cancelledIngestRequestIdsRef = useRef<Set<string>>(new Set());
   const preparingConversationIdsRef = useRef<Record<string, true>>({});
@@ -1107,6 +1112,17 @@ export function IngestModeToggle({
     const abortController = new AbortController();
     const hydrationVersion = conversationHydrationVersionRef.current + 1;
     const preserveCurrentHistory = preserveHistoryDuringHydrationRef.current;
+    const cachedHistoryScope = readAdminIngestAccountHistoryScope({
+      storage: window.localStorage,
+      registeredAccount
+    });
+    const cachedDisplaySnapshot = cachedHistoryScope
+      ? readAdminIngestScopedLocalSnapshotForDisplay({
+          historyScope: cachedHistoryScope,
+          includeDrafts: capabilities.saveKnowledge,
+          storage: window.localStorage
+        })
+      : null;
     let cancelled = false;
 
     preserveHistoryDuringHydrationRef.current = false;
@@ -1146,6 +1162,70 @@ export function IngestModeToggle({
       setExpandedConversationAgentIds([]);
       setMessages([]);
       setDraft(ingestChatInitialDraft);
+
+      if (cachedDisplaySnapshot?.state.agents.length) {
+        const cachedState = cachedDisplaySnapshot.state;
+        const cachedAgents = cachedState.agents.map((agent) => ({
+          ...agent,
+          platform: hydrationContext.platform,
+          syncTarget: [...hydrationContext.syncTarget]
+        }));
+        const cachedConversations = cachedState.agentConversations.map(
+          (conversation) => ({
+            ...conversation,
+            platform: hydrationContext.platform,
+            syncTarget: [...hydrationContext.syncTarget]
+          })
+        );
+        const cachedActiveAgentId = cachedAgents.some(
+          (agent) => agent.id === cachedState.activeAgentId
+        )
+          ? cachedState.activeAgentId
+          : cachedAgents[0]?.id ?? "";
+        const cachedActiveConversationId = cachedConversations.some(
+          (conversation) => (
+            conversation.id === cachedState.activeConversationId
+            && conversation.status !== "archived"
+          )
+        )
+          ? cachedState.activeConversationId
+          : cachedConversations.find((conversation) => (
+              conversation.agentId === cachedActiveAgentId
+              && conversation.status !== "archived"
+            ))?.id ?? "";
+        const cachedMessages = mergeMessageRecords(
+          cachedState.conversationMessagesById,
+          {}
+        );
+        const cachedDrafts = capabilities.saveKnowledge
+          ? cachedState.conversationDraftsById
+          : {};
+
+        activeConversationIdRef.current = cachedActiveConversationId;
+        conversationMessagesByIdRef.current = cachedMessages;
+        conversationDraftsByIdRef.current = cachedDrafts;
+        setAgents(cachedAgents);
+        setAgentConversations(cachedConversations);
+        setActiveAgentId(cachedActiveAgentId);
+        setActiveConversationScope(cachedActiveConversationId);
+        setConversationMessagesById(cachedMessages);
+        setConversationDraftsById(cachedDrafts);
+        setConversationRuntimeStatusById(
+          cachedState.conversationRuntimeStatusById
+        );
+        setPinnedAgentIds(cachedState.pinnedAgentIds);
+        setExpandedAgentIds(cachedState.expandedAgentIds);
+        setExpandedConversationAgentIds(
+          cachedState.expandedConversationAgentIds
+        );
+        setMessages(
+          cachedMessages[cachedActiveConversationId] ?? []
+        );
+        setDraft(
+          cachedDrafts[cachedActiveConversationId]
+            ?? ingestChatInitialDraft
+        );
+      }
     }
 
     async function hydrateAccountHistory() {
@@ -1307,6 +1387,11 @@ export function IngestModeToggle({
             state: hydratedState,
             markSynced: !shouldRestoreLocal
           });
+          writeAdminIngestAccountHistoryScope({
+            storage: window.localStorage,
+            registeredAccount,
+            historyScope: nextHistoryScope
+          });
         } catch {
           // Scoped browser caching is optional; the server remains authoritative.
         }
@@ -1345,7 +1430,12 @@ export function IngestModeToggle({
         conversationHydrationAbortControllerRef.current = null;
       }
     };
-  }, [accessTier, capabilities.saveKnowledge, historyLoadRetryVersion]);
+  }, [
+    accessTier,
+    capabilities.saveKnowledge,
+    historyLoadRetryVersion,
+    registeredAccount
+  ]);
 
   useEffect(() => {
     if (!historyLoaded || !hasActiveAgent) {
@@ -4215,6 +4305,10 @@ export function IngestModeToggle({
     }
 
     if (composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl)) {
+      if (!options?.preserveComposer) {
+        setInput("");
+        setUploadedFiles([]);
+      }
       setIsParsing(true);
       preparingConversationIdsRef.current = {
         ...preparingConversationIdsRef.current,
@@ -4226,6 +4320,8 @@ export function IngestModeToggle({
 
       try {
         const imagePersistenceController = new AbortController();
+        preparationAbortControllerByConversationRef.current[conversationId] =
+          imagePersistenceController;
         accountScopedMutationAbortControllersRef.current.add(imagePersistenceController);
 
         try {
@@ -4266,13 +4362,27 @@ export function IngestModeToggle({
         if (
           error instanceof DOMException
           && error.name === "AbortError"
-          && historyScopeRef.current !== requestHistoryScope
         ) {
+          if (historyScopeRef.current !== requestHistoryScope) {
+            return null;
+          }
+
+          setIsParsing(
+            countActiveIngestConversationRequests(
+              conversationStateByIdRef.current
+            ) > 0
+          );
+          setNoticeMessage("已停止本轮图片保存与发送。");
+          setErrorMessage("");
           return null;
         }
 
         const message = error instanceof Error ? error.message : "图片永久保存失败，请稍后重试。";
 
+        if (!options?.preserveComposer) {
+          setInput(value);
+          setUploadedFiles(composerUploads);
+        }
         setIsParsing(
           countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
         );
@@ -4285,6 +4395,9 @@ export function IngestModeToggle({
         });
         return null;
       } finally {
+        delete preparationAbortControllerByConversationRef.current[
+          conversationId
+        ];
         const nextPreparingConversationIds = {
           ...preparingConversationIdsRef.current
         };
@@ -4976,10 +5089,6 @@ export function IngestModeToggle({
       }
 
       if (isRequestCancelled()) {
-        if (!options?.preserveComposer && isRequestConversationVisible()) {
-          setInput((current) => current || value);
-          setUploadedFiles((current) => current.length > 0 ? current : resumableUploads);
-        }
         return null;
       }
 
@@ -5292,6 +5401,8 @@ export function IngestModeToggle({
         !options?.preserveComposer
         && isRequestConversationVisible()
         && (!activeRequestId || activeRequestId === requestId)
+        && !requestWasCancelled
+        && !abortController.signal.aborted
       ) {
         setInput((current) => current || value);
         setUploadedFiles((current) => current.length > 0 ? current : cancelledUploads);
@@ -5358,11 +5469,11 @@ export function IngestModeToggle({
         }
 
         setRequestFallbackToast(null);
-        setRequestNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
+        setRequestNoticeMessage("已停止本轮附件识别与生成。");
         setRequestErrorMessage("");
         showRequestActionToast({
           type: "info",
-          title: "本轮投喂已停止，内容已保留。"
+          title: "本轮投喂已停止。"
         });
         return null;
       }
@@ -6013,7 +6124,38 @@ export function IngestModeToggle({
   function handleCancelIngest() {
     const conversationId = activeConversationIdRef.current;
     const controller = abortControllerByConversationRef.current[conversationId];
+    const preparationController =
+      preparationAbortControllerByConversationRef.current[conversationId];
     const requestId = activeIngestRequestIdByConversationRef.current[conversationId];
+
+    if (preparationController && !preparationController.signal.aborted) {
+      preparationController.abort(
+        new DOMException("用户已停止本轮图片保存与发送。", "AbortError")
+      );
+      delete preparationAbortControllerByConversationRef.current[
+        conversationId
+      ];
+      const nextPreparingConversationIds = {
+        ...preparingConversationIdsRef.current
+      };
+      delete nextPreparingConversationIds[conversationId];
+      preparingConversationIdsRef.current = nextPreparingConversationIds;
+      setPreparingConversationIds(nextPreparingConversationIds);
+      setInput("");
+      setIsParsing(
+        countActiveIngestConversationRequests(
+          conversationStateByIdRef.current
+        ) > 0
+      );
+      setGptFallbackToast(null);
+      setErrorMessage("");
+      setNoticeMessage("已停止本轮图片保存与发送。");
+      showActionToast({
+        type: "info",
+        title: "本轮图片发送已停止。"
+      });
+      return;
+    }
 
     if (!controller || !requestId) {
       setNoticeMessage("当前没有正在进行的附件识别或模型生成。");
@@ -6057,18 +6199,13 @@ export function IngestModeToggle({
     if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
       delete activeIngestRequestIdByConversationRef.current[conversationId];
     }
-    const lastSubmittedMessage = [...(
-      conversationMessagesByIdRef.current[conversationId] ?? []
-    )].reverse().find((message) => message.role === "user");
-
-    setInput((current) => (
-      current || conversationLastInputByIdRef.current[conversationId] || ""
-    ));
-    setUploadedFiles((current) => (
-      current.length > 0
-        ? current
-        : lastSubmittedMessage?.attachments ?? []
-    ));
+    const nextPreparingConversationIds = {
+      ...preparingConversationIdsRef.current
+    };
+    delete nextPreparingConversationIds[conversationId];
+    preparingConversationIdsRef.current = nextPreparingConversationIds;
+    setPreparingConversationIds(nextPreparingConversationIds);
+    setInput("");
     setIsParsing(
       countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
     );
@@ -6077,10 +6214,10 @@ export function IngestModeToggle({
     );
     setGptFallbackToast(null);
     setErrorMessage("");
-    setNoticeMessage("已停止本轮附件识别与生成；输入内容和附件已保留，可继续修改或重试。");
+    setNoticeMessage("已停止本轮附件识别与生成。");
     showActionToast({
       type: "info",
-      title: "本轮投喂已停止，内容已保留。"
+      title: "本轮投喂已停止。"
     });
   }
 

@@ -92,13 +92,11 @@ export function IngestEXEInputBar({
   onToolAction,
   onOpenExperts
 }: IngestEXEInputBarProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const organizeMenuRef = useRef<HTMLDivElement>(null);
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [isConnectionOpen, setIsConnectionOpen] = useState(false);
   const [isOrganizeOpen, setIsOrganizeOpen] = useState(false);
-  const [fileAccept, setFileAccept] = useState(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
   const selectedModelLabel = selectedModel;
 
   useEffect(() => {
@@ -169,16 +167,6 @@ export function IngestEXEInputBar({
     await onSend(value);
   }
 
-  function handleUploadClick() {
-    if (!hasActiveAgent) {
-      onOpenExperts();
-      return;
-    }
-
-    setFileAccept(".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
-    fileInputRef.current?.click();
-  }
-
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
 
@@ -186,18 +174,8 @@ export function IngestEXEInputBar({
       onUpload(files);
     }
 
+    setIsMoreOpen(false);
     event.target.value = "";
-  }
-
-  function openTypedUpload(label: string) {
-    if (!hasActiveAgent) {
-      onOpenExperts();
-      return;
-    }
-
-    setFileAccept(uploadAcceptByTool[label] ?? ".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md");
-    onToolAction(label);
-    fileInputRef.current?.click();
   }
 
   function handleMoreTool(label: string) {
@@ -206,11 +184,6 @@ export function IngestEXEInputBar({
     if (label === "连接状态") {
       setIsConnectionOpen(true);
       void onCheckConnection();
-      return;
-    }
-
-    if (label in uploadAcceptByTool) {
-      openTypedUpload(label);
       return;
     }
 
@@ -249,14 +222,6 @@ export function IngestEXEInputBar({
           placeholder={hasActiveAgent ? `可以向${activeAgent.name}描述任务或提问任何问题` : "请先到专家广场添加专家 Agent"}
           className="min-h-[84px] w-full resize-none rounded-2xl border-0 bg-[#fbfbfa] px-4 py-3 text-sm leading-6 text-[#202020] outline-none placeholder:text-[#a0a0a0] focus:bg-white disabled:cursor-not-allowed disabled:text-[#aaa]"
         />
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          accept={fileAccept}
-          multiple
-          onChange={handleFileChange}
-        />
         <div className="mt-2 flex flex-col gap-2 border-t border-[#f0f0ee] pt-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="relative flex min-w-0 flex-wrap items-center gap-2 text-xs font-semibold text-[#555]">
             <IngestGPTModelPicker
@@ -287,8 +252,34 @@ export function IngestEXEInputBar({
                 <div className="absolute bottom-11 left-0 z-30 w-56 rounded-2xl border border-[#e7e7e4] bg-white p-2 shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
                   {moreToolActions.map((action) => {
                     const Icon = action.icon;
+                    const uploadAccept = uploadAcceptByTool[action.label];
 
-                    return (
+                    return uploadAccept ? (
+                      <label
+                        key={action.label}
+                        className="relative flex h-9 w-full cursor-pointer items-center gap-2 overflow-hidden rounded-xl px-3 text-left text-xs font-semibold text-[#444] transition hover:bg-[#f5f5f3]"
+                        onClick={(event) => {
+                          if (!hasActiveAgent) {
+                            event.preventDefault();
+                            onOpenExperts();
+                            return;
+                          }
+
+                          onToolAction(action.label);
+                        }}
+                      >
+                        <Icon className="h-3.5 w-3.5 text-[#777]" aria-hidden="true" />
+                        {action.label}
+                        <input
+                          type="file"
+                          aria-label={action.label}
+                          className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                          accept={uploadAccept}
+                          multiple
+                          onChange={handleFileChange}
+                        />
+                      </label>
+                    ) : (
                       <button
                         key={action.label}
                         type="button"
@@ -351,9 +342,29 @@ export function IngestEXEInputBar({
                 </div>
               ) : null}
             </div>
-            <button type="button" title="附件" onClick={handleUploadClick} className="flex h-9 w-9 items-center justify-center rounded-full text-[#555] hover:bg-[#f3f3f1]">
+            <label
+              title="附件"
+              className="relative flex h-9 w-9 cursor-pointer items-center justify-center overflow-hidden rounded-full text-[#555] hover:bg-[#f3f3f1]"
+              onClick={(event) => {
+                if (!hasActiveAgent) {
+                  event.preventDefault();
+                  onOpenExperts();
+                  return;
+                }
+
+                onToolAction("文件上传");
+              }}
+            >
               <Paperclip className="h-4 w-4" aria-hidden="true" />
-            </button>
+              <input
+                type="file"
+                aria-label="附件"
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                accept=".pdf,.doc,.docx,.ppt,.pptx,image/*,.txt,.md"
+                multiple
+                onChange={handleFileChange}
+              />
+            </label>
             <button
               type="button"
               title={voiceState.isRecording ? "停止语音输入" : "语音备注"}

@@ -28,7 +28,10 @@ import {
   createEmptyAdminIngestConversationSyncSnapshot,
   hasAdminIngestHistoryScopeChanged,
   normalizeAdminIngestConversationSyncSnapshot,
+  readAdminIngestAccountHistoryScope,
   readAdminIngestScopedLocalSnapshot,
+  readAdminIngestScopedLocalSnapshotForDisplay,
+  writeAdminIngestAccountHistoryScope,
   writeAdminIngestScopedLocalSnapshot
 } from "../lib/enterprise/admin-ingest-history-sync";
 
@@ -112,6 +115,40 @@ test("browser storage keys never reuse another account or the legacy global cach
     state: accountAState,
     markSynced: true
   });
+  writeAdminIngestAccountHistoryScope({
+    storage: browserStorage,
+    registeredAccount: "Admin-A@Example.com",
+    historyScope: createAdminIngestHistoryScope("account-a")
+  });
+  accessedKeys.length = 0;
+
+  const indexedAccountAScope = readAdminIngestAccountHistoryScope({
+    storage: browserStorage,
+    registeredAccount: " admin-a@example.com "
+  });
+  const cachedAccountADisplay = readAdminIngestScopedLocalSnapshotForDisplay({
+    historyScope: indexedAccountAScope,
+    includeDrafts: true,
+    storage: browserStorage
+  });
+
+  assert.equal(
+    indexedAccountAScope,
+    createAdminIngestHistoryScope("account-a")
+  );
+  assert.equal(
+    cachedAccountADisplay?.state.pinnedAgentIds[0],
+    "account-a-agent",
+    "同一注册账号应能在服务器同步期间立即显示已签名的本地快照。"
+  );
+  assert.equal(
+    readAdminIngestAccountHistoryScope({
+      storage: browserStorage,
+      registeredAccount: "admin-b@example.com"
+    }),
+    "",
+    "账号 B 不能命中账号 A 的本地历史作用域索引。"
+  );
   accessedKeys.length = 0;
 
   const accountBRead = readAdminIngestScopedLocalSnapshot({

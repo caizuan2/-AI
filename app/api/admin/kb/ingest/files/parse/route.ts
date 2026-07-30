@@ -195,9 +195,18 @@ export async function POST(request: Request) {
   const recognitionMode = recognitionModeValue === "wechat_conversation"
     ? "wechat_conversation" as const
     : undefined;
+  const wechatOutputModeValue = readString(formData.get("wechatOutputMode"));
+  const wechatOutputMode = wechatOutputModeValue === "full_answer"
+    ? "full_answer" as const
+    : wechatOutputModeValue === "reply_script"
+      ? "reply_script" as const
+      : undefined;
 
   if (recognitionModeValue && !recognitionMode) {
     return apiError(new ValidationError("图片识别模式无效。"));
+  }
+  if (wechatOutputModeValue && (!wechatOutputMode || !recognitionMode)) {
+    return apiError(new ValidationError("微信截图输出模式无效。"));
   }
 
   const arrayBuffer = await file.arrayBuffer();
@@ -220,6 +229,7 @@ export async function POST(request: Request) {
     pageStart,
     pageBatchSize,
     recognitionMode,
+    wechatOutputMode,
     signal: request.signal
   });
 
