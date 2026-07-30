@@ -49,6 +49,7 @@ export type AdminIngestConversationMessageMergeRequest = {
 };
 
 export type AdminIngestHistoryStorageKeys = {
+  displaySnapshotEnvelope: string;
   snapshotEnvelope: string;
   revision: string;
   snapshotFingerprint: string;
@@ -82,12 +83,14 @@ export type AdminIngestScopedLocalSnapshot = {
 
 const HISTORY_SCOPE_PATTERN = /^[a-zA-Z0-9_-]{20,80}$/;
 const HISTORY_STORAGE_VERSION = "v2";
+const DISPLAY_SNAPSHOT_VERSION = "v1";
 const ACCOUNT_SCOPE_INDEX_VERSION = "v1";
 const ACCOUNT_SCOPE_INDEX_KEY_BASE = "ai-kb-ingest-account-history-scope";
 const EMPTY_HISTORY_MESSAGE_PREFIX = "empty-history-";
 const EMPTY_HISTORY_MESSAGE_CONTENT = "暂无历史内容";
 
 const HISTORY_STORAGE_KEY_BASES = {
+  displaySnapshotEnvelope: "ai-kb-ingest-history-display-snapshot",
   snapshotEnvelope: "ai-kb-ingest-history-snapshot",
   revision: "ai-kb-ingest-history-revision",
   snapshotFingerprint: "ai-kb-ingest-history-snapshot-fingerprint",
@@ -136,6 +139,9 @@ export function createAdminIngestHistoryStorageKeys(
     `${baseKey}:${HISTORY_STORAGE_VERSION}:${normalizedScope}`;
 
   return {
+    displaySnapshotEnvelope: scopedKey(
+      HISTORY_STORAGE_KEY_BASES.displaySnapshotEnvelope
+    ),
     snapshotEnvelope: scopedKey(HISTORY_STORAGE_KEY_BASES.snapshotEnvelope),
     revision: scopedKey(HISTORY_STORAGE_KEY_BASES.revision),
     snapshotFingerprint: scopedKey(
@@ -254,6 +260,59 @@ export function readAdminIngestScopedLocalSnapshotForDisplay(input: {
     return null;
   }
 
+  const rawDisplayEnvelope = readStoredString(
+    input.storage,
+    keys.displaySnapshotEnvelope
+  );
+
+  if (rawDisplayEnvelope) {
+    try {
+      const envelope = JSON.parse(rawDisplayEnvelope) as {
+        version?: unknown;
+        historyScope?: unknown;
+        revision?: unknown;
+        state?: unknown;
+        fingerprint?: unknown;
+      };
+      const historyScope = normalizeAdminIngestHistoryScope(
+        envelope.historyScope
+      );
+      const revision = envelope.revision;
+      const state = normalizeAdminIngestConversationDisplaySnapshot(
+        envelope.state
+      );
+      const fingerprint = (
+        typeof revision === "number"
+        && Number.isSafeInteger(revision)
+        && revision >= 0
+      )
+        ? fingerprintAdminIngestConversationDisplaySnapshot({
+            historyScope,
+            revision,
+            state
+          })
+        : "";
+
+      if (
+        envelope.version === DISPLAY_SNAPSHOT_VERSION
+        && historyScope === normalizeAdminIngestHistoryScope(
+          input.historyScope
+        )
+        && fingerprint
+        && envelope.fingerprint === fingerprint
+      ) {
+        return {
+          keys,
+          revisionMatches: true,
+          hasUnsyncedChanges: false,
+          state
+        };
+      }
+    } catch {
+      // Fall back to the full atomic snapshot when the display cache is stale.
+    }
+  }
+
   const rawEnvelope = readStoredString(input.storage, keys.snapshotEnvelope);
 
   if (!rawEnvelope) {
@@ -286,6 +345,84 @@ export function readAdminIngestScopedLocalSnapshotForDisplay(input: {
   } catch {
     return null;
   }
+}
+
+function normalizeAdminIngestConversationDisplaySnapshot(
+  value: unknown
+): AdminIngestConversationSyncSnapshot {
+  const source = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Partial<AdminIngestConversationSyncSnapshot>
+    : {};
+
+  return {
+    agents: normalizeArray<IngestChatAgent>(source.agents),
+    agentConversations: normalizeArray<IngestAgentConversation>(
+      source.agentConversations
+    ),
+    activeAgentId: typeof source.activeAgentId === "string"
+      ? source.activeAgentId
+      : "",
+    activeConversationId: typeof source.activeConversationId === "string"
+      ? source.activeConversationId
+      : "",
+    conversationMessagesById: {},
+    conversationDraftsById: {},
+    conversationRuntimeStatusById: {},
+    pinnedAgentIds: normalizeArray<string>(source.pinnedAgentIds),
+    expandedAgentIds: normalizeArray<string>(source.expandedAgentIds),
+    expandedConversationAgentIds: normalizeArray<string>(
+      source.expandedConversationAgentIds
+    )
+  };
+}
+
+function fingerprintAdminIngestConversationDisplaySnapshot(input: {
+  historyScope: string;
+  revision: number;
+  state: AdminIngestConversationSyncSnapshot;
+}) {
+  return fingerprintString(JSON.stringify({
+    version: DISPLAY_SNAPSHOT_VERSION,
+    historyScope: normalizeAdminIngestHistoryScope(input.historyScope),
+    revision: input.revision,
+    state: normalizeAdminIngestConversationDisplaySnapshot(input.state)
+  }));
+}
+
+export function writeAdminIngestScopedLocalDisplaySnapshot(input: {
+  storage: Pick<AdminIngestHistoryStorageWriter, "setItem">;
+  historyScope: string;
+  keys: AdminIngestHistoryStorageKeys;
+  revision: number;
+  state: AdminIngestConversationSyncSnapshot;
+}) {
+  const historyScope = normalizeAdminIngestHistoryScope(input.historyScope);
+
+  if (
+    !historyScope
+    || !Number.isSafeInteger(input.revision)
+    || input.revision < 0
+  ) {
+    return;
+  }
+
+  const state = normalizeAdminIngestConversationDisplaySnapshot(input.state);
+  const fingerprint = fingerprintAdminIngestConversationDisplaySnapshot({
+    historyScope,
+    revision: input.revision,
+    state
+  });
+
+  input.storage.setItem(
+    input.keys.displaySnapshotEnvelope,
+    JSON.stringify({
+      version: DISPLAY_SNAPSHOT_VERSION,
+      historyScope,
+      revision: input.revision,
+      state,
+      fingerprint
+    })
+  );
 }
 
 export function fingerprintAdminIngestConversationSyncSnapshot(
