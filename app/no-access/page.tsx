@@ -8,6 +8,16 @@ export default function NoAccessPage() {
   const router = useRouter();
   const [isSigningOut, setIsSigningOut] = useState(false);
 
+  const getLoginPath = () => {
+    const nextPath = new URLSearchParams(window.location.search).get("next") ?? "";
+
+    if (!nextPath.startsWith("/") || nextPath.startsWith("//")) {
+      return "/login";
+    }
+
+    return `/login?next=${encodeURIComponent(nextPath)}`;
+  };
+
   const handleSwitchAccount = async () => {
     setIsSigningOut(true);
 
@@ -17,7 +27,7 @@ export default function NoAccessPage() {
         cache: "no-store",
       });
     } finally {
-      router.replace("/login");
+      router.replace(getLoginPath());
       router.refresh();
     }
   };
