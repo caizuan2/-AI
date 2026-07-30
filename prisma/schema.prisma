@@ -2218,6 +2218,42 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+model ExpertCatalogZone {
+  id          String               @id @default(cuid())
+  zoneKey     String               @unique @map("zone_key")
+  displayName String               @map("display_name")
+  status      String               @default("active")
+  sortOrder   Int                  @default(0) @map("sort_order")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+  agents      ExpertCatalogAgent[]
+
+  @@index([status, sortOrder], map: "expert_catalog_zones_status_sort_idx")
+  @@map("expert_catalog_zones")
+}
+
+model ExpertCatalogAgent {
+  id               String            @id @default(cuid())
+  agentKey         String            @unique @map("agent_key")
+  displayName      String            @map("display_name")
+  knowledgeBaseId  String            @unique @map("knowledge_base_id")
+  namespace        String
+  protectedBinding Boolean           @default(false) @map("protected_binding")
+  zoneId           String            @map("zone_id")
+  status           String            @default("active")
+  sortOrder        Int               @default(0) @map("sort_order")
+  aliases          String[]          @default([])
+  avatar           String?
+  description      String?           @db.Text
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+  zone             ExpertCatalogZone @relation(fields: [zoneId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@index([zoneId, status, sortOrder], map: "expert_catalog_agents_zone_status_sort_idx")
+  @@index([protectedBinding], map: "expert_catalog_agents_protected_idx")
+  @@map("expert_catalog_agents")
+}
+
 model KnowledgeFile {
   id              String           @id @default(cuid())
   originalName    String           @map("original_name")
