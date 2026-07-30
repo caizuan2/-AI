@@ -11,7 +11,7 @@ const routeSource = readFileSync(
 const typesSource = readFileSync("types/super-admin-licenses.ts", "utf8");
 const resetFunction = serviceSource.slice(
   serviceSource.indexOf("export async function resetSuperAdminLicenseUserPassword"),
-  serviceSource.indexOf("export async function disableSuperAdminLicense")
+  serviceSource.indexOf("export async function resetSuperAdminLicenseAccountPassword")
 );
 
 assert.match(typesSource, /SUPER_ADMIN_DEFAULT_RESET_PASSWORD = "123456789"/);

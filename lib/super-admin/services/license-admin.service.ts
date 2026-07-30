@@ -1,14 +1,16 @@
 import "server-only";
 
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
-import { LicenseKeyStatus, Prisma } from "@prisma/client";
+import { LicenseKeyStatus, Prisma, type UserRole } from "@prisma/client";
 import { getAuditRequestContext } from "@/lib/audit-log";
+import { isBootstrapSuperAdminUser } from "@/lib/auth/bootstrap-super-admin";
 import { getAcceptedLicenseHashes, hashLicenseKey, normalizeLicenseKey } from "@/lib/auth/license";
 import { hashPassword } from "@/lib/auth/password";
 import { initializeTeamOsStandardPlans } from "@/apps/team-os/features/licensing/services/team-os-license-repository";
 import type { RbacUser } from "@/lib/auth/rbac";
 import { NotFoundError, ValidationError } from "@/lib/errors";
 import { prisma } from "@/lib/prisma";
+import { getRoleLabel } from "@/lib/super-admin/services/role-policy.service";
 import {
   decryptLicenseKey,
   encryptLicenseKey,
@@ -17,6 +19,8 @@ import {
 import { SUPER_ADMIN_DEFAULT_RESET_PASSWORD } from "@/types/super-admin-licenses";
 import type {
   SuperAdminGeneratedLicense,
+  SuperAdminLicenseAccountPasswordResetResult,
+  SuperAdminLicenseAccountRecord,
   SuperAdminLicenseActivationRecord,
   SuperAdminLicenseAppType,
   SuperAdminLicenseAuditRecord,
@@ -55,6 +59,13 @@ const PLAIN_LICENSE_KEY_PATTERN = /^XT-(?:(?:USER|INGEST|SUPER)(?:-[A-Z0-9]{4}){
 const LICENSE_SEARCH_IGNORABLE_CHARACTERS = /[\u00AD\u200B-\u200D\u2060\uFEFF]/g;
 const LICENSE_SEARCH_BATCH_SIZE = 250;
 const LEGACY_DEFAULT_LICENSE_SECRET = "aikb-license-v1-default-secret";
+const LICENSE_ACCOUNT_ROLE_RANK: Record<UserRole, number> = {
+  user: 0,
+  kb_admin: 1,
+  ingest_admin: 1,
+  enterprise_admin: 2,
+  super_admin: 3
+};
 
 type LicenseMetadata = {
   appType: SuperAdminLicenseAppType;
@@ -200,6 +211,39 @@ function normalizeGenerationAppType(value: unknown): UnifiedLicenseProduct {
     return value as UnifiedLicenseProduct;
   }
   throw new ValidationError("卡密类型必须是 user_app、ingest_admin 或 team_os。");
+}
+
+function resolveLicenseAccountRole(
+  baseRole: UserRole,
+  assignments: Array<{ role: UserRole }>
+) {
+  return assignments.reduce(
+    (currentRole, assignment) => (
+      LICENSE_ACCOUNT_ROLE_RANK[assignment.role] > LICENSE_ACCOUNT_ROLE_RANK[currentRole]
+        ? assignment.role
+        : currentRole
+    ),
+    baseRole
+  );
+}
+
+function resolveLicenseAccountAppType(
+  role: UserRole,
+  hasTeamOsAccess: boolean
+): UnifiedLicenseProduct | null {
+  if (role === "super_admin") {
+    return null;
+  }
+
+  if (hasTeamOsAccess) {
+    return "team_os";
+  }
+
+  if (role === "kb_admin" || role === "ingest_admin" || role === "enterprise_admin") {
+    return "ingest_admin";
+  }
+
+  return "user_app";
 }
 
 function normalizePlan(value: unknown): SuperAdminLicensePlan {
@@ -728,6 +772,154 @@ export async function searchSuperAdminLicenses(input: {
   return matchingLicenses;
 }
 
+export async function searchSuperAdminLicenseAccounts(input: {
+  query?: unknown;
+  appType?: unknown;
+}): Promise<SuperAdminLicenseAccountRecord[]> {
+  const query = normalizeText(input.query, 200);
+
+  if (!query) {
+    throw new ValidationError("请输入要搜索的手机号、激活用户或账号。");
+  }
+
+  const appType = normalizeGenerationAppType(input.appType);
+  const compactQuery = query.replace(/\s+/g, "");
+  const now = new Date();
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { id: { contains: query, mode: "insensitive" } },
+        { phone: { contains: compactQuery, mode: "insensitive" } },
+        { email: { contains: query, mode: "insensitive" } },
+        { name: { contains: query, mode: "insensitive" } }
+      ]
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: 20,
+    select: {
+      id: true,
+      phone: true,
+      email: true,
+      name: true,
+      role: true,
+      isActive: true,
+      licenseActivated: true,
+      roleAssignments: {
+        where: {
+          revokedAt: null,
+          OR: [
+            { expiresAt: null },
+            { expiresAt: { gt: now } }
+          ]
+        },
+        select: {
+          role: true
+        }
+      }
+    }
+  });
+
+  if (users.length === 0) {
+    return [];
+  }
+
+  const userIds = users.map((user) => user.id);
+  const [ownedTeams, teamMemberships, linkedLicenses, resetLogs] = await Promise.all([
+    prisma.teamOrganization.findMany({
+      where: {
+        ownerId: { in: userIds }
+      },
+      select: {
+        ownerId: true
+      }
+    }),
+    prisma.teamMember.findMany({
+      where: {
+        userId: { in: userIds },
+        status: "ACTIVE"
+      },
+      select: {
+        userId: true
+      }
+    }),
+    prisma.licenseKey.findMany({
+      where: {
+        redeemedByUserId: { in: userIds }
+      },
+      select: {
+        redeemedByUserId: true
+      }
+    }),
+    prisma.auditLog.findMany({
+      where: {
+        action: "reset_user_password",
+        targetType: "user",
+        targetId: { in: userIds }
+      },
+      orderBy: {
+        createdAt: "desc"
+      },
+      select: {
+        targetId: true,
+        createdAt: true
+      }
+    })
+  ]);
+  const teamOsUserIds = new Set([
+    ...ownedTeams.map((team) => team.ownerId),
+    ...teamMemberships.map((member) => member.userId)
+  ]);
+  const linkedLicenseCountByUserId = new Map<string, number>();
+  const passwordResetAtByUserId = new Map<string, string>();
+
+  for (const license of linkedLicenses) {
+    if (!license.redeemedByUserId) {
+      continue;
+    }
+
+    linkedLicenseCountByUserId.set(
+      license.redeemedByUserId,
+      (linkedLicenseCountByUserId.get(license.redeemedByUserId) ?? 0) + 1
+    );
+  }
+
+  for (const log of resetLogs) {
+    if (log.targetId && !passwordResetAtByUserId.has(log.targetId)) {
+      passwordResetAtByUserId.set(log.targetId, log.createdAt.toISOString());
+    }
+  }
+
+  return users.flatMap((user) => {
+    const role = resolveLicenseAccountRole(user.role, user.roleAssignments);
+    const resolvedAppType = resolveLicenseAccountAppType(role, teamOsUserIds.has(user.id));
+
+    if (
+      resolvedAppType !== appType ||
+      role === "super_admin" ||
+      isBootstrapSuperAdminUser(user)
+    ) {
+      return [];
+    }
+
+    return [{
+      id: user.id,
+      name: user.name?.trim() || user.phone || user.email || user.id,
+      phone: user.phone,
+      email: user.email,
+      account: user.phone || user.email || user.id,
+      role,
+      roleLabel: getRoleLabel(role),
+      appType: resolvedAppType,
+      isActive: user.isActive,
+      licenseActivated: user.licenseActivated,
+      linkedLicenseCount: linkedLicenseCountByUserId.get(user.id) ?? 0,
+      passwordResetAt: passwordResetAtByUserId.get(user.id) ?? null
+    }];
+  });
+}
+
 export async function generateSuperAdminLicenses(
   actor: Pick<RbacUser, "id" | "role">,
   input: SuperAdminLicenseGenerationInput,
@@ -945,6 +1137,114 @@ export async function resetSuperAdminLicenseUserPassword(
       licenseId: license.id,
       userId: updatedUser.id,
       userAccount,
+      resetAt: resetAt.toISOString()
+    };
+  });
+}
+
+export async function resetSuperAdminLicenseAccountPassword(
+  actor: Pick<RbacUser, "id" | "role">,
+  userId: string,
+  input: { appType?: unknown },
+  request?: Request
+): Promise<SuperAdminLicenseAccountPasswordResetResult> {
+  const appType = normalizeGenerationAppType(input.appType);
+  const passwordHash = await hashPassword(SUPER_ADMIN_DEFAULT_RESET_PASSWORD);
+
+  return prisma.$transaction(async (transaction) => {
+    const now = new Date();
+    const user = await transaction.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        phone: true,
+        email: true,
+        role: true,
+        roleAssignments: {
+          where: {
+            revokedAt: null,
+            OR: [
+              { expiresAt: null },
+              { expiresAt: { gt: now } }
+            ]
+          },
+          select: {
+            role: true
+          }
+        }
+      }
+    });
+
+    if (!user) {
+      throw new NotFoundError("用户账号不存在。");
+    }
+
+    const role = resolveLicenseAccountRole(user.role, user.roleAssignments);
+
+    if (role === "super_admin" || isBootstrapSuperAdminUser(user)) {
+      throw new ValidationError("超级管理员账号不能通过卡密授权中心重置密码。");
+    }
+
+    const [ownedTeam, teamMembership] = await Promise.all([
+      transaction.teamOrganization.findFirst({
+        where: { ownerId: user.id },
+        select: { id: true }
+      }),
+      transaction.teamMember.findFirst({
+        where: {
+          userId: user.id,
+          status: "ACTIVE"
+        },
+        select: { id: true }
+      })
+    ]);
+    const resolvedAppType = resolveLicenseAccountAppType(
+      role,
+      Boolean(ownedTeam || teamMembership)
+    );
+
+    if (!resolvedAppType || resolvedAppType !== appType) {
+      throw new ValidationError("该账号的产品归属与当前授权列表不一致。");
+    }
+
+    const updatedUser = await transaction.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+      select: {
+        id: true,
+        phone: true,
+        email: true
+      }
+    });
+    const resetAt = new Date();
+    const userAccount = updatedUser.phone || updatedUser.email || updatedUser.id;
+    const requestContext = getAuditRequestContext(request);
+
+    await transaction.auditLog.create({
+      data: {
+        userId: actor.id,
+        role: actor.role,
+        action: "reset_user_password",
+        targetType: "user",
+        targetId: updatedUser.id,
+        ip: requestContext.ip,
+        userAgent: requestContext.userAgent,
+        metadata: {
+          operatorUserId: actor.id,
+          targetUserId: updatedUser.id,
+          targetUserAccount: userAccount,
+          appType: resolvedAppType,
+          passwordResetAt: resetAt.toISOString(),
+          defaultPasswordApplied: true,
+          source: "super_admin_license_center"
+        } satisfies Prisma.InputJsonObject
+      }
+    });
+
+    return {
+      userId: updatedUser.id,
+      userAccount,
+      appType: resolvedAppType,
       resetAt: resetAt.toISOString()
     };
   });

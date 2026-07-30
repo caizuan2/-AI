@@ -1,4 +1,6 @@
 import type {
+  SuperAdminLicenseAccountPasswordResetResult,
+  SuperAdminLicenseAccountRecord,
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
   SuperAdminLicenseGenerationResult,
@@ -62,6 +64,16 @@ export function searchSuperAdminLicenses(input: {
   });
 }
 
+export function searchSuperAdminLicenseAccounts(input: {
+  query: string;
+  appType: UnifiedLicenseProduct;
+}) {
+  return requestSuperAdmin<SuperAdminLicenseAccountRecord[]>("/api/super-admin/licenses/accounts", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
 export function generateSuperAdminLicenses(input: SuperAdminLicenseGenerationInput) {
   return requestSuperAdmin<SuperAdminLicenseGenerationResult>("/api/super-admin/licenses/generate", {
     method: "POST",
@@ -94,6 +106,19 @@ export function resetSuperAdminLicenseUserPassword(id: string) {
     `/api/super-admin/licenses/${encodeURIComponent(id)}/reset-password`,
     {
       method: "POST"
+    }
+  );
+}
+
+export function resetSuperAdminLicenseAccountPassword(
+  id: string,
+  appType: UnifiedLicenseProduct
+) {
+  return requestSuperAdmin<SuperAdminLicenseAccountPasswordResetResult>(
+    `/api/super-admin/licenses/accounts/${encodeURIComponent(id)}/reset-password`,
+    {
+      method: "POST",
+      body: JSON.stringify({ appType })
     }
   );
 }
