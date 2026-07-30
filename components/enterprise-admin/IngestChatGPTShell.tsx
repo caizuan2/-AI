@@ -240,6 +240,8 @@ interface IngestChatGPTShellProps {
   isSaving?: boolean;
   onOpenCreateAgent?: () => void;
   onAddExpertToAgent?: (expert: IngestExpert) => void;
+  onRemoveExpertFromAgent?: (expert: IngestExpert) => void;
+  onExpertCatalogResolved?: (experts: IngestExpert[]) => void;
   addedExpertIds?: string[];
   onAgentViewDetails?: (agentId: string) => void;
   onAgentEdit?: (agentId: string) => void;
@@ -877,6 +879,8 @@ export function IngestChatGPTShell({
   isSaving: controlledIsSaving,
   onOpenCreateAgent,
   onAddExpertToAgent,
+  onRemoveExpertFromAgent,
+  onExpertCatalogResolved,
   addedExpertIds = [],
   onAgentViewDetails,
   onAgentDelete,
@@ -2634,6 +2638,8 @@ export function IngestChatGPTShell({
                 addedExpertIds={addedExpertIds}
                 isAdminApk={isAdminApk}
                 onAddExpert={(expert) => onAddExpertToAgent?.(expert)}
+                onRemoveExpert={(expert) => onRemoveExpertFromAgent?.(expert)}
+                onCatalogResolved={onExpertCatalogResolved}
               />
             ) : (
               <>

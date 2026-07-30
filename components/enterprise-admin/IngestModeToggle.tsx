@@ -6979,6 +6979,18 @@ export function IngestModeToggle({
       agentId: expert.id,
       expertId: expert.id
     });
+    const knowledgeBaseId = expert.knowledgeBaseId ?? publicScope?.knowledgeBaseId ?? null;
+    const namespace = expert.namespace ?? publicScope?.namespace ?? null;
+
+    if (!knowledgeBaseId || !namespace) {
+      setErrorMessage("该 Agent 尚未绑定固定知识库，暂时不能添加。");
+      showActionToast({
+        type: "warning",
+        title: "Agent 固定知识库未配置"
+      });
+      return;
+    }
+
     const nextAgent: IngestChatAgent = {
       id: `expert-agent-${expert.id}`,
       expertId: expert.id,
@@ -6990,8 +7002,8 @@ export function IngestModeToggle({
       tone: expert.tone,
       tenantId,
       userId,
-      knowledgeBaseId: publicScope?.knowledgeBaseId ?? null,
-      namespace: publicScope?.namespace ?? null,
+      knowledgeBaseId,
+      namespace,
       platform: platformContext.platform,
       syncTarget: [...platformContext.syncTarget],
       createdAt: now,
@@ -7046,6 +7058,66 @@ export function IngestModeToggle({
       title: "已添加到 Agent，可新建对话开始投喂。"
     });
   }
+
+  function handleRemoveExpertFromAgent(expert: IngestExpert) {
+    const existing = visibleAgents.find(
+      (agent) =>
+        agent.expertId === expert.id &&
+        agent.source === "expert_marketplace"
+    );
+
+    if (!existing) {
+      showActionToast({
+        type: "info",
+        title: "该专家未添加到当前工作台"
+      });
+      return;
+    }
+
+    handleRequestDeleteAgent(existing.id);
+  }
+
+  const handleExpertCatalogResolved = useCallback((catalogExperts: IngestExpert[]) => {
+    const expertById = new Map(catalogExperts.map((expert) => [expert.id, expert]));
+
+    setAgents((current) => {
+      let changed = false;
+      const next = current.map((agent) => {
+        if (agent.source !== "expert_marketplace" || !agent.expertId) {
+          return agent;
+        }
+
+        const expert = expertById.get(agent.expertId);
+        if (!expert) {
+          return agent;
+        }
+
+        if (
+          agent.name === expert.name &&
+          agent.description === expert.description &&
+          agent.avatar === expert.avatar &&
+          agent.role === expert.category &&
+          agent.category === expert.category &&
+          agent.tone === expert.tone
+        ) {
+          return agent;
+        }
+
+        changed = true;
+        return {
+          ...agent,
+          name: expert.name,
+          description: expert.description,
+          avatar: expert.avatar,
+          role: expert.category,
+          category: expert.category,
+          tone: expert.tone
+        };
+      });
+
+      return changed ? next : current;
+    });
+  }, []);
 
   async function handleUrlIngestSubmit() {
     const url = urlInput.trim();
@@ -7366,6 +7438,8 @@ export function IngestModeToggle({
     isSaving,
     onOpenCreateAgent: () => handleRailChange("experts"),
     onAddExpertToAgent: handleAddExpertToAgent,
+    onRemoveExpertFromAgent: handleRemoveExpertFromAgent,
+    onExpertCatalogResolved: handleExpertCatalogResolved,
     addedExpertIds: visibleAgents.map((agent) => agent.expertId).filter((id): id is string => Boolean(id)),
     onAgentViewDetails: handleViewAgentDetail,
     onAgentEdit: handleEditAgent,
