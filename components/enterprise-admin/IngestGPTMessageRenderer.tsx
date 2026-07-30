@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { PauseCircle, PlayCircle, Square } from "lucide-react";
 import { IngestCustomerScriptCard } from "@/components/enterprise-admin/IngestCustomerScriptCard";
 import { extractAdminIngestCustomerScriptTargets } from "@/lib/enterprise/admin-ingest-customer-script";
+import { normalizeAdminIngestVisibleReply } from "@/lib/enterprise/admin-ingest-visible-reply";
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 
@@ -25,7 +26,12 @@ export function prepareIngestMessageMarkdown(content: string, provider?: string 
   if (
     normalizedProvider === "deepseek"
     || normalizedProvider === "deepseek-pro"
-    || normalizedProvider === "doubao"
+  ) {
+    return normalizeAdminIngestVisibleReply(content, normalizedProvider);
+  }
+
+  if (
+    normalizedProvider === "doubao"
     || normalizedProvider === "doubao-pro"
   ) {
     return content;

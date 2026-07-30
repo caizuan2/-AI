@@ -122,11 +122,11 @@ async function main() {
   );
   assert.match(
     modeToggleSource,
-    /isParsing:\s*activeConversationIsParsing/
+    /isParsing:\s*activeConversationUiIsParsing/
   );
   assert.match(
     modeToggleSource,
-    /isRequestActive:\s*activeConversationIsParsing/
+    /isRequestActive:\s*activeConversationUiIsParsing/
   );
   assert.match(
     modeToggleSource,
