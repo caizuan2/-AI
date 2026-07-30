@@ -17,7 +17,9 @@ import {
   fetchSuperAdminLicenses,
   generateSuperAdminLicenses,
   revealSuperAdminLicense,
+  resetSuperAdminLicenseAccountPassword,
   resetSuperAdminLicenseUserPassword,
+  searchSuperAdminLicenseAccounts,
   searchSuperAdminLicenses,
   renewSuperAdminLicense
 } from "@/lib/super-admin/license-admin-client";
@@ -25,6 +27,8 @@ import { SUPER_ADMIN_DEFAULT_RESET_PASSWORD } from "@/types/super-admin-licenses
 import type {
   SuperAdminGeneratedLicense,
   SuperAdminLicenseActivationRecord,
+  SuperAdminLicenseAccountPasswordResetResult,
+  SuperAdminLicenseAccountRecord,
   SuperAdminLicenseAppType,
   SuperAdminLicenseDashboardData,
   SuperAdminLicenseGenerationInput,
@@ -33,7 +37,7 @@ import type {
   SuperAdminLicenseRecord,
   UnifiedLicenseProduct
 } from "@/types/super-admin-licenses";
-import { EmptyState, ErrorState, LoadingState } from "@/components/super-admin/common/ApiState";
+import { ErrorState, LoadingState } from "@/components/super-admin/common/ApiState";
 
 const appTypeLabels: Record<SuperAdminLicenseAppType, string> = {
   user_app: "用户端",
@@ -472,7 +476,8 @@ function LicenseTable({
   renewingId,
   onDisable,
   onRenew,
-  onResetPassword
+  onResetPassword,
+  onResetAccountPassword
 }: {
   appType: UnifiedLicenseProduct;
   title: string;
@@ -485,16 +490,21 @@ function LicenseTable({
   onDisable: (id: string) => Promise<SuperAdminLicenseRecord | null>;
   onRenew: (id: string) => Promise<void>;
   onResetPassword: (license: SuperAdminLicenseRecord) => Promise<SuperAdminLicensePasswordResetResult | null>;
+  onResetAccountPassword: (
+    account: SuperAdminLicenseAccountRecord
+  ) => Promise<SuperAdminLicenseAccountPasswordResetResult | null>;
 }) {
   const [draftQuery, setDraftQuery] = useState("");
   const [activeQuery, setActiveQuery] = useState("");
   const [searchResults, setSearchResults] = useState<SuperAdminLicenseRecord[] | null>(null);
+  const [accountResults, setAccountResults] = useState<SuperAdminLicenseAccountRecord[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [copiedLicenseId, setCopiedLicenseId] = useState<string | null>(null);
   const [revealingLicenseId, setRevealingLicenseId] = useState<string | null>(null);
   const [resettingPasswordLicenseId, setResettingPasswordLicenseId] = useState<string | null>(null);
+  const [resettingPasswordAccountId, setResettingPasswordAccountId] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
   const normalizedQuery = activeQuery.trim().toLocaleLowerCase("zh-CN");
   const filteredLicenses = useMemo(() => {
@@ -530,18 +540,24 @@ function LicenseTable({
     if (!query) {
       setActiveQuery("");
       setSearchResults(null);
+      setAccountResults(null);
       return;
     }
 
     setSearching(true);
 
     try {
-      const results = await searchSuperAdminLicenses({ query, appType });
+      const [results, accounts] = await Promise.all([
+        searchSuperAdminLicenses({ query, appType }),
+        searchSuperAdminLicenseAccounts({ query, appType })
+      ]);
       setActiveQuery(query);
       setSearchResults(results);
+      setAccountResults(accounts);
     } catch (error) {
       setActiveQuery(query);
       setSearchResults(null);
+      setAccountResults(null);
       setSearchError(error instanceof Error ? error.message : "卡密搜索失败，请稍后重试。");
     } finally {
       setSearching(false);
@@ -613,8 +629,31 @@ function LicenseTable({
     }
   }
 
-  if (licenses.length === 0) {
-    return <EmptyState message={`${title}暂无卡密记录。`} />;
+  async function handleResetAccountPassword(account: SuperAdminLicenseAccountRecord) {
+    const confirmed = window.confirm(
+      `确认将账号 ${account.account} 的登录密码重置为 ${SUPER_ADMIN_DEFAULT_RESET_PASSWORD}？\n\n` +
+      "此操作只修改登录密码，不会创建或绑定卡密，也不会改变角色、企业或历史数据。"
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setResettingPasswordAccountId(account.id);
+
+    try {
+      const result = await onResetAccountPassword(account);
+
+      if (result) {
+        setAccountResults((currentAccounts) => currentAccounts?.map((currentAccount) => (
+          currentAccount.id === account.id
+            ? { ...currentAccount, passwordResetAt: result.resetAt }
+            : currentAccount
+        )) ?? currentAccounts);
+      }
+    } finally {
+      setResettingPasswordAccountId(null);
+    }
   }
 
   return (
@@ -625,7 +664,8 @@ function LicenseTable({
           <p className="mt-1 text-sm text-slate-500">{description}</p>
           {normalizedQuery ? (
             <p className="mt-1 text-xs text-slate-500">
-              已筛选 {filteredLicenses.length} / {licenses.length} 条
+              已筛选 {filteredLicenses.length} / {licenses.length} 条卡密
+              {accountResults ? `，匹配 ${accountResults.length} 个账户` : ""}
             </p>
           ) : null}
           {copyError ? <p className="mt-1 text-xs font-medium text-rose-600">{copyError}</p> : null}
@@ -658,6 +698,70 @@ function LicenseTable({
           </button>
         </form>
       </div>
+      {accountResults && accountResults.length > 0 ? (
+        <div className="border-b border-slate-200 bg-amber-50/60 px-5 py-4">
+          <div className="mb-3">
+            <h3 className="text-sm font-semibold text-slate-900">账户搜索结果</h3>
+            <p className="mt-1 text-xs text-slate-600">
+              账户记录独立于卡密绑定；重置密码不会创建、恢复或变更卡密。
+            </p>
+          </div>
+          <div className="divide-y divide-amber-100 rounded-lg border border-amber-200 bg-white">
+            {accountResults.map((account) => (
+              <div
+                key={account.id}
+                className="grid gap-3 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1.5fr)_auto] sm:items-center"
+              >
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{account.name}</p>
+                  <p className="mt-1 truncate text-xs text-slate-500">{account.account}</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
+                    {account.roleLabel}
+                  </span>
+                  <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1">
+                    {account.isActive ? "账号正常" : "账号已禁用"}
+                  </span>
+                  <span
+                    className={`rounded-full border px-2.5 py-1 ${
+                      account.linkedLicenseCount > 0
+                        ? "border-sky-200 bg-sky-50 text-sky-700"
+                        : "border-amber-200 bg-amber-50 text-amber-800"
+                    }`}
+                  >
+                    {account.linkedLicenseCount > 0
+                      ? `已绑定 ${account.linkedLicenseCount} 张卡密`
+                      : "未绑定卡密"}
+                  </span>
+                  {account.passwordResetAt ? (
+                    <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-emerald-700">
+                      已重置
+                    </span>
+                  ) : null}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleResetAccountPassword(account)}
+                  disabled={resettingPasswordAccountId === account.id}
+                  className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {resettingPasswordAccountId === account.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <KeyRound className="h-3.5 w-3.5" />
+                  )}
+                  {resettingPasswordAccountId === account.id
+                    ? "重置中"
+                    : account.passwordResetAt
+                      ? "再次重置"
+                      : "重置密码"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="overflow-x-auto">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-normal text-slate-500">
@@ -680,7 +784,9 @@ function LicenseTable({
                 <td colSpan={10} className="px-4 py-8 text-center text-sm text-slate-500">
                   {normalizedQuery.startsWith("xt-")
                     ? "当前环境没有找到这张完整卡密，请确认卡密复制完整、产品类型正确，并且来自当前数据库。"
-                    : "没有找到匹配的卡密、激活用户或账号。"}
+                    : accountResults && accountResults.length > 0
+                      ? "该账户当前没有关联到此产品的卡密记录，账户信息已显示在上方。"
+                      : "没有找到匹配的卡密、激活用户或账号。"}
                 </td>
               </tr>
             ) : paginatedLicenses.map((license) => (
@@ -1077,6 +1183,22 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
     }
   }
 
+  async function handleResetAccountPassword(account: SuperAdminLicenseAccountRecord) {
+    setError(null);
+    setPasswordResetNotice(null);
+
+    try {
+      const result = await resetSuperAdminLicenseAccountPassword(account.id, account.appType);
+      setPasswordResetNotice(
+        `账号 ${result.userAccount} 的密码已重置为 ${SUPER_ADMIN_DEFAULT_RESET_PASSWORD}，请通知用户登录后尽快修改。`
+      );
+      return result;
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "用户密码重置失败。");
+      return null;
+    }
+  }
+
   if (loading) {
     return <LoadingState title="正在加载卡密授权中心" />;
   }
@@ -1156,6 +1278,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             onDisable={handleDisable}
             onRenew={handleRenew}
             onResetPassword={handleResetPassword}
+            onResetAccountPassword={handleResetAccountPassword}
           />
         ) : null}
         {!initialAppType || initialAppType === "ingest_admin" ? (
@@ -1171,6 +1294,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             onDisable={handleDisable}
             onRenew={handleRenew}
             onResetPassword={handleResetPassword}
+            onResetAccountPassword={handleResetAccountPassword}
           />
         ) : null}
         {!initialAppType || initialAppType === "team_os" ? (
@@ -1186,6 +1310,7 @@ export function LicenseDashboard({ initialAppType }: { initialAppType?: UnifiedL
             onDisable={handleDisable}
             onRenew={handleRenew}
             onResetPassword={handleResetPassword}
+            onResetAccountPassword={handleResetAccountPassword}
           />
         ) : null}
       </div>

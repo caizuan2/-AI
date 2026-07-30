@@ -80,6 +80,28 @@ export type SuperAdminLicensePasswordResetResult = {
   resetAt: string;
 };
 
+export type SuperAdminLicenseAccountRecord = {
+  id: string;
+  name: string;
+  phone: string;
+  email: string | null;
+  account: string;
+  role: string;
+  roleLabel: string;
+  appType: UnifiedLicenseProduct;
+  isActive: boolean;
+  licenseActivated: boolean;
+  linkedLicenseCount: number;
+  passwordResetAt: string | null;
+};
+
+export type SuperAdminLicenseAccountPasswordResetResult = {
+  userId: string;
+  userAccount: string;
+  appType: UnifiedLicenseProduct;
+  resetAt: string;
+};
+
 export type SuperAdminLicenseSummary = {
   total: number;
   unused: number;
