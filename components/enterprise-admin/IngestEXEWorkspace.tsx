@@ -63,6 +63,8 @@ export function IngestEXEWorkspace({
   onToolAction,
   onOpenExperts,
   onAddExpertToAgent,
+  onRemoveExpertFromAgent,
+  onExpertCatalogResolved,
   addedExpertIds
 }: {
   activeAgent: IngestChatAgent;
@@ -101,6 +103,8 @@ export function IngestEXEWorkspace({
   onToolAction: (label: string) => void;
   onOpenExperts: () => void;
   onAddExpertToAgent: (expert: IngestExpert) => void;
+  onRemoveExpertFromAgent: (expert: IngestExpert) => void;
+  onExpertCatalogResolved: (experts: IngestExpert[]) => void;
   addedExpertIds: string[];
 }) {
   const selectedModelLabel = selectedModel;
@@ -149,6 +153,8 @@ export function IngestEXEWorkspace({
               <IngestExpertMarketplace
                 addedExpertIds={addedExpertIds}
                 onAddExpert={onAddExpertToAgent}
+                onRemoveExpert={onRemoveExpertFromAgent}
+                onCatalogResolved={onExpertCatalogResolved}
               />
             </div>
           ) : (

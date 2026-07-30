@@ -74,6 +74,8 @@ interface IngestEXEShellProps {
   isParsing: boolean;
   onOpenCreateAgent: () => void;
   onAddExpertToAgent: (expert: IngestExpert) => void;
+  onRemoveExpertFromAgent: (expert: IngestExpert) => void;
+  onExpertCatalogResolved: (experts: IngestExpert[]) => void;
   addedExpertIds: string[];
   onAgentViewDetails: (agentId: string) => void;
   onAgentDelete: (agentId: string) => void;
@@ -126,6 +128,8 @@ export function IngestEXEShell({
   isParsing,
   onOpenCreateAgent,
   onAddExpertToAgent,
+  onRemoveExpertFromAgent,
+  onExpertCatalogResolved,
   addedExpertIds,
   onAgentViewDetails,
   onAgentDelete,
@@ -221,6 +225,8 @@ export function IngestEXEShell({
           onToolAction={onToolAction}
           onOpenExperts={() => onRailChange("experts")}
           onAddExpertToAgent={onAddExpertToAgent}
+          onRemoveExpertFromAgent={onRemoveExpertFromAgent}
+          onExpertCatalogResolved={onExpertCatalogResolved}
           addedExpertIds={addedExpertIds}
         />
       </div>

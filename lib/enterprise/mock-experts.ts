@@ -27,6 +27,9 @@ export interface IngestExpert {
   tone: IngestChatAgentTone;
   badge?: string;
   tags: string[];
+  knowledgeBaseId?: string;
+  namespace?: string;
+  aliases?: string[];
 }
 
 export const ingestExpertZones: IngestExpertZone[] = [
@@ -474,4 +477,3 @@ export const ingestExperts: IngestExpert[] = [
     tags: ["文档", "代码", "解释"]
   }
 ];
-

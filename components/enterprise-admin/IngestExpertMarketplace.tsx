@@ -6,10 +6,12 @@ import { IngestExpertCard } from "@/components/enterprise-admin/IngestExpertCard
 import { IngestExpertCategoryBar } from "@/components/enterprise-admin/IngestExpertCategoryBar";
 import { IngestExpertTabs } from "@/components/enterprise-admin/IngestExpertTabs";
 import {
+  fetchIngestExpertCatalog,
+  getFallbackIngestExpertCatalog
+} from "@/lib/admin-ingest/expert-catalog-client";
+import {
   ingestExpertPrimaryCategories,
   ingestExpertSecondaryCategories,
-  ingestExperts,
-  ingestExpertZones,
   type IngestExpert,
   type IngestExpertZoneId
 } from "@/lib/enterprise/mock-experts";
@@ -19,19 +21,26 @@ const showExpertGrid = false;
 
 export function IngestExpertMarketplace({
   addedExpertIds = [],
-  onAddExpert
+  onAddExpert,
+  onRemoveExpert,
+  onCatalogResolved
 }: {
   addedExpertIds?: string[];
   onAddExpert: (expert: IngestExpert) => void;
+  onRemoveExpert: (expert: IngestExpert) => void;
+  onCatalogResolved?: (experts: IngestExpert[]) => void;
 }) {
+  const fallbackCatalog = getFallbackIngestExpertCatalog();
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [activeZone, setActiveZone] = useState<IngestExpertZoneId | "all">("all");
   const [activePrimary, setActivePrimary] = useState("全部");
   const [activeSecondary, setActiveSecondary] = useState("全部");
+  const [zones, setZones] = useState(fallbackCatalog.zones);
+  const [experts, setExperts] = useState(fallbackCatalog.experts);
   const addedSet = useMemo(() => new Set(addedExpertIds), [addedExpertIds]);
   const normalizedQuery = query.trim().toLowerCase();
-  const recommendationExperts = useMemo(() => ingestExperts.filter((expert) => {
+  const recommendationExperts = useMemo(() => experts.filter((expert) => {
     if (activePrimary !== "全部" && expert.category !== activePrimary) {
       return false;
     }
@@ -51,10 +60,11 @@ export function IngestExpertMarketplace({
       expert.subcategory,
       expert.zoneTitle,
       expert.author,
+      expert.aliases?.join(" ") ?? "",
       expert.tags.join(" ")
     ].join(" ").toLowerCase().includes(normalizedQuery);
-  }), [activePrimary, activeSecondary, normalizedQuery]);
-  const filteredExperts = useMemo(() => ingestExperts.filter((expert) => {
+  }), [activePrimary, activeSecondary, experts, normalizedQuery]);
+  const filteredExperts = useMemo(() => experts.filter((expert) => {
     if (activeZone !== "all" && expert.zoneId !== activeZone) {
       return false;
     }
@@ -78,9 +88,34 @@ export function IngestExpertMarketplace({
       expert.subcategory,
       expert.zoneTitle,
       expert.author,
+      expert.aliases?.join(" ") ?? "",
       expert.tags.join(" ")
     ].join(" ").toLowerCase().includes(normalizedQuery);
-  }), [activePrimary, activeSecondary, activeZone, normalizedQuery]);
+  }), [activePrimary, activeSecondary, activeZone, experts, normalizedQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+
+    void fetchIngestExpertCatalog(controller.signal)
+      .then((catalog) => {
+        setZones(catalog.zones);
+        setExperts(catalog.experts);
+        onCatalogResolved?.(catalog.experts);
+        setActiveZone((current) =>
+          current === "all" || catalog.zones.some((zone) => zone.id === current)
+            ? current
+            : "all"
+        );
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setZones(fallbackCatalog.zones);
+          setExperts(fallbackCatalog.experts);
+        }
+      });
+
+    return () => controller.abort();
+  }, [fallbackCatalog.experts, fallbackCatalog.zones, onCatalogResolved]);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -126,12 +161,13 @@ export function IngestExpertMarketplace({
       </div>
 
       <IngestExpertTabs
-        zones={ingestExpertZones}
+        zones={zones}
         experts={recommendationExperts}
         addedExpertIds={addedExpertIds}
         activeZone={activeZone}
         onZoneChange={setActiveZone}
         onAddExpert={onAddExpert}
+        onRemoveExpert={onRemoveExpert}
       />
 
       {showCategoryFilters ? (

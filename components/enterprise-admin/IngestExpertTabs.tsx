@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Check, Crown, Flame, HeartPulse, Megaphone, Plus, Sparkles, ThumbsUp, UserRound } from "lucide-react";
+import { BookOpen, Crown, Flame, HeartPulse, Megaphone, Plus, Sparkles, ThumbsUp, UserRound, X } from "lucide-react";
 import type { IngestExpert, IngestExpertZone, IngestExpertZoneId } from "@/lib/enterprise/mock-experts";
 
 const avatarToneClasses: Record<IngestExpert["tone"], string> = {
@@ -30,12 +30,16 @@ const zoneDecorations = {
     dotClassName: "bg-[#66c7ff]",
     glowClassName: "bg-[#b9a7ff]/55"
   }
-} satisfies Record<IngestExpertZoneId, {
+} satisfies Record<string, {
   Icon: typeof Sparkles;
   iconClassName: string;
   dotClassName: string;
   glowClassName: string;
 }>;
+
+function getZoneDecoration(zoneId: IngestExpertZoneId) {
+  return zoneDecorations[zoneId as keyof typeof zoneDecorations] ?? zoneDecorations.market;
+}
 
 function getRankMedal(index: number) {
   if (index === 0) {
@@ -82,7 +86,8 @@ export function IngestExpertTabs({
   addedExpertIds,
   activeZone,
   onZoneChange,
-  onAddExpert
+  onAddExpert,
+  onRemoveExpert
 }: {
   zones: IngestExpertZone[];
   experts: IngestExpert[];
@@ -90,6 +95,7 @@ export function IngestExpertTabs({
   activeZone: IngestExpertZoneId | "all";
   onZoneChange: (zoneId: IngestExpertZoneId | "all") => void;
   onAddExpert: (expert: IngestExpert) => void;
+  onRemoveExpert: (expert: IngestExpert) => void;
 }) {
   const addedSet = new Set(addedExpertIds);
 
@@ -97,13 +103,13 @@ export function IngestExpertTabs({
     <div className="grid gap-5 lg:grid-cols-3">
       {zones.map((zone) => {
         const isActive = activeZone === zone.id;
-        const decoration = zoneDecorations[zone.id];
+        const decoration = getZoneDecoration(zone.id);
         const DecorationIcon = decoration.Icon;
         const zoneExperts = experts
           .filter((expert) => expert.zoneId === zone.id)
           .sort((left, right) => {
-            const leftIndex = zone.experts.indexOf(left.name);
-            const rightIndex = zone.experts.indexOf(right.name);
+            const leftIndex = Math.max(zone.experts.indexOf(left.id), zone.experts.indexOf(left.name));
+            const rightIndex = Math.max(zone.experts.indexOf(right.id), zone.experts.indexOf(right.name));
 
             return (leftIndex === -1 ? 99 : leftIndex) - (rightIndex === -1 ? 99 : rightIndex);
           })
@@ -151,17 +157,17 @@ export function IngestExpertTabs({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onAddExpert(expert)}
-                        disabled={isAdded}
+                        onClick={() => (isAdded ? onRemoveExpert(expert) : onAddExpert(expert))}
+                        aria-label={isAdded ? `取消添加 ${expert.name}` : `添加 ${expert.name}`}
                         className={[
                           "flex h-8 shrink-0 items-center gap-1 rounded-full px-3 text-xs font-semibold shadow-sm transition",
                           isAdded
-                            ? "bg-[#e8f7ee] text-[#128246]"
+                            ? "bg-[#e8f7ee] text-[#128246] hover:bg-[#fff0f0] hover:text-[#bd3030]"
                             : "bg-[#202020] text-white hover:bg-black"
                         ].join(" ")}
                       >
-                        {isAdded ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : <Plus className="h-3.5 w-3.5" aria-hidden="true" />}
-                        {isAdded ? "已添加" : "添加"}
+                        {isAdded ? <X className="h-3.5 w-3.5" aria-hidden="true" /> : <Plus className="h-3.5 w-3.5" aria-hidden="true" />}
+                        {isAdded ? "取消" : "添加"}
                       </button>
                     </div>
                   );
