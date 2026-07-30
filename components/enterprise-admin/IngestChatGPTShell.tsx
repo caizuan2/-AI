@@ -2198,7 +2198,7 @@ export function IngestChatGPTShell({
         : documentInputRef;
 
     onToolAction?.(tool === "file" ? "文件上传" : "图片识别·支持微信长截图");
-    setTimeout(() => inputRef.current?.click(), 0);
+    inputRef.current?.click();
   }
 
   async function handleMoreTool(tool: MoreToolKey) {

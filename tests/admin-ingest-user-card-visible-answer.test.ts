@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   hasVisibleReplyForActiveIngestRequest,
+  hasVisibleReplyForActiveIngestProvider,
   shouldShowAdminIngestAnswerActions,
   shouldShowAdminIngestParsingProgress
 } from "../lib/enterprise/admin-ingest-visible-answer-state";
@@ -48,13 +49,20 @@ test("visible reply detection is scoped to the active request", () => {
 
   state.messages[1] = {
     ...state.messages[1],
-    content: "豆包已经返回可见正文"
+    content: "DeepSeek 已经返回可见正文",
+    meta: { provider: "deepseek-pro" }
   };
 
   assert.equal(hasVisibleReplyForActiveIngestRequest(state), true);
+  assert.equal(
+    hasVisibleReplyForActiveIngestProvider(state, ["deepseek", "deepseek-pro"]),
+    true,
+    "只读取当前请求的 DeepSeek 已展示正文，不读取旧消息或其他模型。"
+  );
+  assert.equal(hasVisibleReplyForActiveIngestProvider(state, ["doubao-pro"]), false);
 });
 
-test("chat-only hides parsing progress after visible reply while full ingest keeps it", () => {
+test("DeepSeek visible reply hides only the client progress UI while other full-ingest flows keep their existing behavior", () => {
   assert.equal(shouldShowAdminIngestParsingProgress({
     isParsing: true,
     isRequestActive: true,
@@ -74,7 +82,16 @@ test("chat-only hides parsing progress after visible reply while full ingest kee
     isRequestActive: true,
     hasFullIngestAccess: true,
     hasVisibleReply: true
-  }), true, "投喂卡继续保留知识整理进度");
+  }), true, "未指定 UI 隐藏条件的投喂流程保持原有进度显示。");
+
+  assert.equal(shouldShowAdminIngestParsingProgress({
+    isParsing: true,
+    isRequestActive: true,
+    hasFullIngestAccess: true,
+    hasVisibleReply: true,
+    hideWhenVisibleReply: true
+  }), false, "DeepSeek 正文已显示时必须隐藏已思考提示，不影响请求本身。"
+  );
 });
 
 test("chat-only shows answer actions from visible body without waiting for metadata", () => {
@@ -112,5 +129,7 @@ test("shell reuses the four-button action row and hides metadata status only for
   assert.match(actions, /\{feedbackActions\}/);
   assert.match(actions, /\{canSaveKnowledge \? \(/);
   assert.match(modeToggle, /hasVisibleReplyForActiveIngestRequest\(/);
+  assert.match(modeToggle, /hasVisibleReplyForActiveIngestProvider\([\s\S]*?\["deepseek", "deepseek-pro"\]/);
+  assert.match(modeToggle, /hideWhenVisibleReply: hasVisibleDeepSeekReplyForActiveRequest/);
   assert.match(modeToggle, /shouldShowAdminIngestParsingProgress\(\{/);
 });
