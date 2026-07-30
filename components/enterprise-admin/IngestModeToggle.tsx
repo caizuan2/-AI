@@ -194,6 +194,7 @@ import {
   readAdminIngestScopedLocalSnapshotForDisplay,
   reconcileAdminIngestConversationMessageCounts,
   writeAdminIngestAccountHistoryScope,
+  writeAdminIngestScopedLocalDisplaySnapshot,
   writeAdminIngestScopedLocalSnapshot,
   type AdminIngestConversationSyncResponse,
   type AdminIngestConversationSyncSnapshot,
@@ -919,6 +920,7 @@ export function IngestModeToggle({
   const [conversationSyncLoaded, setConversationSyncLoaded] = useState(false);
   const [historyScope, setHistoryScope] = useState("");
   const lastConversationSyncPayloadRef = useRef("");
+  const skipNextConversationSyncRef = useRef(false);
   const historyScopeRef = useRef("");
   const conversationSyncRevisionRef = useRef(0);
   const conversationRuntimeRevisionRef = useRef(0);
@@ -1147,6 +1149,7 @@ export function IngestModeToggle({
       conversationSyncRevisionRef.current = 0;
       conversationRuntimeRevisionRef.current = 0;
       lastConversationSyncPayloadRef.current = "";
+      skipNextConversationSyncRef.current = false;
       restoredInitialConversationRef.current = false;
       setHistoryScope("");
       setHistoryLoaded(false);
@@ -1383,25 +1386,23 @@ export function IngestModeToggle({
           hydratedState.expandedConversationAgentIds
         );
         try {
-          writeAdminIngestScopedLocalSnapshot({
-            storage: window.localStorage,
-            historyScope: nextHistoryScope,
-            keys: storageKeys,
-            revision: nextRevision,
-            state: hydratedState,
-            markSynced: !shouldRestoreLocal
-          });
           writeAdminIngestAccountHistoryScope({
             storage: window.localStorage,
             registeredAccount,
             historyScope: nextHistoryScope
           });
+          writeAdminIngestScopedLocalDisplaySnapshot({
+            storage: window.localStorage,
+            historyScope: nextHistoryScope,
+            keys: storageKeys,
+            revision: nextRevision,
+            state: hydratedState
+          });
         } catch {
-          // Scoped browser caching is optional; the server remains authoritative.
+          // The compact sidebar cache is optional; remote state is authoritative.
         }
-        lastConversationSyncPayloadRef.current = shouldRestoreLocal
-          ? ""
-          : JSON.stringify(hydratedState);
+        lastConversationSyncPayloadRef.current = "";
+        skipNextConversationSyncRef.current = !shouldRestoreLocal;
         isAccountTransitioningRef.current = false;
         setHistoryLoaded(true);
         setHistoryLoadState("ready");
@@ -1533,6 +1534,52 @@ export function IngestModeToggle({
     window.addEventListener("storage", syncDoubaoPauseAcrossTabs);
     return () => window.removeEventListener("storage", syncDoubaoPauseAcrossTabs);
   }, []);
+
+  useEffect(() => {
+    if (!historyLoaded || !historyStorageKeys) {
+      return;
+    }
+
+    try {
+      writeAdminIngestAccountHistoryScope({
+        storage: window.localStorage,
+        registeredAccount,
+        historyScope
+      });
+      writeAdminIngestScopedLocalDisplaySnapshot({
+        storage: window.localStorage,
+        historyScope,
+        keys: historyStorageKeys,
+        revision: conversationSyncRevisionRef.current,
+        state: {
+          agents,
+          agentConversations,
+          activeAgentId,
+          activeConversationId,
+          conversationMessagesById: {},
+          conversationDraftsById: {},
+          conversationRuntimeStatusById: {},
+          pinnedAgentIds,
+          expandedAgentIds,
+          expandedConversationAgentIds
+        }
+      });
+    } catch {
+      // Keep the live UI working if browser storage is unavailable.
+    }
+  }, [
+    activeAgentId,
+    activeConversationId,
+    agentConversations,
+    agents,
+    expandedAgentIds,
+    expandedConversationAgentIds,
+    historyLoaded,
+    historyScope,
+    historyStorageKeys,
+    pinnedAgentIds,
+    registeredAccount
+  ]);
 
   useEffect(() => {
     if (!historyLoaded || !historyStorageKeys) {
@@ -2213,6 +2260,27 @@ export function IngestModeToggle({
       expandedConversationAgentIds
     };
     const serialized = JSON.stringify(syncPayload);
+
+    if (skipNextConversationSyncRef.current) {
+      skipNextConversationSyncRef.current = false;
+      lastConversationSyncPayloadRef.current = serialized;
+      try {
+        writeAdminIngestScopedLocalSnapshot({
+          storage: window.localStorage,
+          historyScope,
+          keys: historyStorageKeys,
+          revision: conversationSyncRevisionRef.current,
+          state: syncPayload,
+          markSynced: true
+        });
+      } catch {
+        /*
+         * This runs after the first paint. A large message history may exceed
+         * browser storage, while the compact Agent/sidebar cache stays usable.
+         */
+      }
+      return;
+    }
 
     if (serialized === lastConversationSyncPayloadRef.current) {
       return;
