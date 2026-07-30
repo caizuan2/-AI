@@ -51,7 +51,8 @@ import {
   type AdminIngestGroundingResult
 } from "@/lib/enterprise/admin-ingest-grounding";
 import {
-  buildAdminIngestWechatGroundingRequest
+  buildAdminIngestWechatGroundingRequest,
+  shouldPreserveDeepSeekWechatReplyScript
 } from "@/lib/enterprise/admin-ingest-wechat-grounding";
 import type {
   AdminIngestWechatOutputMode
@@ -1497,7 +1498,8 @@ export async function POST(request: Request) {
   });
   const wechatGroundingRequest = buildAdminIngestWechatGroundingRequest({
     input: input.input,
-    attachments: input.attachments
+    attachments: input.attachments,
+    modelProvider: groundingModelProvider
   });
   const strictWechatGrounding = wechatGroundingRequest.strictKnowledgeMode
     && (groundingModelProvider === "deepseek-pro" || groundingModelProvider === "doubao-pro");
@@ -1570,7 +1572,12 @@ export async function POST(request: Request) {
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
-    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
+    const preserveDeepSeekWechatReplyScript = shouldPreserveDeepSeekWechatReplyScript({
+      modelProvider: modelOption.provider,
+      request: wechatGroundingRequest
+    });
+    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider)
+      || preserveDeepSeekWechatReplyScript;
     const selectedModelStartedAt = Date.now();
 
     if (modelOption.provider === "doubao-pro") {
@@ -1612,8 +1619,8 @@ export async function POST(request: Request) {
       gptVersion: input.gptVersion,
       selectedModelLabel: modelRuntime.displayModelLabel,
       modelDisplayName: input.modelDisplayName || modelRuntime.displayModelLabel,
-      recentMessages: input.recentMessages,
-      contextSummary: input.contextSummary,
+      recentMessages: preserveDeepSeekWechatReplyScript ? [] : input.recentMessages,
+      contextSummary: preserveDeepSeekWechatReplyScript ? "" : input.contextSummary,
       memoryContextText: publishedMemoryContext.memoryContextText,
       agentLearningInstruction: publishedMemoryContext.agentLearningInstruction,
       usedMemoryIds: publishedMemoryContext.usedMemoryIds,
@@ -1860,7 +1867,11 @@ export async function POST(request: Request) {
       modelDisplayName: input.modelDisplayName,
       preferredModel: input.preferredModel
     });
-    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider);
+    const strictModelAffinity = usesStrictSelectedModel(input.platform, modelOption.provider)
+      || shouldPreserveDeepSeekWechatReplyScript({
+        modelProvider: modelOption.provider,
+        request: wechatGroundingRequest
+      });
     const strictFailureRetryable = modelOption.provider === "doubao-pro"
       ? !affinityMismatch && isRetryableDoubaoStrictModelFailure(errorCode)
       : !affinityMismatch && !isMissingKey && !isSafetyRejection && !isClientCancelled;
