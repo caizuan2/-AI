@@ -1,7 +1,13 @@
 "use client";
 
 import { BookOpen, Check, Crown, Flame, HeartPulse, Megaphone, Plus, Sparkles, ThumbsUp, UserRound } from "lucide-react";
-import type { IngestExpert, IngestExpertZone, IngestExpertZoneId } from "@/lib/enterprise/mock-experts";
+import { IngestStableLibraryImage } from "@/components/enterprise-admin/IngestStableLibraryImage";
+import {
+  ingestExperts as allIngestExperts,
+  type IngestExpert,
+  type IngestExpertZone,
+  type IngestExpertZoneId
+} from "@/lib/enterprise/mock-experts";
 
 const avatarToneClasses: Record<IngestExpert["tone"], string> = {
   green: "from-[#ddf8e6] via-white to-[#b8efd0] text-[#128246]",
@@ -10,6 +16,10 @@ const avatarToneClasses: Record<IngestExpert["tone"], string> = {
   rose: "from-[#ffe0e5] via-white to-[#ffc0c9] text-[#b93b4a]",
   slate: "from-[#e9edf3] via-white to-[#cdd5df] text-[#475569]"
 };
+
+const expertVisualIndexById = new Map(
+  allIngestExperts.map((expert, index) => [expert.id, index])
+);
 
 const zoneDecorations = {
   market: {
@@ -139,12 +149,24 @@ export function IngestExpertTabs({
                   const isAdded = addedSet.has(expert.id);
                   const rank = getRankMedal(index);
                   const AvatarIcon = getExpertAvatarIcon(expert);
+                  const expertVisualIndex = expertVisualIndexById.get(expert.id) ?? 0;
 
                   return (
                     <div key={expert.id} title={expert.description} className="flex min-h-[58px] items-center gap-3 rounded-[23px] bg-white/78 px-3 py-2.5 shadow-sm ring-1 ring-white/75 backdrop-blur">
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center text-[24px] leading-none" role="img" aria-label={rank.label}>{rank.icon}</span>
-                      <span className={["flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br shadow-sm ring-2 ring-white/90", avatarToneClasses[expert.tone]].join(" ")}>
-                        <AvatarIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                      <span className="flex h-9 w-9 shrink-0 overflow-hidden rounded-full bg-white shadow-sm ring-2 ring-white/90">
+                        <IngestStableLibraryImage
+                          slotKey={`agent:${expert.id}`}
+                          selectionIndex={expertVisualIndex}
+                          alt={`${expert.name} Logo`}
+                          size={36}
+                          className="h-full w-full rounded-full object-cover"
+                          fallback={(
+                            <span className={["flex h-full w-full items-center justify-center rounded-full bg-gradient-to-br", avatarToneClasses[expert.tone]].join(" ")}>
+                              <AvatarIcon className="h-[18px] w-[18px]" aria-hidden="true" />
+                            </span>
+                          )}
+                        />
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-[#202020]">{expert.name}</p>
