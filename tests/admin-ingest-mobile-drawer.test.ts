@@ -9,6 +9,10 @@ const resizableSidebarSource = readFileSync(
   "components/enterprise-admin/IngestResizableSidebar.tsx",
   "utf8"
 );
+const expertMarketplaceSource = readFileSync(
+  "components/enterprise-admin/IngestExpertMarketplace.tsx",
+  "utf8"
+);
 const androidActivitySource = readFileSync(
   "android/app/src/main/java/com/aiknowledge/chat/MainActivity.java",
   "utf8"
@@ -40,6 +44,14 @@ assert.match(
 assert.match(
   shellSource,
   /aria-label="打开左侧功能"[\s\S]*<NextImage[\s\S]*src=\{adminIngestLogo\}[\s\S]*unoptimized/
+);
+assert.match(
+  shellSource,
+  /<IngestExpertMarketplace[\s\S]*isAdminApk=\{isAdminApk\}/
+);
+assert.match(
+  expertMarketplaceSource,
+  /"min-h-10 text-2xl font-semibold tracking-tight text-\[#202020\]"[\s\S]*isAdminApk \? "pl-12 md:pl-0" : ""/
 );
 assert.equal(
   shellSource.match(/src=\{adminIngestLogo\}[\s\S]{0,220}?unoptimized/g)?.length,

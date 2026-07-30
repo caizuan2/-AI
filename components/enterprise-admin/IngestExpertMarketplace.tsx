@@ -19,9 +19,11 @@ const showExpertGrid = false;
 
 export function IngestExpertMarketplace({
   addedExpertIds = [],
+  isAdminApk = false,
   onAddExpert
 }: {
   addedExpertIds?: string[];
+  isAdminApk?: boolean;
   onAddExpert: (expert: IngestExpert) => void;
 }) {
   const searchRef = useRef<HTMLInputElement>(null);
@@ -102,7 +104,10 @@ export function IngestExpertMarketplace({
   return (
     <section className="w-full space-y-5 pb-8">
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-[#202020]">专家广场</h1>
+        <h1 className={[
+          "min-h-10 text-2xl font-semibold tracking-tight text-[#202020]",
+          isAdminApk ? "pl-12 md:pl-0" : ""
+        ].join(" ")}>专家广场</h1>
         <div className="flex h-11 min-w-[min(360px,100%)] items-center gap-2 rounded-2xl bg-[#f0f0ef] px-3 text-sm text-[#8a8a86]">
           <Search className="h-4 w-4 shrink-0" aria-hidden="true" />
           <input

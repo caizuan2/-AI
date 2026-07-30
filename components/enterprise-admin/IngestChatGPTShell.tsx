@@ -2632,6 +2632,7 @@ export function IngestChatGPTShell({
             {isExpertMarketplace ? (
               <IngestExpertMarketplace
                 addedExpertIds={addedExpertIds}
+                isAdminApk={isAdminApk}
                 onAddExpert={(expert) => onAddExpertToAgent?.(expert)}
               />
             ) : (

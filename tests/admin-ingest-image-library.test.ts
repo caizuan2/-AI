@@ -140,6 +140,7 @@ test("admin ingest surfaces use the shared library without touching model routes
   const avatar = readFileSync("components/enterprise-admin/IngestAgentAvatar.tsx", "utf8");
   const exeList = readFileSync("components/enterprise-admin/IngestEXEAgentList.tsx", "utf8");
   const exeSidebar = readFileSync("components/enterprise-admin/IngestEXESidebar.tsx", "utf8");
+  const expertTabs = readFileSync("components/enterprise-admin/IngestExpertTabs.tsx", "utf8");
 
   assert.match(shell, /slotKey=\{`rail:\$\{item\.key\}`\}/);
   assert.match(shell, /assetSlotKey=\{`agent:\$\{agent\.id\}`\}/);
@@ -150,5 +151,9 @@ test("admin ingest surfaces use the shared library without touching model routes
   assert.match(exeList, /assetSlotKey=\{`agent:\$\{agent\.id\}`\}/);
   assert.match(exeList, /assetSelectionIndex=\{agentVisualIndexById\.get\(agent\.id\)\}/);
   assert.match(exeSidebar, /slotKey=\{`rail:\$\{railKey\}`\}/);
+  assert.match(expertTabs, /slotKey=\{`agent:\$\{expert\.id\}`\}/);
+  assert.match(expertTabs, /selectionIndex=\{expertVisualIndex\}/);
+  assert.match(expertTabs, /alt=\{`\$\{expert\.name\} Logo`\}/);
+  assert.match(expertTabs, /fallback=\{\(/);
   assert.doesNotMatch(shell, /doubao-ingest-client|deepseek-ingest-client/);
 });
