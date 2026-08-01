@@ -122,6 +122,14 @@ async function main() {
   assert.match(capturedPrompts[0], /knowledge_first/);
   assert.match(capturedPrompts[0], /第二步：促单跟进/);
   assert.match(capturedPrompts[0], /客户已经完成破冰并看过资料/);
+  assert.match(capturedPrompts[0], /AI讲事业专家固定知识库总规则/);
+  assert.match(capturedPrompts[0], /AI讲事业专家知识库索引/);
+  assert.match(capturedPrompts[0], /AI讲事业专家执行工作流/);
+  assert.match(capturedPrompts[0], /客户心理判断模型/);
+  assert.match(capturedPrompts[0], /行业客户画像库/);
+  assert.match(capturedPrompts[0], /讲事业话术调用库/);
+  assert.match(capturedPrompts[0], /STEP2 促单跟进规则/);
+  assert.doesNotMatch(capturedPrompts[0], /STEP4 锁定问题规则/);
   assert.match(capturedPrompts[0], /FIXED_KNOWLEDGE_SENTINEL/);
   assert.match(capturedPrompts[0], /## 当前 Agent 固定知识库召回/);
   assert.match(capturedPrompts[0], /RUNTIME_MEMORY_SENTINEL/);
@@ -150,7 +158,7 @@ async function main() {
   assert.match(attachmentSection, /ATTACHMENT_OCR_SENTINEL/);
   assert.doesNotMatch(attachmentSection, /FIXED_KNOWLEDGE_SENTINEL|RUNTIME_MEMORY_SENTINEL/);
 
-  const openGenerationResult = await runCareerMentorIngestAnswer({
+  const fixedRuleResult = await runCareerMentorIngestAnswer({
     originalQuestion: "客户说贵，我应该怎么回复？",
     scenarioQuestion: "客户已经听完事业介绍，现在提出价格贵的疑问，我应该怎么回复？",
     careerMentorStage: "objection_handling",
@@ -162,14 +170,18 @@ async function main() {
     requestId: "career-guided-open-test"
   });
 
-  assert.equal(openGenerationResult.answerOutputMode, CAREER_MENTOR_INGEST_OUTPUT_MODE);
-  assert.match(openGenerationResult.answer, /DEEPSEEK_BODY_SENTINEL/);
+  assert.equal(fixedRuleResult.answerOutputMode, CAREER_MENTOR_INGEST_OUTPUT_MODE);
+  assert.match(fixedRuleResult.answer, /DEEPSEEK_BODY_SENTINEL/);
   assert.equal(capturedPrompts.length, 2);
-  assert.match(capturedPrompts[1], /five_step_guided_open/);
+  assert.match(capturedPrompts[1], /knowledge_first/);
   assert.match(capturedPrompts[1], /第四步：锁定问题/);
-  assert.match(capturedPrompts[1], /允许DeepSeek使用通用沟通能力自由生成完整分析、执行建议和AI示例话术/);
-  assert.match(capturedPrompts[1], /不得跳阶段/);
+  assert.match(capturedPrompts[1], /AI讲事业专家固定知识库总规则/);
+  assert.match(capturedPrompts[1], /STEP4 锁定问题规则/);
+  assert.match(capturedPrompts[1], /异议处理数据库/);
+  assert.match(capturedPrompts[1], /三板斧模型/);
+  assert.match(capturedPrompts[1], /不跳步骤|不得跳阶段/);
   assert.doesNotMatch(capturedPrompts[1], /FIXED_KNOWLEDGE_SENTINEL/);
+  assert.doesNotMatch(capturedPrompts[1], /允许DeepSeek使用通用沟通能力自由生成完整分析、执行建议和AI示例话术/);
 
   const unknownDirection = buildCareerMentorDeepSeekDirection({
     originalQuestion: "这个客户怎么聊？",
@@ -219,6 +231,11 @@ async function main() {
   assert.match(routeSource, /scenarioQuestion: question/);
   assert.match(routeSource, /careerMentorStage: careerMentorStage \?\? "unknown"/);
   assert.match(routeSource, /if \(careerMentorNaturalBodyEnabled\)[\s\S]*runCareerMentorIngestAnswer/);
+
+  const ingestSource = readFileSync("lib/ai-chat/career-mentor-ingest-answer.ts", "utf8");
+  assert.match(ingestSource, /answer: result\.replyMarkdown \|\| ""/);
+  assert.match(ingestSource, /loadCareerMentorFixedRuleContexts\(input\.careerMentorStage\)/);
+  assert.doesNotMatch(ingestSource, /cleanCareerMentorUserAnswer|enforceCareerMentorGroundedCopy/);
 
   console.log("ai-chat career mentor ingest answer tests passed");
 }

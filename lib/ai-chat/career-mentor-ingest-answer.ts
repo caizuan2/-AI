@@ -6,6 +6,7 @@ import {
   type CareerMentorKnowledgeMode,
   type CareerMentorStage
 } from "@/lib/ai-chat/career-mentor";
+import { loadCareerMentorFixedRuleContexts } from "@/lib/ai-chat/career-mentor-fixed-rules";
 import type {
   GptIngestKnowledgeContext,
   GptIngestMemoryAttachment
@@ -91,12 +92,14 @@ function toAttachmentContexts(contexts: RagContext[]): GptIngestMemoryAttachment
 export async function runCareerMentorIngestAnswer(
   input: CareerMentorIngestAnswerInput
 ): Promise<CareerMentorIngestAnswerResult> {
-  const knowledgeContexts = toFixedKnowledgeContexts(input.contexts);
+  const fixedRuleContexts = loadCareerMentorFixedRuleContexts(input.careerMentorStage);
+  const knowledgeContexts = [
+    ...fixedRuleContexts,
+    ...toFixedKnowledgeContexts(input.contexts)
+  ];
   const runtimeMemory = toRuntimeMemory(input.contexts);
   const attachments = toAttachmentContexts(input.contexts);
-  const knowledgeMode: CareerMentorKnowledgeMode = knowledgeContexts.length > 0
-    ? "knowledge_first"
-    : "five_step_guided_open";
+  const knowledgeMode: CareerMentorKnowledgeMode = "knowledge_first";
   const agentLearningInstruction = buildCareerMentorDeepSeekDirection({
     originalQuestion: input.originalQuestion,
     scenarioQuestion: input.scenarioQuestion,
