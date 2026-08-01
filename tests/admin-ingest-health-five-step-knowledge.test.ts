@@ -47,6 +47,13 @@ async function main() {
     assert.doesNotMatch(content, /STEP[1-5]/, `${fileName} 的可见规则正文不得保留英文阶段名称。`);
   }
 
+  const rootRuleContent = await readFile(path.join(RULE_ROOT, "AGENTS.md"), "utf8");
+  assert.match(rootRuleContent, /内部依据不得外显/);
+  assert.match(rootRuleContent, /固定知识片段/);
+  assert.match(rootRuleContent, /长期记忆/);
+  assert.match(rootRuleContent, /不得披露内部文件名、片段号、记忆编号、知识库 ID 或检索机制/);
+  assert.match(rootRuleContent, /不得因此删减、改写、概括或替换所选模型正常生成的原始 Markdown 正文/);
+
   const supportFiles = [
     "02_客户心理模型.md",
     "03_同行客户画像库.md",
@@ -224,6 +231,7 @@ async function main() {
   assert.equal(grounding.applied, true);
   assert.equal(grounding.failureReason, "none");
   assert.match(grounding.context, /AI大健康专家：同行沟通五步法总规则/);
+  assert.match(grounding.context, /内部依据不得外显/);
   assert.match(grounding.context, /第一步 破冰卖自己规则/);
   assert.doesNotMatch(grounding.context, /\bSTEP[1-5]\b/);
   assert.doesNotMatch(grounding.context, /第二步 找需求挖危机规则/);
