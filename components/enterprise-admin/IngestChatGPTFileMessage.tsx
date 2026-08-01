@@ -34,7 +34,7 @@ export function IngestChatGPTFileMessage({
         </div>
       ) : null}
 
-      <div className="max-w-full rounded-[24px] bg-[#202020] px-4 py-3 text-sm leading-6 text-white shadow-sm">
+      <div className="max-w-full rounded-[24px] border border-[#008FFF] bg-[#008FFF] px-4 py-3 text-sm leading-6 text-white shadow-sm">
         <p className="whitespace-pre-wrap">{prompt}</p>
       </div>
 

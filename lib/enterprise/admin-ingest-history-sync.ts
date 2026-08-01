@@ -49,6 +49,18 @@ export type AdminIngestConversationMessageMergeRequest = {
   historyScope: string;
   conversationId: string;
   messages: IngestChatMessage[];
+  conversation?: IngestAgentConversation;
+};
+
+export type AdminIngestConversationRuntimeMutationRequest = {
+  operation:
+    | "mark_runtime_generating"
+    | "mark_runtime_visible_completed"
+    | "clear_runtime_status";
+  historyScope: string;
+  conversationId: string;
+  requestId: string;
+  occurredAt?: number;
 };
 
 export type AdminIngestHistoryStorageKeys = {

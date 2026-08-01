@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  clearAdminIngestConversationRequestRuntimeStatus,
+  markAdminIngestConversationRequestGenerating,
   markAdminIngestConversationRequestVisibleCompleted,
   readAdminIngestConversationRuntimeStatusSnapshot,
   readAdminIngestConversationSyncSnapshot,
@@ -77,6 +79,80 @@ test("visible completion uses an account-scoped sidecar without changing history
       {},
       "runtime completion must stay isolated to the authenticated account"
     );
+  } finally {
+    if (previousDir === undefined) {
+      delete process.env.ADMIN_INGEST_CONVERSATION_DIR;
+    } else {
+      process.env.ADMIN_INGEST_CONVERSATION_DIR = previousDir;
+    }
+
+    await rm(testDir, { recursive: true, force: true });
+  }
+});
+
+test("generating and stopped states use the account sidecar without advancing history", async () => {
+  const previousDir = process.env.ADMIN_INGEST_CONVERSATION_DIR;
+  const testDir = await mkdtemp(
+    join(tmpdir(), "admin-ingest-generating-runtime-")
+  );
+  process.env.ADMIN_INGEST_CONVERSATION_DIR = testDir;
+
+  try {
+    const ownerUserId = "runtime-generating-owner";
+    const conversationId = "conversation-generating";
+    const requestId = "request-generating";
+    const startedAt = Date.now() - 2_000;
+    const initialHistory = await readAdminIngestConversationSyncSnapshot(
+      ownerUserId
+    );
+    const generating = await markAdminIngestConversationRequestGenerating(
+      ownerUserId,
+      { conversationId, requestId, startedAt }
+    );
+    const duplicate = await markAdminIngestConversationRequestGenerating(
+      ownerUserId,
+      { conversationId, requestId, startedAt: Date.now() }
+    );
+    const secondConversationId = "conversation-generating-second-device";
+    const secondRequestId = "request-generating-second-device";
+    const concurrent = await markAdminIngestConversationRequestGenerating(
+      ownerUserId,
+      {
+        conversationId: secondConversationId,
+        requestId: secondRequestId,
+        startedAt
+      }
+    );
+    const stopped = await clearAdminIngestConversationRequestRuntimeStatus(
+      ownerUserId,
+      { conversationId, requestId }
+    );
+    const finalHistory = await readAdminIngestConversationSyncSnapshot(
+      ownerUserId
+    );
+
+    assert.equal(initialHistory.revision, 0);
+    assert.equal(finalHistory.revision, 0);
+    assert.deepEqual(generating.statusById[conversationId], {
+      state: "generating",
+      requestId,
+      startedAt,
+      updatedAt: startedAt
+    });
+    assert.equal(duplicate.revision, generating.revision);
+    assert.deepEqual(concurrent.statusById[secondConversationId], {
+      state: "generating",
+      requestId: secondRequestId,
+      startedAt,
+      updatedAt: startedAt
+    });
+    assert.equal(stopped.statusById[conversationId], undefined);
+    assert.deepEqual(
+      stopped.statusById[secondConversationId],
+      concurrent.statusById[secondConversationId],
+      "stopping one device request must not remove another device request"
+    );
+    assert.equal(stopped.revision, concurrent.revision + 1);
   } finally {
     if (previousDir === undefined) {
       delete process.env.ADMIN_INGEST_CONVERSATION_DIR;

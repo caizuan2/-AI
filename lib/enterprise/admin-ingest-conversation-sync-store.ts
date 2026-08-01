@@ -9,7 +9,10 @@ import {
   type AdminIngestConversationSyncSnapshot
 } from "@/lib/enterprise/admin-ingest-history-sync";
 import type { IngestChatMessage } from "@/lib/enterprise/mock-chat";
+import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import {
+  clearAdminIngestConversationRuntimeStatus,
+  markAdminIngestConversationGenerating,
   markAdminIngestConversationVisibleCompleted,
   mergeAdminIngestConversationRuntimeStatusMaps,
   normalizeAdminIngestConversationRuntimeStatusMap,
@@ -628,6 +631,7 @@ export async function mergeAdminIngestConversationSyncMessages(
   input: {
     conversationId: string;
     messages: IngestChatMessage[];
+    conversation?: IngestAgentConversation;
     includeDrafts?: boolean;
   }
 ) {
@@ -648,16 +652,28 @@ export async function mergeAdminIngestConversationSyncMessages(
     });
     const incomingMessages =
       sanitized.conversationMessagesById[conversationId] ?? [];
+    const incomingConversation = input.conversation
+      ? normalizeAdminIngestConversationSyncSnapshot({
+          agentConversations: [input.conversation]
+        }, {
+          includeDrafts: false
+        }).agentConversations.find(
+          (conversation) => conversation.id === conversationId
+        )
+      : undefined;
     const nextMessages = mergeAdminIngestConversationMessages(
       current.state.conversationMessagesById[conversationId] ?? [],
       incomingMessages
+    );
+    const conversationExists = current.state.agentConversations.some(
+      (conversation) => conversation.id === conversationId
     );
     const messagesUnchanged = JSON.stringify(nextMessages)
       === JSON.stringify(
         current.state.conversationMessagesById[conversationId] ?? []
       );
 
-    if (messagesUnchanged) {
+    if (messagesUnchanged && (conversationExists || !incomingConversation)) {
       return current.state;
     }
 
@@ -665,9 +681,12 @@ export async function mergeAdminIngestConversationSyncMessages(
       ...current.state.conversationMessagesById,
       [conversationId]: nextMessages
     };
+    const conversationsWithIncoming = !conversationExists && incomingConversation
+      ? [...current.state.agentConversations, incomingConversation]
+      : current.state.agentConversations;
     const agentConversations =
       reconcileAdminIngestConversationMessageCounts(
-        current.state.agentConversations,
+        conversationsWithIncoming,
         conversationMessagesById
       );
     const nextRevision = current.revision + 1;
@@ -701,38 +720,19 @@ async function getConversationRuntimeStatusFilePath(ownerUserId: string) {
   return `${await getConversationSyncFilePath(ownerUserId)}.runtime.json`;
 }
 
-export async function markAdminIngestConversationRequestVisibleCompleted(
+async function updateAdminIngestConversationRuntimeStatus(
   ownerUserId: string,
-  input: {
-    conversationId: string;
-    requestId: string;
-    completedAt?: number;
-  }
+  update: (
+    current: AdminIngestConversationRuntimeStatusMap
+  ) => AdminIngestConversationRuntimeStatusMap
 ) {
-  const conversationId = input.conversationId.trim();
-  const requestId = input.requestId.trim();
-
-  if (!conversationId || !requestId) {
-    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
-  }
-
   return withOwnerWriteLock(ownerUserId, () => withOwnerFileLock(ownerUserId, async () => {
     const current = await readAdminIngestConversationRuntimeStatusSnapshot(
       ownerUserId
     );
-    const nextRuntimeStatusById =
-      markAdminIngestConversationVisibleCompleted(
-        current.statusById,
-        {
-          conversationId,
-          requestId,
-          now: input.completedAt
-        }
-      );
+    const nextRuntimeStatusById = update(current.statusById);
 
-    if (
-      nextRuntimeStatusById === current.statusById
-    ) {
+    if (nextRuntimeStatusById === current.statusById) {
       return current;
     }
 
@@ -751,6 +751,79 @@ export async function markAdminIngestConversationRequestVisibleCompleted(
 
     return normalized;
   }));
+}
+
+export async function markAdminIngestConversationRequestGenerating(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    requestId: string;
+    startedAt?: number;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+  const requestId = input.requestId.trim();
+
+  if (!conversationId || !requestId) {
+    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
+  }
+
+  return updateAdminIngestConversationRuntimeStatus(
+    ownerUserId,
+    (current) => markAdminIngestConversationGenerating(current, {
+      conversationId,
+      requestId,
+      now: input.startedAt
+    })
+  );
+}
+
+export async function clearAdminIngestConversationRequestRuntimeStatus(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    requestId: string;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+  const requestId = input.requestId.trim();
+
+  if (!conversationId || !requestId) {
+    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
+  }
+
+  return updateAdminIngestConversationRuntimeStatus(
+    ownerUserId,
+    (current) => clearAdminIngestConversationRuntimeStatus(current, {
+      conversationId,
+      requestId
+    })
+  );
+}
+
+export async function markAdminIngestConversationRequestVisibleCompleted(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    requestId: string;
+    completedAt?: number;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+  const requestId = input.requestId.trim();
+
+  if (!conversationId || !requestId) {
+    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
+  }
+
+  return updateAdminIngestConversationRuntimeStatus(
+    ownerUserId,
+    (current) => markAdminIngestConversationVisibleCompleted(current, {
+      conversationId,
+      requestId,
+      now: input.completedAt
+    })
+  );
 }
 
 export async function readAdminIngestConversationRuntimeStatusSnapshot(

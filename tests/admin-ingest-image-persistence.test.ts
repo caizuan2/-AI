@@ -138,6 +138,16 @@ async function main() {
     /<IngestAttachmentPreview files=\{message\.attachments\} imageOnly enableImagePreview \/>/,
     "投喂端 Web 已发送消息应保留可放大查看的纯图片缩略图。"
   );
+  assert.match(
+    sentMessageRenderSource,
+    /border border-\[#008FFF\] bg-\[#008FFF\][\s\S]*?text-white/,
+    "带微信截图的提示词气泡也必须使用与普通提示词一致的系统蓝色。"
+  );
+  assert.match(
+    modeToggleSource,
+    /wechatOutputMode === "full_answer"[\s\S]*?"微信截图识别并输出完整答案"/,
+    "微信截图完整输出模式的默认气泡文字必须显示为答案。"
+  );
   assert.match(shellSource, /files=\{message\.attachments\} compact imageOnly/);
   assert.match(
     shellSource,
