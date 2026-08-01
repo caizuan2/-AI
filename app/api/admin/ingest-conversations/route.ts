@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth";
 import {
   AdminIngestConversationSyncRevisionConflictError,
+  clearAdminIngestConversationRequestRuntimeStatus,
+  markAdminIngestConversationRequestGenerating,
+  markAdminIngestConversationRequestVisibleCompleted,
   mergeAdminIngestConversationSyncMessages,
   readAdminIngestConversationRuntimeStatusSnapshot,
   readAdminIngestConversationSyncSnapshot,
@@ -19,6 +22,7 @@ import {
   normalizeAdminIngestConversationSyncSnapshot
 } from "@/lib/enterprise/admin-ingest-history-sync";
 import { AppError } from "@/lib/errors";
+import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -259,9 +263,67 @@ export async function PATCH(request: Request) {
     }
 
     if (
-      body.operation !== "merge_conversation_messages"
-      || typeof body.conversationId !== "string"
+      typeof body.conversationId !== "string"
       || !body.conversationId.trim()
+    ) {
+      return jsonHistoryError(
+        "INGEST_HISTORY_REQUEST_INVALID",
+        "历史消息保存请求无效，请稍后重试。",
+        400
+      );
+    }
+
+    if (
+      body.operation === "mark_runtime_generating"
+      || body.operation === "mark_runtime_visible_completed"
+      || body.operation === "clear_runtime_status"
+    ) {
+      if (typeof body.requestId !== "string" || !body.requestId.trim()) {
+        return jsonHistoryError(
+          "INGEST_HISTORY_REQUEST_INVALID",
+          "生成状态同步请求无效，请稍后重试。",
+          400
+        );
+      }
+
+      const occurredAt = typeof body.occurredAt === "number"
+        && Number.isFinite(body.occurredAt)
+        && body.occurredAt >= 0
+        ? body.occurredAt
+        : undefined;
+      const runtimeResult = body.operation === "mark_runtime_generating"
+        ? await markAdminIngestConversationRequestGenerating(actor.id, {
+            conversationId: body.conversationId,
+            requestId: body.requestId,
+            startedAt: occurredAt
+          })
+        : body.operation === "mark_runtime_visible_completed"
+          ? await markAdminIngestConversationRequestVisibleCompleted(actor.id, {
+              conversationId: body.conversationId,
+              requestId: body.requestId,
+              completedAt: occurredAt
+            })
+          : await clearAdminIngestConversationRequestRuntimeStatus(actor.id, {
+              conversationId: body.conversationId,
+              requestId: body.requestId
+            });
+      const storedState = await readAdminIngestConversationSyncSnapshot(actor.id);
+
+      return NextResponse.json({
+        ok: true,
+        success: true,
+        historyScope: createAdminIngestHistoryScope(actor.id),
+        revision: storedState.revision,
+        runtimeRevision: runtimeResult.revision
+      }, {
+        headers: {
+          "Cache-Control": "no-store"
+        }
+      });
+    }
+
+    if (
+      body.operation !== "merge_conversation_messages"
       || !Array.isArray(body.messages)
     ) {
       return jsonHistoryError(
@@ -276,6 +338,11 @@ export async function PATCH(request: Request) {
       {
         conversationId: body.conversationId,
         messages: body.messages,
+        conversation: body.conversation
+          && typeof body.conversation === "object"
+          && !Array.isArray(body.conversation)
+          ? body.conversation as IngestAgentConversation
+          : undefined,
         includeDrafts: access.accessTier === "full_ingest"
       }
     );

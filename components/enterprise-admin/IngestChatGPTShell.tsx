@@ -13,7 +13,6 @@ import {
 } from "react";
 import NextImage from "next/image";
 import {
-  Bell,
   Camera,
   Check,
   ChevronDown,
@@ -2283,12 +2282,6 @@ export function IngestChatGPTShell({
         </nav>
 
         <div className="flex flex-col items-center gap-2 text-[#333]">
-          <button type="button" title="更新提示" onClick={() => {
-            onRailChange?.("notifications");
-            closeMobileNavigation();
-          }} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "notifications" ? "bg-white text-[#128246]" : ""].join(" ")}>
-            <Bell className="h-5 w-5" aria-hidden="true" />
-          </button>
           <button type="button" title="我的设置" onClick={() => {
             onRailChange?.("settings");
             closeMobileNavigation();

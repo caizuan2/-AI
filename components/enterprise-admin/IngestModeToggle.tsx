@@ -201,6 +201,7 @@ import {
   type AdminIngestConversationSyncSnapshot,
   type AdminIngestConversationSyncWriteRequest,
   type AdminIngestConversationMessageMergeRequest,
+  type AdminIngestConversationRuntimeMutationRequest,
   type AdminIngestHistoryStorageKeys
 } from "@/lib/enterprise/admin-ingest-history-sync";
 import {
@@ -1854,12 +1855,14 @@ export function IngestModeToggle({
     historyScope: string;
     conversationId: string;
     messages: IngestChatMessage[];
+    conversation?: IngestAgentConversation;
   }) => {
     const requestBody: AdminIngestConversationMessageMergeRequest = {
       operation: "merge_conversation_messages",
       historyScope: input.historyScope,
       conversationId: input.conversationId,
-      messages: input.messages
+      messages: input.messages,
+      conversation: input.conversation
     };
 
     try {
@@ -1898,30 +1901,71 @@ export function IngestModeToggle({
         return false;
       }
 
-      if (
-        typeof payload.revision === "number"
-        && Number.isSafeInteger(payload.revision)
-        && payload.revision >= conversationSyncRevisionRef.current
-      ) {
-        conversationSyncRevisionRef.current = payload.revision;
-      }
-
-      if (
-        typeof payload.runtimeRevision === "number"
-        && Number.isSafeInteger(payload.runtimeRevision)
-      ) {
-        conversationRuntimeRevisionRef.current = Math.max(
-          conversationRuntimeRevisionRef.current,
-          payload.runtimeRevision
-        );
-      }
-
+      /*
+       * PATCH may have merged changes written by another device. Do not move
+       * the local pull cursor without hydrating that merged state; the next
+       * poll must still observe and apply the new revision.
+       */
       return true;
     } catch (error) {
       console.warn(
         "[admin-ingest:conversation-sync:message-merge]",
         error
       );
+      return false;
+    }
+  }, [reloadForAccountHistoryChange]);
+
+  const persistConversationRuntimeStatusAtomically = useCallback(async (input: {
+    operation: AdminIngestConversationRuntimeMutationRequest["operation"];
+    historyScope: string;
+    conversationId: string;
+    requestId: string;
+    occurredAt?: number;
+  }) => {
+    const requestBody: AdminIngestConversationRuntimeMutationRequest = input;
+
+    try {
+      const response = await fetch(INGEST_CONVERSATION_SYNC_ENDPOINT, {
+        method: "PATCH",
+        credentials: "include",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(requestBody)
+      });
+      const payload =
+        await response.json() as AdminIngestConversationSyncResponse;
+      const responseHistoryScope = normalizeAdminIngestHistoryScope(
+        payload.historyScope
+      );
+
+      if (
+        payload.errorCode === "INGEST_HISTORY_SCOPE_MISMATCH"
+        || (
+          responseHistoryScope
+          && responseHistoryScope !== input.historyScope
+        )
+      ) {
+        reloadForAccountHistoryChange();
+        return false;
+      }
+
+      if (!response.ok) {
+        console.warn("[admin-ingest:conversation-sync:runtime]", {
+          operation: input.operation,
+          errorCode: payload.errorCode
+            ?? "INGEST_HISTORY_RUNTIME_SYNC_FAILED",
+          status: response.status
+        });
+        return false;
+      }
+
+      /* Keep the runtime pull cursor unchanged until the merged map is read. */
+      return true;
+    } catch (error) {
+      console.warn("[admin-ingest:conversation-sync:runtime]", error);
       return false;
     }
   }, [reloadForAccountHistoryChange]);
@@ -2406,9 +2450,7 @@ export function IngestModeToggle({
           && nextRevision > conversationSyncRevisionRef.current;
         const hasRuntimeUpdate =
           nextRuntimeRevision > conversationRuntimeRevisionRef.current;
-        const canApplyConversationUpdate = hasConversationUpdate
-          && !conversationSyncInFlightRef.current
-          && !pendingConversationSyncRef.current;
+        const canApplyConversationUpdate = hasConversationUpdate;
 
         if (
           disposed
@@ -2420,12 +2462,41 @@ export function IngestModeToggle({
           return;
         }
 
-        const remoteState = normalizeAdminIngestConversationSyncSnapshot(
+        const confirmedRemoteState = normalizeAdminIngestConversationSyncSnapshot(
           payload.state,
           {
             includeDrafts: capabilities.saveKnowledge
           }
         );
+        const pendingConversationSync = pendingConversationSyncRef.current;
+        const hasLocalConversationChanges = Boolean(
+          conversationSyncInFlightRef.current
+          || pendingConversationSync
+        );
+        const remoteState = hasLocalConversationChanges
+          ? mergeAdminIngestConversationSyncConflict({
+              base: readConfirmedAdminIngestSyncSnapshot(
+                lastConversationSyncPayloadRef.current,
+                capabilities.saveKnowledge
+              ),
+              local: pendingConversationSync?.state ?? {
+                agents,
+                agentConversations,
+                activeAgentId: activeAgentIdRef.current,
+                activeConversationId: activeConversationIdRef.current,
+                conversationMessagesById:
+                  conversationMessagesByIdRef.current,
+                conversationDraftsById:
+                  conversationDraftsByIdRef.current,
+                conversationRuntimeStatusById,
+                pinnedAgentIds,
+                expandedAgentIds,
+                expandedConversationAgentIds
+              },
+              remote: confirmedRemoteState,
+              includeDrafts: capabilities.saveKnowledge
+            })
+          : confirmedRemoteState;
         conversationRuntimeRevisionRef.current = Math.max(
           conversationRuntimeRevisionRef.current,
           nextRuntimeRevision
@@ -2582,8 +2653,20 @@ export function IngestModeToggle({
           conversationRuntimeRevisionRef.current,
           nextRuntimeRevision
         );
-        lastConversationSyncPayloadRef.current =
-          JSON.stringify(nextLocalSnapshot);
+        lastConversationSyncPayloadRef.current = JSON.stringify(
+          hasLocalConversationChanges
+            ? confirmedRemoteState
+            : nextLocalSnapshot
+        );
+        if (hasLocalConversationChanges) {
+          pendingConversationSyncRef.current = {
+            historyScope: nextHistoryScope,
+            storageKeys: historyStorageKeys,
+            serialized: JSON.stringify(nextLocalSnapshot),
+            state: nextLocalSnapshot,
+            retryCount: pendingConversationSync?.retryCount ?? 0
+          };
+        }
         activeAgentIdRef.current = nextActiveAgentId;
         activeConversationIdRef.current = nextActiveConversationId;
         conversationMessagesByIdRef.current = nextMessagesById;
@@ -2625,7 +2708,7 @@ export function IngestModeToggle({
             keys: historyStorageKeys,
             revision: nextRevision,
             state: nextLocalSnapshot,
-            markSynced: true
+            markSynced: !hasLocalConversationChanges
           });
         } catch {
           // Live cloud sync remains authoritative if local cache is unavailable.
@@ -2663,6 +2746,8 @@ export function IngestModeToggle({
       );
     };
   }, [
+    agentConversations,
+    agents,
     capabilities.saveKnowledge,
     conversationRuntimeStatusById,
     conversationSyncLoaded,
@@ -2671,6 +2756,7 @@ export function IngestModeToggle({
     historyLoaded,
     historyScope,
     historyStorageKeys,
+    pinnedAgentIds,
     platformContext
   ]);
 
@@ -4737,7 +4823,7 @@ export function IngestModeToggle({
           content: value || (
             isWechatConversationReply
               ? wechatOutputMode === "full_answer"
-                ? "微信截图识别并输出完整正文"
+                ? "微信截图识别并输出完整答案"
                 : "微信截图识别并回复客户"
               : "附件投喂"
           ),
@@ -4758,6 +4844,22 @@ export function IngestModeToggle({
         }
       ]);
     }
+    const requestConversation = agentConversations.find(
+      (conversation) => conversation.id === conversationId
+    );
+    void persistConversationMessagesAtomically({
+      historyScope: requestHistoryScope,
+      conversationId,
+      messages: requestMessagesSnapshot,
+      conversation: requestConversation
+    });
+    void persistConversationRuntimeStatusAtomically({
+      operation: "mark_runtime_generating",
+      historyScope: requestHistoryScope,
+      conversationId,
+      requestId,
+      occurredAt: requestStartedAt
+    });
 
     if (!options?.preserveComposer) {
       setInput("");
@@ -5297,13 +5399,6 @@ export function IngestModeToggle({
 
       const nextRecords = mergeTrainingRecords(result.records, records);
       const successAt = Date.now();
-      if (
-        typeof result.runtimeRevision === "number"
-        && Number.isSafeInteger(result.runtimeRevision)
-        && result.runtimeRevision > conversationRuntimeRevisionRef.current
-      ) {
-        conversationRuntimeRevisionRef.current = result.runtimeRevision;
-      }
       const fallbackActualModel = result.fallbackUsed
         ? getIngestModelOptionByProvider(result.actualProvider ?? result.provider)
         : null;
@@ -5482,6 +5577,14 @@ export function IngestModeToggle({
         conversationId,
         messages: finalizedMessages
       });
+      const completedRuntimePersistence =
+        persistConversationRuntimeStatusAtomically({
+          operation: "mark_runtime_visible_completed",
+          historyScope: requestHistoryScope,
+          conversationId,
+          requestId,
+          occurredAt: Date.now()
+        });
       commitRequestMessages(() => finalizedMessages);
       if (
         result.provider === "deepseek"
@@ -5495,6 +5598,7 @@ export function IngestModeToggle({
         ));
       }
       await completedMessagePersistence;
+      await completedRuntimePersistence;
       if (
         metadataDeferred
         && result.draft.jobId
@@ -5905,6 +6009,12 @@ export function IngestModeToggle({
             requestId
           })
         ));
+        void persistConversationRuntimeStatusAtomically({
+          operation: "clear_runtime_status",
+          historyScope: requestHistoryScope,
+          conversationId,
+          requestId
+        });
       }
       if (abortControllerByConversationRef.current[conversationId] === abortController) {
         delete abortControllerByConversationRef.current[conversationId];
@@ -6404,6 +6514,12 @@ export function IngestModeToggle({
         requestId
       })
     ));
+    void persistConversationRuntimeStatusAtomically({
+      operation: "clear_runtime_status",
+      historyScope: historyScopeRef.current,
+      conversationId,
+      requestId
+    });
     if (abortControllerByConversationRef.current[conversationId] === controller) {
       delete abortControllerByConversationRef.current[conversationId];
     }

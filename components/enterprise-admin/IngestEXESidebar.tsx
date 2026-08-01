@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { Bell, BotMessageSquare, Database, FileStack, ListChecks, Settings, ShieldCheck, Sparkles } from "lucide-react";
+import { BotMessageSquare, Database, FileStack, ListChecks, Settings, ShieldCheck, Sparkles } from "lucide-react";
 import { getIngestRailFeature } from "@/components/enterprise-admin/IngestRailConfig";
 import { IngestStableLibraryImage } from "@/components/enterprise-admin/IngestStableLibraryImage";
 import type { IngestEXENavId, IngestEXENavItem } from "@/lib/enterprise/mock-ingest";
@@ -100,9 +100,6 @@ export function IngestEXESidebar({
       </nav>
 
       <div className="flex flex-col items-center gap-3 text-[#333]">
-        <button type="button" title="投喂通知" onClick={() => onRailChange("notifications")} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "notifications" ? "bg-white text-[#128246]" : ""].join(" ")}>
-          <Bell className="h-5 w-5" aria-hidden="true" />
-        </button>
         <button type="button" title="当前投喂端设置" onClick={() => onRailChange("settings")} className={["flex h-9 w-9 items-center justify-center rounded-xl hover:bg-white", activeRailKey === "settings" ? "bg-white text-[#128246]" : ""].join(" ")}>
           <Settings className="h-5 w-5" aria-hidden="true" />
         </button>

@@ -13,6 +13,10 @@ const expertMarketplaceSource = readFileSync(
   "components/enterprise-admin/IngestExpertMarketplace.tsx",
   "utf8"
 );
+const exeSidebarSource = readFileSync(
+  "components/enterprise-admin/IngestEXESidebar.tsx",
+  "utf8"
+);
 const androidActivitySource = readFileSync(
   "android/app/src/main/java/com/aiknowledge/chat/MainActivity.java",
   "utf8"
@@ -185,5 +189,9 @@ assert.doesNotMatch(
   shellSource,
   /ChatSidebarDrawer/
 );
+assert.doesNotMatch(shellSource, /title="更新提示"|<Bell/);
+assert.doesNotMatch(exeSidebarSource, /title="投喂通知"|<Bell/);
+assert.match(shellSource, /title="我的设置"/);
+assert.match(exeSidebarSource, /title="当前投喂端设置"/);
 
 console.log("admin-ingest-mobile-drawer tests passed");

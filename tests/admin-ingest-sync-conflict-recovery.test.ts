@@ -236,6 +236,48 @@ test("atomic message merge is idempotent and rejects later stale snapshot overwr
   }
 });
 
+test("atomic request start publishes a newly created conversation and its user message", async () => {
+  const previousDir = process.env.ADMIN_INGEST_CONVERSATION_DIR;
+  const testDir = await mkdtemp(
+    join(tmpdir(), "admin-ingest-request-start-")
+  );
+  process.env.ADMIN_INGEST_CONVERSATION_DIR = testDir;
+
+  try {
+    const ownerUserId = "request-start-owner";
+    const conversation = createConversation();
+    const messages = [
+      createMessage("user-request-start", "跨端立即可见的提示词", "completed")
+    ];
+    const stored = await mergeAdminIngestConversationSyncMessages(
+      ownerUserId,
+      {
+        conversationId: conversation.id,
+        conversation,
+        messages
+      }
+    );
+
+    assert.equal(stored.revision, 1);
+    assert.equal(
+      stored.agentConversations.some((item) => item.id === conversation.id),
+      true
+    );
+    assert.equal(
+      stored.conversationMessagesById[conversation.id]?.[0]?.content,
+      "跨端立即可见的提示词"
+    );
+  } finally {
+    if (previousDir === undefined) {
+      delete process.env.ADMIN_INGEST_CONVERSATION_DIR;
+    } else {
+      process.env.ADMIN_INGEST_CONVERSATION_DIR = previousDir;
+    }
+
+    await rm(testDir, { recursive: true, force: true });
+  }
+});
+
 test("client only reloads for account scope changes and uses atomic PATCH for body", () => {
   const componentSource = readFileSync(
     "components/enterprise-admin/IngestModeToggle.tsx",
@@ -262,8 +304,21 @@ test("client only reloads for account scope changes and uses atomic PATCH for bo
     componentSource,
     /operation:\s*"merge_conversation_messages"/
   );
+  assert.match(componentSource, /operation:\s*"mark_runtime_generating"/);
+  assert.match(componentSource, /operation:\s*"mark_runtime_visible_completed"/);
+  assert.match(componentSource, /operation:\s*"clear_runtime_status"/);
+  assert.match(
+    componentSource,
+    /PATCH may have merged changes written by another device[\s\S]*?Do not move[\s\S]*?pull cursor/
+  );
+  assert.match(
+    componentSource,
+    /hasLocalConversationChanges[\s\S]*?mergeAdminIngestConversationSyncConflict/
+  );
   assert.match(componentSource, /method:\s*"PATCH"/);
   assert.match(routeSource, /export async function PATCH/);
   assert.match(routeSource, /mergeAdminIngestConversationSyncMessages/);
+  assert.match(routeSource, /markAdminIngestConversationRequestGenerating/);
+  assert.match(routeSource, /clearAdminIngestConversationRequestRuntimeStatus/);
   assert.doesNotMatch(routeSource, /prisma/i);
 });
