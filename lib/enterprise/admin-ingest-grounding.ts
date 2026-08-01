@@ -7,6 +7,9 @@ import {
   type RetrievedRagChunk,
 } from "@/lib/rag/search";
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
+import {
+  loadHealthFiveStepRuleCandidates,
+} from "@/lib/enterprise/admin-ingest-health-five-step-knowledge";
 
 const DEFAULT_TOP_K = 8;
 const MAX_TOP_K = 12;
@@ -94,6 +97,7 @@ export type AdminIngestGroundingResult = {
 
 type AdminIngestGroundingDependencies = {
   retrieveRelevantChunks?: AdminIngestGroundingRetriever;
+  loadHealthFiveStepRuleCandidates?: typeof loadHealthFiveStepRuleCandidates;
 };
 
 type ScopeIdentifiers = Pick<
@@ -467,6 +471,21 @@ export async function retrieveAdminIngestGrounding(
     MAX_CONTEXT_CHARS,
   );
   const retrieve = dependencies.retrieveRelevantChunks ?? retrieveRelevantChunks;
+  const loadHealthRules = dependencies.loadHealthFiveStepRuleCandidates
+    ?? loadHealthFiveStepRuleCandidates;
+  let fixedRuleCandidates: GroundingCandidate[] = [];
+
+  try {
+    fixedRuleCandidates = await loadHealthRules({
+      query,
+      tenantId: scope.tenantId,
+      agentId: scope.agentId,
+      knowledgeBaseId: scope.knowledgeBaseId,
+      namespace: scope.namespace,
+    });
+  } catch {
+    warnings.push("AI大健康专家同行沟通五步法规则暂时不可读取，已继续使用原固定知识库检索。");
+  }
 
   try {
     const variants = buildRetrievalScopeVariants(input, scope);
@@ -513,7 +532,13 @@ export async function retrieveAdminIngestGrounding(
       warnings.push("固定知识库通过受控 canonical alias 兼容检索命中。");
     }
 
-    if (strictlyScoped.length === 0) {
+    const scopedCandidates = [...fixedRuleCandidates, ...strictlyScoped];
+
+    if (fixedRuleCandidates.length > 0) {
+      warnings.push("已加载 AI大健康专家专属同行沟通五步法规则；其他 Agent 不会调用此规则。");
+    }
+
+    if (scopedCandidates.length === 0) {
       warnings.push(input.strictKnowledgeMode
         ? "当前 Agent 固定知识库没有相关命中，严格知识模式已阻止模型生成。"
         : "当前 Agent 固定知识库没有相关命中，已安全降级为无知识库上下文。");
@@ -521,12 +546,12 @@ export async function retrieveAdminIngestGrounding(
     }
 
     const retrievedSourceIds = {
-      chunkIds: Array.from(new Set(strictlyScoped.map((candidate) => candidate.chunkId).filter(Boolean))),
-      knowledgeItemIds: Array.from(new Set(strictlyScoped
+      chunkIds: Array.from(new Set(scopedCandidates.map((candidate) => candidate.chunkId).filter(Boolean))),
+      knowledgeItemIds: Array.from(new Set(scopedCandidates
         .map((candidate) => candidate.knowledgeItemId)
         .filter(Boolean))),
     };
-    const built = buildContext(strictlyScoped, maxContextChars, input.strictKnowledgeMode === true);
+    const built = buildContext(scopedCandidates, maxContextChars, input.strictKnowledgeMode === true);
 
     if (built.truncated) {
       warnings.push("固定知识库上下文已按安全长度上限截断。");
@@ -551,7 +576,37 @@ export async function retrieveAdminIngestGrounding(
       ...built,
     };
   } catch {
+    if (fixedRuleCandidates.length > 0) {
+      const built = buildContext(
+        fixedRuleCandidates,
+        maxContextChars,
+        input.strictKnowledgeMode === true,
+      );
+
+      if (built.sources.length > 0) {
+        if (built.truncated) {
+          warnings.push("固定知识库上下文已按安全长度上限截断。");
+        }
+
+        warnings.push("原固定知识库检索暂时不可用，本轮仅使用 AI大健康专家专属同行沟通五步法规则。");
+
+        return {
+          applied: true,
+          failureReason: "none",
+          warnings,
+          scope,
+          retrievedSourceIds: {
+            chunkIds: fixedRuleCandidates.map((candidate) => candidate.chunkId),
+            knowledgeItemIds: Array.from(new Set(fixedRuleCandidates
+              .map((candidate) => candidate.knowledgeItemId))),
+          },
+          ...built,
+        };
+      }
+    }
+
     return emptyResult([
+      ...warnings,
       input.strictKnowledgeMode
         ? "固定知识库检索暂时不可用，严格知识模式已阻止模型生成。"
         : "固定知识库检索暂时不可用，已安全降级为无知识库上下文。",
