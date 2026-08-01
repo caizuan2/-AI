@@ -33,23 +33,23 @@ type HealthFiveStepRuleInput = {
 const STEP_FILES: Record<HealthFiveStepStage, { fileName: string; title: string }> = {
   STEP1: {
     fileName: "STEP1_破冰卖自己规则.md",
-    title: "同行沟通五步法 STEP1 破冰卖自己规则",
+    title: "同行沟通五步法 第一步 破冰卖自己规则",
   },
   STEP2: {
     fileName: "STEP2_找需求挖危机规则.md",
-    title: "同行沟通五步法 STEP2 找需求挖危机规则",
+    title: "同行沟通五步法 第二步 找需求挖危机规则",
   },
   STEP3: {
     fileName: "STEP3_讲系统价值规则.md",
-    title: "同行沟通五步法 STEP3 讲系统价值规则",
+    title: "同行沟通五步法 第三步 讲系统价值规则",
   },
   STEP4: {
     fileName: "STEP4_锁定问题解决问题规则.md",
-    title: "同行沟通五步法 STEP4 锁定问题解决问题规则",
+    title: "同行沟通五步法 第四步 锁定问题解决问题规则",
   },
   STEP5: {
     fileName: "STEP5_成交规则.md",
-    title: "同行沟通五步法 STEP5 成交规则",
+    title: "同行沟通五步法 第五步 成交规则",
   },
 };
 
