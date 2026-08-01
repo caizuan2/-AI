@@ -40,6 +40,7 @@ async function main() {
     const content = await readFile(path.join(RULE_ROOT, fileName), "utf8");
     assert.ok(content.length > 1_000, `${fileName} 应保存完整、可执行的规则正文。`);
     assert.doesNotMatch(content, /contentReference\[oaicite/i);
+    assert.doesNotMatch(content, /\bSTEP[1-5]\b/, `${fileName} 的可见规则正文不得保留英文阶段名称。`);
   }
 
   const step4Candidates = await loadHealthFiveStepRuleCandidates({
@@ -51,7 +52,10 @@ async function main() {
   assert.ok(step4Candidates.length >= 2);
   assert.match(step4Context, /只属于 `expert-health \/ kb-health-expert/);
   assert.match(step4Context, /认同 \+ 一句话过渡 \+ 三板斧/);
-  assert.doesNotMatch(step4Context, /# STEP1 破冰卖自己规则/);
+  assert.match(step4Context, /第四步 锁定问题解决问题规则/);
+  assert.doesNotMatch(step4Context, /\bSTEP[1-5]\b/);
+  assert.doesNotMatch(step4Context, /# 第一步 破冰卖自己规则/);
+  assert.equal(step4Candidates.every((candidate) => !/\bSTEP[1-5]\b/.test(candidate.title)), true);
   assert.equal(step4Candidates.every((candidate) => (
     candidate.agentId === "expert-health"
     && candidate.knowledgeBaseId === "kb-health-expert"
@@ -80,6 +84,7 @@ async function main() {
     });
     const completeRuleText = candidates.map((candidate) => candidate.content).join("\n");
     assert.match(completeRuleText, /## 核心口诀/);
+    assert.equal(candidates.every((candidate) => !/\bSTEP[1-5]\b/.test(candidate.title)), true);
   }
 
   const unrelatedScopes = [{
@@ -121,8 +126,9 @@ async function main() {
   assert.equal(grounding.applied, true);
   assert.equal(grounding.failureReason, "none");
   assert.match(grounding.context, /AI大健康专家：同行沟通五步法总规则/);
-  assert.match(grounding.context, /STEP1 破冰卖自己规则/);
-  assert.doesNotMatch(grounding.context, /STEP2 找需求挖危机规则/);
+  assert.match(grounding.context, /第一步 破冰卖自己规则/);
+  assert.doesNotMatch(grounding.context, /\bSTEP[1-5]\b/);
+  assert.doesNotMatch(grounding.context, /第二步 找需求挖危机规则/);
   assert.equal(grounding.sources.every((source) => (
     source.chunkId.startsWith("fixed-health-five-step:")
   )), true);
