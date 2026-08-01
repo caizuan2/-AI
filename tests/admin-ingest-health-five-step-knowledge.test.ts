@@ -6,10 +6,12 @@ import {
   isHealthPeerCommunicationQuery,
   loadHealthFiveStepRuleCandidates,
   resolveHealthFiveStepStage,
+  resolveHealthKnowledgeCommand,
 } from "../lib/enterprise/admin-ingest-health-five-step-knowledge";
 import { retrieveAdminIngestGrounding } from "../lib/enterprise/admin-ingest-grounding";
 
 const RULE_ROOT = path.resolve(process.cwd(), "knowledge", "01_同行沟通五步法");
+const KNOWLEDGE_ROOT = path.resolve(process.cwd(), "knowledge");
 const HEALTH_SCOPE = {
   tenantId: "tenant-health-test",
   agentId: "expert-health",
@@ -26,6 +28,8 @@ async function main() {
   assert.equal(resolveHealthFiveStepStage("请介绍日常膳食搭配"), null);
   assert.equal(isHealthPeerCommunicationQuery("请根据这张微信聊天截图回复客户"), true);
   assert.equal(isHealthPeerCommunicationQuery("请介绍日常膳食搭配"), false);
+  assert.equal(resolveHealthKnowledgeCommand("/分析同行聊天\n请看下面记录"), "分析同行聊天");
+  assert.equal(resolveHealthKnowledgeCommand("请分析同行聊天"), null);
 
   const expectedFiles = [
     "AGENTS.md",
@@ -40,7 +44,92 @@ async function main() {
     const content = await readFile(path.join(RULE_ROOT, fileName), "utf8");
     assert.ok(content.length > 1_000, `${fileName} 应保存完整、可执行的规则正文。`);
     assert.doesNotMatch(content, /contentReference\[oaicite/i);
-    assert.doesNotMatch(content, /\bSTEP[1-5]\b/, `${fileName} 的可见规则正文不得保留英文阶段名称。`);
+    assert.doesNotMatch(content, /STEP[1-5]/, `${fileName} 的可见规则正文不得保留英文阶段名称。`);
+  }
+
+  const supportFiles = [
+    "02_客户心理模型.md",
+    "03_同行客户画像库.md",
+    "04_客户阶段判断模型.md",
+    "05_客户跟进策略模型.md",
+    "06_素材调用与内容展示规则.md",
+    "07_沟通复盘与优化规则.md",
+  ];
+  const commandFiles = [
+    "分析同行聊天.md",
+    "判断客户阶段.md",
+    "生成下一句话.md",
+    "生成电话沟通方案.md",
+    "处理客户异议.md",
+    "复盘失败沟通.md",
+    "生成客户跟进计划.md",
+  ];
+
+  for (const relativePath of [
+    ...supportFiles,
+    ...commandFiles.map((fileName) => path.join("commands", fileName)),
+  ]) {
+    const content = await readFile(path.join(KNOWLEDGE_ROOT, relativePath), "utf8");
+    assert.ok(content.length > 400, `${relativePath} 应保存完整、可执行的规则正文。`);
+    assert.doesNotMatch(content, /contentReference\[oaicite/i);
+    assert.doesNotMatch(content, /STEP[1-5]/, `${relativePath} 不得向模型注入英文阶段名称。`);
+  }
+
+  const commandExpectations = [{
+    command: "分析同行聊天",
+    expectedTitles: ["分析同行聊天", "同行客户画像库", "客户心理模型", "客户阶段判断模型"],
+  }, {
+    command: "判断客户阶段",
+    expectedTitles: ["判断客户阶段", "客户阶段判断模型", "客户心理模型"],
+  }, {
+    command: "生成下一句话",
+    expectedTitles: ["生成下一句话", "客户心理模型", "客户阶段判断模型"],
+  }, {
+    command: "生成电话沟通方案",
+    expectedTitles: ["生成电话沟通方案", "同行客户画像库", "客户阶段判断模型"],
+  }, {
+    command: "处理客户异议",
+    expectedTitles: ["处理客户异议", "客户心理模型", "客户阶段判断模型", "第四步"],
+  }, {
+    command: "复盘失败沟通",
+    expectedTitles: ["复盘失败沟通", "沟通复盘与优化规则", "客户阶段判断模型"],
+  }, {
+    command: "生成客户跟进计划",
+    expectedTitles: ["生成客户跟进计划", "客户跟进策略模型", "客户阶段判断模型"],
+  }];
+
+  for (const expectation of commandExpectations) {
+    const candidates = await loadHealthFiveStepRuleCandidates({
+      ...HEALTH_SCOPE,
+      query: `/${expectation.command}`,
+    });
+    const titles = candidates.map((candidate) => candidate.title).join("\n");
+    const content = candidates.map((candidate) => candidate.content).join("\n");
+
+    for (const expectedTitle of expectation.expectedTitles) {
+      assert.match(titles, new RegExp(expectedTitle));
+    }
+    assert.doesNotMatch(titles, /STEP[1-5]/);
+    assert.doesNotMatch(content, /STEP[1-5]/);
+  }
+
+  const topicExpectations = [{
+    query: "这个客户沉默几天了，后续怎么跟进？",
+    title: "客户跟进策略模型",
+  }, {
+    query: "这个同行适合发送什么案例素材？",
+    title: "素材调用与内容展示规则",
+  }, {
+    query: "帮我复盘为什么这次沟通没有推进",
+    title: "沟通复盘与优化规则",
+  }];
+
+  for (const expectation of topicExpectations) {
+    const candidates = await loadHealthFiveStepRuleCandidates({
+      ...HEALTH_SCOPE,
+      query: expectation.query,
+    });
+    assert.match(candidates.map((candidate) => candidate.title).join("\n"), new RegExp(expectation.title));
   }
 
   const step4Candidates = await loadHealthFiveStepRuleCandidates({
@@ -114,6 +203,15 @@ async function main() {
     assert.deepEqual(candidates, [], `${scope.agentId} 不得调用大健康五步法规则。`);
   }
 
+  for (const scope of unrelatedScopes) {
+    const candidates = await loadHealthFiveStepRuleCandidates({
+      tenantId: "tenant-health-test",
+      query: "/分析同行聊天",
+      ...scope,
+    });
+    assert.deepEqual(candidates, [], `${scope.agentId} 不得调用大健康指令层。`);
+  }
+
   const grounding = await retrieveAdminIngestGrounding({
     ...HEALTH_SCOPE,
     actorUserId: "admin-health-test",
@@ -132,6 +230,22 @@ async function main() {
   assert.equal(grounding.sources.every((source) => (
     source.chunkId.startsWith("fixed-health-five-step:")
   )), true);
+
+  const commandGrounding = await retrieveAdminIngestGrounding({
+    ...HEALTH_SCOPE,
+    actorUserId: "admin-health-test",
+    query: "/生成下一句话\n客户说：我先看看",
+    strictKnowledgeMode: true,
+    maxContextChars: 30_000,
+  }, {
+    retrieveRelevantChunks: async () => [],
+  });
+
+  assert.equal(commandGrounding.applied, true);
+  assert.match(commandGrounding.context, /指令：生成下一句话/);
+  assert.match(commandGrounding.context, /AI大健康专家客户心理模型/);
+  assert.match(commandGrounding.context, /AI大健康专家客户阶段判断模型/);
+  assert.doesNotMatch(commandGrounding.context, /\bSTEP[1-5]\b/);
 
   const ordinaryHealthGrounding = await retrieveAdminIngestGrounding({
     ...HEALTH_SCOPE,

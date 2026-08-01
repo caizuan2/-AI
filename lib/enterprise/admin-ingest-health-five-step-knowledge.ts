@@ -5,7 +5,8 @@ import path from "node:path";
 
 const HEALTH_AGENT_ID = "expert-health";
 const HEALTH_KNOWLEDGE_BASE_ID = "kb-health-expert";
-const RULE_DIRECTORY = path.join("knowledge", "01_同行沟通五步法");
+const KNOWLEDGE_DIRECTORY = "knowledge";
+const FIVE_STEP_DIRECTORY = "01_同行沟通五步法";
 const MAX_RULE_CHUNK_CHARS = 3_200;
 
 export type HealthFiveStepStage = "STEP1" | "STEP2" | "STEP3" | "STEP4" | "STEP5";
@@ -30,27 +31,101 @@ type HealthFiveStepRuleInput = {
   namespace: string;
 };
 
-const STEP_FILES: Record<HealthFiveStepStage, { fileName: string; title: string }> = {
+type HealthRuleFile = {
+  relativePath: string;
+  title: string;
+};
+
+const STEP_FILES: Record<HealthFiveStepStage, HealthRuleFile> = {
   STEP1: {
-    fileName: "STEP1_破冰卖自己规则.md",
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "STEP1_破冰卖自己规则.md"),
     title: "同行沟通五步法 第一步 破冰卖自己规则",
   },
   STEP2: {
-    fileName: "STEP2_找需求挖危机规则.md",
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "STEP2_找需求挖危机规则.md"),
     title: "同行沟通五步法 第二步 找需求挖危机规则",
   },
   STEP3: {
-    fileName: "STEP3_讲系统价值规则.md",
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "STEP3_讲系统价值规则.md"),
     title: "同行沟通五步法 第三步 讲系统价值规则",
   },
   STEP4: {
-    fileName: "STEP4_锁定问题解决问题规则.md",
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "STEP4_锁定问题解决问题规则.md"),
     title: "同行沟通五步法 第四步 锁定问题解决问题规则",
   },
   STEP5: {
-    fileName: "STEP5_成交规则.md",
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "STEP5_成交规则.md"),
     title: "同行沟通五步法 第五步 成交规则",
   },
+};
+
+const COMMAND_FILES = [{
+  command: "分析同行聊天",
+  relativePath: path.join("commands", "分析同行聊天.md"),
+  title: "AI大健康专家指令 分析同行聊天",
+}, {
+  command: "判断客户阶段",
+  relativePath: path.join("commands", "判断客户阶段.md"),
+  title: "AI大健康专家指令 判断客户阶段",
+}, {
+  command: "生成下一句话",
+  relativePath: path.join("commands", "生成下一句话.md"),
+  title: "AI大健康专家指令 生成下一句话",
+}, {
+  command: "生成电话沟通方案",
+  relativePath: path.join("commands", "生成电话沟通方案.md"),
+  title: "AI大健康专家指令 生成电话沟通方案",
+}, {
+  command: "处理客户异议",
+  relativePath: path.join("commands", "处理客户异议.md"),
+  title: "AI大健康专家指令 处理客户异议",
+}, {
+  command: "复盘失败沟通",
+  relativePath: path.join("commands", "复盘失败沟通.md"),
+  title: "AI大健康专家指令 复盘失败沟通",
+}, {
+  command: "生成客户跟进计划",
+  relativePath: path.join("commands", "生成客户跟进计划.md"),
+  title: "AI大健康专家指令 生成客户跟进计划",
+}] as const;
+
+export type HealthKnowledgeCommand = typeof COMMAND_FILES[number]["command"];
+
+const SUPPORT_FILES = {
+  psychology: {
+    relativePath: "02_客户心理模型.md",
+    title: "AI大健康专家 客户心理模型",
+  },
+  profile: {
+    relativePath: "03_同行客户画像库.md",
+    title: "AI大健康专家 同行客户画像库",
+  },
+  stage: {
+    relativePath: "04_客户阶段判断模型.md",
+    title: "AI大健康专家 客户阶段判断模型",
+  },
+  followUp: {
+    relativePath: "05_客户跟进策略模型.md",
+    title: "AI大健康专家 客户跟进策略模型",
+  },
+  material: {
+    relativePath: "06_素材调用与内容展示规则.md",
+    title: "AI大健康专家 素材调用与内容展示规则",
+  },
+  review: {
+    relativePath: "07_沟通复盘与优化规则.md",
+    title: "AI大健康专家 沟通复盘与优化规则",
+  },
+} satisfies Record<string, HealthRuleFile>;
+
+const COMMAND_SUPPORT_KEYS: Record<HealthKnowledgeCommand, Array<keyof typeof SUPPORT_FILES>> = {
+  分析同行聊天: ["profile", "psychology", "stage"],
+  判断客户阶段: ["stage", "psychology"],
+  生成下一句话: ["psychology", "stage"],
+  生成电话沟通方案: ["profile", "stage"],
+  处理客户异议: ["psychology", "stage"],
+  复盘失败沟通: ["review", "stage"],
+  生成客户跟进计划: ["followUp", "stage"],
 };
 
 const fileCache = new Map<string, Promise<string>>();
@@ -120,8 +195,44 @@ export function isHealthPeerCommunicationQuery(query: string): boolean {
   return /同行|客户|微信|聊天|沟通|话术|怎么回|回复|好友|团队|市场|平台|系统|人脉|新人|成交|异议|顾虑/.test(normalized);
 }
 
-function readRuleFile(fileName: string): Promise<string> {
-  const absolutePath = path.resolve(process.cwd(), RULE_DIRECTORY, fileName);
+export function resolveHealthKnowledgeCommand(query: string): HealthKnowledgeCommand | null {
+  const normalized = normalizeRuleQuery(query);
+  const matched = COMMAND_FILES.find(({ command }) => normalized.includes(`/${command}`));
+
+  return matched?.command ?? null;
+}
+
+function resolveSupportFiles(
+  query: string,
+  command: HealthKnowledgeCommand | null,
+): HealthRuleFile[] {
+  const normalized = normalizeRuleQuery(query);
+  const keys = new Set<keyof typeof SUPPORT_FILES>(command ? COMMAND_SUPPORT_KEYS[command] : []);
+
+  if (/心理|真实意图|为什么这样|防御|购买动机|客户温度/.test(normalized)) {
+    keys.add("psychology");
+  }
+  if (/画像|客户类型|哪类同行|直销|微商|保险|实体老板|创业者|团队长/.test(normalized)) {
+    keys.add("profile");
+  }
+  if (/阶段|哪一步|当前步骤|判断客户/.test(normalized)) {
+    keys.add("stage");
+  }
+  if (/跟进|沉默|重新激活|未来7天|联系谁|下次沟通/.test(normalized)) {
+    keys.add("followUp");
+  }
+  if (/素材|案例|发什么内容|内容展示|朋友圈/.test(normalized)) {
+    keys.add("material");
+  }
+  if (/复盘|失败沟通|没有推进|哪里出错|沟通评分|优化沟通/.test(normalized)) {
+    keys.add("review");
+  }
+
+  return Array.from(keys, (key) => SUPPORT_FILES[key]);
+}
+
+function readRuleFile(relativePath: string): Promise<string> {
+  const absolutePath = path.resolve(process.cwd(), KNOWLEDGE_DIRECTORY, relativePath);
   const cached = fileCache.get(absolutePath);
 
   if (cached) {
@@ -186,11 +297,11 @@ function chunkRuleMarkdown(content: string): string[] {
 
 function toRuleCandidates(input: {
   content: string;
-  fileName: string;
+  relativePath: string;
   title: string;
   tenantId: string;
 }): HealthFiveStepRuleCandidate[] {
-  const stableId = input.fileName.replace(/\.md$/i, "").replace(/[^a-z0-9一-龥_-]+/gi, "-");
+  const stableId = input.relativePath.replace(/\.md$/i, "").replace(/[^a-z0-9一-龥_-]+/gi, "-");
 
   return chunkRuleMarkdown(input.content).map((content, index) => ({
     chunkId: `fixed-health-five-step:${stableId}:${index + 1}`,
@@ -213,19 +324,29 @@ export async function loadHealthFiveStepRuleCandidates(
   }
 
   const selectedStage = resolveHealthFiveStepStage(input.query);
+  const selectedCommand = resolveHealthKnowledgeCommand(input.query);
 
-  if (!selectedStage && !isHealthPeerCommunicationQuery(input.query)) {
+  if (!selectedStage && !selectedCommand && !isHealthPeerCommunicationQuery(input.query)) {
     return [];
   }
 
   const selectedRule = selectedStage ? STEP_FILES[selectedStage] : null;
-  const requestedFiles = [{
-    fileName: "AGENTS.md",
+  const selectedCommandFile = selectedCommand
+    ? COMMAND_FILES.find(({ command }) => command === selectedCommand) ?? null
+    : null;
+  const requestedFiles: HealthRuleFile[] = [{
+    relativePath: path.join(FIVE_STEP_DIRECTORY, "AGENTS.md"),
     title: "AI大健康专家同行沟通五步法总规则",
-  }, ...(selectedRule ? [selectedRule] : [])];
-  const loadedFiles = await Promise.all(requestedFiles.map(async (rule) => ({
+  },
+  ...(selectedCommandFile ? [selectedCommandFile] : []),
+  ...(selectedRule ? [selectedRule] : []),
+  ...resolveSupportFiles(input.query, selectedCommand)];
+  const uniqueFiles = requestedFiles.filter((file, index, files) => (
+    files.findIndex((candidate) => candidate.relativePath === file.relativePath) === index
+  ));
+  const loadedFiles = await Promise.all(uniqueFiles.map(async (rule) => ({
     ...rule,
-    content: await readRuleFile(rule.fileName),
+    content: await readRuleFile(rule.relativePath),
   })));
 
   return loadedFiles.flatMap((rule) => toRuleCandidates({
