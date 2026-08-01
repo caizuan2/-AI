@@ -29,6 +29,8 @@ async function main() {
   assert.equal(isHealthPeerCommunicationQuery("请根据这张微信聊天截图回复客户"), true);
   assert.equal(isHealthPeerCommunicationQuery("请介绍日常膳食搭配"), false);
   assert.equal(resolveHealthKnowledgeCommand("/分析同行聊天\n请看下面记录"), "分析同行聊天");
+  assert.equal(resolveHealthKnowledgeCommand("/生成系统价值沟通方案\n请看下面记录"), "生成系统价值沟通方案");
+  assert.equal(resolveHealthKnowledgeCommand("/复盘同行沟通记录"), "复盘同行沟通记录");
   assert.equal(resolveHealthKnowledgeCommand("请分析同行聊天"), null);
 
   const expectedFiles = [
@@ -61,6 +63,11 @@ async function main() {
     "05_客户跟进策略模型.md",
     "06_素材调用与内容展示规则.md",
     "07_沟通复盘与优化规则.md",
+    "08_commands高级指令库.md",
+    "09_案例库与训练数据结构.md",
+    "10_知识库安全与输出规范.md",
+    "11_AI Agent调用优先级路由规则.md",
+    "12_AI Agent记忆库结构规则.md",
   ];
   const commandFiles = [
     "分析同行聊天.md",
@@ -103,6 +110,27 @@ async function main() {
   }, {
     command: "生成客户跟进计划",
     expectedTitles: ["生成客户跟进计划", "客户跟进策略模型", "客户阶段判断模型"],
+  }, {
+    command: "分析健康同行客户",
+    expectedTitles: ["分析健康同行客户", "同行客户画像库", "客户心理模型", "客户阶段判断模型"],
+  }, {
+    command: "生成破冰方案",
+    expectedTitles: ["生成破冰方案", "同行客户画像库", "客户阶段判断模型", "第一步"],
+  }, {
+    command: "生成系统价值沟通方案",
+    expectedTitles: ["生成系统价值沟通方案", "同行客户画像库", "客户阶段判断模型", "第三步"],
+  }, {
+    command: "锁定问题解决问题",
+    expectedTitles: ["锁定问题解决问题", "客户心理模型", "客户阶段判断模型", "第四步"],
+  }, {
+    command: "生成合作推进方案",
+    expectedTitles: ["生成合作推进方案", "记忆库结构规则", "第五步"],
+  }, {
+    command: "模拟健康同行沟通",
+    expectedTitles: ["模拟健康同行沟通", "案例库与训练数据结构", "同行客户画像库"],
+  }, {
+    command: "复盘同行沟通记录",
+    expectedTitles: ["复盘同行沟通记录", "沟通复盘与优化规则", "案例库与训练数据结构", "记忆库结构规则"],
   }];
 
   for (const expectation of commandExpectations) {
@@ -116,6 +144,8 @@ async function main() {
     for (const expectedTitle of expectation.expectedTitles) {
       assert.match(titles, new RegExp(expectedTitle));
     }
+    assert.match(titles, /知识库安全与输出规范/);
+    assert.match(titles, /调用优先级路由规则/);
     assert.doesNotMatch(titles, /STEP[1-5]/);
     assert.doesNotMatch(content, /STEP[1-5]/);
   }
@@ -129,6 +159,12 @@ async function main() {
   }, {
     query: "帮我复盘为什么这次沟通没有推进",
     title: "沟通复盘与优化规则",
+  }, {
+    query: "请用相似案例模拟一次健康同行沟通训练",
+    title: "案例库与训练数据结构",
+  }, {
+    query: "结合上次历史沟通，继续推进这个同行的下一步动作",
+    title: "记忆库结构规则",
   }];
 
   for (const expectation of topicExpectations) {
@@ -149,6 +185,8 @@ async function main() {
   assert.match(step4Context, /只属于 `expert-health \/ kb-health-expert/);
   assert.match(step4Context, /认同 \+ 一句话过渡 \+ 三板斧/);
   assert.match(step4Context, /第四步 锁定问题解决问题规则/);
+  assert.match(step4Context, /AI大健康专家同行沟通安全与输出质量规则/);
+  assert.match(step4Context, /AI大健康专家同行沟通知识路由系统/);
   assert.doesNotMatch(step4Context, /\bSTEP[1-5]\b/);
   assert.doesNotMatch(step4Context, /# 第一步 破冰卖自己规则/);
   assert.equal(step4Candidates.every((candidate) => !/\bSTEP[1-5]\b/.test(candidate.title)), true);
@@ -233,6 +271,8 @@ async function main() {
   assert.match(grounding.context, /AI大健康专家：同行沟通五步法总规则/);
   assert.match(grounding.context, /内部依据不得外显/);
   assert.match(grounding.context, /第一步 破冰卖自己规则/);
+  assert.match(grounding.context, /知识库安全与输出规范/);
+  assert.match(grounding.context, /调用优先级路由规则/);
   assert.doesNotMatch(grounding.context, /\bSTEP[1-5]\b/);
   assert.doesNotMatch(grounding.context, /第二步 找需求挖危机规则/);
   assert.equal(grounding.sources.every((source) => (
