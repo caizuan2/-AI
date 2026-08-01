@@ -80,6 +80,16 @@ assert.match(masterRule, /`kb-business-coach`/);
 assert.match(masterRule, /不得被瘦身 KKS、AI大健康、三生中国/);
 assert.match(masterRule, /Provider 返回的 `replyMarkdown` 必须原样透传/);
 assert.match(masterRule, /不增加第二次模型请求/);
+assert.match(masterRule, /内部依据不得外显/);
+assert.match(masterRule, /固定知识片段/);
+assert.match(masterRule, /长期记忆/);
+assert.match(masterRule, /不得披露内部文件名、片段号、记忆编号、知识库 ID 或检索机制/);
+assert.match(masterRule, /不得因此删减、改写、概括或替换所选模型正常生成的原始 Markdown 正文/);
+
+const sharedRuleContent = loadCareerMentorFixedRuleContexts("unknown")
+  .map((context) => context.content)
+  .join("\n");
+assert.match(sharedRuleContent, /内部依据不得外显/);
 
 for (const fileName of [
   "02_促单跟进规则.md",
