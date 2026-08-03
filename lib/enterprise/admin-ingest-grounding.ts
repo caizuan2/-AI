@@ -10,6 +10,9 @@ import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import {
   loadHealthFiveStepRuleCandidates,
 } from "@/lib/enterprise/admin-ingest-health-five-step-knowledge";
+import {
+  loadKksFixedRuleCandidates,
+} from "@/lib/enterprise/admin-ingest-kks-fixed-rules";
 
 const DEFAULT_TOP_K = 8;
 const MAX_TOP_K = 12;
@@ -98,6 +101,7 @@ export type AdminIngestGroundingResult = {
 type AdminIngestGroundingDependencies = {
   retrieveRelevantChunks?: AdminIngestGroundingRetriever;
   loadHealthFiveStepRuleCandidates?: typeof loadHealthFiveStepRuleCandidates;
+  loadKksFixedRuleCandidates?: typeof loadKksFixedRuleCandidates;
 };
 
 type ScopeIdentifiers = Pick<
@@ -473,6 +477,8 @@ export async function retrieveAdminIngestGrounding(
   const retrieve = dependencies.retrieveRelevantChunks ?? retrieveRelevantChunks;
   const loadHealthRules = dependencies.loadHealthFiveStepRuleCandidates
     ?? loadHealthFiveStepRuleCandidates;
+  const loadKksRules = dependencies.loadKksFixedRuleCandidates
+    ?? loadKksFixedRuleCandidates;
   let fixedRuleCandidates: GroundingCandidate[] = [];
 
   try {
@@ -532,10 +538,33 @@ export async function retrieveAdminIngestGrounding(
       warnings.push("固定知识库通过受控 canonical alias 兼容检索命中。");
     }
 
-    const scopedCandidates = [...fixedRuleCandidates, ...strictlyScoped];
+    let kksRuleCandidates: GroundingCandidate[] = [];
+
+    if (strictlyScoped.length > 0) {
+      try {
+        kksRuleCandidates = await loadKksRules({
+          tenantId: scope.tenantId,
+          agentId: scope.agentId,
+          knowledgeBaseId: scope.knowledgeBaseId,
+          namespace: scope.namespace,
+        });
+      } catch {
+        warnings.push("AI瘦身KKS专业师固定输出规则暂时不可读取，已继续使用原固定知识库检索。");
+      }
+    }
+
+    const scopedCandidates = [
+      ...fixedRuleCandidates,
+      ...kksRuleCandidates,
+      ...strictlyScoped,
+    ];
 
     if (fixedRuleCandidates.length > 0) {
       warnings.push("已加载 AI大健康专家专属同行沟通五步法规则；其他 Agent 不会调用此规则。");
+    }
+
+    if (kksRuleCandidates.length > 0) {
+      warnings.push("已加载 AI瘦身KKS专业师专属固定输出规则；其他 Agent 不会调用此规则。");
     }
 
     if (scopedCandidates.length === 0) {
