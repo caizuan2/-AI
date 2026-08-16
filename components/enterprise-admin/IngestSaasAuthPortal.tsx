@@ -19,7 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { unwrapApiResponse } from "@/lib/api/client";
+import { ApiClientError, unwrapApiResponse } from "@/lib/api/client";
 import { getIngestLoginErrorMessage } from "@/lib/enterprise/ingest-login-error";
 import { INGEST_LICENSE_REACTIVATION_EVENT_KEY } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
 import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
@@ -498,6 +498,19 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
       goNext(hasIngestPortalAccess);
     } catch (caughtError) {
+      if (
+        mode === "reactivate"
+        && caughtError instanceof ApiClientError
+        && caughtError.details.code === "LICENSE_USED"
+      ) {
+        setError(
+          caughtError.message.includes("该卡密已经激活")
+            ? "该卡密已经激活，请直接登录。"
+            : "该卡密已经被使用。"
+        );
+        return;
+      }
+
       setError(
         mode === "login"
           ? getIngestLoginErrorMessage(caughtError)
@@ -730,7 +743,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               ) : null}
 
               {error ? (
-                <div className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                <div role="alert" className="flex items-start gap-2 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
                   <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
                   <span className="whitespace-pre-line">{error}</span>
                 </div>

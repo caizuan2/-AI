@@ -22,9 +22,15 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const REACTIVATION_FAILED_MESSAGE = "原账号或新小董AI卡密验证失败，请检查后重试。";
+const LICENSE_ALREADY_USED_MESSAGE = "该卡密已经被使用。";
+const LICENSE_ALREADY_ACTIVATED_MESSAGE = "该卡密已经激活，请直接登录。";
 
 function reactivationUnauthorized() {
   return new UnauthorizedError(REACTIVATION_FAILED_MESSAGE);
+}
+
+function licenseAlreadyUsed(message = LICENSE_ALREADY_USED_MESSAGE) {
+  return new AppError("LICENSE_USED", message, 409);
 }
 
 export async function POST(request: Request) {
@@ -93,22 +99,35 @@ export async function POST(request: Request) {
       throw reactivationUnauthorized();
     }
 
-    const unusedLicense = await prisma.licenseKey.findFirst({
+    const candidateLicenses = await prisma.licenseKey.findMany({
       where: {
         keyHash: {
           in: getAcceptedLicenseHashes(normalizedLicenseKey)
-        },
-        status: LicenseKeyStatus.UNUSED,
-        redeemedByUserId: null,
-        OR: [
-          { expiresAt: null },
-          { expiresAt: { gt: new Date() } }
-        ]
+        }
       },
-      select: { id: true }
+      select: {
+        status: true,
+        redeemedByUserId: true,
+        expiresAt: true
+      }
     });
+    const now = new Date();
+    const hasUnusedLicense = candidateLicenses.some((license) => (
+      license.status === LicenseKeyStatus.UNUSED
+      && license.redeemedByUserId === null
+      && (!license.expiresAt || license.expiresAt > now)
+    ));
 
-    if (!unusedLicense) {
+    if (!hasUnusedLicense) {
+      const usedLicense = candidateLicenses.find((license) => license.status === LicenseKeyStatus.USED);
+      if (usedLicense) {
+        throw licenseAlreadyUsed(
+          usedLicense.redeemedByUserId === user.id
+            ? LICENSE_ALREADY_ACTIVATED_MESSAGE
+            : LICENSE_ALREADY_USED_MESSAGE
+        );
+      }
+
       throw reactivationUnauthorized();
     }
 
@@ -175,6 +194,10 @@ export async function POST(request: Request) {
       user: authUser
     });
   } catch (error) {
+    if (error instanceof AppError && error.code === "LICENSE_ACTIVATION_LIMIT_REACHED") {
+      return apiError(licenseAlreadyUsed());
+    }
+
     return apiError(error);
   }
 }
