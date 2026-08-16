@@ -24,7 +24,7 @@ import { getIngestLoginErrorMessage } from "@/lib/enterprise/ingest-login-error"
 import { INGEST_LICENSE_REACTIVATION_EVENT_KEY } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
 import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 
-type IngestAuthMode = "login" | "register" | "activate" | "reset";
+type IngestAuthMode = "login" | "register" | "activate" | "reset" | "reactivate";
 
 type IngestAuthUser = {
   id: string;
@@ -48,6 +48,7 @@ type IngestAuthResponse = {
   permission?: "none" | "chat_only" | "full_ingest";
   accessTier?: "none" | "chat_only" | "full_ingest";
   sessionToken?: string;
+  redirectTarget?: string;
   licenseActivated: boolean;
   hasIngestPortalAccess?: boolean;
   hasIngestAccess?: boolean;
@@ -108,6 +109,14 @@ const modeCopy: Record<IngestAuthMode, {
     sideTitle: "卡密验证账号归属，安全找回访问权限。",
     sideDescription: "手机号与原小董AI卡密必须属于同一账号；重置成功后需使用新密码重新登录。",
     cta: "设置新密码"
+  },
+  reactivate: {
+    eyebrow: "原账号恢复",
+    title: "使用新卡恢复小董AI",
+    description: "无需先登录，输入原账号手机号和一张尚未使用的新卡密，激活后直接进入原账号工作台。",
+    sideTitle: "新卡恢复原账号，历史资料保持不变。",
+    sideDescription: "系统只恢复曾经激活过的原账号，不创建新账号；新卡会绑定原账号和原历史空间。",
+    cta: "激活并进入系统"
   }
 };
 
@@ -126,7 +135,9 @@ function safeNextPath(value: string | null) {
     pathname === "/ingest/activate" ||
     pathname.startsWith("/ingest/activate/") ||
     pathname === "/ingest/forgot-password" ||
-    pathname.startsWith("/ingest/forgot-password/")
+    pathname.startsWith("/ingest/forgot-password/") ||
+    pathname === "/ingest/reactivate" ||
+    pathname.startsWith("/ingest/reactivate/")
   ) {
     return "";
   }
@@ -364,7 +375,12 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (mode !== "activate" && (!username.trim() || !password)) {
+    if (mode !== "activate" && !username.trim()) {
+      setError("请输入手机号。");
+      return;
+    }
+
+    if ((mode === "login" || mode === "register" || mode === "reset") && !password) {
       setError("请输入手机号和密码。");
       return;
     }
@@ -374,8 +390,8 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
       return;
     }
 
-    if ((mode === "activate" || mode === "register" || mode === "reset") && !licenseKey.trim()) {
-      setError("请输入用户端或投喂端卡密。");
+    if ((mode === "activate" || mode === "register" || mode === "reset" || mode === "reactivate") && !licenseKey.trim()) {
+      setError(mode === "reactivate" ? "请输入尚未使用的新小董AI卡密。" : "请输入用户端或投喂端卡密。");
       return;
     }
 
@@ -390,7 +406,9 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
           ? "/api/ingest/auth/register"
           : mode === "reset"
             ? "/api/ingest/auth/reset-password"
-            : "/api/ingest/auth/activate-license";
+            : mode === "reactivate"
+              ? "/api/ingest/auth/reactivate-account"
+              : "/api/ingest/auth/activate-license";
       const body = mode === "activate"
         ? { licenseKey }
         : mode === "reset"
@@ -400,14 +418,19 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               newPassword: password,
               confirmPassword
             }
-        : {
-            name,
-            username,
-            phone: username,
-            password,
-            confirmPassword,
-            ...(mode === "register" ? { licenseKey } : {})
-          };
+          : mode === "reactivate"
+            ? {
+                phone: username,
+                licenseKey
+              }
+            : {
+                name,
+                username,
+                phone: username,
+                password,
+                confirmPassword,
+                ...(mode === "register" ? { licenseKey } : {})
+              };
       const response = await fetch(endpoint, {
         method: "POST",
         credentials: "include",
@@ -429,6 +452,18 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
         ?? data.hasIngestAccess
         ?? data.user.hasIngestAccess
         ?? (data.licenseActivated || data.user.licenseActivated);
+
+      if (mode === "reactivate") {
+        const redirectTarget = safeNextPath(data.redirectTarget ?? null);
+
+        if (!redirectTarget) {
+          throw new Error("激活入口复核失败，请稍后重试。");
+        }
+
+        router.replace(redirectTarget);
+        router.refresh();
+        return;
+      }
 
       if (mode === "activate") {
         if (currentAccount && data.userId && data.userId !== currentAccount.id) {
@@ -631,21 +666,23 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                     </span>
                   </label>
 
-                  <label className="block">
-                    <span className="text-sm font-medium">{mode === "reset" ? "新密码" : "密码"}</span>
-                    <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
-                      <LockKeyhole className="h-4 w-4 text-slate-400" />
-                      <Input
-                        name={mode === "reset" ? "newPassword" : "password"}
-                        value={password}
-                        onChange={(event) => setPassword(event.target.value)}
-                        type="password"
-                        autoComplete={mode === "login" ? "current-password" : "new-password"}
-                        className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
-                        placeholder={mode === "login" ? "请输入密码" : "至少 8 位"}
-                      />
-                    </span>
-                  </label>
+                  {mode !== "reactivate" ? (
+                    <label className="block">
+                      <span className="text-sm font-medium">{mode === "reset" ? "新密码" : "密码"}</span>
+                      <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
+                        <LockKeyhole className="h-4 w-4 text-slate-400" />
+                        <Input
+                          name={mode === "reset" ? "newPassword" : "password"}
+                          value={password}
+                          onChange={(event) => setPassword(event.target.value)}
+                          type="password"
+                          autoComplete={mode === "login" ? "current-password" : "new-password"}
+                          className="h-auto border-0 bg-transparent p-0 shadow-none focus-visible:ring-0"
+                          placeholder={mode === "login" ? "请输入密码" : "至少 8 位"}
+                        />
+                      </span>
+                    </label>
+                  ) : null}
                 </>
               ) : null}
 
@@ -667,10 +704,12 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                 </label>
               ) : null}
 
-              {mode === "activate" || mode === "register" || mode === "reset" ? (
+              {mode === "activate" || mode === "register" || mode === "reset" || mode === "reactivate" ? (
                 <label className="block">
                   <span className="text-sm font-medium">
-                    {mode === "reset"
+                    {mode === "reactivate"
+                      ? "新小董AI卡密"
+                      : mode === "reset"
                       ? "原小董AI卡密"
                       : mode === "activate" && reactivationRequested && requiresFullIngest
                         ? "新卡密（小董AI请使用 XT-INGEST）"
@@ -682,7 +721,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                       name="licenseKey"
                       value={licenseKey}
                       onChange={(event) => setLicenseKey(event.target.value)}
-                      autoComplete="one-time-code"
+                      autoComplete={mode === "reactivate" ? "off" : "one-time-code"}
                       className="h-auto border-0 bg-transparent p-0 font-mono shadow-none focus-visible:ring-0"
                       placeholder="XT-USER / XT-INGEST"
                     />
@@ -715,6 +754,12 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                       忘记密码？
                     </Link>
                   </p>
+                  <p>
+                    原账号卡密失效？
+                    <Link href={`/ingest/reactivate?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                      使用新卡直接恢复
+                    </Link>
+                  </p>
                   {!reactivationRequested ? (
                     <p>
                       没有账号？
@@ -738,6 +783,15 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               {mode === "reset" ? (
                 <p className="text-center text-sm text-slate-500">
                   想起密码了？
+                  <Link href={`/ingest/login?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
+                    返回登录
+                  </Link>
+                </p>
+              ) : null}
+
+              {mode === "reactivate" ? (
+                <p className="text-center text-sm text-slate-500">
+                  仍可使用原密码？
                   <Link href={`/ingest/login?next=${encodeURIComponent(nextPath)}`} className="font-medium text-emerald-700 hover:text-emerald-800">
                     返回登录
                   </Link>

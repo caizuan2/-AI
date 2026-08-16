@@ -415,6 +415,15 @@ export async function hasUserRedeemedLicenseHistory(userId: string) {
   return redeemedLicenseCount > 0;
 }
 
+export async function hasUserRedeemedLicenseHistoryForAppType(
+  userId: string,
+  requiredAppType: LicenseAppType
+) {
+  const licenses = await getRedeemedLicenseStates(userId);
+
+  return licenses.some((license) => license.appType === requiredAppType);
+}
+
 async function recordLicenseAuditLog(input: {
   userId: string | null;
   action: string;

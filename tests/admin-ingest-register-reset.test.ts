@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   INGEST_PASSWORD_MAX_LENGTH,
   INGEST_PASSWORD_MIN_LENGTH,
+  parseIngestAccountReactivationRequest,
   parseIngestPasswordResetRequest,
   parseIngestRegisterRequest
 } from "../lib/enterprise/ingest-auth-credentials";
@@ -42,53 +43,71 @@ test("ingest registration normalizes account data and requires a license key", (
   );
 });
 
-test("ingest password reset validates the original card and matching new password", () => {
+test("ingest password reset requires the registered phone and original card", () => {
   assert.deepEqual(parseIngestPasswordResetRequest({
     phone: "186 2877 7821",
     licenseKey: " xt-ingest-abcd-efgh-jkmn ",
-    newPassword: "replacement-password-123",
-    confirmPassword: "replacement-password-123"
+    newPassword: "new-password-123",
+    confirmPassword: "new-password-123"
   }), {
     phone: "+8618628777821",
     licenseKey: "xt-ingest-abcd-efgh-jkmn",
-    newPassword: "replacement-password-123"
+    newPassword: "new-password-123"
   });
 
   assert.throws(
     () => parseIngestPasswordResetRequest({
       phone: "18628777821",
       licenseKey: "",
-      newPassword: "replacement-password-123",
-      confirmPassword: "replacement-password-123"
+      newPassword: "new-password-123",
+      confirmPassword: "new-password-123"
     }),
-    /请输入小董AI卡密/
+    /请输入原小董AI卡密/
   );
   assert.throws(
     () => parseIngestPasswordResetRequest({
       phone: "18628777821",
       licenseKey: "XT-INGEST-ABCD-EFGH-JKMN",
-      newPassword: "short",
-      confirmPassword: "short"
+      newPassword: "x".repeat(INGEST_PASSWORD_MIN_LENGTH - 1),
+      confirmPassword: "x".repeat(INGEST_PASSWORD_MIN_LENGTH - 1)
     }),
-    new RegExp(`至少需要 ${INGEST_PASSWORD_MIN_LENGTH} 位`)
+    /至少需要/
   );
   assert.throws(
     () => parseIngestPasswordResetRequest({
       phone: "18628777821",
       licenseKey: "XT-INGEST-ABCD-EFGH-JKMN",
-      newPassword: "a".repeat(INGEST_PASSWORD_MAX_LENGTH + 1),
-      confirmPassword: "a".repeat(INGEST_PASSWORD_MAX_LENGTH + 1)
+      newPassword: "x".repeat(INGEST_PASSWORD_MAX_LENGTH + 1),
+      confirmPassword: "x".repeat(INGEST_PASSWORD_MAX_LENGTH + 1)
     }),
-    new RegExp(`不能超过 ${INGEST_PASSWORD_MAX_LENGTH} 位`)
+    /不能超过/
   );
   assert.throws(
     () => parseIngestPasswordResetRequest({
       phone: "18628777821",
       licenseKey: "XT-INGEST-ABCD-EFGH-JKMN",
-      newPassword: "replacement-password-123",
+      newPassword: "new-password-123",
       confirmPassword: "different-password"
     }),
     /两次输入的新密码不一致/
+  );
+});
+
+test("ingest account reactivation accepts an original account and a new card", () => {
+  assert.deepEqual(parseIngestAccountReactivationRequest({
+    phone: "186 2877 7821",
+    licenseKey: " xt-user-abcd-efgh-jkmn "
+  }), {
+    phone: "+8618628777821",
+    licenseKey: "xt-user-abcd-efgh-jkmn"
+  });
+
+  assert.throws(
+    () => parseIngestAccountReactivationRequest({
+      phone: "18628777821",
+      licenseKey: ""
+    }),
+    /请输入新小董AI卡密/
   );
 });
 
@@ -114,7 +133,7 @@ test("register route activates before session creation and compensates failed ac
   assert.match(route, /redirectTarget: "\/admin-ingest\?app=ingest-admin&platform=web"/);
 });
 
-test("ingest reset route accepts the bound active user or ingest card", () => {
+test("ingest reset route verifies the original redeemed card and applies the chosen password", () => {
   const route = readFileSync("app/api/ingest/auth/reset-password/route.ts", "utf8");
 
   assert.match(route, /appType === "user_app" \|\| appType === "ingest_admin"/);
@@ -123,22 +142,55 @@ test("ingest reset route accepts the bound active user or ingest card", () => {
   assert.match(route, /hasRedeemedLicenseForAppType\(user\.id, appType\)/);
   assert.match(route, /namespace: "ingest-auth-password-reset"/);
   assert.match(route, /limit: 5/);
-  assert.match(route, /passwordHash/);
+  assert.match(route, /hashPassword\(input\.newPassword\)/);
   assert.match(route, /prisma\.session\.deleteMany/);
-  assert.match(route, /手机号或小董AI卡密验证失败/);
+  assert.match(route, /手机号或原小董AI卡密验证失败/);
+  assert.doesNotMatch(route, /verifyIngestSmsPasswordResetChallenge|短信验证码/);
+  assert.doesNotMatch(route, /123456789|DEFAULT_INGEST_RESET_PASSWORD/);
   assert.doesNotMatch(route, /prisma\.licenseKey\.(?:update|delete)/);
+});
+
+test("ingest account reactivation preserves account type and creates a session last", () => {
+  const route = readFileSync("app/api/ingest/auth/reactivate-account/route.ts", "utf8");
+  const licenseCore = readFileSync("lib/auth/license.ts", "utf8");
+  const redeemIndex = route.indexOf("await redeemLicenseKey");
+  const sessionIndex = route.indexOf("createSession(account.id");
+
+  assert.match(route, /appType !== "user_app" && appType !== "ingest_admin"/);
+  assert.match(route, /hasUserRedeemedLicenseHistoryForAppType\(user\.id, appType\)/);
+  assert.match(licenseCore, /hasUserRedeemedLicenseHistoryForAppType[\s\S]*license\.appType === requiredAppType/);
+  assert.match(route, /status: LicenseKeyStatus\.UNUSED/);
+  assert.match(route, /redeemedByUserId: null/);
+  assert.match(route, /expiresAt: \{ gt: new Date\(\) \}/);
+  assert.match(route, /activatedUser\.id !== user\.id/);
+  assert.match(route, /nextHistoryScope !== originalHistoryScope/);
+  assert.match(route, /access\.accessTier === "none"/);
+  assert.match(route, /namespace: "ingest-auth-account-reactivation"/);
+  assert.match(route, /limit: 5/);
+  assert.match(route, /appType === "user_app"[\s\S]*\? "\/app"[\s\S]*: "\/admin-ingest\?app=ingest-admin&platform=web"/);
+  assert.match(route, /setIngestPortalCookie\(appUser, request, access\)/);
+  assert.ok(redeemIndex >= 0 && sessionIndex > redeemIndex, "session must be created only after reactivation succeeds");
+  assert.doesNotMatch(route, /verifyPassword|passwordHash/);
 });
 
 test("ingest auth UI exposes register activation and password recovery only in ingest pages", () => {
   const portal = readFileSync("components/enterprise-admin/IngestSaasAuthPortal.tsx", "utf8");
   const forgotPage = readFileSync("app/ingest/forgot-password/page.tsx", "utf8");
+  const reactivatePage = readFileSync("app/ingest/reactivate/page.tsx", "utf8");
   const middleware = readFileSync("middleware.ts", "utf8");
 
-  assert.match(portal, /type IngestAuthMode = "login" \| "register" \| "activate" \| "reset"/);
+  assert.match(portal, /type IngestAuthMode = "login" \| "register" \| "activate" \| "reset" \| "reactivate"/);
   assert.match(portal, /cta: "注册并激活"/);
   assert.match(portal, /mode !== "register"/);
-  assert.match(portal, /mode === "activate" \|\| mode === "register" \|\| mode === "reset"/);
+  assert.match(portal, /mode === "activate" \|\| mode === "register"/);
   assert.match(portal, /\/api\/ingest\/auth\/reset-password/);
+  assert.doesNotMatch(portal, /password-reset-code|短信验证码|获取验证码/);
+  assert.match(portal, /title: "找回小董AI密码"/);
+  assert.match(portal, /cta: "设置新密码"/);
+  assert.match(portal, /newPassword: password/);
+  assert.match(portal, /confirmPassword/);
+  assert.doesNotMatch(portal, /默认密码|123456789/);
+  assert.match(portal, /\? "原小董AI卡密"/);
   assert.match(portal, /忘记密码？/);
   assert.match(portal, /import adminIngestLogo from "@\/assets\/admin-ingest\/web-logo\.png"/);
   assert.match(portal, /src=\{adminIngestLogo\}/);
@@ -147,13 +199,19 @@ test("ingest auth UI exposes register activation and password recovery only in i
   assert.doesNotMatch(portal, /src="\/brand\/xiaodong-ai-logo\.png"/);
   assert.match(portal, /title: "登录小董AI"/);
   assert.match(portal, /title: "找回小董AI密码"/);
-  assert.match(portal, /原小董AI卡密/);
   assert.match(portal, /用户端／投喂端卡密/);
   assert.doesNotMatch(portal, /找回投喂端密码|原投喂端卡密/);
   assert.match(portal, /passwordReset=1/);
+  assert.match(portal, /\/api\/ingest\/auth\/reactivate-account/);
+  assert.match(portal, /使用新卡直接恢复/);
+  assert.match(portal, /新小董AI卡密/);
+  assert.match(portal, /safeNextPath\(data\.redirectTarget \?\? null\)/);
   assert.match(forgotPage, /IngestSaasAuthPortal mode="reset"/);
+  assert.match(reactivatePage, /IngestSaasAuthPortal mode="reactivate"/);
   assert.match(middleware, /publicExactPaths[\s\S]*"\/ingest\/forgot-password"/);
   assert.match(middleware, /isSafeNextPath[\s\S]*"\/ingest\/forgot-password"/);
+  assert.match(middleware, /publicExactPaths[\s\S]*"\/ingest\/reactivate"/);
+  assert.match(middleware, /isSafeNextPath[\s\S]*"\/ingest\/reactivate"/);
 });
 
 test("invalid card dialog exposes original-account recovery and isolated new registration", () => {

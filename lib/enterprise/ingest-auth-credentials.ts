@@ -85,7 +85,7 @@ export function parseIngestPasswordResetRequest(body: unknown) {
 
   const record = body as Record<string, unknown>;
   const phone = readPhone(record);
-  const licenseKey = readLicenseKey(record, "小董AI卡密");
+  const licenseKey = readLicenseKey(record, "原小董AI卡密");
   const newPassword = readString(record, "newPassword", "new_password");
   const confirmPassword = readString(record, "confirmPassword", "confirm_password");
 
@@ -103,6 +103,19 @@ export function parseIngestPasswordResetRequest(body: unknown) {
     phone,
     licenseKey,
     newPassword
+  };
+}
+
+export function parseIngestAccountReactivationRequest(body: unknown) {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("请求体必须是 JSON 对象。");
+  }
+
+  const record = body as Record<string, unknown>;
+
+  return {
+    phone: readPhone(record),
+    licenseKey: readLicenseKey(record, "新小董AI卡密")
   };
 }
 
