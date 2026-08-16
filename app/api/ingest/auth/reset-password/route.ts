@@ -20,7 +20,7 @@ import { hasDatabaseUrl } from "@/lib/server-config";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const RESET_FAILED_MESSAGE = "手机号或小董AI卡密验证失败，请检查后重试。";
+const RESET_FAILED_MESSAGE = "手机号或原小董AI卡密验证失败，请检查后重试。";
 
 function resetUnauthorized() {
   return new UnauthorizedError(RESET_FAILED_MESSAGE);
