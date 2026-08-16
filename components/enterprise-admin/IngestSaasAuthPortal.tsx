@@ -20,6 +20,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { unwrapApiResponse } from "@/lib/api/client";
+import { getIngestLoginErrorMessage } from "@/lib/enterprise/ingest-login-error";
 import { INGEST_LICENSE_REACTIVATION_EVENT_KEY } from "@/components/enterprise-admin/IngestLicenseInvalidGate";
 import adminIngestLogo from "@/assets/admin-ingest/web-logo.png";
 
@@ -462,7 +463,13 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
 
       goNext(hasIngestPortalAccess);
     } catch (caughtError) {
-      setError(caughtError instanceof Error ? caughtError.message : "网络错误，请稍后重试。");
+      setError(
+        mode === "login"
+          ? getIngestLoginErrorMessage(caughtError)
+          : caughtError instanceof Error
+            ? caughtError.message
+            : "网络错误，请稍后重试。"
+      );
     } finally {
       setLoading(false);
     }

@@ -66,8 +66,12 @@ export async function POST(request: Request) {
       }
     });
 
-    if (!user || !(await verifyPassword(input.password, user.passwordHash))) {
-      throw new UnauthorizedError("手机号或密码错误。");
+    if (!user) {
+      throw new UnauthorizedError("账号错误。");
+    }
+
+    if (!(await verifyPassword(input.password, user.passwordHash))) {
+      throw new UnauthorizedError("密码错误。");
     }
 
     if (!user.isActive) {
