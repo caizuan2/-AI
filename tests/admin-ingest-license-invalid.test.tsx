@@ -366,9 +366,12 @@ function testDialogAndLifecycleWiring() {
   assert.match(markup, /role="alertdialog"/);
   assert.match(markup, /aria-modal="true"/);
   assert.match(markup, /卡密已失效/);
-  assert.match(markup, /知识投喂、上传和资料管理功能已暂停/);
+  assert.doesNotMatch(markup, /知识投喂、上传和资料管理功能已暂停/);
+  assert.doesNotMatch(markup, /如需恢复完整投喂端/);
+  assert.doesNotMatch(markup, /新账号不会继承原账号历史/);
   assert.match(markup, /重新激活/);
   assert.match(markup, /切换账号/);
+  assert.match(markup, /注册新账号/);
   assert.match(markup, /href="\/ingest\/activate\?reactivate=1&amp;reason=invalid&amp;required=ingest_admin&amp;next=%2Fadmin-ingest"/);
   assert.doesNotMatch(markup, /关闭|XT-INGEST-|token|userId/);
   assert.equal((markup.match(/卡密已失效/g) ?? []).length, 1);

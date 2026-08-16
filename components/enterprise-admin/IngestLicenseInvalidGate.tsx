@@ -80,7 +80,6 @@ export function IngestLicenseInvalidDialog({
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="ingest-license-invalid-title"
-        aria-describedby="ingest-license-invalid-description"
         className="w-full max-w-md rounded-3xl border border-white/70 bg-white p-6 shadow-[0_28px_90px_rgba(15,23,42,.28)] sm:p-8"
       >
         <span className="grid h-12 w-12 place-items-center rounded-2xl bg-rose-50 text-rose-700 ring-1 ring-rose-100">
@@ -90,16 +89,6 @@ export function IngestLicenseInvalidDialog({
         <h2 id="ingest-license-invalid-title" className="mt-5 text-2xl font-semibold text-slate-950">
           {title}
         </h2>
-        <p id="ingest-license-invalid-description" className="mt-3 text-sm leading-6 text-slate-600">
-          知识投喂、上传和资料管理功能已暂停，但原账号的历史记录与知识资料不会被清除。请使用新的未使用卡密重新激活。
-        </p>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          如需恢复完整投喂端，请使用 XT-INGEST 卡密；XT-USER 只恢复聊天版权限。
-        </p>
-        <p className="mt-2 text-sm leading-6 text-slate-600">
-          也可以切换账号后，用新手机号和新卡密注册全新账号；新账号不会继承原账号历史。
-        </p>
-
         <div className="mt-7 grid gap-3 sm:grid-cols-2">
           <a
             href={getActivateHref(invalidCode)}

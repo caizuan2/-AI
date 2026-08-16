@@ -87,6 +87,10 @@ assert.match(invalidGate, /nextTier && nextTier !== accessTierRef\.current[\s\S]
 assert.match(authPortal, /请登录原手机号账号后更换卡密，不要重新注册/);
 assert.match(authPortal, /更换卡密不会创建新账号，也不会清除原账号的历史记录和知识资料/);
 assert.match(authPortal, /当前原账号：\{maskAccountPhone\(currentAccount\.phone\)\}/);
+assert.ok(authPortal.includes(">小董AI<"));
+assert.match(authPortal, /如需恢复小董AI，请使用 XT-INGEST 卡密/);
+assert.match(authPortal, /新卡密（小董AI请使用 XT-INGEST）/);
+assert.doesNotMatch(authPortal, /AI 投喂 SaaS|完整投喂端/);
 assert.match(authPortal, /data\.userId !== currentAccount\.id/);
 assert.match(authPortal, /!data\.historyScope \|\| !permission \|\| permission === "none"/);
 assert.match(authPortal, /window\.localStorage\.setItem/);

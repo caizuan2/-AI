@@ -491,7 +491,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
             <Sparkles className="h-5 w-5" />
           </span>
           <div>
-            <p className="text-base font-semibold">AI 投喂 SaaS</p>
+            <p className="text-base font-semibold">小董AI</p>
             <p className="text-xs text-slate-300">Admin Ingest Portal</p>
           </div>
         </div>
@@ -513,7 +513,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               <span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#111816] text-white">
                 <Sparkles className="h-5 w-5" />
               </span>
-              <h1 className="mt-4 text-2xl font-semibold">AI 投喂 SaaS</h1>
+              <h1 className="mt-4 text-2xl font-semibold">小董AI</h1>
             </div>
           ) : null}
 
@@ -580,7 +580,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
               ) : null}
               {mode === "activate" && reactivationRequested && currentAccount ? (
                 <div role="status" className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm leading-6 text-emerald-900">
-                  当前原账号：{maskAccountPhone(currentAccount.phone)}。如需恢复完整投喂端，请使用 XT-INGEST 卡密。
+                  当前原账号：{maskAccountPhone(currentAccount.phone)}。如需恢复小董AI，请使用 XT-INGEST 卡密。
                 </div>
               ) : null}
               {passwordReset ? (
@@ -666,7 +666,7 @@ export function IngestSaasAuthPortal({ mode }: { mode: IngestAuthMode }) {
                     {mode === "reset"
                       ? "原小董AI卡密"
                       : mode === "activate" && reactivationRequested && requiresFullIngest
-                        ? "新卡密（完整投喂端请使用 XT-INGEST）"
+                        ? "新卡密（小董AI请使用 XT-INGEST）"
                         : "用户端／投喂端卡密"}
                   </span>
                   <span className="mt-2 flex h-11 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3">
