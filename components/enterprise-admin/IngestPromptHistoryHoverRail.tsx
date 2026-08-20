@@ -446,10 +446,12 @@ export function IngestPromptHistoryHoverRail({
             aria-label="历史提示词"
             onClick={(event) => event.stopPropagation()}
             style={{
-              paddingTop: "env(safe-area-inset-top)",
-              paddingBottom: "env(safe-area-inset-bottom)"
+              paddingTop: "max(0px, env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px))",
+              paddingBottom: "max(0px, env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px))",
+              WebkitTextSizeAdjust: "100%",
+              textSizeAdjust: "100%"
             }}
-            className="ml-auto flex h-full w-[min(86vw,360px)] flex-col overflow-hidden rounded-l-[24px] border-l border-neutral-200 bg-white shadow-[-24px_0_80px_rgba(15,23,42,0.25)]"
+            className="ml-auto flex h-full min-h-0 w-[min(86vw,360px)] flex-col overflow-hidden rounded-l-[24px] border-l border-neutral-200 bg-white shadow-[-24px_0_80px_rgba(15,23,42,0.25)]"
           >
             <div className="flex items-center justify-between border-b border-[#f0f0ed] px-4 py-3">
               <div className="flex items-center gap-2">

@@ -513,7 +513,10 @@ async function main() {
   assert.match(routeSource, /enqueue\("visible"/);
   assert.match(routeSource, /enqueue\("status"/);
   assert.match(routeSource, /response\.ok \? "final" : "error"/);
-  assert.match(routeSource, /producer: executeRequest/);
+  assert.match(
+    routeSource,
+    /producer:\s*async \(signal, onProgressEvent\)[\s\S]*executeRequest\(signal, onProgressEvent\)[\s\S]*stopRuntimeLeaseHeartbeat\(\)[\s\S]*activeRequest\.unregister\(\)/
+  );
   assert.match(routeSource, /onProgressEvent: onDoubaoProgressEvent/);
   assert.match(routeSource, /input\.platform === "apk"/);
   assert.match(

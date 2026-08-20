@@ -3,6 +3,7 @@ import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth
 import {
   AdminIngestConversationSyncRevisionConflictError,
   clearAdminIngestConversationRequestRuntimeStatus,
+  markAdminIngestConversationRequestTerminalStatus,
   markAdminIngestConversationRequestGenerating,
   markAdminIngestConversationRequestVisibleCompleted,
   mergeAdminIngestConversationSyncMessages,
@@ -10,6 +11,9 @@ import {
   readAdminIngestConversationSyncSnapshot,
   writeAdminIngestConversationSyncState
 } from "@/lib/enterprise/admin-ingest-conversation-sync-store";
+import {
+  cancelAdminIngestActiveRequest
+} from "@/lib/enterprise/admin-ingest-request-cancellation-store";
 import {
   mergeAdminIngestConversationRuntimeStatusMaps
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
@@ -276,6 +280,10 @@ export async function PATCH(request: Request) {
     if (
       body.operation === "mark_runtime_generating"
       || body.operation === "mark_runtime_visible_completed"
+      || body.operation === "request_runtime_stop"
+      || body.operation === "mark_runtime_stopped"
+      || body.operation === "mark_runtime_failed"
+      || body.operation === "mark_runtime_timed_out"
       || body.operation === "clear_runtime_status"
     ) {
       if (typeof body.requestId !== "string" || !body.requestId.trim()) {
@@ -286,27 +294,75 @@ export async function PATCH(request: Request) {
         );
       }
 
+      const conversationId = body.conversationId.trim();
+      const requestId = body.requestId.trim();
       const occurredAt = typeof body.occurredAt === "number"
         && Number.isFinite(body.occurredAt)
         && body.occurredAt >= 0
         ? body.occurredAt
         : undefined;
+      let activeRequestCancelled = false;
+      let stopApplied: boolean | undefined;
       const runtimeResult = body.operation === "mark_runtime_generating"
         ? await markAdminIngestConversationRequestGenerating(actor.id, {
-            conversationId: body.conversationId,
-            requestId: body.requestId,
+            conversationId,
+            requestId,
             startedAt: occurredAt
           })
         : body.operation === "mark_runtime_visible_completed"
           ? await markAdminIngestConversationRequestVisibleCompleted(actor.id, {
-              conversationId: body.conversationId,
-              requestId: body.requestId,
+              conversationId,
+              requestId,
               completedAt: occurredAt
             })
-          : await clearAdminIngestConversationRequestRuntimeStatus(actor.id, {
-              conversationId: body.conversationId,
-              requestId: body.requestId
-            });
+          : body.operation === "request_runtime_stop"
+            ? await (async () => {
+                const requested = await markAdminIngestConversationRequestTerminalStatus(actor.id, {
+                  conversationId,
+                  requestId,
+                  state: "stop_requested",
+                  occurredAt
+                });
+                const requestedStatus = requested.statusById[conversationId];
+
+                if (
+                  requestedStatus?.requestId !== requestId
+                  || requestedStatus.state !== "stop_requested"
+                ) {
+                  stopApplied = false;
+                  return requested;
+                }
+
+                stopApplied = true;
+                activeRequestCancelled = cancelAdminIngestActiveRequest({
+                  ownerUserId: actor.id,
+                  conversationId,
+                  requestId
+                });
+                return markAdminIngestConversationRequestTerminalStatus(actor.id, {
+                  conversationId,
+                  requestId,
+                  state: "stopped",
+                  occurredAt: Date.now()
+                });
+              })()
+            : body.operation === "mark_runtime_stopped"
+              || body.operation === "mark_runtime_failed"
+              || body.operation === "mark_runtime_timed_out"
+              ? await markAdminIngestConversationRequestTerminalStatus(actor.id, {
+                  conversationId,
+                  requestId,
+                  state: body.operation === "mark_runtime_stopped"
+                    ? "stopped"
+                    : body.operation === "mark_runtime_failed"
+                      ? "failed"
+                      : "timed_out",
+                  occurredAt
+                })
+              : await clearAdminIngestConversationRequestRuntimeStatus(actor.id, {
+                  conversationId,
+                  requestId
+                });
       const storedState = await readAdminIngestConversationSyncSnapshot(actor.id);
 
       return NextResponse.json({
@@ -314,7 +370,10 @@ export async function PATCH(request: Request) {
         success: true,
         historyScope: createAdminIngestHistoryScope(actor.id),
         revision: storedState.revision,
-        runtimeRevision: runtimeResult.revision
+        runtimeRevision: runtimeResult.revision,
+        runtimeStatus: runtimeResult.statusById[conversationId] ?? null,
+        stopApplied,
+        activeRequestCancelled
       }, {
         headers: {
           "Cache-Control": "no-store"

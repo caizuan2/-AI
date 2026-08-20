@@ -48,6 +48,10 @@ import {
   type AdminIngestPlatformContext
 } from "@/lib/enterprise/admin-ingest-platform";
 import {
+  resolveAdminIngestMobileViewportHeight,
+  shouldUseAdminIngestCompactViewport
+} from "@/lib/enterprise/admin-ingest-mobile-viewport";
+import {
   isAdminIngestApplePlatform,
   startAdminIngestAppleVoiceRecording,
   supportsAdminIngestAppleVoiceRecording,
@@ -141,13 +145,14 @@ import {
   type IngestConversationState
 } from "@/lib/enterprise/ingest-conversation-state";
 import {
-  clearAdminIngestConversationRuntimeStatus,
+  markAdminIngestConversationRequestTerminal,
   markAdminIngestConversationCompleted,
   markAdminIngestConversationGenerating,
   markAdminIngestConversationRead,
   markAdminIngestConversationVisibleCompleted,
   mergeAdminIngestConversationRuntimeStatusMaps,
   removeAdminIngestConversationRuntimeStatus,
+  type AdminIngestConversationRuntimeStatus,
   type AdminIngestConversationRuntimeStatusMap
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 import {
@@ -396,6 +401,53 @@ function readConfirmedAdminIngestSyncSnapshot(
   } catch {
     return createEmptyAdminIngestConversationSyncSnapshot();
   }
+}
+
+function useAdminIngestMobileViewportHeight(enabled: boolean) {
+  const [height, setHeight] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setHeight(null);
+      return;
+    }
+
+    const visualViewport = window.visualViewport;
+    const updateHeight = () => {
+      const nextHeight = resolveAdminIngestMobileViewportHeight({
+        visualViewportHeight: visualViewport?.height,
+        innerHeight: window.innerHeight
+      });
+
+      setHeight((current) => current === nextHeight ? current : nextHeight);
+    };
+    const updateHeightWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        updateHeight();
+      }
+    };
+
+    updateHeight();
+    visualViewport?.addEventListener("resize", updateHeight);
+    visualViewport?.addEventListener("scroll", updateHeight);
+    window.addEventListener("resize", updateHeight);
+    window.addEventListener("orientationchange", updateHeight);
+    window.addEventListener("focus", updateHeight);
+    window.addEventListener("pageshow", updateHeight);
+    document.addEventListener("visibilitychange", updateHeightWhenVisible);
+
+    return () => {
+      visualViewport?.removeEventListener("resize", updateHeight);
+      visualViewport?.removeEventListener("scroll", updateHeight);
+      window.removeEventListener("resize", updateHeight);
+      window.removeEventListener("orientationchange", updateHeight);
+      window.removeEventListener("focus", updateHeight);
+      window.removeEventListener("pageshow", updateHeight);
+      document.removeEventListener("visibilitychange", updateHeightWhenVisible);
+    };
+  }, [enabled]);
+
+  return height;
 }
 
 function isAdminIngestHistoryScopeMismatch(error: unknown) {
@@ -857,6 +909,10 @@ export function IngestModeToggle({
   const [doubaoInferencePaused, setDoubaoInferencePaused] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<IngestUploadState[]>([]);
   const [voiceState, setVoiceState] = useState<IngestVoiceState>(initialVoiceState);
+  const isAdminApkViewport = voiceState.platform === "apk";
+  const adminIngestMobileViewportHeight = useAdminIngestMobileViewportHeight(isAdminApkViewport);
+  const useCompactAdminIngestChrome = isAdminApkViewport
+    && shouldUseAdminIngestCompactViewport(adminIngestMobileViewportHeight);
   const [notifications, setNotifications] = useState<IngestNotification[]>([
     createNotification({
       type: "sync",
@@ -1922,7 +1978,11 @@ export function IngestModeToggle({
     conversationId: string;
     requestId: string;
     occurredAt?: number;
-  }) => {
+  }): Promise<{
+    ok: boolean;
+    runtimeStatus: AdminIngestConversationRuntimeStatus | null;
+    stopApplied?: boolean;
+  }> => {
     const requestBody: AdminIngestConversationRuntimeMutationRequest = input;
 
     try {
@@ -1949,7 +2009,7 @@ export function IngestModeToggle({
         )
       ) {
         reloadForAccountHistoryChange();
-        return false;
+        return { ok: false, runtimeStatus: null };
       }
 
       if (!response.ok) {
@@ -1959,14 +2019,18 @@ export function IngestModeToggle({
             ?? "INGEST_HISTORY_RUNTIME_SYNC_FAILED",
           status: response.status
         });
-        return false;
+        return { ok: false, runtimeStatus: null };
       }
 
       /* Keep the runtime pull cursor unchanged until the merged map is read. */
-      return true;
+      return {
+        ok: true,
+        runtimeStatus: payload.runtimeStatus ?? null,
+        stopApplied: payload.stopApplied
+      };
     } catch (error) {
       console.warn("[admin-ingest:conversation-sync:runtime]", error);
-      return false;
+      return { ok: false, runtimeStatus: null };
     }
   }, [reloadForAccountHistoryChange]);
 
@@ -2509,9 +2573,44 @@ export function IngestModeToggle({
             conversationStateByIdRef.current[conversationId];
 
           if (
-            status.state !== "visible_completed"
-            || !localConversationState?.activeRequestId
+            !localConversationState?.activeRequestId
             || localConversationState.activeRequestId !== status.requestId
+          ) {
+            continue;
+          }
+
+          if (
+            status.state === "stop_requested"
+            || status.state === "stopped"
+            || status.state === "failed"
+            || status.state === "timed_out"
+          ) {
+            cancelledIngestRequestIdsRef.current.add(status.requestId);
+            const controller = abortControllerByConversationRef.current[conversationId];
+
+            if (controller && !controller.signal.aborted) {
+              controller.abort(
+                new DOMException("该投喂请求已在其他设备停止。", "AbortError")
+              );
+            }
+
+            conversationStateByIdRef.current[conversationId] = failAssistantMessage(
+              localConversationState,
+              {
+                requestId: status.requestId,
+                message: status.state === "timed_out"
+                  ? "本轮生成已超时结束。"
+                  : status.state === "failed"
+                    ? "本轮生成失败，请重试。"
+                    : "本轮生成已停止。"
+              }
+            );
+            continue;
+          }
+
+          if (
+            status.state !== "visible_completed"
+            && status.state !== "completed_unread"
           ) {
             continue;
           }
@@ -2610,8 +2709,8 @@ export function IngestModeToggle({
             remoteState.conversationRuntimeStatusById[conversationId];
 
           if (
-            remoteStatus?.state === "visible_completed"
-            && remoteStatus.requestId === localConversationState.activeRequestId
+            remoteStatus?.requestId === localConversationState.activeRequestId
+            && remoteStatus.state !== "generating"
           ) {
             continue;
           }
@@ -4949,9 +5048,10 @@ export function IngestModeToggle({
         requestId
       );
       setConversationRuntimeStatusById((current) => (
-        clearAdminIngestConversationRuntimeStatus(current, {
+        markAdminIngestConversationRequestTerminal(current, {
           conversationId,
-          requestId
+          requestId,
+          state: "timed_out"
         })
       ));
       if (abortControllerByConversationRef.current[conversationId] === abortController) {
@@ -5654,7 +5754,14 @@ export function IngestModeToggle({
         records: nextRecords
       };
     } catch (error) {
-      const requestWasCancelled = isRequestCancelled();
+      const handledError = doubaoVisibleBudgetTimedOut
+        ? createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
+        : error;
+      const requestError = readAdminIngestRequestError(handledError);
+      const requestWasCancelled = isRequestCancelled()
+        || abortController.signal.aborted
+        || requestError?.errorCode === "ADMIN_INGEST_REQUEST_CANCELLED"
+        || requestError?.causeCode === "ADMIN_INGEST_REQUEST_CANCELLED";
 
       if (
         !requestWasCancelled
@@ -5677,10 +5784,6 @@ export function IngestModeToggle({
         return null;
       }
 
-      const handledError = doubaoVisibleBudgetTimedOut
-        ? createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
-        : error;
-      const requestError = readAdminIngestRequestError(handledError);
       const stateDomain = getStateDomain(handledError);
       const errorCode = requestError?.errorCode
         ?? (handledError instanceof Error ? handledError.name : undefined);
@@ -5775,7 +5878,7 @@ export function IngestModeToggle({
         return null;
       }
 
-      if (abortController.signal.aborted && !doubaoVisibleBudgetTimedOut) {
+      if (requestWasCancelled && !doubaoVisibleBudgetTimedOut) {
         const nextActiveRequestId =
           activeIngestRequestIdByConversationRef.current[conversationId];
 
@@ -6003,14 +6106,27 @@ export function IngestModeToggle({
           })
         ));
       } else {
+        const requestWasStopped =
+          cancelledIngestRequestIdsRef.current.has(requestId)
+          || abortController.signal.aborted;
+        const terminalState = requestWasStopped
+          ? "stopped" as const
+          : doubaoVisibleBudgetTimedOut
+            ? "timed_out" as const
+            : "failed" as const;
         setConversationRuntimeStatusById((current) => (
-          clearAdminIngestConversationRuntimeStatus(current, {
+          markAdminIngestConversationRequestTerminal(current, {
             conversationId,
-            requestId
+            requestId,
+            state: terminalState
           })
         ));
         void persistConversationRuntimeStatusAtomically({
-          operation: "clear_runtime_status",
+          operation: terminalState === "stopped"
+            ? "mark_runtime_stopped"
+            : terminalState === "timed_out"
+              ? "mark_runtime_timed_out"
+              : "mark_runtime_failed",
           historyScope: requestHistoryScope,
           conversationId,
           requestId
@@ -6442,12 +6558,14 @@ export function IngestModeToggle({
     }
   }
 
-  function handleCancelIngest() {
+  async function handleCancelIngest() {
     const conversationId = activeConversationIdRef.current;
     const controller = abortControllerByConversationRef.current[conversationId];
     const preparationController =
       preparationAbortControllerByConversationRef.current[conversationId];
-    const requestId = activeIngestRequestIdByConversationRef.current[conversationId];
+    const runtimeStatus = conversationRuntimeStatusById[conversationId];
+    const requestId = activeIngestRequestIdByConversationRef.current[conversationId]
+      ?? (runtimeStatus?.state === "generating" ? runtimeStatus.requestId : undefined);
 
     if (preparationController && !preparationController.signal.aborted) {
       preparationController.abort(
@@ -6478,14 +6596,14 @@ export function IngestModeToggle({
       return;
     }
 
-    if (!controller || !requestId) {
+    if (!requestId) {
       setNoticeMessage("当前没有正在进行的附件识别或模型生成。");
       return;
     }
 
     if (
       cancelledIngestRequestIdsRef.current.has(requestId)
-      || controller.signal.aborted
+      || controller?.signal.aborted
     ) {
       setNoticeMessage("正在停止本轮附件识别与生成...");
       return;
@@ -6498,6 +6616,165 @@ export function IngestModeToggle({
       requestId
     );
     const conversationState = conversationStateByIdRef.current[conversationId];
+    setConversationRuntimeStatusById((current) => (
+      markAdminIngestConversationRequestTerminal(current, {
+        conversationId,
+        requestId,
+        state: "stop_requested"
+      })
+    ));
+    if (controller && !controller.signal.aborted) {
+      controller.abort(
+        new DOMException("用户已停止本轮附件识别与生成。", "AbortError")
+      );
+    }
+    const stopRequest = persistConversationRuntimeStatusAtomically({
+      operation: "request_runtime_stop",
+      historyScope: historyScopeRef.current,
+      conversationId,
+      requestId
+    });
+    const stopResult = await stopRequest;
+    const stopConfirmed = controller ? true : stopResult.ok;
+
+    if (controller) {
+      if (!stopResult.ok) {
+          showActionToast({
+            type: "warning",
+            title: "本机已停止，跨端同步暂未完成",
+            description: "其他设备可能稍后才会更新停止状态。"
+          });
+      }
+    }
+
+    if (
+      stopResult.ok
+      && stopResult.stopApplied === false
+      && stopResult.runtimeStatus
+    ) {
+      cancelledIngestRequestIdsRef.current.delete(requestId);
+      const effectiveStatus = stopResult.runtimeStatus;
+      setConversationRuntimeStatusById((current) => ({
+        ...current,
+        [conversationId]: effectiveStatus
+      }));
+
+      if (effectiveStatus.requestId !== requestId) {
+        if (conversationState) {
+          conversationStateByIdRef.current[conversationId] = failAssistantMessage(
+            conversationState,
+            {
+              requestId,
+              message: "本轮生成已停止，当前对话已进入新一轮生成。"
+            }
+          );
+        }
+        if (
+          controller
+          && abortControllerByConversationRef.current[conversationId] === controller
+        ) {
+          delete abortControllerByConversationRef.current[conversationId];
+        }
+        if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
+          delete activeIngestRequestIdByConversationRef.current[conversationId];
+        }
+        setNoticeMessage("旧请求已结束，当前对话已进入新一轮生成。");
+        setIsParsing(
+          countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+        );
+        showActionToast({
+          type: "info",
+          title: "当前对话已进入新一轮"
+        });
+        return;
+      }
+
+      if (
+        conversationState
+        && (
+          effectiveStatus.state === "visible_completed"
+          || effectiveStatus.state === "completed_unread"
+        )
+      ) {
+        const currentMessages = conversationMessagesByIdRef.current[conversationId] ?? [];
+        const completedMessage = [...currentMessages].reverse().find(
+          (message) =>
+            message.role === "assistant"
+            && message.id === `assistant-result-${requestId}`
+        );
+        conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
+          conversationState,
+          {
+            requestId,
+            messageId: completedMessage?.id,
+            content: completedMessage?.content || undefined,
+            meta: {
+              metadataState: completedMessage?.metadataState ?? "pending"
+            }
+          }
+        );
+        setNoticeMessage("本轮回答已在停止请求到达前完成。");
+        showActionToast({
+          type: "info",
+          title: "本轮回答已经完成"
+        });
+      } else if (conversationState) {
+        conversationStateByIdRef.current[conversationId] = failAssistantMessage(
+          conversationState,
+          {
+            requestId,
+            message: effectiveStatus.state === "timed_out"
+              ? "本轮生成已超时结束。"
+              : effectiveStatus.state === "failed"
+                ? "本轮生成失败，请重试。"
+                : "本轮生成已停止。"
+          }
+        );
+      }
+
+      setIsParsing(
+        countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+      );
+      return;
+    }
+
+    if (!stopConfirmed && !controller) {
+      cancelledIngestRequestIdsRef.current.delete(requestId);
+      if (conversationState) {
+        conversationStateByIdRef.current[conversationId] = conversationState;
+      }
+      setConversationRuntimeStatusById((current) => {
+        const pendingStatus = current[conversationId];
+
+        if (
+          pendingStatus?.state !== "stop_requested"
+          || pendingStatus.requestId !== requestId
+        ) {
+          return current;
+        }
+
+        if (runtimeStatus) {
+          return {
+            ...current,
+            [conversationId]: runtimeStatus
+          };
+        }
+
+        const next = { ...current };
+        delete next[conversationId];
+        return next;
+      });
+      setNoticeMessage("停止请求未送达，请检查网络后重试。");
+      setIsParsing(
+        countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
+      );
+      showActionToast({
+        type: "warning",
+        title: "暂未停止生成",
+        description: "当前设备无法连接到生成任务，请检查网络后再次点击停止。"
+      });
+      return;
+    }
 
     if (conversationState) {
       conversationStateByIdRef.current[conversationId] = failAssistantMessage(
@@ -6509,18 +6786,13 @@ export function IngestModeToggle({
       );
     }
     setConversationRuntimeStatusById((current) => (
-      clearAdminIngestConversationRuntimeStatus(current, {
+      markAdminIngestConversationRequestTerminal(current, {
         conversationId,
-        requestId
+        requestId,
+        state: "stopped"
       })
     ));
-    void persistConversationRuntimeStatusAtomically({
-      operation: "clear_runtime_status",
-      historyScope: historyScopeRef.current,
-      conversationId,
-      requestId
-    });
-    if (abortControllerByConversationRef.current[conversationId] === controller) {
+    if (controller && abortControllerByConversationRef.current[conversationId] === controller) {
       delete abortControllerByConversationRef.current[conversationId];
     }
     if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
@@ -6535,9 +6807,6 @@ export function IngestModeToggle({
     setInput("");
     setIsParsing(
       countActiveIngestConversationRequests(conversationStateByIdRef.current) > 0
-    );
-    controller.abort(
-      new DOMException("用户已停止本轮附件识别与生成。", "AbortError")
     );
     setGptFallbackToast(null);
     setErrorMessage("");
@@ -7718,7 +7987,17 @@ export function IngestModeToggle({
   }, [accessTier]);
 
   return (
-    <div className="relative h-screen w-full overflow-hidden bg-[#f7f7f6] text-[#191919]">
+    <div
+      className={[
+        "relative w-full overflow-hidden bg-[#f7f7f6] text-[#191919]",
+        isAdminApkViewport
+          ? "h-screen supports-[height:100svh]:h-svh supports-[height:100dvh]:h-dvh"
+          : "h-screen"
+      ].join(" ")}
+      style={isAdminApkViewport && adminIngestMobileViewportHeight !== null
+        ? { height: `${adminIngestMobileViewportHeight}px` }
+        : undefined}
+    >
       {accessTier === "full_ingest" && activeRailKey !== "experts" ? (
         <div className="absolute left-[calc(68px+var(--admin-ingest-sidebar-width,300px)+24px)] top-5 z-50 flex rounded-full border border-[#ededeb] bg-[#f2f2f1]/95 p-1 text-sm font-semibold shadow-[0_10px_30px_rgba(15,23,42,0.04)] backdrop-blur max-md:left-1/2 max-md:-translate-x-1/2">
           <button
@@ -7783,6 +8062,7 @@ export function IngestModeToggle({
           ? (
             <IngestChatGPTShell
               {...sharedProps}
+              compactMobileViewport={useCompactAdminIngestChrome}
               userName={userName}
               welcomeVariant={accessTier === "chat_only" ? "chat_only" : "full_ingest"}
             />

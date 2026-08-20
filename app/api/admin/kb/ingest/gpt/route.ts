@@ -42,8 +42,18 @@ import {
 } from "@/lib/enterprise/admin-ingest-auth";
 import { matchesAdminIngestHistoryScope } from "@/lib/enterprise/admin-ingest-history-scope";
 import {
-  markAdminIngestConversationRequestVisibleCompleted
+  markAdminIngestConversationRequestGenerating,
+  markAdminIngestConversationRequestVisibleCompleted,
+  readAdminIngestConversationRuntimeStatusSnapshot
 } from "@/lib/enterprise/admin-ingest-conversation-sync-store";
+import {
+  isAdminIngestConversationRequestCancelled
+} from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
+import {
+  cancelAdminIngestActiveRequest,
+  isAdminIngestRequestCancellationPending,
+  registerAdminIngestActiveRequest
+} from "@/lib/enterprise/admin-ingest-request-cancellation-store";
 import {
   hasCanonicalAdminIngestGroundingScope,
   retrieveAdminIngestGrounding,
@@ -97,6 +107,8 @@ function jsonUtf8(data: unknown, status = 200) {
 }
 
 const ADMIN_INGEST_SSE_HEARTBEAT_MS = 12_000;
+const ADMIN_INGEST_RUNTIME_LEASE_HEARTBEAT_MS = 30_000;
+const ADMIN_INGEST_RUNTIME_CANCELLATION_POLL_MS = 2_000;
 
 type SafeDoubaoFailureDetails = {
   parseStage?: string;
@@ -163,7 +175,7 @@ function encodeAdminIngestSseEvent(event: string, data: unknown) {
 }
 
 function createDoubaoBrowserSseResponse(input: {
-  request: Request;
+  signal: AbortSignal;
   requestId: string;
   selectedModelLabel: string;
   requestedModel: string;
@@ -187,7 +199,7 @@ function createDoubaoBrowserSseResponse(input: {
 
   const abortProvider = () => {
     if (!providerController.signal.aborted) {
-      providerController.abort(input.request.signal.reason);
+      providerController.abort(input.signal.reason);
     }
   };
   const cleanup = () => {
@@ -195,7 +207,7 @@ function createDoubaoBrowserSseResponse(input: {
       clearInterval(heartbeat);
       heartbeat = null;
     }
-    input.request.signal.removeEventListener("abort", abortProvider);
+    input.signal.removeEventListener("abort", abortProvider);
   };
   const enqueue = (event: string, data: unknown) => {
     if (closed || !streamController) {
@@ -227,10 +239,10 @@ function createDoubaoBrowserSseResponse(input: {
     }
   };
 
-  if (input.request.signal.aborted) {
+  if (input.signal.aborted) {
     abortProvider();
   } else {
-    input.request.signal.addEventListener("abort", abortProvider, { once: true });
+    input.signal.addEventListener("abort", abortProvider, { once: true });
   }
 
   const stream = new ReadableStream<Uint8Array>({
@@ -1465,6 +1477,96 @@ export async function POST(request: Request) {
     );
   }
 
+  const startRuntimeLeaseHeartbeat = () => {
+    const conversationId = input.conversationId?.trim() ?? "";
+
+    if (!actor || !conversationId) {
+      return () => undefined;
+    }
+
+    let active = true;
+    let refreshInFlight = false;
+    let cancellationReadInFlight = false;
+    const cancelLocalRequest = () => {
+      cancelAdminIngestActiveRequest({
+        ownerUserId: actor.id,
+        conversationId,
+        requestId
+      });
+    };
+    const observeCancellation = async () => {
+      if (!active || cancellationReadInFlight) {
+        return;
+      }
+
+      cancellationReadInFlight = true;
+
+      try {
+        const runtime = await readAdminIngestConversationRuntimeStatusSnapshot(actor.id);
+
+        if (isAdminIngestConversationRequestCancelled(
+          runtime.statusById[conversationId],
+          requestId
+        )) {
+          cancelLocalRequest();
+        }
+      } catch (error) {
+        console.warn("[admin-ingest:runtime-status:cancellation-poll]", {
+          requestId,
+          conversationId,
+          message: error instanceof Error ? error.message : String(error ?? "")
+        });
+      } finally {
+        cancellationReadInFlight = false;
+      }
+    };
+    const refresh = async () => {
+      if (!active || refreshInFlight) {
+        return;
+      }
+
+      refreshInFlight = true;
+
+      try {
+        const runtime = await markAdminIngestConversationRequestGenerating(actor.id, {
+          conversationId,
+          requestId,
+          startedAt: Date.now()
+        });
+
+        if (isAdminIngestConversationRequestCancelled(
+          runtime.statusById[conversationId],
+          requestId
+        )) {
+          cancelLocalRequest();
+        }
+      } catch (error) {
+        console.warn("[admin-ingest:runtime-status:heartbeat]", {
+          requestId,
+          conversationId,
+          message: error instanceof Error ? error.message : String(error ?? "")
+        });
+      } finally {
+        refreshInFlight = false;
+      }
+    };
+    const heartbeat = setInterval(() => {
+      void refresh();
+    }, ADMIN_INGEST_RUNTIME_LEASE_HEARTBEAT_MS);
+    const cancellationPoll = setInterval(() => {
+      void observeCancellation();
+    }, ADMIN_INGEST_RUNTIME_CANCELLATION_POLL_MS);
+
+    void refresh();
+    void observeCancellation();
+
+    return () => {
+      active = false;
+      clearInterval(heartbeat);
+      clearInterval(cancellationPoll);
+    };
+  };
+
   const executeRequest = async (
     signal?: AbortSignal,
     onDoubaoProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void
@@ -1472,6 +1574,31 @@ export async function POST(request: Request) {
   const enterpriseActor = toEnterpriseActor(actor);
   const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
   const effectiveTenantId = enterpriseActor?.tenantId ?? input.tenantId;
+  const ensureRequestIsActive = async () => {
+    if (
+      signal?.aborted
+      || isAdminIngestRequestCancellationPending({
+        ownerUserId: effectiveActorId,
+        conversationId: input.conversationId ?? "",
+        requestId
+      })
+    ) {
+      throw new DOMException("该投喂请求已被停止。", "AbortError");
+    }
+
+    if (actor && input.conversationId) {
+      const runtime = await readAdminIngestConversationRuntimeStatusSnapshot(actor.id);
+
+      if (isAdminIngestConversationRequestCancelled(
+        runtime.statusById[input.conversationId],
+        requestId
+      )) {
+        throw new DOMException("该投喂请求已被停止。", "AbortError");
+      }
+    }
+  };
+
+  await ensureRequestIsActive();
   const canonicalAgentScope = hasCanonicalAdminIngestGroundingScope({
     tenantId: effectiveTenantId,
     agentId: input.agentId ?? "",
@@ -1632,8 +1759,19 @@ export async function POST(request: Request) {
       signal,
       deferMetadata: modelOption.provider === "doubao-pro"
         && Boolean(onDoubaoProgressEvent),
-      onProgressEvent: onDoubaoProgressEvent
+        onProgressEvent: onDoubaoProgressEvent
         ? (event) => {
+            if (
+              signal?.aborted
+              || isAdminIngestRequestCancellationPending({
+                ownerUserId: effectiveActorId,
+                conversationId: input.conversationId ?? "",
+                requestId
+              })
+            ) {
+              return;
+            }
+
             if (
               event.type === "visible_reply"
               && findUnsupportedAdminIngestAttachmentClaim(event.replyMarkdown, attachmentEvidence)
@@ -1645,6 +1783,8 @@ export async function POST(request: Request) {
           }
         : undefined
     });
+
+    await ensureRequestIsActive();
 
     if (modelOption.provider === "doubao-pro") {
       console.info("[admin-ingest:doubao-request-stage]", {
@@ -1719,6 +1859,10 @@ export async function POST(request: Request) {
         ...publishedMemoryContext.warnings.map((warning) => `adminIngestPublishedMemory:warning:${warning}`)
       ]
     };
+    // A stop request can arrive while the completed provider payload is being
+    // normalized. Re-check before publishing any terminal state or persistence
+    // side effect so a stopped request cannot resurrect its reply afterwards.
+    await ensureRequestIsActive();
     const doubaoVisibleCompletion = rawResult.provider === "doubao"
       && rawResult.diagnostics.includes("doubao:metadataDeferred:true")
       && actor
@@ -1747,6 +1891,7 @@ export async function POST(request: Request) {
     const doubaoMetadataFailureCode = isDoubaoTrainingResult
       ? readDiagnosticValue(rawResult.diagnostics, "doubao:metadataFailureCode:")
       : null;
+    await ensureRequestIsActive();
     const trainingLog = hasFullIngestAccess && enterpriseActor && hasDatabaseUrl() && structuredForTrainingLog
       ? await createEnterpriseIngestLog(enterpriseActor, {
         input: input.input,
@@ -1772,6 +1917,8 @@ export async function POST(request: Request) {
     const trainingRecords = hasFullIngestAccess && enterpriseActor && hasDatabaseUrl()
       ? await listEnterpriseTrainingRecords(enterpriseActor)
       : trainingLog?.record ? [trainingLog.record] : [];
+
+    await ensureRequestIsActive();
 
     logGptRoute({
       requestId,
@@ -1843,6 +1990,29 @@ export async function POST(request: Request) {
       sourceType: rawResult.sourceType
     });
   } catch (error) {
+    if (
+      signal?.aborted
+      || isAdminIngestRequestCancellationPending({
+        ownerUserId: effectiveActorId,
+        conversationId: input.conversationId ?? "",
+        requestId
+      })
+    ) {
+      return jsonUtf8({
+        ok: false,
+        success: false,
+        retryable: false,
+        fallback: false,
+        fallbackUsed: false,
+        code: "ADMIN_INGEST_REQUEST_CANCELLED",
+        errorCode: "ADMIN_INGEST_REQUEST_CANCELLED",
+        causeCode: "ADMIN_INGEST_REQUEST_CANCELLED",
+        message: "本轮投喂已停止。",
+        userMessage: "本轮投喂已停止。",
+        requestId
+      }, 499);
+    }
+
     const errorCode = toGptFallbackErrorCode(error);
     const affinityMismatch = error instanceof AdminIngestModelAffinityError ? error.details : null;
     const isTimeout = errorCode === "OPENAI_TIMEOUT" || errorCode === "DEEPSEEK_TIMEOUT" || errorCode === "DOUBAO_TIMEOUT" || errorCode === "QWEN_TIMEOUT" || errorCode === "KIMI_TIMEOUT";
@@ -2028,19 +2198,48 @@ export async function POST(request: Request) {
       historyScope: progressHistoryScope
     });
 
+    const activeRequest = registerAdminIngestActiveRequest({
+      ownerUserId: progressActorId,
+      conversationId: input.conversationId ?? "",
+      requestId,
+      clientSignal: request.signal
+    });
+    const stopRuntimeLeaseHeartbeat = startRuntimeLeaseHeartbeat();
+
     return createDoubaoBrowserSseResponse({
-      request,
+      signal: activeRequest.signal,
       requestId,
       selectedModelLabel: streamModelRuntime.displayModelLabel,
       requestedModel: streamModelRuntime.actualModel,
       onProgressSnapshot: (progress) => {
         updateAdminIngestDoubaoProgress(requestId, progress);
       },
-      producer: executeRequest
+      producer: async (signal, onProgressEvent) => {
+        try {
+          return await executeRequest(signal, onProgressEvent);
+        } finally {
+          stopRuntimeLeaseHeartbeat();
+          activeRequest.unregister();
+        }
+      }
     });
   }
 
-  return executeRequest(request.signal);
+  const requestOwnerId = actor?.id ?? input.userId ?? "local-admin-ingest-dev";
+  const activeRequest = registerAdminIngestActiveRequest({
+    ownerUserId: requestOwnerId,
+    conversationId: input.conversationId ?? "",
+    requestId,
+    clientSignal: request.signal
+  });
+  const stopRuntimeLeaseHeartbeat = startRuntimeLeaseHeartbeat();
+
+  try {
+    return await executeRequest(activeRequest.signal);
+  } finally {
+    stopRuntimeLeaseHeartbeat();
+    activeRequest.unregister();
+  }
 }
 
 export async function GET(request: Request) {

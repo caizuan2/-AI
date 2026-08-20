@@ -7,6 +7,7 @@ import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conver
 import {
   mergeAdminIngestConversationRuntimeStatusMaps,
   normalizeAdminIngestConversationRuntimeStatusMap,
+  type AdminIngestConversationRuntimeStatus,
   type AdminIngestConversationRuntimeStatusMap
 } from "@/lib/enterprise/admin-ingest-conversation-runtime-status";
 
@@ -30,6 +31,8 @@ export type AdminIngestConversationSyncResponse = {
   revision?: number;
   currentRevision?: number;
   runtimeRevision?: number;
+  runtimeStatus?: AdminIngestConversationRuntimeStatus | null;
+  stopApplied?: boolean;
   state?: AdminIngestConversationSyncSnapshot;
   conversationId?: string;
   messages?: IngestChatMessage[];
@@ -56,6 +59,10 @@ export type AdminIngestConversationRuntimeMutationRequest = {
   operation:
     | "mark_runtime_generating"
     | "mark_runtime_visible_completed"
+    | "request_runtime_stop"
+    | "mark_runtime_stopped"
+    | "mark_runtime_failed"
+    | "mark_runtime_timed_out"
     | "clear_runtime_status";
   historyScope: string;
   conversationId: string;

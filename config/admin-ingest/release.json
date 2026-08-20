@@ -1,9 +1,9 @@
 {
-  "version": "1.0.35",
-  "build": 135,
-  "minimum_build": 135,
+  "version": "1.0.36",
+  "build": 136,
+  "minimum_build": 136,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.35-build.135",
+  "release_tag": "release/admin-ingest-1.0.36-build.136",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,11 +11,11 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "管理员投喂版冷启动优先显示账号隔离且完整校验的本地历史快照，后台继续同步服务器",
-    "停止后立即清理本轮思考状态、提示词与附件，发送成功后同步清空输入框",
-    "Web 与 Windows EXE 的图片、相机和附件入口恢复原生文件选择响应",
-    "微信长截图的精准回复优先识别最近有效对话区域，完整正文仍保留整图识别",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.35 Build 135",
+    "APK、Windows EXE 与 Web 可跨端请求停止，停止终态按账号、对话和请求精确同步",
+    "清理历史遗留生成状态，避免计时无限增长、停止后分片继续显示或旧请求覆盖新请求",
+    "投喂端 APK 兼容新旧 Android WebView、系统安全区、三键导航、软键盘和横竖屏",
+    "超大系统字体下固定保留顶部栏目、底部输入栏及发送或停止主操作",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.36 Build 136",
     "用户端、超级管理员、AI Team OS、DeepSeek、豆包 Provider 与模型原文输出保持不变"
   ]
 }

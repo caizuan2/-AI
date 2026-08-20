@@ -78,7 +78,11 @@ function testStaleRuntimeStatusIsNotRestoredForever() {
   }, now);
 
   assert.equal(normalized.fresh?.state, "generating");
-  assert.equal(normalized.stale, undefined);
+  assert.deepEqual(normalized.stale, {
+    state: "timed_out",
+    requestId: "request-stale",
+    updatedAt: 5 * 60 * 1_000 + 1
+  });
 }
 
 function testVisibleCompletionCannotRegressToGenerating() {
