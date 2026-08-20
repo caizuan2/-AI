@@ -27,6 +27,10 @@ const gptRoute = readFileSync(
   "app/api/admin/kb/ingest/gpt/route.ts",
   "utf8"
 );
+const androidMainActivity = readFileSync(
+  "android/app/src/main/java/com/aiknowledge/chat/MainActivity.java",
+  "utf8"
+);
 
 const menuSource = shell.slice(
   shell.indexOf("const moreToolActions"),
@@ -46,6 +50,16 @@ assert.match(
   /moreToolActions\.filter\(\(action\) => \([\s\S]*canUseFullIngestTools \|\| !action\.requiresFullIngestAccess/
 );
 assert.match(shell, /rounded-\[28px\][\s\S]*shadow-2xl shadow-slate-200\/80/);
+assert.match(
+  shell,
+  /"relative z-20 shrink-0 overflow-visible bg-white\/80"/,
+  "底部输入栏不能裁剪向上展开的附件菜单。"
+);
+assert.doesNotMatch(
+  shell,
+  /"relative z-20 shrink-0 overflow-hidden bg-white\/80"/,
+  "附件菜单祖先使用 overflow-hidden 时，点击加号后菜单会被完全隐藏。"
+);
 assert.match(shell, /h-11 w-11[\s\S]*rounded-full bg-slate-100 text-slate-950/);
 assert.match(shell, /text-base font-normal text-slate-950/);
 assert.match(modeToggle, /canUseFullIngestTools: accessTier === "full_ingest"/);
@@ -76,6 +90,11 @@ assert.match(
   shell,
   /action\.key === "file"[\s\S]*\? undefined[\s\S]*: "wechat_conversation"/
 );
+assert.match(
+  androidMainActivity,
+  /setWebChromeClient\(new AppWebChromeClient\(getBridge\(\)\)\)/
+);
+assert.match(androidMainActivity, /public boolean onShowFileChooser\(/);
 
 assert.match(parseRoute, /const chatAccess = await requireAdminIngestChatAccess\(\)/);
 assert.match(parseRoute, /accessTier = chatAccess\.access\.accessTier/);

@@ -48,6 +48,11 @@ assert.match(
 assert.match(shellSource, /overflow-y-auto overscroll-contain/);
 assert.match(
   shellSource,
+  /"relative z-20 shrink-0 overflow-visible bg-white\/80"/,
+  "固定底栏需要允许附件菜单向消息区方向展开。"
+);
+assert.match(
+  shellSource,
   /compactMobileViewport \? "max-h-\[72px\]" : "max-h-32"/
 );
 assert.match(

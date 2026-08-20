@@ -3075,7 +3075,7 @@ export function IngestChatGPTShell({
         {!isExpertMarketplace ? (
         <div
           className={[
-            "relative z-20 shrink-0 overflow-hidden bg-white/80",
+            "relative z-20 shrink-0 overflow-visible bg-white/80",
             isAdminApk && compactMobileViewport ? "px-3 pb-2 pt-1" : "px-5 pb-4 pt-2"
           ].join(" ")}
           style={isAdminApk
