@@ -53,7 +53,6 @@ try {
   $env:ADMIN_INGEST_APP_VERSION = $ReleaseInfo.version
   $env:ADMIN_INGEST_APP_BUILD = $ReleaseInfo.buildNumber
   $env:ADMIN_WEB_RELEASE_SHA = $ReleaseHead
-  $env:NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA = $ReleaseHead
   $env:ADMIN_INGEST_RELEASE_BUILD = "1"
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("install", "--include=dev")
   Invoke-ProjectCommand -FilePath "npm" -Arguments @("run", "typecheck")

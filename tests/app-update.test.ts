@@ -33,7 +33,7 @@ import committedReleaseInfo from "../public/releases/latest.json";
 import adminRelease from "../config/admin-ingest/release.json";
 import versionInfo from "../version.json";
 
-const adminWebReleaseSha = "admin-ingest-hotfix-test-sha";
+const adminWebReleaseSha = "admin-ingest-rollback-test-sha";
 const releaseInfo = {
   ...committedReleaseInfo,
   apps: {
