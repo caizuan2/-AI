@@ -16,6 +16,7 @@ export const APP_WEB_RELEASE_SHA =
   || resolvedVersionInfo.web_release_sha
   || resolvedVersionInfo.webReleaseSha
   || "";
+export const ADMIN_APP_WEB_RELEASE_SHA = process.env.NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA || "";
 
 export const USER_APP_KIND = "user";
 export const ADMIN_APP_KIND = "admin";

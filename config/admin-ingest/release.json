@@ -1,9 +1,9 @@
 {
-  "version": "1.0.37",
-  "build": 137,
-  "minimum_build": 137,
+  "version": "1.0.38",
+  "build": 138,
+  "minimum_build": 138,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.37-build.137",
+  "release_tag": "release/admin-ingest-1.0.38-build.138",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -16,6 +16,7 @@
     "微信整图识别保持绿色气泡为本人、白色气泡为客户，完整上下文不裁剪",
     "模型原始 Markdown、浏览器终态与历史记录保持一致，内部推理与规则不外显",
     "保留跨端停止状态、APK 移动端兼容与附件上传菜单修复",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.37 Build 137"
+    "旧版投喂端 APK/EXE 低于最低 Build 时优先安装新包，不再循环刷新 Web 内容",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.38 Build 138"
   ]
 }
