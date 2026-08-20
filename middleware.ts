@@ -13,6 +13,7 @@ import {
   INGEST_PORTAL_COOKIE_NAME,
   verifyIngestPortalCookieValue
 } from "@/lib/enterprise/ingest-portal-cookie";
+import { buildAdminIngestPublicRedirectUrl } from "@/lib/enterprise/admin-ingest-redirect-origin";
 import { logger, getRequestIdFromHeaders, REQUEST_ID_HEADER } from "@/lib/logger";
 
 type RateLimitBucket = {
@@ -305,11 +306,8 @@ function redirectToAdminIngestEntry(request: NextRequest) {
 }
 
 function redirectToIngestLogin(request: NextRequest) {
-  const loginUrl = request.nextUrl.clone();
+  const loginUrl = buildAdminIngestPublicRedirectUrl(request, "/ingest/login");
   const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-
-  loginUrl.pathname = "/ingest/login";
-  loginUrl.search = "";
 
   if (isSafeNextPath(currentTarget)) {
     loginUrl.searchParams.set("next", currentTarget);
@@ -319,11 +317,8 @@ function redirectToIngestLogin(request: NextRequest) {
 }
 
 function redirectToIngestActivate(request: NextRequest) {
-  const activateUrl = request.nextUrl.clone();
+  const activateUrl = buildAdminIngestPublicRedirectUrl(request, "/ingest/activate");
   const currentTarget = `${request.nextUrl.pathname}${request.nextUrl.search}`;
-
-  activateUrl.pathname = "/ingest/activate";
-  activateUrl.search = "";
 
   if (isSafeNextPath(currentTarget)) {
     activateUrl.searchParams.set("next", currentTarget);
