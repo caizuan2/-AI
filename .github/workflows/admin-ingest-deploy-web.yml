@@ -147,6 +147,7 @@ jobs:
           npm run lint
           ADMIN_INGEST_RELEASE_BUILD=1 \
           ADMIN_WEB_RELEASE_SHA="$RELEASE_SHA" \
+          NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA="$RELEASE_SHA" \
           npm run build
           pm2 restart ai-knowledge-main --update-env
           sleep 3

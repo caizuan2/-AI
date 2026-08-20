@@ -4,7 +4,14 @@ import {
   type AppPlatform,
   type AppUpdateResult
 } from "./app-update";
-import { ADMIN_APP_KIND, APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA, type AppKind } from "./app-version";
+import {
+  ADMIN_APP_KIND,
+  ADMIN_APP_WEB_RELEASE_SHA,
+  APP_BUILD,
+  APP_VERSION,
+  APP_WEB_RELEASE_SHA,
+  type AppKind
+} from "./app-version";
 
 interface CheckCurrentAppUpdateOptions {
   appKind: AppKind;
@@ -57,6 +64,7 @@ interface RuntimeWindowLike {
 }
 
 interface GetCurrentAppVersionOptions {
+  appKind?: AppKind;
   runtimeWindow?: RuntimeWindowLike;
   search?: string;
   storage?: RuntimeStorageLike;
@@ -208,7 +216,11 @@ export function getCurrentAppVersion(options: GetCurrentAppVersionOptions = {}):
   return {
     version: explicitVersion ?? (legacyNativeShell ? "旧安装包" : APP_VERSION),
     build: explicitBuild ?? (legacyNativeShell || staleNativeVersion ? 0 : APP_BUILD),
-    webReleaseSha: explicitWebReleaseSha ?? APP_WEB_RELEASE_SHA
+    webReleaseSha:
+      explicitWebReleaseSha
+      ?? (options.appKind === ADMIN_APP_KIND && ADMIN_APP_WEB_RELEASE_SHA
+        ? ADMIN_APP_WEB_RELEASE_SHA
+        : APP_WEB_RELEASE_SHA)
   };
 }
 
@@ -221,6 +233,7 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
   const userAgent = options.userAgent ?? runtimeWindow?.navigator?.userAgent ?? "";
   const nativeShell = detectNativeShell(runtimeWindow, userAgent);
   const current = getCurrentAppVersion({
+    appKind: options.appKind,
     runtimeWindow,
     search: options.search,
     storage: options.storage,
@@ -239,6 +252,26 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
     fetcher: options.fetcher
   });
 
+  const currentBuild = options.currentBuild ?? current.build;
+  const requiresAdminPackageUpdate = Boolean(
+    options.appKind === ADMIN_APP_KIND
+    && nativeShell
+    && result.hasUpdate
+    && result.latest
+    && (
+      currentBuild < result.latest.minimum_build
+      || (result.latest.force_update && currentBuild < result.latest.build)
+    )
+  );
+
+  if (requiresAdminPackageUpdate) {
+    return {
+      ...result,
+      forceUpdate: true,
+      updateKind: "package"
+    };
+  }
+
   if (
     options.appKind === ADMIN_APP_KIND
     && nativeShell
@@ -249,21 +282,6 @@ export async function checkCurrentAppUpdate(options: CheckCurrentAppUpdateOption
       ...result,
       forceUpdate: true,
       updateKind: "web"
-    };
-  }
-
-  const currentBuild = options.currentBuild ?? current.build;
-  if (
-    options.appKind === ADMIN_APP_KIND
-    && nativeShell
-    && result.hasUpdate
-    && result.latest
-    && currentBuild < result.latest.minimum_build
-  ) {
-    return {
-      ...result,
-      forceUpdate: true,
-      updateKind: "package"
     };
   }
 
