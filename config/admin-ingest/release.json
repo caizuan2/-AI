@@ -1,9 +1,9 @@
 {
-  "version": "1.0.37",
-  "build": 137,
-  "minimum_build": 137,
+  "version": "1.0.39",
+  "build": 139,
+  "minimum_build": 139,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.37-build.137",
+  "release_tag": "release/admin-ingest-1.0.39-build.139",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,11 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端新增 DeepSeek V4 Flash 快速模式，DeepSeek V4 Pro 保持默认深度模式",
-    "Flash、Pro 与豆包均显式选择并校验实际模型，禁止静默回退或模型错位",
-    "微信整图识别保持绿色气泡为本人、白色气泡为客户，完整上下文不裁剪",
-    "模型原始 Markdown、浏览器终态与历史记录保持一致，内部推理与规则不外显",
-    "保留跨端停止状态、APK 移动端兼容与附件上传菜单修复",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.37 Build 137"
+    "修复投喂端 Android APK 未登录或未激活时错误跳转到手机本机 localhost 的问题",
+    "投喂端登录与激活保持阿里云公网地址，并完整保留原页面返回路径",
+    "DeepSeek V4 Pro、DeepSeek V4 Flash、豆包、用户端、超级管理员与知识规则保持不变",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.39 Build 139"
   ]
 }
