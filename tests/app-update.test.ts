@@ -29,8 +29,31 @@ import {
   resolveUpdateAppKind
 } from "../components/EnterpriseAutoUpdate";
 import { APP_BUILD, APP_VERSION, APP_WEB_RELEASE_SHA } from "../lib/app-version";
-import releaseInfo from "../public/releases/latest.json";
+import committedReleaseInfo from "../public/releases/latest.json";
+import adminRelease from "../config/admin-ingest/release.json";
 import versionInfo from "../version.json";
+
+const adminWebReleaseSha = "admin-ingest-hotfix-test-sha";
+const releaseInfo = {
+  ...committedReleaseInfo,
+  apps: {
+    ...committedReleaseInfo.apps,
+    admin: {
+      ...committedReleaseInfo.apps.admin,
+      active_version: adminRelease.version,
+      versions: [{
+        ...committedReleaseInfo.apps.admin.versions[0],
+        ...adminRelease,
+        web_release_sha: adminWebReleaseSha
+      }]
+    }
+  },
+  admin: {
+    ...committedReleaseInfo.admin,
+    ...adminRelease,
+    web_release_sha: adminWebReleaseSha
+  }
+};
 
 const parsedManifest = normalizeLatestReleaseManifest(releaseInfo);
 const appStoreManifest = normalizeAppStoreManifest(releaseInfo);
