@@ -34,7 +34,7 @@ function testCancelClearsOnlyTheMatchingConversationQueue() {
   queue = startRequest(queue, "conversation-a", "request-a");
   queue = enqueueRequest(queue, {
     conversationId: "conversation-a",
-    prompt: "不应在停止后重新发送",
+    visibleInput: "不应在停止后重新发送",
     createdAt: 1
   });
   queue = startRequest(queue, "conversation-b", "request-b");
@@ -49,7 +49,7 @@ function testCancelClearsOnlyTheMatchingConversationQueue() {
 
   const queuedAfterCompletion = enqueueRequest(cancelled, {
     conversationId: "conversation-a",
-    prompt: "新一轮待发送内容",
+    visibleInput: "新一轮待发送内容",
     createdAt: 2
   });
   const lateStop = cancelRequest(

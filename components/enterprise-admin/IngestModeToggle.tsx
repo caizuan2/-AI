@@ -42,6 +42,7 @@ import {
   type IngestVoiceState,
   type IngestUploadState
 } from "@/lib/enterprise/ingest-client";
+import { createAdminIngestLatencyTrace } from "@/lib/enterprise/admin-ingest-latency-trace";
 import {
   defaultAdminIngestPlatformContext,
   resolveAdminIngestPlatformContext,
@@ -85,10 +86,14 @@ import {
 } from "@/lib/enterprise/ingest-model-options";
 import {
   ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY,
+  beginAdminIngestModelSelection,
+  canCommitAdminIngestModelSelection,
+  isAdminIngestModelSelectionPending,
   migrateLegacyAdminIngestModelPreference,
   parseAdminIngestModelPreferences,
   resolveAdminIngestAgentModel,
   setAdminIngestAgentModel,
+  type AdminIngestPendingModelSelection,
   type AdminIngestModelPreferencesByAgent
 } from "@/lib/enterprise/ingest-model-preferences";
 import { shouldDisableDoubaoForHealth } from "@/lib/enterprise/ingest-model-availability";
@@ -122,9 +127,12 @@ import {
 import { sanitizeGptOSUserMessage } from "@/lib/enterprise/gpt-os-fallback-normalizer";
 import { buildAdminIngestFailurePresentation } from "@/lib/enterprise/admin-ingest-failure-presentation";
 import {
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
   ATTACHMENT_CONTENT_MISSING_CODE,
   assessAdminIngestAttachmentEvidence,
   buildAttachmentContentMissingMessage,
+  hasAdminIngestWechatTailRoleEvidenceInsufficient,
   readAttachmentEvidenceErrorMessage
 } from "@/lib/enterprise/ingest-attachment-evidence";
 import {
@@ -214,6 +222,7 @@ import {
   createIngestRequestId,
   getRetryDelayMs,
   isRetryableIngestError,
+  shouldRestoreAdminIngestEvidencePreflightRequest,
   shouldIgnoreRequestError,
   shouldIgnoreRequestResult
 } from "@/lib/enterprise/ingest-request-controller";
@@ -233,12 +242,14 @@ import {
 import type { IngestExpert } from "@/lib/enterprise/mock-experts";
 import { resolvePublicExpertScope } from "@/lib/enterprise/public-expert-scope";
 import {
+  AdminIngestRequestError,
   isStrictSelectedModelFailure,
   readAdminIngestRequestError
 } from "@/lib/enterprise/admin-ingest-request-error";
 import {
   excludeFailedIngestMessages,
   replaceIngestRetryOutcome,
+  resolveIngestRegenerateRequest,
   resolveIngestSendAttachments
 } from "@/lib/enterprise/ingest-retry-state";
 import {
@@ -955,6 +966,8 @@ export function IngestModeToggle({
   const conversationMessagesByIdRef = useRef<Record<string, IngestChatMessage[]>>({});
   const conversationDraftsByIdRef = useRef<Record<string, IngestKnowledgeDraft>>({});
   const conversationLastInputByIdRef = useRef<Record<string, string>>({});
+  const selectedModelRef = useRef(DEFAULT_INGEST_MODEL_OPTION.label);
+  const pendingModelSelectionRef = useRef<AdminIngestPendingModelSelection | null>(null);
   const draftRef = useRef<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const messagesRef = useRef<IngestChatMessage[]>([]);
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
@@ -1029,6 +1042,7 @@ export function IngestModeToggle({
   useEffect(() => {
     activeAgentIdRef.current = activeAgent.id;
     doubaoHealthRequestVersionRef.current += 1;
+    pendingModelSelectionRef.current = null;
   }, [activeAgent.id]);
 
   useEffect(() => {
@@ -1102,6 +1116,7 @@ export function IngestModeToggle({
     });
 
     setModelPreferencesByAgent(migratedModelPreferences);
+    selectedModelRef.current = initialModelLabel;
     setSelectedModel(initialModelLabel);
     setResolvedModel(initialModelLabel);
     writeLocalJson(ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY, migratedModelPreferences);
@@ -1516,6 +1531,7 @@ export function IngestModeToggle({
       agentId: activeAgent.id
     });
 
+    selectedModelRef.current = agentModelLabel;
     setSelectedModel(agentModelLabel);
     setResolvedModel(agentModelLabel);
     setGptHealthStatus(null);
@@ -3919,6 +3935,9 @@ export function IngestModeToggle({
     setActiveConversationScope(nextConversation.id);
     setDraft(ingestChatInitialDraft);
     setMessages([]);
+    setErrorMessage("");
+    setGptFallbackToast(null);
+    setActionToast(null);
     setActiveRailKey("chat");
     setMode("chat");
     setNoticeMessage(`已为 ${targetAgent.name} 新建对话，可开始投喂。`);
@@ -4547,8 +4566,24 @@ export function IngestModeToggle({
 
   async function handleSend(textOverride?: string, options?: IngestSendOptions): Promise<IngestActionResult | null> {
     const value = (textOverride ?? input).trim();
-    const currentModelLabel = options?.modelLabel ?? selectedModelLabel;
+    const pendingModelSelection = pendingModelSelectionRef.current;
+
+    if (isAdminIngestModelSelectionPending(pendingModelSelection, activeAgent.id)) {
+      const message = `正在确认 ${pendingModelSelection?.modelLabel ?? "所选模型"} 连接状态，请等待检查完成后再发送或重新生成。`;
+
+      setNoticeMessage(message);
+      setErrorMessage("");
+      showActionToast({
+        type: "info",
+        title: "模型切换尚未完成",
+        description: message
+      });
+      return null;
+    }
+
+    const currentModelLabel = options?.modelLabel ?? selectedModelRef.current;
     const requestModelOption = getIngestModelOptionByLabel(currentModelLabel) ?? selectedModelOption;
+
     const requestHistoryScope = historyScopeRef.current;
 
     if (
@@ -4627,6 +4662,15 @@ export function IngestModeToggle({
     const baseInput = value || (draftAttachments.length > 0
       ? `附件投喂：${draftAttachments.map((file) => file.fileName).join("、")}`
       : "");
+    const buildVisibleInput = (isWechatConversation: boolean) => value || (
+      isWechatConversation
+        ? wechatOutputMode === "full_answer"
+          ? "微信截图识别并输出完整答案"
+          : "微信截图识别并回复客户"
+        : draftAttachments.length > 0
+          ? "附件投喂"
+          : ""
+    );
     const buildEffectiveInput = (isWechatConversation: boolean) => isWechatConversation
       ? [
         value || "请根据这张微信对话截图回复客户。",
@@ -4637,7 +4681,9 @@ export function IngestModeToggle({
           : "只输出可直接发送给客户的答案正文，不要输出识别结果、分析、回复思路、标题、前言、角色标签或模型信息。"
       ].join("\n")
       : baseInput;
+    let visibleInput = buildVisibleInput(isWechatConversationReply);
     let effectiveInput = buildEffectiveInput(isWechatConversationReply);
+    let preparedDeepSeekUploads: IngestUploadState[] | null = null;
 
     if (!effectiveInput) {
       setNoticeMessage("请输入投喂任务或先选择附件后再发送。");
@@ -4647,6 +4693,10 @@ export function IngestModeToggle({
 
     const conversationId = ensureConversationForSend(activeAgent);
     const sendAttemptAt = Date.now();
+    const latencyTrace = createAdminIngestLatencyTrace({
+      traceId: createIngestRequestId(),
+      startedAt: sendAttemptAt
+    });
     const hasActiveConversationRequest = Boolean(conversationStateByIdRef.current[conversationId]?.activeRequestId)
       || Boolean(preparingConversationIdsRef.current[conversationId])
       || !canStartRequest(requestQueueRef.current, conversationId);
@@ -4660,11 +4710,11 @@ export function IngestModeToggle({
 
       requestQueueRef.current = enqueueRequest(recordSendAttempt(requestQueueRef.current, conversationId, sendAttemptAt), {
         conversationId,
-        prompt: effectiveInput,
+        visibleInput,
         createdAt: sendAttemptAt
       });
       if (!options?.preserveComposer) {
-        setInput(effectiveInput);
+        setInput(visibleInput);
       }
       setNoticeMessage("上一条还在生成，请稍候。已保留最后一条输入，生成完成后可继续发送。");
       setErrorMessage("");
@@ -4677,7 +4727,7 @@ export function IngestModeToggle({
       >= MAX_CONCURRENT_INGEST_CONVERSATIONS
     ) {
       if (!options?.preserveComposer) {
-        setInput(effectiveInput);
+        setInput(visibleInput);
       }
       setNoticeMessage(`当前已有 ${MAX_CONCURRENT_INGEST_CONVERSATIONS} 个对话在生成，请等待任一对话完成后再发送。`);
       setErrorMessage("");
@@ -4699,17 +4749,89 @@ export function IngestModeToggle({
       setErrorMessage("");
 
       try {
+        const imagePersistenceStartedAt = Date.now();
         const imagePersistenceController = new AbortController();
         preparationAbortControllerByConversationRef.current[conversationId] =
           imagePersistenceController;
         accountScopedMutationAbortControllersRef.current.add(imagePersistenceController);
 
         try {
-          composerUploads = await persistAdminIngestUploadImages(
+          const uploadsBeforePersistence = composerUploads;
+          const imagePersistencePromise = (async () => await persistAdminIngestUploadImages(
             composerUploads,
             requestHistoryScope,
             imagePersistenceController.signal
+          ))().catch((error: unknown) => {
+            imagePersistenceController.abort(error);
+            throw error;
+          });
+          const shouldOverlapDeepSeekAttachmentParsing = (
+            (requestModelOption.provider === "deepseek-pro" || requestModelOption.provider === "deepseek-flash")
+            && uploadsBeforePersistence.length > 0
           );
+          const deepSeekAttachmentProvider = requestModelOption.provider === "deepseek-flash"
+            ? "deepseek-flash" as const
+            : "deepseek-pro" as const;
+          const overlappingAttachmentParseStartedAt = Date.now();
+          const overlappingAttachmentParsePromise = shouldOverlapDeepSeekAttachmentParsing
+            ? parseUploadedFilesForGpt(uploadsBeforePersistence, 2, {
+              modelProvider: deepSeekAttachmentProvider,
+              preferredModel: requestModelOption.defaultModel,
+              selectedModelLabel: requestModelOption.label,
+              strictModelAffinity: true
+            }, {
+              signal: imagePersistenceController.signal,
+              traceId: latencyTrace.traceId,
+              pageBatchSize: 4
+            }).then(
+              (files) => ({ files, error: null }),
+              (error: unknown) => ({ files: null, error })
+            )
+            : Promise.resolve({ files: null, error: null });
+          const [persistedUploads, overlappingAttachmentParse] = await Promise.all([
+            imagePersistencePromise,
+            overlappingAttachmentParsePromise
+          ]);
+          composerUploads = persistedUploads;
+
+          if (overlappingAttachmentParse.files) {
+            const persistedUploadById = new Map(
+              persistedUploads.map((file) => [file.id, file] as const)
+            );
+            preparedDeepSeekUploads = overlappingAttachmentParse.files.map((file) => {
+              const persistedFile = persistedUploadById.get(file.id);
+
+              return persistedFile?.persistentUrl
+                ? {
+                  ...file,
+                  previewUrl: persistedFile.previewUrl,
+                  persistentUrl: persistedFile.persistentUrl
+                }
+                : file;
+            });
+            latencyTrace.mark(
+              "attachment_parse_completed",
+              overlappingAttachmentParseStartedAt
+            );
+          } else if (
+            imagePersistenceController.signal.aborted
+            || overlappingAttachmentParse.error instanceof AdminIngestFileParseCancelledError
+            || (
+              overlappingAttachmentParse.error instanceof DOMException
+              && overlappingAttachmentParse.error.name === "AbortError"
+            )
+          ) {
+            const cancellationReason = imagePersistenceController.signal.reason;
+
+            throw cancellationReason instanceof DOMException
+              && cancellationReason.name === "AbortError"
+              ? cancellationReason
+              : new DOMException(
+                "Admin ingest DeepSeek attachment preparation cancelled.",
+                "AbortError"
+              );
+          }
+          latencyTrace.mark("image_persist_completed", imagePersistenceStartedAt);
         } finally {
           accountScopedMutationAbortControllersRef.current.delete(imagePersistenceController);
         }
@@ -4732,6 +4854,7 @@ export function IngestModeToggle({
         wechatOutputMode = normalizeAdminIngestWechatOutputMode(
           draftAttachments.find((file) => file.recognitionMode === "wechat_conversation")?.wechatOutputMode
         );
+        visibleInput = buildVisibleInput(isWechatConversationReply);
         effectiveInput = buildEffectiveInput(isWechatConversationReply);
       } catch (error) {
         if (isAdminIngestHistoryScopeMismatch(error)) {
@@ -4794,9 +4917,9 @@ export function IngestModeToggle({
         ?? conversationMessagesById[conversationId]
         ?? [];
     const contextSourceMessages = excludeFailedIngestMessages(
-      requestMessagesSnapshot
+      requestMessagesSnapshot.filter((message) => message.id !== options?.failedMessageId)
     );
-    const requestId = createIngestRequestId();
+    const requestId = latencyTrace.traceId;
     const requestStartedAt = Date.now();
     const assistantMessageId = `assistant-result-${requestId}`;
     const abortController = new AbortController();
@@ -4815,7 +4938,7 @@ export function IngestModeToggle({
     if (!options?.reuseUserMessageId) {
       conversationState = appendUserMessage(conversationState, {
         id: `user-${Date.now()}`,
-        content: effectiveInput,
+        content: visibleInput,
         requestId,
         meta: {
           model: currentModelLabel,
@@ -4903,11 +5026,11 @@ export function IngestModeToggle({
     );
 
     activeIngestRequestIdByConversationRef.current[conversationId] = requestId;
-    conversationLastInputByIdRef.current[conversationId] = effectiveInput;
+    conversationLastInputByIdRef.current[conversationId] = visibleInput;
     requestQueueRef.current = startRequest(requestQueueRef.current, conversationId, requestId);
     abortControllerByConversationRef.current[conversationId] = abortController;
     ingestSuccessLockByConversationRef.current[conversationId] = false;
-    markConversationUsed(conversationId, effectiveInput, draftAttachments[0]?.fileName);
+    markConversationUsed(conversationId, visibleInput, draftAttachments[0]?.fileName);
     setIsParsing(true);
     setNoticeMessage(`${requestModelOption.label} 正在深度分析资料...`);
     setErrorMessage("");
@@ -4919,13 +5042,7 @@ export function IngestModeToggle({
         {
           id: userMessageId,
           role: "user",
-          content: value || (
-            isWechatConversationReply
-              ? wechatOutputMode === "full_answer"
-                ? "微信截图识别并输出完整答案"
-                : "微信截图识别并回复客户"
-              : "附件投喂"
-          ),
+          content: visibleInput,
           time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
           attachments: draftAttachments,
           source: "admin_ingest",
@@ -4967,6 +5084,7 @@ export function IngestModeToggle({
 
     let successRendered = false;
     let visibleReplyRendered = false;
+    let firstVisibleReplyMarked = false;
     let visibleReplySnapshot = "";
     let deferredDoubaoMetadataRecovery: {
       draft: IngestKnowledgeDraft;
@@ -5097,18 +5215,24 @@ export function IngestModeToggle({
     try {
       if (composerUploads.length > 0) {
         const selectedFileModelProvider = requestModelOption.provider;
+        const attachmentParseStartedAt = Date.now();
 
-        if (selectedFileModelProvider !== "deepseek-pro" && selectedFileModelProvider !== "doubao-pro") {
+        if (
+          selectedFileModelProvider !== "deepseek-pro"
+          && selectedFileModelProvider !== "deepseek-flash"
+          && selectedFileModelProvider !== "doubao-pro"
+        ) {
           throw new Error("Web 投喂端附件解析仅支持当前选定的 DeepSeek Pro 或 Doubao Pro 模型。");
         }
 
-        const preparedUploads = await parseUploadedFilesForGpt(composerUploads, 1, {
+        const preparedUploads = preparedDeepSeekUploads ?? await parseUploadedFilesForGpt(composerUploads, 2, {
           modelProvider: selectedFileModelProvider,
           preferredModel: requestModelOption.defaultModel,
           selectedModelLabel: requestModelOption.label,
           strictModelAffinity: true
         }, {
           signal: abortController.signal,
+          traceId: latencyTrace.traceId,
           pageBatchSize: 4,
           onProgress: (progress) => {
             if (
@@ -5132,6 +5256,9 @@ export function IngestModeToggle({
             );
           }
         });
+        if (!preparedDeepSeekUploads) {
+          latencyTrace.mark("attachment_parse_completed", attachmentParseStartedAt);
+        }
         resumableUploads = preparedUploads;
 
         outgoingAttachments = preparedUploads.map((file) => ({
@@ -5144,13 +5271,47 @@ export function IngestModeToggle({
           syncTarget: [...platformContext.syncTarget]
         }));
         const parsedAsWechatConversation = hasAdminIngestWechatConversationAttachment(outgoingAttachments);
+        const tailRoleEvidenceInsufficient = hasAdminIngestWechatTailRoleEvidenceInsufficient(
+          outgoingAttachments
+        );
 
         if (!isWechatConversationReply && parsedAsWechatConversation) {
           isWechatConversationReply = true;
           wechatOutputMode = normalizeAdminIngestWechatOutputMode(
             outgoingAttachments.find((file) => file.recognitionMode === "wechat_conversation")?.wechatOutputMode
           );
+          visibleInput = buildVisibleInput(true);
           effectiveInput = buildEffectiveInput(true);
+        }
+
+        const shouldRestoreEvidencePreflightRequest =
+          shouldRestoreAdminIngestEvidencePreflightRequest({
+            activeRequestId: activeIngestRequestIdByConversationRef.current[conversationId],
+            requestId,
+            cancelled: isRequestCancelled(),
+            conversationId,
+            requestConversationId: conversationState.conversationId,
+            selectedProvider: selectedFileModelProvider,
+            requestProvider: requestModelOption.provider,
+            evidenceInsufficient: tailRoleEvidenceInsufficient
+          });
+
+        if (!isCurrentRequest() && shouldRestoreEvidencePreflightRequest) {
+          conversationStateByIdRef.current[conversationId] = markRequestActive(
+            ensureConversationState(conversationStateByIdRef.current[conversationId], {
+              conversationId,
+              agentId: activeAgent.id,
+              knowledgeBaseId: activeAgent.knowledgeBaseId ?? undefined,
+              messages: conversationState.messages
+            }),
+            requestId,
+            requestStartedAt
+          );
+          console.info("[admin-ingest:gpt:post-parse-request-restored]", {
+            requestId,
+            reason: "same_request_state_sync_terminal",
+            provider: requestModelOption.provider
+          });
         }
 
         if (
@@ -5158,6 +5319,18 @@ export function IngestModeToggle({
           || isRequestCancelled()
           || doubaoVisibleBudgetTimedOut
         ) {
+          console.info("[admin-ingest:gpt:post-parse-terminal]", {
+            requestId,
+            reason: isRequestCancelled()
+              ? "cancelled"
+              : doubaoVisibleBudgetTimedOut
+                ? "visible_budget_timeout"
+                : activeIngestRequestIdByConversationRef.current[conversationId] === requestId
+                  ? "conversation_state_not_current"
+                  : "request_replaced",
+            tailRoleEvidenceInsufficient,
+            provider: requestModelOption.provider
+          });
           return null;
         }
 
@@ -5167,6 +5340,24 @@ export function IngestModeToggle({
       }
 
       const attachmentEvidence = assessAdminIngestAttachmentEvidence(outgoingAttachments);
+
+      if (hasAdminIngestWechatTailRoleEvidenceInsufficient(outgoingAttachments)) {
+        throw new AdminIngestRequestError(
+          ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+          {
+            status: 422,
+            errorCode: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+            retryable: false,
+            provider: requestModelOption.provider,
+            requestedProvider: requestModelOption.provider,
+            actualProvider: null,
+            selectedModelLabel: currentModelLabel,
+            actualModel: null,
+            fallbackUsed: false,
+            requestId
+          }
+        );
+      }
 
       if (attachmentEvidence.blocking) {
         throw new Error(`${ATTACHMENT_CONTENT_MISSING_CODE}: ${buildAttachmentContentMissingMessage(attachmentEvidence)}`);
@@ -5213,9 +5404,12 @@ export function IngestModeToggle({
 
       let attempt = 0;
       let result: IngestActionResult;
+      let latestModelRequestStartedAt = Date.now();
 
       while (true) {
         try {
+          latestModelRequestStartedAt = Date.now();
+          latencyTrace.mark("model_request_started", latestModelRequestStartedAt);
           result = await sendCoreIngest({
             text: effectiveInput,
             agent: activeAgent,
@@ -5267,6 +5461,10 @@ export function IngestModeToggle({
                 }
 
                 clearDoubaoVisibleBudget();
+                if (!firstVisibleReplyMarked) {
+                  firstVisibleReplyMarked = true;
+                  latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+                }
                 conversationStateByIdRef.current[conversationId] =
                   updateAssistantMessage(
                     conversationStateByIdRef.current[conversationId],
@@ -5275,7 +5473,7 @@ export function IngestModeToggle({
                       messageId: assistantMessageId,
                       content: event.replyMarkdown,
                       meta: {
-                        provider: "doubao-pro",
+                        provider: requestModelOption.provider,
                         model: event.actualModel ?? currentModelLabel
                       }
                     }
@@ -5304,7 +5502,7 @@ export function IngestModeToggle({
                       ? activeAgent.name
                       : null,
                     model: event.actualModel ?? currentModelLabel,
-                    provider: "doubao-pro",
+                    provider: requestModelOption.provider,
                     isRestored: false,
                     isHistorical: false,
                     isStreaming: true,
@@ -5313,7 +5511,7 @@ export function IngestModeToggle({
                     status: "streaming"
                   }
                 ));
-                setRequestNoticeMessage("豆包正在生成正文...");
+                setRequestNoticeMessage(`${requestModelOption.label} 正在生成原文正文...`);
                 setRequestErrorMessage("");
               },
               onVisibleReply: (event) => {
@@ -5328,6 +5526,11 @@ export function IngestModeToggle({
                 }
 
                 clearDoubaoVisibleBudget();
+                if (!firstVisibleReplyMarked) {
+                  firstVisibleReplyMarked = true;
+                  latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+                }
+                latencyTrace.mark("model_completed", latestModelRequestStartedAt);
                 visibleReplySnapshot = event.replyMarkdown;
                 visibleReplyRendered = true;
                 conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
@@ -5337,7 +5540,7 @@ export function IngestModeToggle({
                     messageId: assistantMessageId,
                     content: event.replyMarkdown,
                     meta: {
-                      provider: "doubao-pro",
+                      provider: requestModelOption.provider,
                       model: event.actualModel ?? currentModelLabel,
                       metadataState: "pending"
                     }
@@ -5362,7 +5565,7 @@ export function IngestModeToggle({
                     agentName: activeAgent.name,
                     expertName: activeAgent.expertId ? activeAgent.name : null,
                     model: event.actualModel ?? currentModelLabel,
-                    provider: "doubao-pro",
+                    provider: requestModelOption.provider,
                     metadataState: "pending",
                     isRestored: false,
                     isHistorical: false,
@@ -5383,7 +5586,7 @@ export function IngestModeToggle({
                     conversationStateByIdRef.current
                   ) > 0
                 );
-                setRequestNoticeMessage("豆包深度思考正文已完整生成，后台正在用同一个模型整理知识草稿...");
+                setRequestNoticeMessage(`${requestModelOption.label} 深度思考原文正文已完整生成，后台正在整理知识草稿...`);
                 setRequestErrorMessage("");
               },
               onStatus: (event) => {
@@ -5481,6 +5684,10 @@ export function IngestModeToggle({
         }
       }
 
+      if (!visibleReplyRendered) {
+        latencyTrace.mark("model_completed", latestModelRequestStartedAt);
+      }
+
       if (doubaoVisibleBudgetTimedOut) {
         throw createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel);
       }
@@ -5525,8 +5732,16 @@ export function IngestModeToggle({
         : undefined;
       const metadataPausedNotice = "正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。";
 
+      if (!firstVisibleReplyMarked) {
+        firstVisibleReplyMarked = true;
+        latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+      }
+
       if (visibleReplyRendered && assistantContent !== visibleReplySnapshot) {
-        throw new Error("DOUBAO_RESPONSE_PARSE_FAILED: 豆包可见正文与最终正文不一致，已保留先前原文。");
+        const providerPrefix = requestModelOption.provider.startsWith("deepseek")
+          ? "DEEPSEEK"
+          : "DOUBAO";
+        throw new Error(`${providerPrefix}_RESPONSE_PARSE_FAILED: 可见正文与最终正文不一致，已保留先前原文。`);
       }
 
       let nextConversationState = updateAssistantMessage(conversationStateByIdRef.current[conversationId], {
@@ -5593,7 +5808,7 @@ export function IngestModeToggle({
         draftRef.current = result.draft;
         setDraft(result.draft);
         setResolvedModel(result.model ?? currentModelLabel);
-        setLastInput(effectiveInput);
+        setLastInput(visibleInput);
       }
       setRequestFallbackToast(fallbackDescription ? {
         id: `model-fallback-${Date.now()}`,
@@ -5686,9 +5901,11 @@ export function IngestModeToggle({
           occurredAt: Date.now()
         });
       commitRequestMessages(() => finalizedMessages);
+      latencyTrace.mark("terminal_committed", successAt);
       if (
         result.provider === "deepseek"
         || result.provider === "deepseek-pro"
+        || result.provider === "deepseek-flash"
       ) {
         setConversationRuntimeStatusById((current) => (
           markAdminIngestConversationVisibleCompleted(current, {
@@ -5699,6 +5916,7 @@ export function IngestModeToggle({
       }
       await completedMessagePersistence;
       await completedRuntimePersistence;
+      latencyTrace.mark("history_persist_completed", successAt);
       if (
         metadataDeferred
         && result.draft.jobId
@@ -5762,9 +5980,14 @@ export function IngestModeToggle({
         || abortController.signal.aborted
         || requestError?.errorCode === "ADMIN_INGEST_REQUEST_CANCELLED"
         || requestError?.causeCode === "ADMIN_INGEST_REQUEST_CANCELLED";
+      const caughtTailRoleUnverified =
+        requestError?.errorCode === ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE;
+      const ownsCaughtRequest =
+        activeIngestRequestIdByConversationRef.current[conversationId] === requestId;
 
       if (
         !requestWasCancelled
+        && !(caughtTailRoleUnverified && ownsCaughtRequest)
         && (
           shouldIgnoreRequestError(conversationStateByIdRef.current[conversationId], requestId)
           || !isCurrentRequest()
@@ -5834,7 +6057,7 @@ export function IngestModeToggle({
             messageId: assistantMessageId,
             content: visibleReplySnapshot,
             meta: {
-              provider: "doubao-pro",
+              provider: requestModelOption.provider,
               model: currentModelLabel,
               metadataState: "unavailable",
               warning: rawErrorMessage
@@ -5860,7 +6083,7 @@ export function IngestModeToggle({
             agentName: activeAgent.name,
             expertName: activeAgent.expertId ? activeAgent.name : null,
             model: currentModelLabel,
-            provider: "doubao-pro",
+            provider: requestModelOption.provider,
             metadataState: "unavailable",
             saveSuggestion: false,
             isRestored: false,
@@ -5943,7 +6166,9 @@ export function IngestModeToggle({
         return null;
       }
 
-      const authAccessMessage = getAuthAccessErrorMessage(handledError);
+      const authAccessMessage = stateDomain === "ingest"
+        ? null
+        : getAuthAccessErrorMessage(handledError);
 
       if (authAccessMessage) {
         console.warn("[admin-ingest:auth-access:error]", {
@@ -6040,7 +6265,7 @@ export function IngestModeToggle({
 
       // The persistent failure card is the single source of truth for generation failures.
       setRequestFallbackToast(null);
-      commitRequestMessages((current) => replaceIngestRetryOutcome(
+      const failedMessages = commitRequestMessages((current) => replaceIngestRetryOutcome(
         current,
         options?.failedMessageId,
         {
@@ -6087,6 +6312,11 @@ export function IngestModeToggle({
           status: "failed"
         }
       ));
+      void persistConversationMessagesAtomically({
+        historyScope: requestHistoryScope,
+        conversationId,
+        messages: failedMessages
+      });
       setRequestNoticeMessage(message);
       setRequestErrorMessage(message);
       return null;
@@ -6138,7 +6368,7 @@ export function IngestModeToggle({
       const queuedRequest = getNextQueuedRequest(requestQueueRef.current, conversationId);
 
       if (queuedRequest && isRequestConversationVisible()) {
-        setInput((current) => current || queuedRequest.prompt);
+        setInput((current) => current || queuedRequest.visibleInput);
       }
 
       if (activeIngestRequestIdByConversationRef.current[conversationId] === requestId) {
@@ -6366,6 +6596,39 @@ export function IngestModeToggle({
       failedMessageId,
       retryAttachments,
       modelLabel: failedMessage.model ?? selectedModelLabel,
+      preserveComposer: true
+    });
+  }
+
+  async function handleRegenerateMessage(assistantMessageId: string) {
+    if (
+      isIngestConversationRequestActive(
+        conversationStateByIdRef.current[activeConversationIdRef.current]
+      )
+    ) {
+      setNoticeMessage("上一条还在生成，请稍候再重新生成。");
+      return null;
+    }
+
+    const conversationId = activeConversationIdRef.current;
+    const committedModelLabel = selectedModelRef.current;
+    const currentMessages = conversationMessagesByIdRef.current[conversationId]
+      ?? messagesRef.current;
+    const regenerateRequest = resolveIngestRegenerateRequest(
+      currentMessages,
+      assistantMessageId
+    );
+
+    if (!regenerateRequest) {
+      setNoticeMessage("未找到可重新生成的原始问题，请重新发送一次。");
+      return null;
+    }
+
+    return handleSend(regenerateRequest.visibleInput, {
+      reuseUserMessageId: regenerateRequest.reuseUserMessageId,
+      failedMessageId: regenerateRequest.replaceAssistantMessageId,
+      retryAttachments: regenerateRequest.retryAttachments.map((file) => ({ ...file })),
+      modelLabel: committedModelLabel,
       preserveComposer: true
     });
   }
@@ -7006,55 +7269,188 @@ export function IngestModeToggle({
     const requestVersion = ++doubaoHealthRequestVersionRef.current;
     const targetAgentId = activeAgent.id;
     const nextModel = getIngestModelOptionByLabel(model);
+    const commitSelection = () => {
+      setModelPreferencesByAgent((current) => setAdminIngestAgentModel({
+        preferences: current,
+        agentId: targetAgentId,
+        modelLabel: nextModel.label
+      }));
+      selectedModelRef.current = nextModel.label;
+      setSelectedModel(nextModel.label);
+      setResolvedModel(nextModel.label);
+      setErrorMessage("");
+      setGptFallbackToast(null);
+      setGptHealthStatus(null);
+      setNoticeMessage(`当前 Agent 已切换为 ${nextModel.label}，下一次投喂开始生效；知识库、对话上下文和未提交内容保持不变。`);
+    };
 
-    if (nextModel.provider === "doubao-pro") {
-      setNoticeMessage("正在检查豆包模型连接状态...");
-      const health = await checkGptHealthStatus({
-        provider: nextModel.provider,
-        selectedModelLabel: nextModel.label,
-        preferredModel: nextModel.defaultModel,
-        testRequest: false
+    if (nextModel.provider === "deepseek-flash") {
+      const pendingSelection = beginAdminIngestModelSelection({
+        requestVersion,
+        agentId: targetAgentId,
+        modelLabel: nextModel.label
       });
 
-      if (
-        requestVersion !== doubaoHealthRequestVersionRef.current
-        || activeAgentIdRef.current !== targetAgentId
-      ) {
-        return;
-      }
-
-      const normalizedHealthProvider = normalizeIngestModelProvider(health.provider);
-
-      setUnavailableModelProviders((current) => shouldDisableDoubaoForHealth(health)
-        ? Array.from(new Set([...current, normalizedHealthProvider]))
-        : current.filter((provider) => provider !== normalizedHealthProvider));
-      setGptHealthStatus(health);
-
-      if (!health.ok) {
-        const message = sanitizeGptOSUserMessage(health.message || "豆包模型暂未连接");
-
-        setNoticeMessage(message);
-        setErrorMessage("");
-        showActionToast({
-          type: "warning",
-          title: "豆包模型暂未连接",
-          description: message
+      pendingModelSelectionRef.current = pendingSelection;
+      setNoticeMessage("正在真实检查 DeepSeek Flash 模型连接状态...");
+      try {
+        const health = await checkGptHealthStatus({
+          provider: nextModel.provider,
+          selectedModelLabel: nextModel.label,
+          preferredModel: nextModel.defaultModel
         });
-        return;
+
+        if (
+          requestVersion !== doubaoHealthRequestVersionRef.current
+          || activeAgentIdRef.current !== targetAgentId
+          || !canCommitAdminIngestModelSelection({
+            pending: pendingModelSelectionRef.current,
+            requestVersion,
+            agentId: targetAgentId,
+            modelLabel: nextModel.label
+          })
+        ) {
+          return;
+        }
+
+        setGptHealthStatus(health);
+        const healthMatchesSelection = health.ok
+          && health.requestTested === true
+          && health.requestedModel === nextModel.defaultModel
+          && health.actualModel === health.requestedModel;
+
+        if (!healthMatchesSelection) {
+          const message = sanitizeGptOSUserMessage(
+            health.message || "DeepSeek Flash 真实连接检查未返回当前指定模型，已保留原模型。"
+          );
+          setNoticeMessage(message);
+          setErrorMessage("");
+          showActionToast({
+            type: "warning",
+            title: "DeepSeek Flash 暂未连接",
+            description: message
+          });
+          return;
+        }
+
+        commitSelection();
+      } catch (error) {
+        if (
+          requestVersion === doubaoHealthRequestVersionRef.current
+          && activeAgentIdRef.current === targetAgentId
+        ) {
+          const message = sanitizeGptOSUserMessage(
+            error instanceof Error ? error.message : "DeepSeek Flash 连接检查失败，已保留原模型。"
+          );
+          setNoticeMessage(message);
+          setErrorMessage("");
+          showActionToast({
+            type: "warning",
+            title: "DeepSeek Flash 暂未连接",
+            description: message
+          });
+        }
+      } finally {
+        if (canCommitAdminIngestModelSelection({
+          pending: pendingModelSelectionRef.current,
+          requestVersion,
+          agentId: targetAgentId,
+          modelLabel: nextModel.label
+        })) {
+          pendingModelSelectionRef.current = null;
+        }
       }
+      return;
     }
 
-    setModelPreferencesByAgent((current) => setAdminIngestAgentModel({
-      preferences: current,
-      agentId: targetAgentId,
-      modelLabel: nextModel.label
-    }));
-    setSelectedModel(nextModel.label);
-    setResolvedModel(nextModel.label);
-    setErrorMessage("");
-    setGptFallbackToast(null);
-    setGptHealthStatus(null);
-    setNoticeMessage(`当前 Agent 已切换为 ${nextModel.label}，下一次投喂开始生效；知识库、对话上下文和未提交内容保持不变。`);
+    if (nextModel.provider === "doubao-pro") {
+      const pendingSelection = beginAdminIngestModelSelection({
+        requestVersion,
+        agentId: targetAgentId,
+        modelLabel: nextModel.label
+      });
+
+      pendingModelSelectionRef.current = pendingSelection;
+      setNoticeMessage("正在检查豆包模型连接状态...");
+      try {
+        const health = await checkGptHealthStatus({
+          provider: nextModel.provider,
+          selectedModelLabel: nextModel.label,
+          preferredModel: nextModel.defaultModel,
+          testRequest: false
+        });
+
+        if (
+          requestVersion !== doubaoHealthRequestVersionRef.current
+          || activeAgentIdRef.current !== targetAgentId
+          || !canCommitAdminIngestModelSelection({
+            pending: pendingModelSelectionRef.current,
+            requestVersion,
+            agentId: targetAgentId,
+            modelLabel: nextModel.label
+          })
+        ) {
+          return;
+        }
+
+        const normalizedHealthProvider = normalizeIngestModelProvider(health.provider);
+        const healthMatchesSelection = normalizedHealthProvider === nextModel.provider;
+
+        setUnavailableModelProviders((current) => shouldDisableDoubaoForHealth(health) || !healthMatchesSelection
+          ? Array.from(new Set([...current, nextModel.provider]))
+          : current.filter((provider) => provider !== nextModel.provider));
+        setGptHealthStatus(health);
+
+        if (!health.ok || !healthMatchesSelection) {
+          const message = sanitizeGptOSUserMessage(
+            healthMatchesSelection
+              ? health.message || "豆包模型暂未连接"
+              : "豆包模型连接校验未返回豆包服务，已保留原模型。"
+          );
+
+          setNoticeMessage(message);
+          setErrorMessage("");
+          showActionToast({
+            type: "warning",
+            title: "豆包模型暂未连接",
+            description: message
+          });
+          return;
+        }
+
+        commitSelection();
+      } catch (error) {
+        if (
+          requestVersion === doubaoHealthRequestVersionRef.current
+          && activeAgentIdRef.current === targetAgentId
+        ) {
+          const message = sanitizeGptOSUserMessage(
+            error instanceof Error ? error.message : "豆包模型连接检查失败，已保留原模型。"
+          );
+
+          setNoticeMessage(message);
+          setErrorMessage("");
+          showActionToast({
+            type: "warning",
+            title: "豆包模型暂未连接",
+            description: message
+          });
+        }
+      } finally {
+        if (canCommitAdminIngestModelSelection({
+          pending: pendingModelSelectionRef.current,
+          requestVersion,
+          agentId: targetAgentId,
+          modelLabel: nextModel.label
+        })) {
+          pendingModelSelectionRef.current = null;
+        }
+      }
+      return;
+    }
+
+    pendingModelSelectionRef.current = null;
+    commitSelection();
   }
 
   async function handleCheckConnection() {
@@ -7847,7 +8243,7 @@ export function IngestModeToggle({
   );
   const hasVisibleDeepSeekReplyForActiveRequest = hasVisibleReplyForActiveIngestProvider(
     activeConversationRequestState,
-    ["deepseek", "deepseek-pro"]
+    ["deepseek", "deepseek-pro", "deepseek-flash"]
   );
   const activeConversationRequestId =
     activeConversationRequestState?.activeRequestId
@@ -7863,6 +8259,7 @@ export function IngestModeToggle({
   const selectedProviderIsDeepSeek = (
     selectedModelOption.provider === "deepseek"
     || selectedModelOption.provider === "deepseek-pro"
+    || selectedModelOption.provider === "deepseek-flash"
   );
   const hasVisibleDeepSeekTerminalReply =
     hasVisibleDeepSeekReplyForActiveRequest
@@ -7956,6 +8353,7 @@ export function IngestModeToggle({
     onNoticeChange: setNoticeMessage,
     onErrorChange: setErrorMessage,
     onSend: handleSend,
+    onRegenerateMessage: handleRegenerateMessage,
     onRetryFailedMessage: handleRetryFailedMessage,
     onRetryDoubaoMetadata: handleRetryDoubaoMetadata,
     recoveringMetadataMessageId,

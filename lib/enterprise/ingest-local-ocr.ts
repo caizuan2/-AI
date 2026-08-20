@@ -13,6 +13,7 @@ import {
   buildAdminIngestWechatTranscript,
   calculateAdminIngestWechatSegments,
   inferAdminIngestWechatRoleHintFromColor,
+  type AdminIngestWechatTailRoleEvidence,
   type AdminIngestWechatTranscriptReliabilityReason,
   type AdminIngestWechatOcrLine
 } from "@/lib/enterprise/ingest-wechat-transcript";
@@ -58,6 +59,10 @@ export interface AdminIngestWechatOcrResult extends AdminIngestLocalOcrResult {
   uncertainLineRatio?: number;
   noisyLineRatio?: number;
   reliabilityReasons?: AdminIngestWechatTranscriptReliabilityReason[];
+  tailRoleEvidence?: AdminIngestWechatTailRoleEvidence | null;
+  strictTailTranscript?: string;
+  strictTailRoleEvidence?: AdminIngestWechatTailRoleEvidence | null;
+  strictFilteredTailComposerChromeCount?: number;
 }
 
 interface TesseractLanguagePackage {
@@ -595,6 +600,15 @@ export async function terminateAdminIngestLocalOcrWorker() {
   await resetLocalOcrWorker(worker ?? undefined);
 }
 
+export async function warmAdminIngestLocalOcrWorker() {
+  if (!isLocalOcrEnabled()) {
+    return false;
+  }
+
+  await getLocalOcrWorker();
+  return true;
+}
+
 export async function extractAdminIngestLocalOcrText(input: {
   bytes: Uint8Array;
   mimeType: string;
@@ -829,7 +843,11 @@ export async function extractAdminIngestWechatConversationText(input: {
       return allLines;
     });
     const lines = await runWithinLocalOcrBudget(budget, () => queuedResult);
-    const transcript = buildAdminIngestWechatTranscript(lines);
+    const transcript = buildAdminIngestWechatTranscript(lines, { imageHeight: height });
+    const strictTailTranscript = buildAdminIngestWechatTranscript(lines, {
+      imageHeight: height,
+      tailStrictComposerFilter: true
+    });
 
     if (!transcript.transcript || !transcript.latestCustomerMessage) {
       return {
@@ -846,7 +864,12 @@ export async function extractAdminIngestWechatConversationText(input: {
         recognizedSegmentCount,
         transcript: transcript.transcript,
         latestCustomerMessage: transcript.latestCustomerMessage,
-        uncertainLineCount: transcript.uncertainCount
+        uncertainLineCount: transcript.uncertainCount,
+        tailRoleEvidence: transcript.tailRoleEvidence,
+        strictTailTranscript: strictTailTranscript.transcript,
+        strictTailRoleEvidence: strictTailTranscript.tailRoleEvidence,
+        strictFilteredTailComposerChromeCount:
+          strictTailTranscript.filteredTailComposerChromeCount
       };
     }
 
@@ -895,7 +918,12 @@ export async function extractAdminIngestWechatConversationText(input: {
       roleReliable: reliability.reliable,
       uncertainLineRatio: reliability.uncertainRatio,
       noisyLineRatio: reliability.noisyLineRatio,
-      reliabilityReasons: reliability.reasons
+      reliabilityReasons: reliability.reasons,
+      tailRoleEvidence: transcript.tailRoleEvidence,
+      strictTailTranscript: strictTailTranscript.transcript,
+      strictTailRoleEvidence: strictTailTranscript.tailRoleEvidence,
+      strictFilteredTailComposerChromeCount:
+        strictTailTranscript.filteredTailComposerChromeCount
     };
   } catch (error) {
     const controlCode = error instanceof LocalOcrControlError ? error.code : null;

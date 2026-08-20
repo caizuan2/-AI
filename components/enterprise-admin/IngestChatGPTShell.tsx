@@ -249,6 +249,7 @@ interface IngestChatGPTShellProps {
   onNoticeChange?: (message: string) => void;
   onErrorChange?: (message: string) => void;
   onSend?: (value?: string) => Promise<IngestActionResult | null>;
+  onRegenerateMessage?: (messageId: string) => Promise<IngestActionResult | null>;
   onRetryFailedMessage?: (messageId: string, prompt: string) => Promise<unknown> | void;
   onRetryDoubaoMetadata?: (messageId: string, prompt: string, replyMarkdown: string) => Promise<unknown> | void;
   recoveringMetadataMessageId?: string | null;
@@ -887,6 +888,7 @@ export function IngestChatGPTShell({
   onNoticeChange,
   onErrorChange,
   onSend,
+  onRegenerateMessage,
   onRetryFailedMessage,
   onRetryDoubaoMetadata,
   recoveringMetadataMessageId = null,
@@ -2010,7 +2012,17 @@ export function IngestChatGPTShell({
     }
   }
 
-  async function handleRegenerate(messageContent: string) {
+  async function handleRegenerate(messageId: string, messageContent: string) {
+    if (onRegenerateMessage) {
+      setNoticeMessage("正在按原始问题和附件重新生成...");
+      const result = await onRegenerateMessage(messageId);
+
+      if (result && !result.preview) {
+        showToast("已重新生成", result.draft.title, "success");
+      }
+      return;
+    }
+
     const nextInput = (regenerateInput || draft.standardQuestion || draft.title || messageContent).trim();
 
     if (!nextInput) {
@@ -3016,7 +3028,7 @@ export function IngestChatGPTShell({
                           }}
                           onRegenerate={() => {
                             trackAssistantBehavior("regenerate_answer", { action: "regenerate_answer" });
-                            void handleRegenerate(message.content);
+                            void handleRegenerate(message.id, message.content);
                           }}
                           onContinueOptimize={handleContinueOptimize}
                           onSourceOpen={() => trackAssistantBehavior("source_click", { action: "open_source_materials" })}

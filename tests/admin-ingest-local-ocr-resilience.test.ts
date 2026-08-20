@@ -4,7 +4,8 @@ import sharp from "sharp";
 
 import {
   extractAdminIngestLocalOcrText,
-  terminateAdminIngestLocalOcrWorker
+  terminateAdminIngestLocalOcrWorker,
+  warmAdminIngestLocalOcrWorker
 } from "../lib/enterprise/ingest-local-ocr";
 
 const TEST_ENV_NAMES = [
@@ -52,6 +53,14 @@ async function main() {
       networkCallCount += 1;
       throw new Error("Local OCR resilience must never call a cloud model.");
     }) as typeof fetch;
+
+    const warmed = await Promise.all([
+      warmAdminIngestLocalOcrWorker(),
+      warmAdminIngestLocalOcrWorker(),
+      warmAdminIngestLocalOcrWorker()
+    ]);
+
+    assert.deepEqual(warmed, [true, true, true]);
 
     const textImage = await buildTextImage("RETRY SAFE 2026");
     const retried = await extractAdminIngestLocalOcrText({
@@ -117,6 +126,10 @@ async function main() {
     assert.equal(timedOut.text, "");
     assert.ok(Date.now() - timeoutStartedAt < 5_000);
     assert.equal(networkCallCount, 0);
+
+    await terminateAdminIngestLocalOcrWorker();
+    process.env.ADMIN_INGEST_LOCAL_OCR_ENABLED = "false";
+    assert.equal(await warmAdminIngestLocalOcrWorker(), false);
 
     console.log("Admin ingest local OCR resilience tests passed.");
   } finally {

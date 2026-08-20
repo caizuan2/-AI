@@ -34,7 +34,11 @@ export function shouldRetryAdminIngestWechatModelTimeout(
 ) {
   if (
     input.attempt !== 0
-    || (input.modelProvider !== "deepseek-pro" && input.modelProvider !== "doubao-pro")
+    || (
+      input.modelProvider !== "deepseek-pro"
+      && input.modelProvider !== "deepseek-flash"
+      && input.modelProvider !== "doubao-pro"
+    )
   ) {
     return false;
   }
@@ -48,5 +52,13 @@ export function shouldRetryAdminIngestWechatModelTimeout(
 export function shouldRunAdminIngestHealthPreflight(
   input: AdminIngestHealthPreflightInput
 ) {
-  return input.modelProvider !== "doubao-pro" && input.skipHealthPreflight !== true;
+  if (
+    input.modelProvider === "doubao-pro"
+    || input.modelProvider === "deepseek-pro"
+    || input.modelProvider === "deepseek-flash"
+  ) {
+    return false;
+  }
+
+  return input.skipHealthPreflight !== true;
 }

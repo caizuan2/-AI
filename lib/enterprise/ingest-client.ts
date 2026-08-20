@@ -95,7 +95,7 @@ export interface IngestGptHealthStatus {
   diagnostics: string[];
   checkedAt?: string;
   requestTested?: boolean;
-  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT";
+  errorCode?: "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_TIMEOUT" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_MODEL_AFFINITY_MISMATCH" | "DEEPSEEK_TIMEOUT" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT";
 }
 
 export interface IngestUploadState {
@@ -134,6 +134,7 @@ export interface IngestUploadState {
   agentId?: string | null;
   recognitionMode?: "wechat_conversation";
   wechatOutputMode?: AdminIngestWechatOutputMode;
+  currentTurnState?: "reply_required" | "waiting_for_customer" | "evidence_insufficient";
   createdAt: string;
 }
 
@@ -256,7 +257,7 @@ interface GptFailureResponse {
   success?: false;
   fallback?: boolean;
   provider?: IngestModelProvider;
-  errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE" | "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED" | "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
+  errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE" | "ADMIN_INGEST_DOUBAO_METADATA_RECOVERY_FAILED" | "ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED" | "ATTACHMENT_CONTENT_MISSING" | "ATTACHMENT_EVIDENCE_MISMATCH" | "OPENAI_API_KEY_MISSING" | "OPENAI_BASE_URL_INVALID" | "OPENAI_RESPONSES_REQUEST_FAILED" | "OPENAI_RESPONSES_PARSE_FAILED" | "OPENAI_RATE_LIMIT" | "OPENAI_TIMEOUT" | "OPENAI_FULL_REQUEST_FAILED" | "OPENAI_PRO_QUALITY_FAILED" | "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT" | "DEEPSEEK_PRO_QUALITY_FAILED" | "DOUBAO_API_KEY_MISSING" | "DOUBAO_API_KEY_INVALID" | "DOUBAO_BASE_URL_INVALID" | "DOUBAO_RATE_LIMITED" | "DOUBAO_INFERENCE_LIMIT_PAUSED" | "DOUBAO_QUOTA_EXCEEDED" | "DOUBAO_SAFETY_REJECTED" | "DOUBAO_MODEL_UNAVAILABLE" | "DOUBAO_REQUEST_FAILED" | "DOUBAO_RESPONSE_PARSE_FAILED" | "DOUBAO_TIMEOUT" | "QWEN_API_KEY_MISSING" | "QWEN_BASE_URL_INVALID" | "QWEN_REQUEST_FAILED" | "QWEN_RESPONSE_PARSE_FAILED" | "QWEN_TIMEOUT" | "QWEN_PRO_QUALITY_FAILED" | "KIMI_API_KEY_MISSING" | "KIMI_BASE_URL_INVALID" | "KIMI_REQUEST_FAILED" | "KIMI_RESPONSE_PARSE_FAILED" | "KIMI_TIMEOUT" | "KIMI_PRO_QUALITY_FAILED";
   causeCode?: string;
   message: string;
   userMessage?: string;
@@ -567,11 +568,23 @@ type AdminIngestBrowserSseTerminal = {
 
 type AdminIngestBrowserSseCallbacks = {
   expectedRequestId: string;
+  expectedProvider: IngestModelProvider;
   visibleReplyMarkdown: string;
   onVisibleDelta?: IngestStreamingOptions["onVisibleDelta"];
   onVisibleReply?: IngestStreamingOptions["onVisibleReply"];
   onStatus?: IngestStreamingOptions["onStatus"];
 };
+
+function readAdminIngestBrowserSseProviderDetails(callbacks: AdminIngestBrowserSseCallbacks) {
+  const deepSeek = callbacks.expectedProvider === "deepseek-pro"
+    || callbacks.expectedProvider === "deepseek-flash";
+
+  return {
+    label: deepSeek ? "DeepSeek" : "豆包",
+    causePrefix: deepSeek ? "DEEPSEEK" : "DOUBAO",
+    provider: callbacks.expectedProvider
+  };
+}
 
 function parseAdminIngestSseBlock(
   block: string,
@@ -600,13 +613,14 @@ function parseAdminIngestSseBlock(
   try {
     envelope = JSON.parse(dataLines.join("\n")) as unknown;
   } catch {
-    throw new AdminIngestRequestError("豆包浏览器流式结果解析失败，系统未切换其他模型。", {
+    const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+    throw new AdminIngestRequestError(`${provider.label} 浏览器流式结果解析失败，系统未切换其他模型。`, {
       status: 503,
       errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      causeCode: `${provider.causePrefix}_RESPONSE_PARSE_FAILED`,
       retryable: true,
-      provider: "doubao-pro",
-      requestedProvider: "doubao-pro",
+      provider: provider.provider,
+      requestedProvider: provider.provider,
       fallbackUsed: false,
       failureDetails: { parseStage: "browser_sse_event" }
     });
@@ -617,8 +631,13 @@ function parseAdminIngestSseBlock(
   }
 
   const eventRequestId = readString(envelope.requestId);
+  const eventProvider = readString(envelope.provider)?.toLowerCase();
 
   if (eventRequestId && eventRequestId !== callbacks.expectedRequestId) {
+    return null;
+  }
+
+  if (eventProvider && eventProvider !== callbacks.expectedProvider) {
     return null;
   }
 
@@ -651,13 +670,14 @@ function parseAdminIngestSseBlock(
       : "";
 
     if (!eventRequestId || !replyMarkdown) {
-      throw new AdminIngestRequestError("豆包可见正文事件不完整，系统未切换其他模型。", {
+      const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+      throw new AdminIngestRequestError(`${provider.label} 可见正文事件不完整，系统未切换其他模型。`, {
         status: 503,
         errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-        causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+        causeCode: `${provider.causePrefix}_RESPONSE_PARSE_FAILED`,
         retryable: true,
-        provider: "doubao-pro",
-        requestedProvider: "doubao-pro",
+        provider: provider.provider,
+        requestedProvider: provider.provider,
         requestId: callbacks.expectedRequestId,
         fallbackUsed: false,
         failureDetails: { parseStage: "browser_sse_event" }
@@ -723,13 +743,14 @@ function parseAdminIngestSseBlock(
   const payload = envelope.payload;
 
   if (!Number.isInteger(status) || status < 200 || status > 599) {
-    throw new AdminIngestRequestError("豆包浏览器流式状态无效，系统未切换其他模型。", {
+    const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+    throw new AdminIngestRequestError(`${provider.label} 浏览器流式状态无效，系统未切换其他模型。`, {
       status: 503,
       errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-      causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+      causeCode: `${provider.causePrefix}_RESPONSE_PARSE_FAILED`,
       retryable: true,
-      provider: "doubao-pro",
-      requestedProvider: "doubao-pro",
+      provider: provider.provider,
+      requestedProvider: provider.provider,
       fallbackUsed: false,
       failureDetails: { parseStage: "browser_sse_event" }
     });
@@ -760,13 +781,14 @@ async function readAdminIngestResponse(
   const reader = response.body?.getReader();
 
   if (!reader) {
-    throw new AdminIngestRequestError("豆包浏览器流式连接没有响应正文，系统未切换其他模型。", {
+    const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+    throw new AdminIngestRequestError(`${provider.label} 浏览器流式连接没有响应正文，系统未切换其他模型。`, {
       status: 503,
       errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-      causeCode: "DOUBAO_REQUEST_FAILED",
+      causeCode: `${provider.causePrefix}_REQUEST_FAILED`,
       retryable: true,
-      provider: "doubao-pro",
-      requestedProvider: "doubao-pro",
+      provider: provider.provider,
+      requestedProvider: provider.provider,
       fallbackUsed: false,
       failureDetails: { parseStage: "browser_sse_body" }
     });
@@ -820,13 +842,14 @@ async function readAdminIngestResponse(
       }
     }
 
-    throw new AdminIngestRequestError("豆包浏览器流式连接提前结束，系统未切换其他模型。", {
+    const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+    throw new AdminIngestRequestError(`${provider.label} 浏览器流式连接提前结束，系统未切换其他模型。`, {
       status: 503,
       errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-      causeCode: "DOUBAO_REQUEST_FAILED",
+      causeCode: `${provider.causePrefix}_REQUEST_FAILED`,
       retryable: true,
-      provider: "doubao-pro",
-      requestedProvider: "doubao-pro",
+      provider: provider.provider,
+      requestedProvider: provider.provider,
       fallbackUsed: false,
       failureDetails: { parseStage: "browser_sse_eof" }
     });
@@ -842,13 +865,14 @@ async function readAdminIngestResponse(
     }
 
     if (streamAcknowledged || /^event:\s*(?:accepted|heartbeat)\s*$/im.test(buffer)) {
-      throw new AdminIngestRequestError("豆包浏览器长连接中断，系统未切换其他模型。", {
+      const provider = readAdminIngestBrowserSseProviderDetails(callbacks);
+      throw new AdminIngestRequestError(`${provider.label} 浏览器长连接中断，系统未切换其他模型。`, {
         status: 503,
         errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-        causeCode: "DOUBAO_REQUEST_FAILED",
+        causeCode: `${provider.causePrefix}_REQUEST_FAILED`,
         retryable: true,
-        provider: "doubao-pro",
-        requestedProvider: "doubao-pro",
+        provider: provider.provider,
+        requestedProvider: provider.provider,
         fallbackUsed: false,
         failureDetails: { parseStage: "browser_sse_network" }
       });
@@ -1534,6 +1558,14 @@ export async function sendCoreIngest(input: {
   // transport as Web because WebView can buffer a long-lived SSE response.
   const useDoubaoBrowserSse = (platform === "web" || platform === "apk" || platform === "ios")
     && modelProvider === "doubao-pro";
+  const useDeepSeekBrowserSse = (
+    platform === "web"
+    || platform === "exe"
+    || platform === "apk"
+    || platform === "ios"
+    || platform === "macos"
+  ) && (modelProvider === "deepseek-pro" || modelProvider === "deepseek-flash");
+  const useBrowserSse = useDoubaoBrowserSse || useDeepSeekBrowserSse;
 
   if (shouldRunAdminIngestHealthPreflight({
     modelProvider,
@@ -1592,7 +1624,7 @@ export async function sendCoreIngest(input: {
       signal: input.streaming?.signal,
       headers: {
         "Content-Type": "application/json",
-        Accept: useDoubaoBrowserSse ? "text/event-stream, application/json" : "application/json",
+        Accept: useBrowserSse ? "text/event-stream, application/json" : "application/json",
         "x-request-id": requestId,
         "x-admin-ingest-history-scope": input.historyScope
       },
@@ -1645,6 +1677,7 @@ export async function sendCoreIngest(input: {
     });
     const transportResult = await readAdminIngestResponse(response, input.streaming?.signal, {
       expectedRequestId: requestId,
+      expectedProvider: modelProvider,
       visibleReplyMarkdown: "",
       onVisibleDelta: input.streaming?.onVisibleDelta,
       onVisibleReply: input.streaming?.onVisibleReply,
@@ -1737,7 +1770,8 @@ export async function sendCoreIngest(input: {
     const preserveRawSelectedModelOutput = actualProvider === "doubao"
       || actualProvider === "doubao-pro"
       || actualProvider === "deepseek"
-      || actualProvider === "deepseek-pro";
+      || actualProvider === "deepseek-pro"
+      || actualProvider === "deepseek-flash";
     const rawSelectedModelReply = typeof data.replyMarkdown === "string" ? data.replyMarkdown : "";
     const replyContent = preserveRawSelectedModelOutput
       ? rawSelectedModelReply || ingestResult.replyText || normalizedSuccess?.replyText || readGptResponseContent(data)
@@ -2313,6 +2347,7 @@ interface ParseFileResponse {
     deadlineReached?: boolean;
     limitationNote: string;
     recognitionMode?: "wechat_conversation";
+    currentTurnState?: "reply_required" | "waiting_for_customer" | "evidence_insufficient";
   };
   message?: string;
   error?: {
@@ -2321,7 +2356,7 @@ interface ParseFileResponse {
 }
 
 export interface AdminIngestFileModelAffinity {
-  modelProvider: "deepseek-pro" | "doubao-pro";
+  modelProvider: "deepseek-pro" | "deepseek-flash" | "doubao-pro";
   preferredModel: string;
   selectedModelLabel: string;
   strictModelAffinity: true;
@@ -2343,6 +2378,7 @@ export interface AdminIngestFileParseProgress {
 
 export interface AdminIngestFileParseOptions {
   signal?: AbortSignal;
+  traceId?: string;
   pageBatchSize?: number;
   requestTimeoutMs?: number;
   onProgress?: (progress: AdminIngestFileParseProgress) => void;
@@ -2581,6 +2617,7 @@ export async function parseUploadedFileForGpt(
       successRatePercent: finalSuccessRatePercent,
       deadlineReached,
       recognitionMode: lastData?.recognitionMode ?? file.recognitionMode,
+      currentTurnState: lastData?.currentTurnState ?? file.currentTurnState,
       wechatOutputMode: (lastData?.recognitionMode ?? file.recognitionMode) === "wechat_conversation"
         ? file.wechatOutputMode ?? "reply_script"
         : undefined,
@@ -2630,6 +2667,9 @@ export async function parseUploadedFileForGpt(
       response = await fetch("/api/admin/kb/ingest/files/parse", {
         method: "POST",
         credentials: "include",
+        headers: options.traceId
+          ? { "x-admin-ingest-trace-id": options.traceId }
+          : undefined,
         body: formData,
         signal: requestSignal.signal
       });
@@ -2725,7 +2765,12 @@ export async function parseUploadedFileForGpt(
     }
   }
 
-  const retryPages = [...failedPages];
+  const uploadMimeType = (file.mimeType || file.fileType || file.rawFile.type || "").toLowerCase();
+  const isImageUpload = file.isImage === true || uploadMimeType.startsWith("image/");
+  // Image parsers already retry/fallback at segment level. Their page numbers
+  // represent OCR segments, not independently addressable document pages, so a
+  // generic failed-page retry would upload and OCR the complete image again.
+  const retryPages = isImageUpload ? [] : [...failedPages];
 
   for (const retryPage of retryPages) {
     if (options.signal?.aborted) {
@@ -2760,6 +2805,9 @@ export async function parseUploadedFileForGpt(
       const retryResponse = await fetch("/api/admin/kb/ingest/files/parse", {
         method: "POST",
         credentials: "include",
+        headers: options.traceId
+          ? { "x-admin-ingest-trace-id": options.traceId }
+          : undefined,
         body: retryFormData,
         signal: retrySignal.signal
       });

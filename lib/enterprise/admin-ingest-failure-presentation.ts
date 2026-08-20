@@ -1,4 +1,8 @@
 import { readAdminIngestRequestError } from "@/lib/enterprise/admin-ingest-request-error";
+import {
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE
+} from "@/lib/enterprise/ingest-attachment-evidence";
 
 export type AdminIngestFailurePresentation = {
   title: string;
@@ -68,6 +72,17 @@ export function buildAdminIngestFailurePresentation(
     causeCode,
     retryAfterMs
   });
+
+  if (normalizedCode === ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE) {
+    return {
+      title: "截图底部角色无法确认",
+      message: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+      retryable: false,
+      errorCode,
+      causeCode,
+      retryAfterMs
+    };
+  }
 
   if (normalizedCode.includes("ADMIN_INGEST_GROUNDING_NO_HIT")) {
     return result(

@@ -13,6 +13,7 @@ type AdminIngestWechatGroundingAttachment = {
 };
 
 const WECHAT_EVIDENCE_MARKER = "【微信对话截图识别稿】";
+const WECHAT_CURRENT_TURN_ROLE_INSUFFICIENT_MARKER = "【当前回合角色核验】证据不足";
 const MAX_WECHAT_GROUNDING_QUERY_CHARS = 2_000;
 const MAX_WECHAT_GROUNDING_CONTEXT_MESSAGES = 8;
 
@@ -47,9 +48,37 @@ function normalizeComparableText(value: string) {
     .toLowerCase();
 }
 
+function readLastStructuredRoleMessage(value: string) {
+  const lines = value.replace(/\r\n?/g, "\n").split("\n");
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = lines[index]?.trim().match(/^(客户|我)\s*[（(](左侧|右侧)[）)]\s*[：:]\s*(.*)$/);
+
+    if (!match) {
+      continue;
+    }
+
+    const role = match[1] === "客户" && match[2] === "左侧"
+      ? "customer" as const
+      : match[1] === "我" && match[2] === "右侧"
+        ? "user" as const
+        : null;
+    const text = clean(match[3]);
+
+    if (!role || !text) {
+      return null;
+    }
+
+    return { role, text };
+  }
+
+  return null;
+}
+
 function buildConversationContext(
   transcript: ReturnType<typeof parseAdminIngestWechatRoleTranscript>,
-  latestCustomerMessage: string
+  latestCustomerMessage: string,
+  targetMessageIndex?: number
 ) {
   const normalizedLatestCustomer = normalizeComparableText(latestCustomerMessage);
   const matchedCustomerIndex = transcript.messages
@@ -59,12 +88,12 @@ function buildConversationContext(
       && normalizeComparableText(message.text) === normalizedLatestCustomer
     ))
     .at(-1)?.index ?? -1;
-  const latestCustomerIndex = matchedCustomerIndex >= 0
+  const latestCustomerIndex = targetMessageIndex ?? (matchedCustomerIndex >= 0
     ? matchedCustomerIndex
     : transcript.messages
       .map((message, index) => ({ message, index }))
       .filter(({ message }) => message.role === "customer")
-      .at(-1)?.index ?? -1;
+      .at(-1)?.index ?? -1);
 
   if (latestCustomerIndex < 0) {
     return [];
@@ -83,8 +112,35 @@ function buildConversationContext(
 function buildWechatReplyTask(
   latestCustomerMessage: string,
   outputMode: AdminIngestWechatOutputMode,
-  modelProvider?: string | null
+  modelProvider?: string | null,
+  currentTurn?: {
+    waitingForCustomerReply: boolean;
+    evidenceInsufficient: boolean;
+    latestUserMessage: string;
+  }
 ) {
+  if (outputMode === "full_answer" && currentTurn?.evidenceInsufficient) {
+    return [
+      "请处理已完成角色识别的微信对话截图。",
+      "当前回合证据不足：无法可靠确认截图底部最后一条有效消息的角色或完整正文。",
+      "不得回退到更早的左侧客户消息生成回复，不得猜测客户已经说了什么，也不得虚构当前沟通阶段。",
+      "请直接输出简洁的 Markdown 正文，说明当前无法安全生成本轮客户回复，并建议用户上传更清晰的原始截图或包含底部完整气泡的分段截图。",
+      "不要输出 OCR 原文、识别说明、知识来源、角色标签、模型信息或内部推理过程。"
+    ].join("\n");
+  }
+
+  if (outputMode === "full_answer" && currentTurn?.waitingForCustomerReply) {
+    return [
+      "请处理已完成角色识别的微信对话截图。",
+      `当前回合锚点：截图底部最后一条有效消息来自右侧用户本人“${currentTurn.latestUserMessage}”。`,
+      "这表示用户已经完成当前回复，正在等待左侧客户的新回复。不得回到更早的左侧客户消息继续生成本轮回复，也不得假设客户已经作出新的回应。",
+      "专业内容必须严格依据当前 Agent 已命中的固定知识库；不得跨专家、跨知识库或用通用知识补写。",
+      "请直接输出完整 Markdown 正文，明确当前应等待客户回复，并根据已经识别到的对话给出客户后续可能回应时的分支处理建议、推进动作和注意事项。",
+      "截图信息不足时，只能依据可靠识别到的对话和当前知识库作答，不得虚构客户背景、客户新回复、沟通阶段或未出现的顾虑。",
+      "不要输出 OCR 原文、识别说明、知识来源、角色标签、模型信息或内部推理过程。"
+    ].join("\n");
+  }
+
   const replyTarget = latestCustomerMessage || "截图中可靠识别到的最后一条左侧客户消息";
   const sharedRules = [
     "请处理已完成角色识别的微信对话截图。",
@@ -144,17 +200,64 @@ export function buildAdminIngestWechatGroundingRequest(input: {
     .filter(Boolean)
     .join("\n");
   const transcript = parseAdminIngestWechatRoleTranscript(evidence);
-  const latestCustomerMessage = transcript.latestCustomerMessage
-    || readLatestCustomerSummary(evidenceAttachments);
   const outputMode = normalizeAdminIngestWechatOutputMode(
     evidenceAttachments.find((attachment) => attachment.wechatOutputMode)?.wechatOutputMode
   );
-  const conversationContext = buildConversationContext(transcript, latestCustomerMessage);
+  const latestStructuredRoleMessage = readLastStructuredRoleMessage(evidence);
+  const latestTranscriptMessage = transcript.messages.at(-1) ?? null;
+  const evidenceInsufficient = outputMode === "full_answer" && (
+    evidence.includes(WECHAT_CURRENT_TURN_ROLE_INSUFFICIENT_MARKER)
+    || !latestStructuredRoleMessage
+  );
+  const waitingForCustomerReply = outputMode === "full_answer"
+    && !evidenceInsufficient
+    && latestStructuredRoleMessage?.role === "user";
+  const latestUserMessage = waitingForCustomerReply
+    ? latestStructuredRoleMessage?.text ?? ""
+    : "";
+  const latestCustomerMessage = evidenceInsufficient || waitingForCustomerReply
+    ? ""
+    : outputMode === "full_answer" && latestStructuredRoleMessage?.role === "customer"
+      ? latestStructuredRoleMessage.text
+      : transcript.latestCustomerMessage || readLatestCustomerSummary(evidenceAttachments);
+  const baseConversationContext = evidenceInsufficient
+    ? []
+    : buildConversationContext(
+        transcript,
+        latestCustomerMessage,
+        outputMode === "full_answer" ? transcript.messages.length - 1 : undefined
+      );
+  const structuredTailAlreadyPresent = Boolean(
+    latestStructuredRoleMessage
+    && latestTranscriptMessage
+    && latestStructuredRoleMessage.role === latestTranscriptMessage.role
+    && normalizeComparableText(latestStructuredRoleMessage.text)
+      === normalizeComparableText(latestTranscriptMessage.text)
+  );
+  const conversationContext = outputMode === "full_answer"
+    && latestStructuredRoleMessage
+    && !structuredTailAlreadyPresent
+      ? [
+          ...baseConversationContext,
+          `${latestStructuredRoleMessage.role === "customer" ? "客户" : "用户已说"}：${latestStructuredRoleMessage.text}`
+        ].slice(-MAX_WECHAT_GROUNDING_CONTEXT_MESSAGES)
+      : baseConversationContext;
   const query = [
-    latestCustomerMessage
+    evidenceInsufficient
+      ? "当前回合状态：底部最后一条有效消息证据不足，不得回退到更早消息"
+      : waitingForCustomerReply
+      ? "当前回合状态：用户已发送最后一条消息，正在等待客户回复"
+      : latestCustomerMessage
       ? `客户最近消息：${latestCustomerMessage}`
       : "客户最近消息：未能可靠确定",
-    conversationContext.length > 0 ? "截止客户最近消息的对话上下文：" : "",
+    waitingForCustomerReply && latestUserMessage
+      ? `用户最后已发送：${latestUserMessage}`
+      : "",
+    conversationContext.length > 0
+      ? waitingForCustomerReply
+        ? "截止用户最后已发送消息的对话上下文："
+        : "截止客户最近消息的对话上下文："
+      : "",
     ...conversationContext
   ].filter(Boolean).join("\n").slice(0, MAX_WECHAT_GROUNDING_QUERY_CHARS);
 
@@ -162,8 +265,18 @@ export function buildAdminIngestWechatGroundingRequest(input: {
     isWechatConversation: true as const,
     strictKnowledgeMode: true as const,
     query,
-    modelInput: buildWechatReplyTask(latestCustomerMessage, outputMode, input.modelProvider),
+    modelInput: buildWechatReplyTask(latestCustomerMessage, outputMode, input.modelProvider, {
+      waitingForCustomerReply,
+      evidenceInsufficient,
+      latestUserMessage
+    }),
     latestCustomerMessage: latestCustomerMessage || null,
+    latestUserMessage: latestUserMessage || null,
+    currentTurnState: evidenceInsufficient
+      ? "evidence_insufficient" as const
+      : waitingForCustomerReply
+        ? "waiting_for_customer" as const
+        : "reply_required" as const,
     outputMode
   };
 }

@@ -10,6 +10,7 @@ import { sendCoreIngest } from "@/lib/enterprise/ingest-client";
 
 const originalFetch = globalThis.fetch;
 const rawMarkdown = "\n# 豆包原文\n\n保留开头、结尾和  Markdown  空格。  \n";
+const deepSeekRawMarkdown = "\n# DeepSeek 原文\n\n旧请求和错误 Provider 都不能污染这一段。  \n";
 
 function buildSuccessPayload() {
   return {
@@ -505,6 +506,152 @@ async function main() {
 
   assert.equal(gptRequestCount, 6);
 
+  let deepSeekHealthRequestCount = 0;
+  globalThis.fetch = async (request, init) => {
+    if (String(request).includes("/api/admin/kb/ingest/models/health")) {
+      deepSeekHealthRequestCount += 1;
+      throw new Error("A normal DeepSeek send must not run a real health probe.");
+    }
+
+    const requestBody = JSON.parse(String(init?.body ?? "{}")) as {
+      runtimeContext?: { requestId?: string };
+    };
+    const requestId = requestBody.runtimeContext?.requestId ?? "deepseek-browser-sse";
+    const firstDelta = deepSeekRawMarkdown.slice(0, 18);
+    const secondDelta = deepSeekRawMarkdown.slice(18);
+    const payload = {
+      ...buildSuccessPayload(),
+      provider: "deepseek",
+      requestedProvider: "deepseek-pro",
+      actualProvider: "deepseek-pro",
+      requestedModel: "deepseek-v4-pro",
+      actualModel: "deepseek-v4-pro",
+      model: "deepseek-v4-pro",
+      modelDisplayName: "DeepSeek-V4-Pro",
+      selectedModelLabel: "DeepSeek-V4-Pro",
+      responseId: "deepseek-browser-sse-success",
+      replyMarkdown: deepSeekRawMarkdown,
+      content: deepSeekRawMarkdown,
+      answer: deepSeekRawMarkdown,
+      knowledgeDraft: {
+        ...buildSuccessPayload().knowledgeDraft,
+        standardAnswer: deepSeekRawMarkdown
+      }
+    };
+    const body = [
+      `event: accepted\ndata: ${JSON.stringify({ type: "accepted", requestId })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId: "old-deepseek-request",
+        provider: "deepseek-pro",
+        actualModel: "deepseek-v4-pro",
+        delta: "OLD_REQUEST_MUST_BE_IGNORED"
+      })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId,
+        provider: "doubao-pro",
+        actualModel: "deepseek-v4-pro",
+        delta: "WRONG_PROVIDER_MUST_BE_IGNORED"
+      })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId,
+        provider: "deepseek-pro",
+        actualModel: "deepseek-v4-pro",
+        responseId: "deepseek-browser-sse-success",
+        delta: firstDelta
+      })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId,
+        provider: "deepseek-pro",
+        actualModel: "deepseek-v4-pro",
+        responseId: "deepseek-browser-sse-success",
+        delta: secondDelta
+      })}\n\n`,
+      `event: visible\ndata: ${JSON.stringify({
+        type: "visible",
+        requestId,
+        provider: "deepseek-pro",
+        actualModel: "deepseek-v4-pro",
+        responseId: "deepseek-browser-sse-success",
+        replyMarkdown: deepSeekRawMarkdown,
+        metadataPending: true
+      })}\n\n`,
+      `event: visible_delta\ndata: ${JSON.stringify({
+        type: "visible_delta",
+        requestId: "old-deepseek-request",
+        provider: "deepseek-pro",
+        actualModel: "deepseek-v4-pro",
+        delta: "DELAYED_OLD_CHUNK_MUST_BE_IGNORED"
+      })}\n\n`,
+      `event: final\ndata: ${JSON.stringify({
+        type: "final",
+        requestId,
+        status: 200,
+        payload
+      })}\n\n`
+    ].join("");
+    const bytes = new TextEncoder().encode(body);
+
+    assert.match(
+      new Headers(init?.headers).get("accept") ?? "",
+      /text\/event-stream/,
+      "DeepSeek Pro Web requests must opt into the original-answer SSE transport."
+    );
+
+    return new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let offset = 0; offset < bytes.length; offset += 5) {
+          controller.enqueue(bytes.slice(offset, Math.min(offset + 5, bytes.length)));
+        }
+        controller.close();
+      }
+    }), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream; charset=utf-8" }
+    });
+  };
+
+  try {
+    const visibleDeltas: string[] = [];
+    let visibleReply = "";
+    const deepSeekResult = await sendCoreIngest({
+      text: "DeepSeek 浏览器 SSE 请求隔离测试",
+      historyScope: "test-history-scope-deepseek-browser-sse",
+      category: "测试",
+      model: "DeepSeek-V4-Pro",
+      modelProvider: "deepseek-pro",
+      selectedModelLabel: "DeepSeek-V4-Pro",
+      requestId: "deepseek-browser-sse-success",
+      agent,
+      streaming: {
+        onVisibleDelta(event) {
+          visibleDeltas.push(event.delta);
+          assert.equal(event.requestId, "deepseek-browser-sse-success");
+        },
+        onVisibleReply(event) {
+          visibleReply = event.replyMarkdown;
+          assert.equal(event.requestId, "deepseek-browser-sse-success");
+          assert.equal(event.metadataPending, true);
+        }
+      }
+    });
+
+    assert.equal(deepSeekHealthRequestCount, 0);
+    assert.equal(visibleDeltas.join(""), deepSeekRawMarkdown);
+    assert.equal(visibleReply, deepSeekRawMarkdown);
+    assert.equal(deepSeekResult.replyMarkdown, deepSeekRawMarkdown);
+    assert.equal(deepSeekResult.requestedProvider, "deepseek-pro");
+    assert.equal(deepSeekResult.actualProvider, "deepseek-pro");
+    assert.equal(deepSeekResult.fallbackUsed, false);
+    assert.equal(JSON.stringify(visibleDeltas).includes("OLD_REQUEST"), false);
+    assert.equal(JSON.stringify(visibleDeltas).includes("WRONG_PROVIDER"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
   const routeSource = readFileSync("app/api/admin/kb/ingest/gpt/route.ts", "utf8");
   const providerSource = readFileSync("lib/enterprise/ingest-model-provider.ts", "utf8");
   assert.match(routeSource, /ADMIN_INGEST_SSE_HEARTBEAT_MS = 12_000/);
@@ -517,7 +664,8 @@ async function main() {
     routeSource,
     /producer:\s*async \(signal, onProgressEvent\)[\s\S]*executeRequest\(signal, onProgressEvent\)[\s\S]*stopRuntimeLeaseHeartbeat\(\)[\s\S]*activeRequest\.unregister\(\)/
   );
-  assert.match(routeSource, /onProgressEvent: onDoubaoProgressEvent/);
+  assert.match(routeSource, /onProgressEvent: onProgressEvent/);
+  assert.match(routeSource, /provider: streamModelOption\.provider/);
   assert.match(routeSource, /input\.platform === "apk"/);
   assert.match(
     readFileSync("lib/enterprise/ingest-client.ts", "utf8"),

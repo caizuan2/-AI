@@ -10,6 +10,8 @@ import {
 } from "@/lib/enterprise/ingest-file-parser";
 import { requireAdminIngestChatAccess } from "@/lib/enterprise/admin-ingest-auth";
 import { isAdminIngestImageAttachment } from "@/lib/enterprise/admin-ingest-attachment-access";
+import { warmAdminIngestLocalOcrWorker } from "@/lib/enterprise/ingest-local-ocr";
+import { createAdminIngestLatencyTrace } from "@/lib/enterprise/admin-ingest-latency-trace";
 import type { IngestAccessTier } from "@/lib/enterprise/ingest-access-policy";
 import {
   getIngestModelOptionByProvider,
@@ -81,11 +83,12 @@ function readPositiveInteger(input: {
 
 const STRICT_WEB_INGEST_PROVIDERS = new Set<IngestModelProvider>([
   "deepseek-pro",
+  "deepseek-flash",
   "doubao-pro"
 ]);
 
 interface AdminIngestParseModelAffinity {
-  modelProvider: "deepseek-pro" | "doubao-pro";
+  modelProvider: "deepseek-pro" | "deepseek-flash" | "doubao-pro";
   preferredModel: string;
   selectedModelLabel: string;
   strictModelAffinity: true;
@@ -111,7 +114,7 @@ function readAdminIngestParseModelAffinity(formData: FormData): AdminIngestParse
   const selectedModelLabel = readString(formData.get("selectedModelLabel"));
 
   if (!STRICT_WEB_INGEST_PROVIDERS.has(modelProvider as IngestModelProvider)) {
-    throw new ValidationError("Web 投喂端附件解析仅允许使用 DeepSeek Pro 或 Doubao Pro 严格模型身份。");
+    throw new ValidationError("Web 投喂端附件解析仅允许使用 DeepSeek Pro、DeepSeek Flash 或 Doubao Pro 严格模型身份。");
   }
 
   const selectedOption = getIngestModelOptionByProvider(modelProvider);
@@ -129,16 +132,26 @@ function readAdminIngestParseModelAffinity(formData: FormData): AdminIngestParse
 }
 
 export async function POST(request: Request) {
+  const requestStartedAt = Date.now();
+  const latencyTrace = createAdminIngestLatencyTrace({
+    traceId: request.headers.get("x-admin-ingest-trace-id")
+      ?? request.headers.get("x-request-id"),
+    startedAt: requestStartedAt
+  });
+  const authStartedAt = Date.now();
   let accessTier: IngestAccessTier = "full_ingest";
+  let cacheAccountScope = "local-dev";
 
   try {
     const chatAccess = await requireAdminIngestChatAccess();
     accessTier = chatAccess.access.accessTier;
+    cacheAccountScope = chatAccess.actor.id;
   } catch (error) {
     if (!isLocalDevWithoutDatabase(request)) {
       return apiError(error);
     }
   }
+  latencyTrace.mark("auth_completed", authStartedAt);
 
   const maxParseBytes = readMaxParseBytes();
   const contentLength = Number(request.headers.get("content-length"));
@@ -148,12 +161,14 @@ export async function POST(request: Request) {
   }
 
   let formData: FormData;
+  const formDataStartedAt = Date.now();
 
   try {
     formData = await request.formData();
   } catch {
     return apiError(new ValidationError("文件解析接口需要 multipart/form-data。"));
   }
+  latencyTrace.mark("form_data_completed", formDataStartedAt);
 
   let modelAffinity: AdminIngestParseModelAffinity | null;
   let pageStart: number;
@@ -208,9 +223,30 @@ export async function POST(request: Request) {
   if (wechatOutputModeValue && (!wechatOutputMode || !recognitionMode)) {
     return apiError(new ValidationError("微信截图输出模式无效。"));
   }
+  const tailRoleVerificationPolicy = recognitionMode === "wechat_conversation"
+    && wechatOutputMode === "full_answer"
+    && (
+      modelAffinity?.modelProvider === "deepseek-pro"
+      || modelAffinity?.modelProvider === "deepseek-flash"
+    )
+    ? "tail_strict" as const
+    : "global" as const;
 
+  const shouldPrewarmLocalOcr = mimeType.toLowerCase().startsWith("image/")
+    || /\.(?:pdf|pptx)$/i.test(fileName);
+
+  if (shouldPrewarmLocalOcr) {
+    const workerPrewarmStartedAt = Date.now();
+
+    void warmAdminIngestLocalOcrWorker()
+      .then(() => latencyTrace.mark("worker_prewarm_completed", workerPrewarmStartedAt))
+      .catch(() => latencyTrace.mark("worker_prewarm_completed", workerPrewarmStartedAt));
+  }
+
+  const bufferStartedAt = Date.now();
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+  latencyTrace.mark("buffer_completed", bufferStartedAt);
 
   if (
     accessTier !== "full_ingest"
@@ -230,12 +266,17 @@ export async function POST(request: Request) {
     pageBatchSize,
     recognitionMode,
     wechatOutputMode,
-    signal: request.signal
+    signal: request.signal,
+    cacheAccountScope,
+    latencyTrace,
+    tailRoleVerificationPolicy
   });
 
   const responseData = modelAffinity
     ? { ...parsed, modelAffinity }
     : parsed;
+
+  latencyTrace.mark("response_ready", requestStartedAt);
 
   return jsonUtf8({
     data: responseData,

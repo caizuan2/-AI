@@ -37,7 +37,10 @@ async function main() {
   }), false);
   assert.equal(shouldRunAdminIngestHealthPreflight({
     modelProvider: "deepseek-pro"
-  }), true);
+  }), false);
+  assert.equal(shouldRunAdminIngestHealthPreflight({
+    modelProvider: "deepseek-flash"
+  }), false);
   assert.equal(shouldRunAdminIngestHealthPreflight({
     modelProvider: "deepseek-pro",
     skipHealthPreflight: true
@@ -78,7 +81,7 @@ async function main() {
   );
   assert.match(
     modeToggleSource,
-    /setNoticeMessage\(`\$\{requestModelOption\.label\} 首次等待超时，正在使用同一个模型自动重试\.\.\.`\)/
+    /setRequestNoticeMessage\(`\$\{requestModelOption\.label\} 首次等待超时，正在使用同一个模型自动重试\.\.\.`\)/
   );
   assert.match(
     ingestClientSource,
@@ -86,7 +89,7 @@ async function main() {
   );
   assert.match(
     modeToggleSource,
-    /const assistantContent = result\.replyMarkdown \|\|/
+    /const assistantContent = normalizeAdminIngestVisibleReply\(\s*result\.replyMarkdown \?\? ""/
   );
 
   console.log("Admin ingest WeChat answer timeout regression tests passed.");

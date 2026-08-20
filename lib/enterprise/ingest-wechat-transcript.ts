@@ -38,6 +38,60 @@ export interface AdminIngestWechatTranscriptReliability {
   reasons: AdminIngestWechatTranscriptReliabilityReason[];
 }
 
+export type AdminIngestWechatTailRoleVerificationPolicy = "global" | "tail_strict";
+export type AdminIngestWechatTailRoleSource = "color" | "geometry" | "uncertain";
+
+export interface AdminIngestWechatTailRoleEvidence {
+  confidence: number;
+  roleSource: AdminIngestWechatTailRoleSource;
+  isLowestNonNoiseEvidence: boolean;
+}
+
+export type AdminIngestWechatTailRoleVerificationReason =
+  | "VERIFIED"
+  | "VISION_TAIL_MISSING"
+  | "VISION_PROVIDER_FAILED"
+  | "VISION_TEXT_EMPTY"
+  | "VISION_ROLE_FORMAT_UNPARSEABLE"
+  | "LOCAL_TAIL_MISSING"
+  | "GLOBAL_ROLE_UNRELIABLE"
+  | "TAIL_CONFIDENCE_LOW"
+  | "TAIL_ROLE_SOURCE_UNRELIABLE"
+  | "TAIL_NOT_LOWEST_NON_NOISE_EVIDENCE"
+  | "TAIL_TEXT_MISMATCH"
+  | "MATCH_NOT_LOCAL_TAIL"
+  | "VISION_LOCAL_ROLE_CONFLICT"
+  | "RECONCILED_TAIL_MISMATCH";
+
+export interface AdminIngestWechatTailRoleVerificationDiagnostics {
+  policy: AdminIngestWechatTailRoleVerificationPolicy;
+  reason: AdminIngestWechatTailRoleVerificationReason;
+  localRoleReliable: boolean;
+  bestScoreBucket: "none" | "below_050" | "050_071" | "072_089" | "090_099" | "exact";
+  bestLocalIndex: number;
+  localTailIndex: number;
+  visionTailIndex: number;
+  visionTailLength: number;
+  localTailLength: number;
+  localTailConfidence: number | null;
+  localTailRoleSource: AdminIngestWechatTailRoleSource | null;
+  localTailIsLowestNonNoiseEvidence: boolean | null;
+}
+
+export type AdminIngestWechatTailRoleVerification = {
+  status: "verified";
+  tailRole: "customer" | "user";
+  tailText: string;
+  transcript: ReturnType<typeof buildAdminIngestWechatTranscript>;
+  diagnostics: AdminIngestWechatTailRoleVerificationDiagnostics;
+} | {
+  status: "insufficient";
+  tailRole: "uncertain";
+  tailText: string;
+  transcript: ReturnType<typeof buildAdminIngestWechatTranscript>;
+  diagnostics: AdminIngestWechatTailRoleVerificationDiagnostics;
+};
+
 const DEFAULT_TARGET_SEGMENT_HEIGHT = 2_400;
 const DEFAULT_SEGMENT_OVERLAP = 360;
 const DEFAULT_MAX_SEGMENTS = 12;
@@ -324,24 +378,62 @@ function isNearDuplicate(
 
 export function buildAdminIngestWechatTranscript(
   lines: AdminIngestWechatOcrLine[],
-  options: { overlapDistance?: number } = {}
+  options: {
+    overlapDistance?: number;
+    imageHeight?: number;
+    tailStrictComposerFilter?: boolean;
+  } = {}
 ) {
   const overlapDistance = Math.max(120, options.overlapDistance ?? 520);
   const candidates: AdminIngestWechatTranscriptMessage[] = [];
+  const candidateEvidence = new Map<AdminIngestWechatTranscriptMessage, {
+    roleSource: AdminIngestWechatTailRoleSource;
+    noisy: boolean;
+  }>();
   let uncertainCount = 0;
   let noisyCount = 0;
+  let filteredTailComposerChromeCount = 0;
+  let lowestNonNoiseEvidenceY = Number.NEGATIVE_INFINITY;
 
   for (const line of [...lines].sort((left, right) => left.y0 - right.y0 || left.x0 - right.x0)) {
     const text = cleanOcrLine(line.text);
     const role = classifyAdminIngestWechatLine(line);
     const centerRatio = line.imageWidth > 0 ? ((line.x0 + line.x1) / 2) / line.imageWidth : 0.5;
+    const hasBubbleColorRole = Boolean(line.roleHint && line.roleHint !== "uncertain");
+    const imageHeight = Math.max(0, options.imageHeight ?? 0);
+    const isInBottomComposerBand = imageHeight > 0 && line.y0 >= imageHeight * 0.88;
+    const comparableLength = normalizeComparableText(text).length;
+    const isTailComposerChrome = options.tailStrictComposerFilter === true
+      && isInBottomComposerBand
+      && line.confidence < 60
+      && comparableLength > 0
+      && comparableLength <= 2
+      && !hasBubbleColorRole
+      && role !== "uncertain";
+    const preserveColoredShortTail = options.tailStrictComposerFilter === true
+      && isInBottomComposerBand
+      && hasBubbleColorRole
+      && comparableLength > 0;
 
-    if (!text || isLikelyOcrNoise(text) || isWechatChromeOrTimestamp(text, centerRatio)) {
+    if (
+      !text
+      || (isLikelyOcrNoise(text) && !preserveColoredShortTail)
+      || isWechatChromeOrTimestamp(text, centerRatio)
+    ) {
       continue;
     }
 
-    if (isLikelyWechatOcrGarbage(text)) {
+    if (isTailComposerChrome) {
+      filteredTailComposerChromeCount += 1;
+      continue;
+    }
+
+    const noisy = isLikelyWechatOcrGarbage(text);
+
+    if (noisy) {
       noisyCount += 1;
+    } else {
+      lowestNonNoiseEvidenceY = Math.max(lowestNonNoiseEvidenceY, line.y0);
     }
 
     if (role === "uncertain") {
@@ -355,6 +447,11 @@ export function buildAdminIngestWechatTranscript(
       y: line.y0,
       confidence: line.confidence
     };
+    const roleSource: AdminIngestWechatTailRoleSource = line.roleHint
+      && line.roleHint !== "uncertain"
+      ? "color"
+      : "geometry";
+    candidateEvidence.set(candidate, { roleSource, noisy });
     const duplicateIndex = candidates.findIndex((item) => isNearDuplicate(item, candidate, overlapDistance));
 
     if (duplicateIndex >= 0) {
@@ -383,21 +480,41 @@ export function buildAdminIngestWechatTranscript(
   const transcript = messages.map((message) => (
     `${message.role === "customer" ? "客户(左侧)" : "我(右侧)"}：${message.text}`
   )).join("\n");
+  const tailMessage = messages.at(-1) ?? null;
+  const tailEvidence = tailMessage ? candidateEvidence.get(tailMessage) ?? null : null;
 
   return {
     messages,
     transcript,
     latestCustomerMessage: selectLatestCustomerMessage(customerMessages),
     uncertainCount,
-    noisyCount
+    noisyCount,
+    filteredTailComposerChromeCount,
+    tailRoleEvidence: tailMessage && tailEvidence
+      ? {
+          confidence: tailMessage.confidence,
+          roleSource: tailEvidence.roleSource,
+          isLowestNonNoiseEvidence: !tailEvidence.noisy
+            && tailMessage.y >= lowestNonNoiseEvidenceY
+        } satisfies AdminIngestWechatTailRoleEvidence
+      : null
   };
 }
 
-export function parseAdminIngestWechatRoleTranscript(value: string) {
+export function parseAdminIngestWechatRoleTranscript(
+  value: string,
+  options: { allowMarkdownRoleLabelWrapper?: boolean } = {}
+) {
   const lines: AdminIngestWechatOcrLine[] = [];
 
   for (const rawLine of value.replace(/\r\n?/g, "\n").split("\n")) {
-    const line = rawLine.trim();
+    const line = options.allowMarkdownRoleLabelWrapper === true
+      ? rawLine
+          .trim()
+          .replace(/^(?:[-+*•]\s+|\d{1,3}[.)、]\s*)/, "")
+          .replace(/\*\*/g, "")
+          .trim()
+      : rawLine.trim();
     const match = line.match(/^(客户|我)\s*[（(](左侧|右侧)[）)]\s*[：:]\s*(.+)$/);
 
     if (!match || /\d+\/\d+\s*段未识别/.test(line)) {
@@ -473,8 +590,11 @@ function textMatchScore(left: string, right: string) {
 export function reconcileAdminIngestWechatRoleTranscripts(input: {
   visionTranscript: string;
   localTranscript: string;
+  allowMarkdownRoleLabelWrapper?: boolean;
 }) {
-  const vision = parseAdminIngestWechatRoleTranscript(input.visionTranscript);
+  const vision = parseAdminIngestWechatRoleTranscript(input.visionTranscript, {
+    allowMarkdownRoleLabelWrapper: input.allowMarkdownRoleLabelWrapper
+  });
   const local = parseAdminIngestWechatRoleTranscript(input.localTranscript);
   const reconciledLines: AdminIngestWechatOcrLine[] = vision.messages.map((message, index) => {
     let bestMatch: AdminIngestWechatTranscriptMessage | null = null;
@@ -521,10 +641,156 @@ export function reconcileAdminIngestWechatRoleTranscripts(input: {
   return buildAdminIngestWechatTranscript(reconciledLines, { overlapDistance: 160 });
 }
 
+export function verifyAdminIngestWechatTailRole(input: {
+  visionTranscript: string;
+  localTranscript: string;
+  localRoleReliable: boolean;
+  policy?: AdminIngestWechatTailRoleVerificationPolicy;
+  localTailEvidence?: AdminIngestWechatTailRoleEvidence | null;
+  visionMissingReason?: Extract<
+    AdminIngestWechatTailRoleVerificationReason,
+    | "VISION_PROVIDER_FAILED"
+    | "VISION_TEXT_EMPTY"
+    | "VISION_ROLE_FORMAT_UNPARSEABLE"
+  >;
+}): AdminIngestWechatTailRoleVerification {
+  const policy = input.policy ?? "global";
+  const vision = parseAdminIngestWechatRoleTranscript(input.visionTranscript, {
+    allowMarkdownRoleLabelWrapper: policy === "tail_strict"
+  });
+  const local = parseAdminIngestWechatRoleTranscript(input.localTranscript);
+  const visionTail = vision.messages.at(-1) ?? null;
+  const localTail = local.messages.at(-1) ?? null;
+  let bestLocalMatch: AdminIngestWechatTranscriptMessage | null = null;
+  let bestScore = 0;
+  let bestIndex = -1;
+
+  if (visionTail) {
+    for (let index = 0; index < local.messages.length; index += 1) {
+      const candidate = local.messages[index];
+      const score = textMatchScore(visionTail.text, candidate.text);
+
+      if (score > bestScore || (score === bestScore && index > bestIndex)) {
+        bestLocalMatch = candidate;
+        bestScore = score;
+        bestIndex = index;
+      }
+    }
+  }
+
+  const bestScoreBucket: AdminIngestWechatTailRoleVerificationDiagnostics["bestScoreBucket"] = bestScore <= 0
+    ? "none"
+    : bestScore < 0.5
+      ? "below_050"
+      : bestScore < 0.72
+        ? "050_071"
+        : bestScore < 0.9
+          ? "072_089"
+          : bestScore < 1
+            ? "090_099"
+            : "exact";
+  const buildDiagnostics = (
+    reason: AdminIngestWechatTailRoleVerificationReason
+  ): AdminIngestWechatTailRoleVerificationDiagnostics => ({
+    policy,
+    reason,
+    localRoleReliable: input.localRoleReliable,
+    bestScoreBucket,
+    bestLocalIndex: bestIndex,
+    localTailIndex: Math.max(-1, local.messages.length - 1),
+    visionTailIndex: Math.max(-1, vision.messages.length - 1),
+    visionTailLength: normalizeComparableText(visionTail?.text ?? "").length,
+    localTailLength: normalizeComparableText(localTail?.text ?? "").length,
+    localTailConfidence: input.localTailEvidence?.confidence ?? null,
+    localTailRoleSource: input.localTailEvidence?.roleSource ?? null,
+    localTailIsLowestNonNoiseEvidence:
+      input.localTailEvidence?.isLowestNonNoiseEvidence ?? null
+  });
+  const insufficient = (reason: AdminIngestWechatTailRoleVerificationReason) => ({
+    status: "insufficient" as const,
+    tailRole: "uncertain" as const,
+    tailText: visionTail?.text ?? "",
+    transcript: vision,
+    diagnostics: buildDiagnostics(reason)
+  });
+
+  if (!visionTail) {
+    if (policy === "global" && input.localRoleReliable && localTail) {
+      return {
+        status: "verified",
+        tailRole: localTail.role,
+        tailText: localTail.text,
+        transcript: local,
+        diagnostics: buildDiagnostics("VERIFIED")
+      };
+    }
+
+    return insufficient(input.visionMissingReason ?? "VISION_TAIL_MISSING");
+  }
+
+  if (!localTail) {
+    return insufficient("LOCAL_TAIL_MISSING");
+  }
+
+  if (policy === "global" && !input.localRoleReliable) {
+    return insufficient("GLOBAL_ROLE_UNRELIABLE");
+  }
+
+  if (policy === "tail_strict") {
+    if (!input.localTailEvidence || input.localTailEvidence.confidence < 60) {
+      return insufficient("TAIL_CONFIDENCE_LOW");
+    }
+    if (
+      input.localTailEvidence.roleSource !== "color"
+      && input.localTailEvidence.roleSource !== "geometry"
+    ) {
+      return insufficient("TAIL_ROLE_SOURCE_UNRELIABLE");
+    }
+    if (!input.localTailEvidence.isLowestNonNoiseEvidence) {
+      return insufficient("TAIL_NOT_LOWEST_NON_NOISE_EVIDENCE");
+    }
+  }
+
+  if (!bestLocalMatch || bestScore < 0.72) {
+    return insufficient("TAIL_TEXT_MISMATCH");
+  }
+
+  if (bestIndex !== local.messages.length - 1) {
+    return insufficient("MATCH_NOT_LOCAL_TAIL");
+  }
+
+  if (visionTail.role === "user" && bestLocalMatch.role !== "user") {
+    return insufficient("VISION_LOCAL_ROLE_CONFLICT");
+  }
+
+  const reconciled = reconcileAdminIngestWechatRoleTranscripts({
+    ...input,
+    allowMarkdownRoleLabelWrapper: policy === "tail_strict"
+  });
+  const reconciledTail = reconciled.messages.at(-1) ?? null;
+
+  if (
+    !reconciledTail
+    || normalizeComparableText(reconciledTail.text) !== normalizeComparableText(visionTail.text)
+    || reconciledTail.role !== bestLocalMatch.role
+  ) {
+    return insufficient("RECONCILED_TAIL_MISMATCH");
+  }
+
+  return {
+    status: "verified",
+    tailRole: bestLocalMatch.role,
+    tailText: visionTail.text,
+    transcript: reconciled,
+    diagnostics: buildDiagnostics("VERIFIED")
+  };
+}
+
 export function buildAdminIngestWechatReplyEvidence(input: {
   transcript: string;
   latestCustomerMessage: string;
   partial?: boolean;
+  currentTurnRoleVerification?: "verified" | "insufficient";
 }) {
   return [
     "【微信对话截图识别稿】",
@@ -536,6 +802,9 @@ export function buildAdminIngestWechatReplyEvidence(input: {
     input.latestCustomerMessage
       ? `从截图底部向上识别到的最近客户消息：${input.latestCustomerMessage}`
       : "未能可靠确定最近客户消息。",
+    input.currentTurnRoleVerification === "insufficient"
+      ? "【当前回合角色核验】证据不足"
+      : "",
     input.partial ? "截图存在未识别片段，只能基于已识别对话作答，不得补写缺失内容。" : "",
     "",
     "【回答任务】",

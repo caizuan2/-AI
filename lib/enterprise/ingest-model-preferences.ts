@@ -7,6 +7,37 @@ export const ADMIN_INGEST_MODEL_BY_AGENT_STORAGE_KEY = "admin-ingest-selected-mo
 
 export type AdminIngestModelPreferencesByAgent = Record<string, string>;
 
+export type AdminIngestPendingModelSelection = {
+  agentId: string;
+  modelLabel: string;
+  requestVersion: number;
+};
+
+export function beginAdminIngestModelSelection(input: AdminIngestPendingModelSelection) {
+  return { ...input };
+}
+
+export function isAdminIngestModelSelectionPending(
+  pending: AdminIngestPendingModelSelection | null,
+  agentId: string
+) {
+  return Boolean(pending && pending.agentId === agentId);
+}
+
+export function canCommitAdminIngestModelSelection(input: {
+  pending: AdminIngestPendingModelSelection | null;
+  agentId: string;
+  modelLabel: string;
+  requestVersion: number;
+}) {
+  return Boolean(
+    input.pending
+    && input.pending.agentId === input.agentId
+    && input.pending.modelLabel === input.modelLabel
+    && input.pending.requestVersion === input.requestVersion
+  );
+}
+
 function normalizeSelectableAgentModel(modelLabel: string | null | undefined) {
   return getIngestModelOptionByLabel(modelLabel).label;
 }
