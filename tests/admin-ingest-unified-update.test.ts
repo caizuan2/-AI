@@ -9,10 +9,31 @@ import {
   resolveAdminAndroidUpdateUrl
 } from "../components/AppUpdateNotice";
 import { checkCurrentAppUpdate } from "../lib/update-checker";
-import releaseInfo from "../public/releases/latest.json";
+import committedReleaseInfo from "../public/releases/latest.json";
 import adminRelease from "../config/admin-ingest/release.json";
 
 async function main() {
+const adminWebReleaseSha = "admin-ingest-rollback-test-sha";
+const releaseInfo = {
+  ...committedReleaseInfo,
+  apps: {
+    ...committedReleaseInfo.apps,
+    admin: {
+      ...committedReleaseInfo.apps.admin,
+      active_version: adminRelease.version,
+      versions: [{
+        ...committedReleaseInfo.apps.admin.versions[0],
+        ...adminRelease,
+        web_release_sha: adminWebReleaseSha
+      }]
+    }
+  },
+  admin: {
+    ...committedReleaseInfo.admin,
+    ...adminRelease,
+    web_release_sha: adminWebReleaseSha
+  }
+};
 const normalized = normalizeLatestReleaseManifest(releaseInfo);
 assert.ok(normalized);
 
