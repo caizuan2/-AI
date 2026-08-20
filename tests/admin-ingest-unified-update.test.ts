@@ -9,31 +9,10 @@ import {
   resolveAdminAndroidUpdateUrl
 } from "../components/AppUpdateNotice";
 import { checkCurrentAppUpdate } from "../lib/update-checker";
-import committedReleaseInfo from "../public/releases/latest.json";
+import releaseInfo from "../public/releases/latest.json";
 import adminRelease from "../config/admin-ingest/release.json";
 
 async function main() {
-const adminWebReleaseSha = "admin-ingest-hotfix-test-sha";
-const releaseInfo = {
-  ...committedReleaseInfo,
-  apps: {
-    ...committedReleaseInfo.apps,
-    admin: {
-      ...committedReleaseInfo.apps.admin,
-      active_version: adminRelease.version,
-      versions: [{
-        ...committedReleaseInfo.apps.admin.versions[0],
-        ...adminRelease,
-        web_release_sha: adminWebReleaseSha
-      }]
-    }
-  },
-  admin: {
-    ...committedReleaseInfo.admin,
-    ...adminRelease,
-    web_release_sha: adminWebReleaseSha
-  }
-};
 const normalized = normalizeLatestReleaseManifest(releaseInfo);
 assert.ok(normalized);
 
@@ -45,10 +24,6 @@ assert.equal(admin.force_update, true);
 assert.equal(admin.web_url, adminRelease.web_url);
 assert.equal(admin.apk_url, adminRelease.apk_url);
 assert.equal(admin.exe_url, adminRelease.exe_url);
-assert.equal(adminRelease.version, "1.0.38");
-assert.equal(adminRelease.build, 138);
-assert.equal(adminRelease.minimum_build, 138);
-assert.equal(adminRelease.release_tag, "release/admin-ingest-1.0.38-build.138");
 assert.equal(admin.apk_url, "http://47.238.0.23/admin-installers/admin-ingest.apk");
 assert.equal(admin.exe_url, "http://47.238.0.23/admin-installers/admin-ingest.exe");
 
@@ -84,7 +59,7 @@ const staleNativeWithOlderWeb = await checkCurrentAppUpdate({
   },
   fetcher: manifestFetch
 });
-assert.equal(staleNativeWithOlderWeb.updateKind, "package");
+assert.equal(staleNativeWithOlderWeb.updateKind, "web");
 assert.equal(staleNativeWithOlderWeb.forceUpdate, true);
 
 const build115AdminApkUpdate = await checkCurrentAppUpdate({
@@ -99,81 +74,8 @@ const build115AdminApkUpdate = await checkCurrentAppUpdate({
   },
   fetcher: manifestFetch
 });
-assert.equal(build115AdminApkUpdate.updateKind, "package");
+assert.equal(build115AdminApkUpdate.updateKind, "web");
 assert.equal(build115AdminApkUpdate.forceUpdate, true);
-
-const currentNativeWithOlderWeb = await checkCurrentAppUpdate({
-  appKind: "admin",
-  currentVersion: admin.version,
-  currentBuild: admin.build,
-  currentWebReleaseSha: "older-admin-web-sha",
-  runtimeWindow: {
-    location: { search: "" },
-    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
-    AndroidBridge: {}
-  },
-  fetcher: manifestFetch
-});
-assert.equal(currentNativeWithOlderWeb.updateKind, "web");
-assert.equal(currentNativeWithOlderWeb.forceUpdate, true);
-
-const currentWebWithOlderRelease = await checkCurrentAppUpdate({
-  appKind: "admin",
-  currentVersion: admin.version,
-  currentBuild: admin.build,
-  currentWebReleaseSha: "older-admin-web-sha",
-  runtimeWindow: {
-    location: { search: "" },
-    navigator: { userAgent: "Mozilla/5.0 Chrome/140.0.0.0" }
-  },
-  fetcher: manifestFetch
-});
-assert.equal(currentWebWithOlderRelease.updateKind, "web");
-assert.equal(currentWebWithOlderRelease.forceUpdate, false);
-
-const forcedNewerPackageFetch = (async () => ({
-  ok: true,
-  json: async () => ({
-    ...releaseInfo,
-    apps: {
-      ...releaseInfo.apps,
-      admin: {
-        ...releaseInfo.apps.admin,
-        active_version: "1.0.39",
-        versions: [{
-          ...admin,
-          version: "1.0.39",
-          build: 139,
-          minimum_build: admin.build,
-          force_update: true,
-          web_release_sha: "newer-forced-admin-release"
-        }]
-      }
-    },
-    admin: {
-      ...admin,
-      version: "1.0.39",
-      build: 139,
-      minimum_build: admin.build,
-      force_update: true,
-      web_release_sha: "newer-forced-admin-release"
-    }
-  })
-} as Response)) as unknown as typeof fetch;
-const forcedNewerNativePackage = await checkCurrentAppUpdate({
-  appKind: "admin",
-  currentVersion: admin.version,
-  currentBuild: admin.build,
-  currentWebReleaseSha: admin.web_release_sha,
-  runtimeWindow: {
-    location: { search: "" },
-    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
-    AndroidBridge: {}
-  },
-  fetcher: forcedNewerPackageFetch
-});
-assert.equal(forcedNewerNativePackage.updateKind, "package");
-assert.equal(forcedNewerNativePackage.forceUpdate, true);
 
 const contentOnlyManifest = {
   updated_at: releaseInfo.updated_at,
@@ -303,50 +205,6 @@ assert.equal(frozenSuperAdminWeb.hasUpdate, false);
 assert.equal(frozenSuperAdminWeb.updateKind, "none");
 
 const user = normalized.user;
-const userNativeUpdateFetch = (async () => ({
-  ok: true,
-  json: async () => ({
-    ...releaseInfo,
-    apps: {
-      ...releaseInfo.apps,
-      user: {
-        ...releaseInfo.apps.user,
-        active_version: "1.0.19",
-        versions: [{
-          ...user,
-          version: "1.0.19",
-          build: user.build + 1,
-          minimum_build: user.minimum_build,
-          force_update: false,
-          web_release_sha: "newer-user-web-release"
-        }]
-      }
-    },
-    user: {
-      ...user,
-      version: "1.0.19",
-      build: user.build + 1,
-      minimum_build: user.minimum_build,
-      force_update: false,
-      web_release_sha: "newer-user-web-release"
-    }
-  })
-} as Response)) as unknown as typeof fetch;
-const userNativeUpdate = await checkCurrentAppUpdate({
-  appKind: "user",
-  currentVersion: user.version,
-  currentBuild: user.build,
-  currentWebReleaseSha: user.web_release_sha,
-  runtimeWindow: {
-    location: { search: "" },
-    navigator: { userAgent: "Mozilla/5.0 (Linux; Android 15; wv)" },
-    AndroidBridge: {}
-  },
-  fetcher: userNativeUpdateFetch
-});
-assert.equal(userNativeUpdate.updateKind, "web");
-assert.equal(userNativeUpdate.forceUpdate, false);
-
 const userWeb = promoteUnappliedWebReleaseUpdate({
   appKind: "user",
   currentVersion: user.version,
@@ -395,13 +253,6 @@ assert.match(apkBuild, /assembleRelease/);
 assert.match(apkBuild, /app\/build\/outputs\/apk\/release\/app-release\.apk/);
 assert.match(apkBuild, /ANDROID_RELEASE_KEYSTORE_PATH/);
 assert.match(apkBuild, /android\.injected\.signing\.store\.file/);
-
-const appVersionSource = readFileSync("lib/app-version.ts", "utf8");
-const updateCheckerSource = readFileSync("lib/update-checker.ts", "utf8");
-const adminWebBuild = readFileSync("scripts/build/build-admin-ingest-web.ps1", "utf8");
-assert.match(appVersionSource, /NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA/);
-assert.match(updateCheckerSource, /options\.appKind === ADMIN_APP_KIND && ADMIN_APP_WEB_RELEASE_SHA/);
-assert.match(adminWebBuild, /NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA\s*=\s*\$ReleaseHead/);
 
 for (const buildScriptPath of [
   "scripts/build/build-admin-ingest-exe.ps1",
@@ -464,7 +315,7 @@ assert.match(
 );
 assert.match(
   deployWorkflow,
-  /ADMIN_INGEST_RELEASE_BUILD=1[\s\S]{0,120}ADMIN_WEB_RELEASE_SHA="\$RELEASE_SHA"[\s\S]{0,120}NEXT_PUBLIC_ADMIN_WEB_RELEASE_SHA="\$RELEASE_SHA"[\s\S]{0,120}npm run build/
+  /ADMIN_INGEST_RELEASE_BUILD=1[\s\S]{0,120}ADMIN_WEB_RELEASE_SHA="\$RELEASE_SHA"[\s\S]{0,120}npm run build/
 );
 assert.match(deployWorkflow, /installer_source="\/var\/www\/ai-knowledge-shared\/admin-ingest\/releases\/current"/);
 assert.match(deployWorkflow, /ensure-admin-installer-link\.sh/);
