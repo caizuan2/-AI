@@ -1,7 +1,7 @@
 export type AdminIngestConversationRuntimeStatus =
   | {
     state: "generating";
-    requestId?: string;
+    requestId: string;
     startedAt: number;
     updatedAt: number;
   }
@@ -12,6 +12,11 @@ export type AdminIngestConversationRuntimeStatus =
   }
   | {
     state: "visible_completed";
+    requestId: string;
+    updatedAt: number;
+  }
+  | {
+    state: "stop_requested" | "stopped" | "failed" | "timed_out";
     requestId: string;
     updatedAt: number;
   };
@@ -65,18 +70,31 @@ export function normalizeAdminIngestConversationRuntimeStatusMap(
     const updatedAt = Math.min(rawUpdatedAt, now);
 
     if (status.state === "generating") {
+      if (!requestId) {
+        continue;
+      }
+
       const startedAt = Math.min(
         readTimestamp(status.startedAt) ?? updatedAt,
         now
       );
 
       if (now - updatedAt > MAX_GENERATING_STATUS_AGE_MS) {
+        const timedOutAt = updatedAt + MAX_GENERATING_STATUS_AGE_MS;
+
+        if (now - timedOutAt <= MAX_COMPLETED_STATUS_AGE_MS) {
+          next[conversationId] = {
+            state: "timed_out",
+            requestId,
+            updatedAt: timedOutAt
+          };
+        }
         continue;
       }
 
       next[conversationId] = {
         state: "generating",
-        requestId: requestId || undefined,
+        requestId,
         startedAt,
         updatedAt
       };
@@ -84,7 +102,14 @@ export function normalizeAdminIngestConversationRuntimeStatusMap(
     }
 
     if (
-      (status.state === "completed_unread" || status.state === "visible_completed")
+      (
+        status.state === "completed_unread"
+        || status.state === "visible_completed"
+        || status.state === "stop_requested"
+        || status.state === "stopped"
+        || status.state === "failed"
+        || status.state === "timed_out"
+      )
       && requestId
       && now - updatedAt <= MAX_COMPLETED_STATUS_AGE_MS
     ) {
@@ -116,7 +141,7 @@ export function markAdminIngestConversationGenerating(
   current: AdminIngestConversationRuntimeStatusMap,
   input: {
     conversationId: string;
-    requestId?: string;
+    requestId: string;
     now?: number;
   }
 ) {
@@ -127,7 +152,17 @@ export function markAdminIngestConversationGenerating(
     previous?.state === "generating"
     && previous.requestId === input.requestId
   ) {
-    return current;
+    if (previous.updatedAt >= now) {
+      return current;
+    }
+
+    return {
+      ...current,
+      [input.conversationId]: {
+        ...previous,
+        updatedAt: now
+      }
+    };
   }
 
   if (
@@ -149,6 +184,100 @@ export function markAdminIngestConversationGenerating(
   };
 }
 
+export function isAdminIngestConversationRequestTerminal(
+  status: AdminIngestConversationRuntimeStatus | undefined
+) {
+  return status?.state === "completed_unread"
+    || status?.state === "visible_completed"
+    || status?.state === "stopped"
+    || status?.state === "failed"
+    || status?.state === "timed_out";
+}
+
+export function isAdminIngestConversationRequestCancelled(
+  status: AdminIngestConversationRuntimeStatus | undefined,
+  requestId: string
+) {
+  return status?.requestId === requestId
+    && (
+      status.state === "stop_requested"
+      || status.state === "stopped"
+      || status.state === "timed_out"
+    );
+}
+
+function getAdminIngestConversationRuntimeStatusPrecedence(
+  status: AdminIngestConversationRuntimeStatus
+) {
+  if (status.state === "generating") {
+    return 0;
+  }
+
+  if (status.state === "completed_unread" || status.state === "visible_completed") {
+    return 1;
+  }
+
+  if (status.state === "stop_requested") {
+    return 2;
+  }
+
+  if (status.state === "failed") {
+    return 3;
+  }
+
+  if (status.state === "timed_out") {
+    return 4;
+  }
+
+  return 5;
+}
+
+export function markAdminIngestConversationRequestTerminal(
+  current: AdminIngestConversationRuntimeStatusMap,
+  input: {
+    conversationId: string;
+    requestId: string;
+    state: "stop_requested" | "stopped" | "failed" | "timed_out";
+    now?: number;
+  }
+) {
+  const previous = current[input.conversationId];
+  const now = input.now ?? Date.now();
+
+  if (previous?.requestId && previous.requestId !== input.requestId) {
+    return current;
+  }
+
+  if (
+    previous?.requestId === input.requestId
+    && (
+      previous.state === "completed_unread"
+      || previous.state === "visible_completed"
+      || previous.state === "stopped"
+      || previous.state === "failed"
+      || previous.state === "timed_out"
+    )
+  ) {
+    return current;
+  }
+
+  if (
+    previous?.state === input.state
+    && previous.requestId === input.requestId
+  ) {
+    return current;
+  }
+
+  return {
+    ...current,
+    [input.conversationId]: {
+      state: input.state,
+      requestId: input.requestId,
+      updatedAt: now
+    }
+  };
+}
+
 export function markAdminIngestConversationVisibleCompleted(
   current: AdminIngestConversationRuntimeStatusMap,
   input: {
@@ -159,6 +288,16 @@ export function markAdminIngestConversationVisibleCompleted(
 ) {
   const previous = current[input.conversationId];
   const now = input.now ?? Date.now();
+
+  if (
+    previous?.requestId === input.requestId
+    && (
+      previous.state === "stop_requested"
+      || isAdminIngestConversationRequestTerminal(previous)
+    )
+  ) {
+    return current;
+  }
 
   if (
     previous?.state === "generating"
@@ -207,6 +346,16 @@ export function markAdminIngestConversationCompleted(
   const previous = current[input.conversationId];
 
   if (
+    previous?.requestId === input.requestId
+    && (
+      previous.state === "stop_requested"
+      || isAdminIngestConversationRequestTerminal(previous)
+    )
+  ) {
+    return current;
+  }
+
+  if (
     previous?.state === "generating"
     && previous.requestId
     && previous.requestId !== input.requestId
@@ -240,6 +389,13 @@ export function clearAdminIngestConversationRuntimeStatus(
   }
 ) {
   const previous = current[input.conversationId];
+
+  if (
+    input.requestId
+    && isAdminIngestConversationRequestCancelled(previous, input.requestId)
+  ) {
+    return current;
+  }
 
   if (
     input.requestId
@@ -287,29 +443,35 @@ export function mergeAdminIngestConversationRuntimeStatusMaps(
       continue;
     }
 
-    if (
-      currentStatus.state !== "generating"
-      && incomingStatus.state === "generating"
-      && currentStatus.requestId === incomingStatus.requestId
-    ) {
-      next[conversationId] = currentStatus;
+    if (currentStatus.requestId === incomingStatus.requestId) {
+      const currentPrecedence = getAdminIngestConversationRuntimeStatusPrecedence(
+        currentStatus
+      );
+      const incomingPrecedence = getAdminIngestConversationRuntimeStatusPrecedence(
+        incomingStatus
+      );
+
+      if (
+        currentPrecedence > incomingPrecedence
+        || (
+          currentPrecedence === incomingPrecedence
+          && currentStatus.updatedAt > incomingStatus.updatedAt
+        )
+      ) {
+        next[conversationId] = currentStatus;
+      }
       continue;
     }
 
     if (
       currentStatus.state === "generating"
       && incomingStatus.state !== "generating"
-      && currentStatus.requestId !== incomingStatus.requestId
     ) {
       next[conversationId] = currentStatus;
       continue;
     }
 
-    if (
-      currentStatus.state !== "generating"
-      && incomingStatus.state !== "generating"
-      && currentStatus.updatedAt > incomingStatus.updatedAt
-    ) {
+    if (currentStatus.updatedAt > incomingStatus.updatedAt) {
       next[conversationId] = currentStatus;
     }
   }

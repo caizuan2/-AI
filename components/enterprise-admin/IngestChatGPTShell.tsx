@@ -268,6 +268,7 @@ interface IngestChatGPTShellProps {
   canUseFullIngestTools?: boolean;
   userName?: string | null;
   welcomeVariant?: "chat_only" | "full_ingest";
+  compactMobileViewport?: boolean;
 }
 
 
@@ -904,7 +905,8 @@ export function IngestChatGPTShell({
   showTrainingEntries = true,
   canUseFullIngestTools = true,
   userName,
-  welcomeVariant = "full_ingest"
+  welcomeVariant = "full_ingest",
+  compactMobileViewport = false
 }: IngestChatGPTShellProps = {}) {
   const wechatUpload = uploadedFiles.find((file) => file.recognitionMode === "wechat_conversation");
   const wechatOutputMode = normalizeAdminIngestWechatOutputMode(wechatUpload?.wechatOutputMode);
@@ -2191,7 +2193,20 @@ export function IngestChatGPTShell({
   }
 
   return (
-    <main className={["flex overflow-hidden bg-[#f7f7f6] text-[#191919]", isAdminApk ? "h-dvh" : "h-screen"].join(" ")}>
+    <main
+      data-admin-ingest-layout={isAdminApk
+        ? compactMobileViewport ? "compact" : "standard"
+        : undefined}
+      className={["box-border flex min-h-0 overflow-hidden bg-[#f7f7f6] text-[#191919]", isAdminApk ? "h-full" : "h-screen"].join(" ")}
+      style={isAdminApk
+        ? {
+            paddingTop: "max(0px, env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px))",
+            paddingRight: "max(0px, env(safe-area-inset-right, 0px), var(--safe-area-inset-right, 0px))",
+            paddingBottom: "max(0px, env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px))",
+            paddingLeft: "max(0px, env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px))"
+          }
+        : undefined}
+    >
       {isAdminApk ? (
         <button
           type="button"
@@ -2208,12 +2223,19 @@ export function IngestChatGPTShell({
         aria-hidden={isAdminApk ? !isMobileNavigationOpen : undefined}
         className={isAdminApk
           ? [
-              "fixed inset-y-0 left-0 z-[70] flex w-[min(92vw,390px)] max-w-full bg-[#fbfbfa] shadow-2xl transition-transform duration-200 ease-out",
+              "fixed inset-y-0 left-0 z-[70] box-border flex w-[min(92vw,390px)] max-w-full bg-[#fbfbfa] shadow-2xl transition-transform duration-200 ease-out",
               isMobileNavigationOpen ? "translate-x-0" : "pointer-events-none -translate-x-full"
             ].join(" ")
           : "contents"}
+        style={isAdminApk
+          ? {
+              paddingTop: "max(0px, env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px))",
+              paddingBottom: "max(0px, env(safe-area-inset-bottom, 0px), var(--safe-area-inset-bottom, 0px))",
+              paddingLeft: "max(0px, env(safe-area-inset-left, 0px), var(--safe-area-inset-left, 0px))"
+            }
+          : undefined}
       >
-      <aside className={["flex w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5", isAdminApk ? "h-dvh" : "h-screen"].join(" ")}>
+      <aside className={["flex min-h-0 w-[68px] shrink-0 flex-col items-center border-r border-[#e9e9e6] bg-[#eeeeec] py-5", isAdminApk ? "h-full" : "h-screen"].join(" ")}>
         <button
           type="button"
           title="管理员头像 / 设置"
@@ -2531,7 +2553,7 @@ export function IngestChatGPTShell({
       </IngestResizableSidebar>
       </div>
 
-      <section className="relative flex min-w-0 flex-1 flex-col bg-white">
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-white">
         {isAdminApk && isExpertMarketplace ? (
           <button
             type="button"
@@ -2551,19 +2573,34 @@ export function IngestChatGPTShell({
           </button>
         ) : null}
         {!isExpertMarketplace ? (
-          <div className={["relative flex h-16 shrink-0 items-center border-b border-[#f0f0ee] px-5", isAdminApk ? "justify-between" : "justify-end"].join(" ")}>
+          <div
+            className={[
+              "relative flex shrink-0 items-center overflow-hidden border-b border-[#f0f0ee]",
+              isAdminApk ? "justify-between" : "h-16 justify-end px-5",
+              isAdminApk && compactMobileViewport ? "h-[52px] px-3" : isAdminApk ? "h-16 px-5" : ""
+            ].join(" ")}
+            style={isAdminApk
+              ? { WebkitTextSizeAdjust: "100%", textSizeAdjust: "100%" }
+              : undefined}
+          >
             {isAdminApk ? (
               <button
                 type="button"
                 aria-label="打开左侧功能"
                 aria-expanded={isMobileNavigationOpen}
                 onClick={openMobileNavigation}
-                className="flex h-10 w-10 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95"
+                className={[
+                  "flex shrink-0 items-center justify-center rounded-full border border-[#ececea] bg-white text-[#202020] shadow-sm transition active:scale-95",
+                  compactMobileViewport ? "h-9 w-9" : "h-10 w-10"
+                ].join(" ")}
               >
                 <NextImage
                   src={adminIngestLogo}
                   alt=""
-                  className="h-7 w-7 rounded-full object-contain"
+                  className={[
+                    "rounded-full object-contain",
+                    compactMobileViewport ? "h-6 w-6" : "h-7 w-7"
+                  ].join(" ")}
                   aria-hidden="true"
                   priority
                   unoptimized
@@ -2571,12 +2608,18 @@ export function IngestChatGPTShell({
               </button>
             ) : null}
             {isAdminApk && canIngest && welcomeVariant === "chat_only" ? (
-              <div className="pointer-events-none absolute inset-y-0 left-[72px] right-[72px] flex items-center justify-center">
+              <div className={[
+                "pointer-events-none absolute inset-y-0 flex min-w-0 items-center justify-center",
+                compactMobileViewport ? "left-[60px] right-[60px]" : "left-[72px] right-[72px]"
+              ].join(" ")}>
                 <div
                   aria-label={activeConversation
                     ? `当前 Agent：${activeAgent.name}，当前对话：${activeConversation.title}`
                     : `当前 Agent：${activeAgent.name}`}
-                  className="w-full max-w-[164px] overflow-hidden px-1 py-0.5"
+                  className={[
+                    "w-full overflow-hidden px-1 py-0.5",
+                    compactMobileViewport ? "max-w-[148px]" : "max-w-[164px]"
+                  ].join(" ")}
                   title={activeConversation
                     ? `${activeAgent.name} · ${activeConversation.title}`
                     : activeAgent.name}
@@ -2585,7 +2628,7 @@ export function IngestChatGPTShell({
                     <span className="mx-auto block w-fit max-w-full truncate rounded-[9px] border border-[#ebe5dc] bg-white px-2.5 py-0.5 text-center text-[13px] font-semibold leading-[16px] tracking-[0.01em] text-[#282521] shadow-[0_2px_6px_rgba(55,45,35,0.1)]">
                       {activeAgent.name}
                     </span>
-                    {activeConversation ? (
+                    {activeConversation && !compactMobileViewport ? (
                       <span className="mt-0.5 block truncate text-center text-[10px] font-normal leading-[13px] tracking-[0.02em] text-[#817c74]">
                         {activeConversation.title}
                       </span>
@@ -2618,7 +2661,7 @@ export function IngestChatGPTShell({
         <div
           ref={scrollContainerRef}
           onScroll={handleConversationScroll}
-          className={["min-h-0 flex-1 overflow-y-auto", isExpertMarketplace ? "bg-[#f7f7f6] px-5 py-5" : "px-5 pb-5 pt-4"].join(" ")}
+          className={["min-h-0 flex-1 overflow-y-auto overscroll-contain", isExpertMarketplace ? "bg-[#f7f7f6] px-5 py-5" : "px-5 pb-5 pt-4"].join(" ")}
         >
           <div ref={scrollContentRef} className={isExpertMarketplace
             ? "mx-auto flex min-h-full w-full max-w-[1440px] flex-col"
@@ -3030,10 +3073,28 @@ export function IngestChatGPTShell({
         ) : null}
 
         {!isExpertMarketplace ? (
-        <div className="shrink-0 bg-white/80 px-5 pb-4 pt-2">
-          <form onSubmit={handleSubmit} className={`${CHAT_CONTENT_WIDTH_CLASS} rounded-[28px] border border-neutral-200 bg-white/95 p-2 shadow-none`}>
+        <div
+          className={[
+            "relative z-20 shrink-0 overflow-hidden bg-white/80",
+            isAdminApk && compactMobileViewport ? "px-3 pb-2 pt-1" : "px-5 pb-4 pt-2"
+          ].join(" ")}
+          style={isAdminApk
+            ? { WebkitTextSizeAdjust: "100%", textSizeAdjust: "100%" }
+            : undefined}
+        >
+          <form
+            onSubmit={handleSubmit}
+            className={[
+              CHAT_CONTENT_WIDTH_CLASS,
+              "flex min-h-0 flex-col rounded-[28px] border border-neutral-200 bg-white/95 shadow-none",
+              isAdminApk && compactMobileViewport ? "p-1.5" : "p-2"
+            ].join(" ")}
+          >
             {uploadedFiles.length > 0 ? (
-              <div className="mb-2">
+              <div className={[
+                "mb-2 shrink overflow-y-auto overscroll-contain",
+                isAdminApk && compactMobileViewport ? "max-h-[72px]" : "max-h-32"
+              ].join(" ")}>
                 <IngestAttachmentPreview
                   files={uploadedFiles}
                   onRemove={onRemoveUpload}
@@ -3071,7 +3132,7 @@ export function IngestChatGPTShell({
                 ) : null}
               </div>
             ) : null}
-            <div className="flex items-end gap-2">
+            <div className="flex min-h-0 shrink-0 items-end gap-2">
               <div className="flex shrink-0 items-center gap-1 text-xs font-semibold text-[#555]">
                 {SHOW_INTERNAL_OS_UI ? (
                   <button
@@ -3103,7 +3164,14 @@ export function IngestChatGPTShell({
                     <Plus className="h-4 w-4" aria-hidden="true" />
                   </button>
                   {isMoreOpen ? (
-                    <div className="absolute bottom-14 left-0 z-30 w-56 rounded-[28px] border border-slate-100 bg-white p-3 shadow-2xl shadow-slate-200/80">
+                    <div
+                      className={[
+                        "absolute bottom-14 left-0 z-30 w-56 rounded-[28px] border border-slate-100 bg-white p-3 shadow-2xl shadow-slate-200/80",
+                        isAdminApk
+                          ? "max-h-[calc(100vh-8rem)] overflow-y-auto overscroll-contain supports-[height:100svh]:max-h-[calc(100svh-8rem)] supports-[height:100dvh]:max-h-[calc(100dvh-8rem)]"
+                          : ""
+                      ].join(" ")}
+                    >
                       {moreToolActions.filter((action) => (
                         canUseFullIngestTools || !action.requiresFullIngestAccess
                       )).map((action) => {
@@ -3174,7 +3242,14 @@ export function IngestChatGPTShell({
                     </div>
                   ) : null}
                   {isConnectionOpen ? (
-                    <div className="absolute bottom-11 left-0 z-30 w-64 rounded-2xl border border-[#e7e7e4] bg-white p-3 text-xs shadow-[0_18px_50px_rgba(15,23,42,0.14)]">
+                    <div
+                      className={[
+                        "absolute bottom-11 left-0 z-30 w-64 rounded-2xl border border-[#e7e7e4] bg-white p-3 text-xs shadow-[0_18px_50px_rgba(15,23,42,0.14)]",
+                        isAdminApk
+                          ? "max-h-[calc(100vh-8rem)] overflow-y-auto overscroll-contain supports-[height:100svh]:max-h-[calc(100svh-8rem)] supports-[height:100dvh]:max-h-[calc(100dvh-8rem)]"
+                          : ""
+                      ].join(" ")}
+                    >
                       <p className="font-semibold text-[#202020]">连接状态</p>
                       <div className="mt-2 space-y-1.5 text-[#666]">
                         <p>企业空间：{connectionStatus.enterpriseSpace}</p>
@@ -3197,7 +3272,10 @@ export function IngestChatGPTShell({
                 placeholder={canIngest
                   ? (canUseFullIngestTools ? "投喂 小董AI" : "问问 小董AI")
                   : "请先添加AI专家。"}
-                className="max-h-[160px] min-h-11 min-w-0 flex-1 resize-none overflow-hidden border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]"
+                className={[
+                  "min-h-11 min-w-0 flex-1 resize-none overflow-y-auto border-0 bg-transparent px-1 py-2.5 text-[15px] leading-6 outline-none placeholder:text-[#aaa] disabled:cursor-not-allowed disabled:text-[#aaa]",
+                  isAdminApk && compactMobileViewport ? "max-h-20" : "max-h-[160px]"
+                ].join(" ")}
               />
               <div className="flex shrink-0 items-center justify-end gap-1.5">
                 <button
@@ -3230,7 +3308,7 @@ export function IngestChatGPTShell({
                   aria-label={isParsing ? "停止本轮识别与生成" : "发送"}
                   className={[
                     "flex items-center justify-center gap-2 rounded-full bg-[#202020] text-white transition hover:bg-black disabled:cursor-not-allowed disabled:bg-[#eeeeec] disabled:text-[#c6c6c2]",
-                    isParsing ? "h-10 w-auto px-3 text-xs font-semibold" : "h-9 w-9"
+                    isParsing ? "h-10 w-auto whitespace-nowrap px-3 text-xs font-semibold leading-none" : "h-9 w-9"
                   ].join(" ")}
                 >
                   {isParsing ? (

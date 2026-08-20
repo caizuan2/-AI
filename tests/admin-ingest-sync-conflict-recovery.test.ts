@@ -306,7 +306,8 @@ test("client only reloads for account scope changes and uses atomic PATCH for bo
   );
   assert.match(componentSource, /operation:\s*"mark_runtime_generating"/);
   assert.match(componentSource, /operation:\s*"mark_runtime_visible_completed"/);
-  assert.match(componentSource, /operation:\s*"clear_runtime_status"/);
+  assert.match(componentSource, /operation:\s*"request_runtime_stop"/);
+  assert.match(componentSource, /"mark_runtime_stopped"[\s\S]*"mark_runtime_timed_out"[\s\S]*"mark_runtime_failed"/);
   assert.match(
     componentSource,
     /PATCH may have merged changes written by another device[\s\S]*?Do not move[\s\S]*?pull cursor/

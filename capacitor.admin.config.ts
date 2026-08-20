@@ -25,6 +25,11 @@ const config: CapacitorConfig = {
   appId: "com.aiknowledge.admin",
   appName: "小董AI",
   webDir: "admin-app-shell",
+  plugins: {
+    SystemBars: {
+      insetsHandling: "css"
+    }
+  },
   server: {
     url: adminAppUrl.toString(),
     cleartext: true

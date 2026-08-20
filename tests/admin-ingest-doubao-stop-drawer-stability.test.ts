@@ -130,7 +130,7 @@ async function testProductionWiringAndFrozenProviderBoundary() {
   );
   assert.match(
     modeToggle,
-    /clearAdminIngestConversationRuntimeStatus\([\s\S]*?conversationId,[\s\S]*?requestId/
+    /markAdminIngestConversationRequestTerminal\([\s\S]*?conversationId,[\s\S]*?requestId,[\s\S]*?state:/
   );
   assert.match(
     modeToggle,

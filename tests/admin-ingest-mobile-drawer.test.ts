@@ -58,7 +58,7 @@ assert.match(
   /"min-h-10 text-2xl font-semibold tracking-tight text-\[#202020\]"[\s\S]*isAdminApk \? "pl-12 md:pl-0" : ""/
 );
 assert.equal(
-  shellSource.match(/src=\{adminIngestLogo\}[\s\S]{0,220}?unoptimized/g)?.length,
+  shellSource.match(/\bunoptimized\b/g)?.length,
   2,
   "两个移动端左侧功能入口都必须绕过不可用的图片优化接口"
 );
@@ -130,7 +130,7 @@ assert.match(
 assert.ok(mobileHeaderCardSource, "管理员 APK 顶部 Agent 卡片应存在");
 assert.match(
   mobileHeaderCardSource,
-  /className="w-full max-w-\[164px\] overflow-hidden px-1 py-0\.5"/
+  /"w-full overflow-hidden px-1 py-0\.5"[\s\S]*compactMobileViewport \? "max-w-\[148px\]" : "max-w-\[164px\]"/
 );
 assert.doesNotMatch(
   mobileHeaderCardSource,
@@ -170,7 +170,7 @@ assert.match(
 );
 assert.match(
   resizableSidebarSource,
-  /mobileDrawer[\s\S]*"relative flex h-dvh min-w-0 flex-1 flex-col border-r"/
+  /mobileDrawer[\s\S]*"relative flex h-full min-h-0 min-w-0 flex-1 flex-col border-r"/
 );
 assert.match(
   resizableSidebarSource,

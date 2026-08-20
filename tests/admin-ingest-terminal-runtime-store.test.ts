@@ -139,7 +139,26 @@ test("generating and stopped states use the account sidecar without advancing hi
       startedAt,
       updatedAt: startedAt
     });
-    assert.equal(duplicate.revision, generating.revision);
+    assert.equal(duplicate.revision, generating.revision + 1);
+    assert.equal(
+      duplicate.statusById[conversationId]?.state,
+      "generating"
+    );
+    assert.equal(
+      duplicate.statusById[conversationId]?.requestId,
+      requestId
+    );
+    assert.equal(
+      duplicate.statusById[conversationId]?.state === "generating"
+        ? duplicate.statusById[conversationId].startedAt
+        : null,
+      startedAt,
+      "a lease heartbeat must preserve the original elapsed-time anchor"
+    );
+    assert.ok(
+      (duplicate.statusById[conversationId]?.updatedAt ?? 0) > startedAt,
+      "a matching heartbeat must renew the runtime lease"
+    );
     assert.deepEqual(concurrent.statusById[secondConversationId], {
       state: "generating",
       requestId: secondRequestId,

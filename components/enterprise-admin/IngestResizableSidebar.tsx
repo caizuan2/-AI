@@ -78,7 +78,7 @@ export function IngestResizableSidebar({
       aria-label={ariaLabel}
       className={[
         mobileDrawer
-          ? "relative flex h-dvh min-w-0 flex-1 flex-col border-r"
+          ? "relative flex h-full min-h-0 min-w-0 flex-1 flex-col border-r"
           : "relative hidden h-screen shrink-0 flex-col border-r md:flex",
         className
       ].join(" ")}

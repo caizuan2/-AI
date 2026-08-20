@@ -12,6 +12,7 @@ import type { IngestChatMessage } from "@/lib/enterprise/mock-chat";
 import type { IngestAgentConversation } from "@/lib/enterprise/mock-agent-conversations";
 import {
   clearAdminIngestConversationRuntimeStatus,
+  markAdminIngestConversationRequestTerminal,
   markAdminIngestConversationGenerating,
   markAdminIngestConversationVisibleCompleted,
   mergeAdminIngestConversationRuntimeStatusMaps,
@@ -797,6 +798,33 @@ export async function clearAdminIngestConversationRequestRuntimeStatus(
     (current) => clearAdminIngestConversationRuntimeStatus(current, {
       conversationId,
       requestId
+    })
+  );
+}
+
+export async function markAdminIngestConversationRequestTerminalStatus(
+  ownerUserId: string,
+  input: {
+    conversationId: string;
+    requestId: string;
+    state: "stop_requested" | "stopped" | "failed" | "timed_out";
+    occurredAt?: number;
+  }
+) {
+  const conversationId = input.conversationId.trim();
+  const requestId = input.requestId.trim();
+
+  if (!conversationId || !requestId) {
+    throw new Error("INGEST_HISTORY_RUNTIME_STATUS_INVALID");
+  }
+
+  return updateAdminIngestConversationRuntimeStatus(
+    ownerUserId,
+    (current) => markAdminIngestConversationRequestTerminal(current, {
+      conversationId,
+      requestId,
+      state: input.state,
+      now: input.occurredAt
     })
   );
 }

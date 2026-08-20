@@ -156,7 +156,7 @@ export function IngestGPTModelPicker({
       </button>
       {isOpen ? (
         <div className={[
-          "z-40 max-h-[calc(100dvh-8rem)] overflow-y-auto overscroll-contain rounded-2xl border border-[#e7e7e4] bg-white p-2 text-xs text-[#303030] shadow-[0_18px_50px_rgba(15,23,42,0.14)]",
+          "z-40 max-h-[calc(100vh-8rem)] overflow-y-auto overscroll-contain rounded-2xl border border-[#e7e7e4] bg-white p-2 text-xs text-[#303030] shadow-[0_18px_50px_rgba(15,23,42,0.14)] supports-[height:100svh]:max-h-[calc(100svh-8rem)] supports-[height:100dvh]:max-h-[calc(100dvh-8rem)]",
           compact
             ? menuPlacement === "below"
               ? "fixed inset-x-4 top-20 w-auto sm:absolute sm:inset-x-auto sm:top-11 sm:right-0 sm:w-[320px] sm:max-w-[calc(100vw-2rem)]"

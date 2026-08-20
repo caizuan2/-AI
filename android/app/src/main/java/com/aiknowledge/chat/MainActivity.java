@@ -31,6 +31,7 @@ import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
 import android.util.Base64;
 import android.util.Log;
+import android.view.View;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -124,7 +125,9 @@ public class MainActivity extends BridgeActivity {
             webView.setWebViewClient(new AppRouteWebViewClient(getBridge(), adminShell));
             webView.setWebChromeClient(new AppWebChromeClient(getBridge()));
 
-            if (!adminShell) {
+            if (adminShell) {
+                configureAdminShellDisplay(webView);
+            } else {
                 loadFreshUserShell(webView, "__native_session");
             }
         }
@@ -201,7 +204,9 @@ public class MainActivity extends BridgeActivity {
     public void onResume() {
         super.onResume();
 
-        if (!isAdminShell() && showingNetworkError) {
+        if (isAdminShell()) {
+            requestAdminShellWindowInsets(getBridge() == null ? null : getBridge().getWebView());
+        } else if (showingNetworkError) {
             WebView webView = getBridge() == null ? null : getBridge().getWebView();
 
             if (webView != null) {
@@ -212,6 +217,33 @@ public class MainActivity extends BridgeActivity {
 
     private boolean isAdminShell() {
         return ADMIN_APP_PACKAGE.equals(getPackageName());
+    }
+
+    private void configureAdminShellDisplay(WebView webView) {
+        if (webView == null || !isAdminShell()) {
+            return;
+        }
+
+        // Keep WebView zoom and text scaling untouched so message content still
+        // follows the user's accessibility preferences. Fixed header/footer text
+        // is bounded by the admin web shell instead of shrinking the whole page.
+        requestAdminShellWindowInsets(webView);
+    }
+
+    private void requestAdminShellWindowInsets(WebView webView) {
+        if (webView == null || !isAdminShell()) {
+            return;
+        }
+
+        webView.post(() -> {
+            Object parent = webView.getParent();
+
+            if (parent instanceof View) {
+                ((View) parent).requestApplyInsets();
+            }
+
+            webView.requestApplyInsets();
+        });
     }
 
     private void requestAdminIngestVoiceRecording() {
