@@ -24,6 +24,17 @@ function includesAny(value: string, signals: string[]) {
   return signals.some((signal) => value.includes(signal));
 }
 
+const SELECTED_MODEL_CONNECTION_FAILURE_SIGNALS = [
+  "api_key_missing",
+  "api_key_invalid",
+  "base_url_invalid",
+  "model_unavailable"
+];
+
+function isSelectedModelConnectionFailure(value: string) {
+  return includesAny(normalizeSignal(value), SELECTED_MODEL_CONNECTION_FAILURE_SIGNALS);
+}
+
 export function getStateDomain(errorOrResult: unknown): IngestStateDomain {
   const details = readAdminIngestRequestError(errorOrResult);
   const raw = errorOrResult instanceof Error
@@ -34,6 +45,14 @@ export function getStateDomain(errorOrResult: unknown): IngestStateDomain {
   const text = normalizeSignal(raw);
 
   if (details?.errorCode === "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE") {
+    return "ingest";
+  }
+
+  // A provider can use HTTP 401/403 for its own API key or model grant.  That
+  // is a selected-model failure, not an expired 小董AI login or card license.
+  // Classify the structured provider code before the generic HTTP status so
+  // the current request gets a persistent, actionable failure card.
+  if (isSelectedModelConnectionFailure(`${details?.errorCode ?? ""} ${details?.causeCode ?? ""}`)) {
     return "ingest";
   }
 
@@ -107,7 +126,7 @@ export function shouldSuppressFallbackToast(input: IngestToastGuardInput) {
   const isStrictSelectedModelFailure = includesAny(errorCode, [
     "admin_ingest_selected_model_unavailable",
     "admin_ingest_strict_knowledge_required"
-  ]);
+  ]) || isSelectedModelConnectionFailure(`${input.errorCode ?? ""} ${input.causeCode ?? ""}`);
   const isCurrentActiveRequest = Boolean(
     input.requestId
     && input.activeRequestId
@@ -195,13 +214,14 @@ export function isRealIngestFailure(input: IngestToastGuardInput) {
     "admin_ingest_selected_model_unavailable",
     "admin_ingest_strict_knowledge_required",
     "admin_ingest_grounding_",
+    "admin_ingest_wechat_tail_role_unverified",
     "doubao_timeout",
     "provider_error",
     "provider_crash",
     "network_error",
     "timeout",
     "request_failed"
-  ])) {
+  ]) || isSelectedModelConnectionFailure(errorCode)) {
     return true;
   }
 

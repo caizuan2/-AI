@@ -30,7 +30,7 @@ export interface DeepSeekIngestHealthStatus {
   diagnostics: string[];
   checkedAt: string;
   requestTested: boolean;
-  errorCode?: "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_TIMEOUT";
+  errorCode?: "DEEPSEEK_API_KEY_MISSING" | "DEEPSEEK_BASE_URL_INVALID" | "DEEPSEEK_REQUEST_FAILED" | "DEEPSEEK_RESPONSE_PARSE_FAILED" | "DEEPSEEK_MODEL_AFFINITY_MISMATCH" | "DEEPSEEK_TIMEOUT";
 }
 
 function readEnv(name: string) {
@@ -54,13 +54,14 @@ function buildChatCompletionsUrl(baseUrl: string) {
 }
 
 function baseStatus(input: {
+  provider?: "deepseek-pro" | "deepseek-flash";
   preferredModel?: string | null;
   selectedModelLabel?: string | null;
 }) {
   const rawBaseUrl = readEnv("DEEPSEEK_BASE_URL");
   const apiKey = readEnv("DEEPSEEK_API_KEY");
-  const isFlash = /flash/i.test(input.selectedModelLabel ?? "");
-  const provider = isFlash ? "deepseek-flash" : "deepseek-pro";
+  const provider = input.provider === "deepseek-flash" ? "deepseek-flash" : "deepseek-pro";
+  const isFlash = provider === "deepseek-flash";
   const configuredModel = isFlash
     ? readEnv("DEEPSEEK_FLASH_MODEL") || readEnv("DEEPSEEK_MODEL")
     : readEnv("DEEPSEEK_PRO_MODEL") || readEnv("DEEPSEEK_MODEL");
@@ -92,6 +93,7 @@ function baseStatus(input: {
 }
 
 export async function checkDeepSeekIngestHealth(input: {
+  provider?: "deepseek-pro" | "deepseek-flash";
   preferredModel?: string | null;
   selectedModelLabel?: string | null;
   testRequest?: boolean;
@@ -165,6 +167,18 @@ export async function checkDeepSeekIngestHealth(input: {
         const choices = Array.isArray(payload.choices) ? payload.choices : [];
 
         if (id || choices.length > 0) {
+          if (actualModel !== status.requestedModel) {
+            return {
+              ...status,
+              configured: true,
+              requestTested: true,
+              actualModel,
+              message: "DeepSeek 返回的模型与当前选择不一致",
+              errorCode: "DEEPSEEK_MODEL_AFFINITY_MISMATCH",
+              diagnostics: ["真实请求已完成，但实际模型与请求模型不一致，系统未提交本次模型切换。"]
+            };
+          }
+
           return {
             ...status,
             ok: true,

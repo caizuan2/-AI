@@ -117,7 +117,7 @@ async function testProductionWiring() {
   );
   assert.match(
     source,
-    /MAX_CONCURRENT_INGEST_CONVERSATIONS[\s\S]*if \(!options\?\.preserveComposer\) \{\s*setInput\(effectiveInput\);/
+    /MAX_CONCURRENT_INGEST_CONVERSATIONS[\s\S]*if \(!options\?\.preserveComposer\) \{\s*setInput\(visibleInput\);/
   );
   assert.match(
     source,
@@ -125,7 +125,7 @@ async function testProductionWiring() {
   );
   assert.match(
     source,
-    /conversationLastInputByIdRef\.current\[conversationId\] = effectiveInput/
+    /conversationLastInputByIdRef\.current\[conversationId\] = visibleInput/
   );
   assert.match(
     source,

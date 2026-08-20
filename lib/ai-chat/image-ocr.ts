@@ -68,7 +68,10 @@ const LONG_IMAGE_MAX_PIXELS = 40_000_000;
 const LONG_IMAGE_TARGET_SEGMENT_HEIGHT = 2_400;
 const LONG_IMAGE_SEGMENT_OVERLAP = 360;
 const LONG_IMAGE_MAX_SEGMENTS = 10;
-const LONG_IMAGE_SEGMENT_CONCURRENCY = 3;
+const DEFAULT_LONG_IMAGE_SEGMENT_CONCURRENCY = 3;
+const MAX_LONG_IMAGE_SEGMENT_CONCURRENCY = 6;
+let adminIngestOcrActiveSegments = 0;
+const adminIngestOcrWaiters: Array<() => void> = [];
 const MAX_SINGLE_IMAGE_OCR_CHARS = 2_200;
 const MAX_LONG_IMAGE_SEGMENT_OCR_CHARS = 2_400;
 const MAX_LONG_IMAGE_MERGED_OCR_CHARS = 8_000;
@@ -99,6 +102,39 @@ function readPositiveNumberEnv(name: string, fallback: number) {
   const parsed = raw ? Number(raw) : NaN;
 
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function resolveLongImageSegmentConcurrency(requestedConcurrency?: number) {
+  if (requestedConcurrency === undefined) {
+    return DEFAULT_LONG_IMAGE_SEGMENT_CONCURRENCY;
+  }
+
+  return Math.min(
+    MAX_LONG_IMAGE_SEGMENT_CONCURRENCY,
+    Math.max(
+      1,
+      Math.floor(
+        Number.isFinite(requestedConcurrency)
+          ? requestedConcurrency
+          : DEFAULT_LONG_IMAGE_SEGMENT_CONCURRENCY,
+      ),
+    )
+  );
+}
+
+async function withAdminIngestOcrSegmentPermit<T>(task: () => Promise<T>) {
+  if (adminIngestOcrActiveSegments >= MAX_LONG_IMAGE_SEGMENT_CONCURRENCY) {
+    await new Promise<void>((resolve) => adminIngestOcrWaiters.push(resolve));
+  }
+
+  adminIngestOcrActiveSegments += 1;
+
+  try {
+    return await task();
+  } finally {
+    adminIngestOcrActiveSegments -= 1;
+    adminIngestOcrWaiters.shift()?.();
+  }
 }
 
 function normalizeBaseUrl(baseUrl: string) {
@@ -455,6 +491,8 @@ async function runProviderForSegments(input: {
   deadline: number;
   filename: string;
   mimeType: string;
+  segmentConcurrency: number;
+  useAdminGlobalLimit: boolean;
 }) {
   const pending = input.segments
     .filter((segment) => !input.results[segment.index])
@@ -490,13 +528,24 @@ async function runProviderForSegments(input: {
       }
 
       try {
-        const text = await recognizeSegment({
-          provider: input.provider,
-          segment,
-          timeoutMs: Math.max(1, Math.min(input.timeoutMs, remainingMs)),
-          filename: input.filename,
-          mimeType: input.mimeType,
-        });
+        const recognize = () => {
+          const currentRemainingMs = input.deadline - Date.now();
+
+          if (currentRemainingMs <= 0) {
+            return Promise.resolve("");
+          }
+
+          return recognizeSegment({
+            provider: input.provider,
+            segment,
+            timeoutMs: Math.max(1, Math.min(input.timeoutMs, currentRemainingMs)),
+            filename: input.filename,
+            mimeType: input.mimeType,
+          });
+        };
+        const text = input.useAdminGlobalLimit
+          ? await withAdminIngestOcrSegmentPermit(recognize)
+          : await recognize();
 
         if (text) {
           input.results[segment.index] = {
@@ -515,7 +564,7 @@ async function runProviderForSegments(input: {
 
   await Promise.all(
     Array.from(
-      { length: Math.min(LONG_IMAGE_SEGMENT_CONCURRENCY, pending.length) },
+      { length: Math.min(input.segmentConcurrency, pending.length) },
       () => worker(),
     ),
   );
@@ -588,6 +637,8 @@ async function extractLongImageText(input: {
   filename: string;
   mimeType: string;
   startedAt: number;
+  segmentConcurrency: number;
+  useAdminGlobalLimit: boolean;
 }): Promise<ChatImageOcrResult> {
   const timeoutMs = readPositiveNumberEnv(
     "CHAT_LONG_IMAGE_OCR_SEGMENT_TIMEOUT_MS",
@@ -623,6 +674,8 @@ async function extractLongImageText(input: {
       deadline: providerDeadline,
       filename: input.filename,
       mimeType: input.mimeType,
+      segmentConcurrency: input.segmentConcurrency,
+      useAdminGlobalLimit: input.useAdminGlobalLimit,
     });
 
     if (results.every(Boolean) || Date.now() >= deadline) {
@@ -710,6 +763,7 @@ export async function extractChatImageText(input: {
   arrayBuffer: ArrayBuffer;
   filename: string;
   mimeType: string;
+  longImageSegmentConcurrency?: number;
 }): Promise<ChatImageOcrResult> {
   const startedAt = Date.now();
 
@@ -747,6 +801,10 @@ export async function extractChatImageText(input: {
       filename: input.filename,
       mimeType: input.mimeType,
       startedAt,
+      segmentConcurrency: resolveLongImageSegmentConcurrency(
+        input.longImageSegmentConcurrency,
+      ),
+      useAdminGlobalLimit: input.longImageSegmentConcurrency !== undefined,
     });
   }
 

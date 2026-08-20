@@ -1,5 +1,7 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
+
 import { logger } from "@/lib/logger";
 import {
   extractRawGptReplyMarkdown,
@@ -44,6 +46,12 @@ import {
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
+import {
+  createAdminIngestReplyProjector,
+  extractCompleteAdminIngestReplyMarkdown,
+  looksLikeAdminIngestStructuredReply,
+  type AdminIngestModelProgressEvent
+} from "@/lib/enterprise/admin-ingest-model-progress";
 
 export interface DeepSeekAdminIngestInput {
   input: string;
@@ -57,6 +65,7 @@ export interface DeepSeekAdminIngestInput {
   syncTarget: Array<"web" | "exe" | "apk">;
   tenantId?: string | null;
   userId?: string | null;
+  modelProvider?: "deepseek-pro" | "deepseek-flash";
   preferredModel?: string | null;
   selectedModelLabel?: string | null;
   modelDisplayName?: string | null;
@@ -73,6 +82,8 @@ export interface DeepSeekAdminIngestInput {
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
   strictModelAffinity?: boolean;
+  signal?: AbortSignal;
+  onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
 }
 
 export interface DeepSeekAdminIngestResult {
@@ -126,7 +137,24 @@ type DeepSeekIngestErrorCode =
 export class DeepSeekIngestError extends Error {
   constructor(
     public readonly code: DeepSeekIngestErrorCode,
-    message: string
+    message: string,
+    public readonly details?: {
+      parseStage?: "sse_event" | "stream_eof" | "reply_json";
+      finishReason?: string;
+      eventCount?: number;
+      receivedChars?: number;
+      receivedContent?: boolean;
+      projectedChars?: number;
+      reasoningChars?: number;
+      providerDone?: boolean;
+      structuredCandidate?: boolean;
+      structuredComplete?: boolean;
+      firstProviderEventLatencyMs?: number | null;
+      firstReasoningLatencyMs?: number | null;
+      firstContentLatencyMs?: number | null;
+      firstVisibleLatencyMs?: number | null;
+      streamCompletedLatencyMs?: number | null;
+    }
   ) {
     super(message);
     this.name = "DeepSeekIngestError";
@@ -137,6 +165,7 @@ const REQUEST_TIMEOUT_MS = 150_000;
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = DEEPSEEK_PRO_MODEL_ID;
 const DEFAULT_MODEL_LABEL = "DeepSeek-V4-Pro";
+const DEFAULT_ADMIN_INGEST_MAX_TOKENS = 6_000;
 
 function readEnv(name: string) {
   return process.env[name]?.trim() ?? "";
@@ -165,8 +194,10 @@ function buildChatCompletionsUrl(baseUrl: string) {
 }
 
 function resolveDeepSeekConfig(input: DeepSeekAdminIngestInput) {
-  const isFlash = /flash/i.test(`${input.selectedModelLabel ?? ""} ${input.modelDisplayName ?? ""}`);
-  const provider = isFlash ? "deepseek-flash" : "deepseek-pro";
+  const provider: "deepseek-pro" | "deepseek-flash" = input.modelProvider === "deepseek-flash"
+    ? "deepseek-flash"
+    : "deepseek-pro";
+  const isFlash = provider === "deepseek-flash";
   const configuredModel = isFlash
     ? readEnv("DEEPSEEK_FLASH_MODEL") || readEnv("DEEPSEEK_MODEL")
     : readEnv("DEEPSEEK_PRO_MODEL") || readEnv("DEEPSEEK_MODEL");
@@ -179,6 +210,7 @@ function resolveDeepSeekConfig(input: DeepSeekAdminIngestInput) {
   const baseUrl = normalizeBaseUrl(readEnv("DEEPSEEK_BASE_URL"));
 
   return {
+    provider,
     apiKey: readDeepSeekKey(),
     baseUrl,
     chatCompletionsUrl: buildChatCompletionsUrl(baseUrl),
@@ -270,13 +302,18 @@ function normalizeDeepSeekResponseError(status: number) {
 }
 
 async function callDeepSeekChatCompletions(input: {
+  provider: "deepseek-pro" | "deepseek-flash";
   chatCompletionsUrl: string;
   apiKey: string;
   model: string;
   systemPrompt: string;
   userPrompt: string;
   signal: AbortSignal;
+  requestId?: string;
+  onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
 }) {
+  const stream = Boolean(input.onProgressEvent);
+  const requestStartedAt = Date.now();
   const call = await withResilientLLMCall("deepseek:chat-completions", () => fetch(input.chatCompletionsUrl, {
       method: "POST",
       headers: {
@@ -290,8 +327,8 @@ async function callDeepSeekChatCompletions(input: {
           { role: "user", content: input.userPrompt }
         ],
         temperature: 0.7,
-        max_tokens: 6000,
-        stream: false
+        max_tokens: DEFAULT_ADMIN_INGEST_MAX_TOKENS,
+        stream
       }),
       signal: input.signal,
       cache: "no-store"
@@ -300,7 +337,18 @@ async function callDeepSeekChatCompletions(input: {
       retryDelayMs: 500
   });
   const response = call.value;
-  const bodyText = await response.text();
+  const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+  const streamResult = stream && response.ok && contentType.includes("text/event-stream")
+    ? await readDeepSeekChatCompletionStream({
+        response,
+        fallbackModel: input.model,
+        signal: input.signal,
+        requestId: input.requestId,
+        requestStartedAt,
+        onProgressEvent: input.onProgressEvent
+      })
+    : null;
+  const bodyText = streamResult?.bodyText ?? await response.text();
 
   if (!response.ok) {
     logger.warn("enterprise_admin_ingest.deepseek_request_failed", {
@@ -312,9 +360,258 @@ async function callDeepSeekChatCompletions(input: {
 
   return {
     ...parseDeepSeekPayload(bodyText, input.model),
+    streamedReplyMarkdown: streamResult?.replyMarkdown ?? null,
+    streamTimings: streamResult?.timings ?? null,
+    streamDiagnostics: streamResult?.diagnostics ?? null,
     retryCount: call.retryCount,
     responseLatency: call.responseLatency,
     circuitBreaker: call.circuitBreaker
+  };
+}
+
+async function readDeepSeekChatCompletionStream(input: {
+  response: Response;
+  fallbackModel: string;
+  signal: AbortSignal;
+  requestId?: string;
+  requestStartedAt: number;
+  onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
+}) {
+  const reader = input.response.body?.getReader();
+
+  if (!reader) {
+    throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 流式返回缺少响应正文。");
+  }
+
+  const decoder = new TextDecoder();
+  const projector = createAdminIngestReplyProjector();
+  let buffer = "";
+  let rawText = "";
+  let responseId = "";
+  let actualModel = input.fallbackModel;
+  let created: unknown = undefined;
+  let finishReason = "";
+  let usage: unknown = undefined;
+  let providerDone = false;
+  let reasoningChars = 0;
+  let firstProviderEventAt: number | null = null;
+  let firstReasoningAt: number | null = null;
+  let firstContentAt: number | null = null;
+  let firstVisibleAt: number | null = null;
+  let eventCount = 0;
+
+  const buildFailureDetails = (parseStage: "sse_event" | "stream_eof") => ({
+    parseStage,
+    finishReason: finishReason || undefined,
+    eventCount,
+    receivedChars: rawText.length,
+    receivedContent: rawText.length > 0,
+    projectedChars: projector.current().length,
+    reasoningChars,
+    providerDone,
+    firstProviderEventLatencyMs: firstProviderEventAt === null ? null : firstProviderEventAt - input.requestStartedAt,
+    firstReasoningLatencyMs: firstReasoningAt === null ? null : firstReasoningAt - input.requestStartedAt,
+    firstContentLatencyMs: firstContentAt === null ? null : firstContentAt - input.requestStartedAt,
+    firstVisibleLatencyMs: firstVisibleAt === null ? null : firstVisibleAt - input.requestStartedAt,
+    streamCompletedLatencyMs: Date.now() - input.requestStartedAt
+  });
+
+  const parseBlock = (block: string) => {
+    const dataLines = block.split(/\r?\n/g)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter(Boolean);
+
+    if (dataLines.length === 0) {
+      return;
+    }
+
+    const dataPayload = dataLines.join("\n");
+
+    if (dataPayload === "[DONE]") {
+      providerDone = true;
+      return;
+    }
+
+    let payload: Record<string, unknown>;
+
+    try {
+      payload = JSON.parse(dataPayload) as Record<string, unknown>;
+    } catch {
+      throw new DeepSeekIngestError(
+        "DEEPSEEK_RESPONSE_PARSE_FAILED",
+        "DeepSeek 流式返回包含无法解析的数据片段。",
+        buildFailureDetails("sse_event")
+      );
+    }
+
+    eventCount += 1;
+    firstProviderEventAt ??= Date.now();
+
+      responseId = typeof payload.id === "string" ? payload.id : responseId;
+      actualModel = typeof payload.model === "string" ? payload.model : actualModel;
+      created = payload.created ?? created;
+      usage = payload.usage ?? usage;
+      const choices = Array.isArray(payload.choices) ? payload.choices : [];
+      const choice = choices[0] && typeof choices[0] === "object"
+        ? choices[0] as Record<string, unknown>
+        : {};
+      const delta = choice.delta && typeof choice.delta === "object"
+        ? choice.delta as Record<string, unknown>
+        : {};
+      const contentDelta = typeof delta.content === "string" ? delta.content : "";
+      const reasoningDelta = typeof delta.reasoning_content === "string" ? delta.reasoning_content : "";
+
+      // Reasoning text is never buffered or exposed. A character count is enough
+      // to distinguish upstream thinking time from JSON projection/UI latency.
+      if (reasoningDelta) {
+        firstReasoningAt ??= Date.now();
+        reasoningChars += reasoningDelta.length;
+      }
+
+      if (contentDelta) {
+        firstContentAt ??= Date.now();
+        rawText += contentDelta;
+        const visible = projector.push(contentDelta);
+
+        if (visible) {
+          firstVisibleAt ??= Date.now();
+          input.onProgressEvent?.({
+            type: "visible_delta",
+            ...visible,
+            model: actualModel,
+            responseId: responseId || undefined
+          });
+        }
+      }
+
+    if (typeof choice.finish_reason === "string") {
+      finishReason = choice.finish_reason;
+    }
+  };
+
+  try {
+    while (true) {
+      if (input.signal.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+
+      const chunk = await reader.read();
+
+      if (chunk.done) {
+        buffer += decoder.decode();
+        break;
+      }
+
+      buffer += decoder.decode(chunk.value, { stream: true });
+      const blocks = buffer.split(/\r?\n\r?\n/);
+      buffer = blocks.pop() ?? "";
+      blocks.forEach(parseBlock);
+
+      if (providerDone) {
+        await reader.cancel("DeepSeek stream completed");
+        buffer = "";
+        break;
+      }
+    }
+
+    if (buffer.trim()) {
+      parseBlock(buffer);
+    }
+  } catch (error) {
+    try {
+      await reader.cancel(error instanceof Error ? error.message : "DeepSeek stream failed");
+    } catch {
+      // The provider may already have closed the stream. Preserve the original error.
+    }
+
+    const details = error instanceof DeepSeekIngestError && error.details
+      ? error.details
+      : buildFailureDetails("stream_eof");
+    logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
+      requestId: input.requestId,
+      model: actualModel,
+      code: error instanceof DeepSeekIngestError ? error.code : "DEEPSEEK_RESPONSE_PARSE_FAILED",
+      ...details
+    });
+    if (error && typeof error === "object" && (error as { name?: unknown }).name === "AbortError") {
+      throw error;
+    }
+    throw error instanceof DeepSeekIngestError
+      ? error
+      : new DeepSeekIngestError(
+          "DEEPSEEK_RESPONSE_PARSE_FAILED",
+          "DeepSeek 流式返回读取失败。",
+          details
+        );
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      // The reader can already be released after abort or EOF.
+    }
+  }
+
+  if (!rawText.trim()) {
+    const details = buildFailureDetails("stream_eof");
+    logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
+      requestId: input.requestId,
+      model: actualModel,
+      code: "DEEPSEEK_RESPONSE_PARSE_FAILED",
+      ...details
+    });
+    throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 流式返回没有最终原文正文。", details);
+  }
+
+  const completedAt = Date.now();
+  const timings = {
+    firstProviderEventLatencyMs: firstProviderEventAt === null
+      ? null
+      : firstProviderEventAt - input.requestStartedAt,
+    firstReasoningLatencyMs: firstReasoningAt === null
+      ? null
+      : firstReasoningAt - input.requestStartedAt,
+    firstContentLatencyMs: firstContentAt === null
+      ? null
+      : firstContentAt - input.requestStartedAt,
+    firstVisibleLatencyMs: firstVisibleAt === null
+      ? null
+      : firstVisibleAt - input.requestStartedAt,
+    projectionDelayMs: firstContentAt === null || firstVisibleAt === null
+      ? null
+      : firstVisibleAt - firstContentAt,
+    streamCompletedLatencyMs: completedAt - input.requestStartedAt,
+    reasoningChars
+  };
+
+  logger.info("enterprise_admin_ingest.deepseek_stream_latency", {
+    requestId: input.requestId,
+    model: actualModel,
+    ...timings
+  });
+
+  return {
+    bodyText: JSON.stringify({
+      id: responseId,
+      model: actualModel,
+      created,
+      choices: [{
+        message: { role: "assistant", content: rawText },
+        finish_reason: finishReason || "stop"
+      }],
+      usage
+    }),
+    replyMarkdown: projector.current(),
+    timings,
+    diagnostics: {
+      finishReason: finishReason || undefined,
+      eventCount,
+      receivedChars: rawText.length,
+      projectedChars: projector.current().length,
+      reasoningChars,
+      providerDone
+    }
   };
 }
 
@@ -340,6 +637,9 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = normalized.model ?? fallbackModel;
   const createdAt = normalized.createdAt ?? normalizeCreatedAt(record.created);
+  const rawUsage = record.usage && typeof record.usage === "object"
+    ? record.usage as Record<string, unknown>
+    : {};
   const generatedProofId = `deepseek-${Date.now().toString(36)}-${Math.random().toString(16).slice(2, 10)}`;
   const responseId = rawResponseId || generatedProofId;
 
@@ -355,6 +655,8 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
     proofIdSource: rawResponseId ? "provider_response_id" as const : "generated_from_provider_payload" as const,
     createdAt,
     usage: normalized.usage ?? normalizeUsage(record.usage),
+    promptCacheHitTokens: readNumber(rawUsage.prompt_cache_hit_tokens),
+    promptCacheMissTokens: readNumber(rawUsage.prompt_cache_miss_tokens),
     rawResponseType: normalized.rawResponseType,
     normalized: normalized.normalized,
     parserUsed: normalized.parserUsed
@@ -378,8 +680,15 @@ function buildMissingReplyQuality(rawText: string, userInput: string) {
 
 export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): Promise<DeepSeekAdminIngestResult> {
   const controller = new AbortController();
+  const forwardAbort = () => controller.abort(input.signal?.reason);
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   const startedAt = Date.now();
+
+  if (input.signal?.aborted) {
+    controller.abort(input.signal.reason);
+  } else {
+    input.signal?.addEventListener("abort", forwardAbort, { once: true });
+  }
 
   try {
     const resolved = resolveDeepSeekConfig(input);
@@ -387,19 +696,83 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     const systemPrompt = buildGptIngestBrainSystemPrompt();
     const userPrompt = buildUserPrompt(input, gptOS);
     const preserveRawReply = input.strictModelAffinity === true;
+    // Streaming is a transport optimization for strict original-body requests.
+    // Non-strict requests keep the existing quality/deepening semantics.
+    const progressEvent = preserveRawReply ? input.onProgressEvent : undefined;
+
+    logger.info("enterprise_admin_ingest.deepseek_prompt_budget", {
+      requestId: input.requestId,
+      model: resolved.model,
+      systemPromptChars: systemPrompt.length,
+      userPromptChars: userPrompt.length,
+      attachmentCount: input.attachments?.length ?? 0,
+      recentMessageCount: input.recentMessages?.length ?? 0,
+      knowledgeContextCount: input.knowledgeContexts?.length ?? 0,
+      contextSummaryChars: input.contextSummary?.length ?? 0,
+      memoryContextChars: input.memoryContextText?.length ?? 0
+    });
 
     let response = await callDeepSeekChatCompletions({
+      provider: resolved.provider,
       chatCompletionsUrl: resolved.chatCompletionsUrl,
       apiKey: resolved.apiKey,
       model: resolved.model,
       systemPrompt,
       userPrompt,
-      signal: controller.signal
+      signal: controller.signal,
+      requestId: input.requestId,
+      onProgressEvent: progressEvent
     });
-    let rawReplyMarkdown = preserveRawReply ? extractRawGptReplyMarkdown(response.text) : "";
+    const completeStructuredReplyMarkdown = preserveRawReply
+      ? extractCompleteAdminIngestReplyMarkdown(response.text)
+      : "";
+    const structuredReplyCandidate = preserveRawReply
+      && looksLikeAdminIngestStructuredReply(response.text);
+    let rawReplyMarkdown = preserveRawReply
+      ? completeStructuredReplyMarkdown
+        || (structuredReplyCandidate ? "" : extractRawGptReplyMarkdown(response.text))
+      : "";
 
     if (preserveRawReply && !rawReplyMarkdown.trim()) {
-      throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 未返回可保存的 replyMarkdown。原始正文未经过替换或补写。");
+      const details = {
+        parseStage: "reply_json" as const,
+        finishReason: response.streamDiagnostics?.finishReason,
+        eventCount: response.streamDiagnostics?.eventCount,
+        receivedChars: response.streamDiagnostics?.receivedChars ?? response.text.length,
+        receivedContent: response.text.length > 0,
+        projectedChars: response.streamDiagnostics?.projectedChars ?? 0,
+        reasoningChars: response.streamDiagnostics?.reasoningChars ?? 0,
+        providerDone: response.streamDiagnostics?.providerDone,
+        structuredCandidate: structuredReplyCandidate,
+        structuredComplete: completeStructuredReplyMarkdown.length > 0,
+        firstProviderEventLatencyMs: response.streamTimings?.firstProviderEventLatencyMs,
+        firstReasoningLatencyMs: response.streamTimings?.firstReasoningLatencyMs,
+        firstContentLatencyMs: response.streamTimings?.firstContentLatencyMs,
+        firstVisibleLatencyMs: response.streamTimings?.firstVisibleLatencyMs,
+        streamCompletedLatencyMs: response.streamTimings?.streamCompletedLatencyMs
+      };
+      logger.warn("enterprise_admin_ingest.deepseek_final_parse_failed", {
+        requestId: input.requestId,
+        model: response.model,
+        ...details
+      });
+      throw new DeepSeekIngestError(
+        "DEEPSEEK_RESPONSE_PARSE_FAILED",
+        "DeepSeek 未返回可保存的 replyMarkdown。原始正文未经过替换或补写。",
+        details
+      );
+    }
+
+    if (
+      progressEvent
+      && response.streamedReplyMarkdown !== null
+      && response.streamedReplyMarkdown !== ""
+      && response.streamedReplyMarkdown !== rawReplyMarkdown
+    ) {
+      throw new DeepSeekIngestError(
+        "DEEPSEEK_RESPONSE_PARSE_FAILED",
+        "DeepSeek 流式正文与最终原文不一致，系统已拒绝保存。"
+      );
     }
 
     let normalized: ReturnType<typeof normalizeGptOutput> | null = null;
@@ -444,6 +817,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         failedReasons: quality.failedReasons
       });
       response = await callDeepSeekChatCompletions({
+        provider: resolved.provider,
         chatCompletionsUrl: resolved.chatCompletionsUrl,
         apiKey: resolved.apiKey,
         model: resolved.model,
@@ -453,7 +827,8 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
           firstReplyMarkdown: normalized?.replyMarkdown ?? response.text,
           quality
         }),
-        signal: controller.signal
+        signal: controller.signal,
+        requestId: input.requestId
       });
       rawReplyMarkdown = extractRawGptReplyMarkdown(response.text);
 
@@ -511,6 +886,16 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       });
     }
 
+    if (progressEvent) {
+      progressEvent({
+        type: "visible_reply",
+        replyMarkdown: rawReplyMarkdown,
+        model: response.model,
+        responseId: response.responseId,
+        metadataPending: true
+      });
+    }
+
     const gptProof: GptCallProof = {
       provider: "deepseek",
       endpoint: "/chat/completions",
@@ -527,6 +912,9 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       usage: response.usage
     };
 
+    const finalReplyMarkdown = preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown;
+    const replySha256 = createHash("sha256").update(finalReplyMarkdown, "utf8").digest("hex");
+
     logger.info("enterprise_admin_ingest.deepseek_success", {
       requestId: input.requestId,
       model: response.model,
@@ -538,6 +926,9 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       intent: quality.intent,
       fixedTemplateRisk: quality.fixedTemplateRisk,
       outputTokens: response.usage.outputTokens,
+      promptCacheHitTokens: response.promptCacheHitTokens,
+      promptCacheMissTokens: response.promptCacheMissTokens,
+      replySha256,
       deepenAttempts
     });
 
@@ -557,7 +948,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       modelMode: resolved.modelMode,
       fallback: false,
       selectedModelLabel: resolved.selectedModelLabel,
-      replyMarkdown: preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown,
+      replyMarkdown: finalReplyMarkdown,
       knowledgeDraft: normalized.knowledgeDraft,
       userClientCallPlan: normalized.userClientCallPlan,
       suggestedQuestions: Array.from(new Set([
@@ -580,6 +971,15 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         `apiResilience:fallbackUsed:false`,
         `apiResilience:qualitySoftAccepted:${qualitySoftAccepted ? "true" : "false"}`,
         `deepseek:replyMarkdownPassthrough:${preserveRawReply ? "true" : "false"}`,
+        `deepseek:firstProviderEventLatencyMs:${response.streamTimings?.firstProviderEventLatencyMs ?? -1}`,
+        `deepseek:firstReasoningLatencyMs:${response.streamTimings?.firstReasoningLatencyMs ?? -1}`,
+        `deepseek:firstContentLatencyMs:${response.streamTimings?.firstContentLatencyMs ?? -1}`,
+        `deepseek:firstVisibleLatencyMs:${response.streamTimings?.firstVisibleLatencyMs ?? -1}`,
+        `deepseek:projectionDelayMs:${response.streamTimings?.projectionDelayMs ?? -1}`,
+        `deepseek:streamCompletedLatencyMs:${response.streamTimings?.streamCompletedLatencyMs ?? -1}`,
+        `deepseek:reasoningChars:${response.streamTimings?.reasoningChars ?? 0}`,
+        `deepseek:promptCacheHitTokens:${response.promptCacheHitTokens ?? -1}`,
+        `deepseek:promptCacheMissTokens:${response.promptCacheMissTokens ?? -1}`,
         `apiResilience:responseLatency:${response.responseLatency}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         `observability:traceId:${gptOS.observability.trace.traceId}`,
@@ -652,5 +1052,6 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     throw error;
   } finally {
     clearTimeout(timeout);
+    input.signal?.removeEventListener("abort", forwardAbort);
   }
 }

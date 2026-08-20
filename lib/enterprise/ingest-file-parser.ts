@@ -1,5 +1,6 @@
 import "server-only";
 
+import { createHash } from "node:crypto";
 import { posix as posixPath } from "node:path";
 import type { JSZipObject } from "jszip";
 import {
@@ -10,11 +11,23 @@ import {
 import { extractChatImageText } from "@/lib/ai-chat/image-ocr";
 import {
   buildAdminIngestWechatReplyEvidence,
-  parseAdminIngestWechatRoleTranscript
+  parseAdminIngestWechatRoleTranscript,
+  verifyAdminIngestWechatTailRole,
+  type AdminIngestWechatTailRoleEvidence,
+  type AdminIngestWechatTailRoleVerificationPolicy
 } from "@/lib/enterprise/ingest-wechat-transcript";
+import { logger } from "@/lib/logger";
 import {
   detectAdminIngestWechatConversationImage
 } from "@/lib/enterprise/admin-ingest-wechat-image-detection";
+import {
+  buildAdminIngestOcrCacheKey,
+  readAdminIngestOcrCache,
+  writeAdminIngestOcrCache
+} from "@/lib/enterprise/admin-ingest-ocr-cache";
+import type {
+  AdminIngestLatencyTrace
+} from "@/lib/enterprise/admin-ingest-latency-trace";
 
 export type IngestParsedFileStatus = "parsed" | "partial" | "metadata_only" | "unsupported" | "ocr_pending";
 
@@ -42,6 +55,7 @@ export interface IngestParsedFileResult {
   successRatePercent?: number;
   deadlineReached?: boolean;
   recognitionMode?: "wechat_conversation";
+  currentTurnState?: "reply_required" | "waiting_for_customer" | "evidence_insufficient";
 }
 
 export interface AdminIngestParseBatchOptions {
@@ -82,6 +96,7 @@ const DEFAULT_PDF_OCR_MAX_PAGES = 12;
 const DEFAULT_PARSE_BATCH_TIMEOUT_MS = 120_000;
 const DEFAULT_LOW_CONFIDENCE_THRESHOLD = 60;
 const MIN_PDF_PAGE_TEXT_EVIDENCE_CHARS = 80;
+export const ADMIN_INGEST_IMAGE_OCR_PIPELINE_VERSION = "admin-ingest-image-ocr-v4-tail-strict-composer";
 export const ADMIN_INGEST_DEFAULT_PAGE_BATCH_SIZE = 4;
 export const ADMIN_INGEST_MIN_PAGE_BATCH_SIZE = 1;
 export const ADMIN_INGEST_MAX_PAGE_BATCH_SIZE = 6;
@@ -1121,10 +1136,88 @@ async function prepareWechatReplyScriptVisionBuffer(buffer: Buffer) {
   };
 }
 
+async function prepareWechatTailRoleVerificationBuffer(buffer: Buffer) {
+  const sharp = (await import("sharp")).default;
+  const normalized = await sharp(buffer, {
+    animated: false,
+    limitInputPixels: 60_000_000
+  })
+    .rotate()
+    .toBuffer({ resolveWithObject: true });
+  const maxTailHeight = 4_200;
+
+  if (normalized.info.height <= maxTailHeight) {
+    return normalized.data;
+  }
+
+  return sharp(normalized.data, {
+    animated: false,
+    limitInputPixels: 60_000_000
+  })
+    .extract({
+      left: 0,
+      top: normalized.info.height - maxTailHeight,
+      width: normalized.info.width,
+      height: maxTailHeight
+    })
+    .toBuffer();
+}
+
+export function resolveAdminIngestWechatVisionTailRole(input: {
+  visionText: string;
+  localTranscript: string;
+  localRoleReliable: boolean;
+  policy?: AdminIngestWechatTailRoleVerificationPolicy;
+  localTailEvidence?: AdminIngestWechatTailRoleEvidence | null;
+  visionMissingReason?:
+    | "VISION_PROVIDER_FAILED"
+    | "VISION_TEXT_EMPTY"
+    | "VISION_ROLE_FORMAT_UNPARSEABLE";
+}) {
+  const rawVisionTranscript = parseAdminIngestWechatRoleTranscript(input.visionText, {
+    allowMarkdownRoleLabelWrapper: input.policy === "tail_strict"
+  });
+  const rawLocalTranscript = parseAdminIngestWechatRoleTranscript(input.localTranscript);
+  const verification = verifyAdminIngestWechatTailRole({
+    visionTranscript: rawVisionTranscript.transcript,
+    localTranscript: input.localTranscript,
+    localRoleReliable: input.localRoleReliable,
+    policy: input.policy,
+    localTailEvidence: input.localTailEvidence,
+    visionMissingReason: input.visionMissingReason
+  });
+  const tailRole = verification.status === "verified"
+    ? verification.tailRole
+    : "uncertain" as const;
+  const currentTurnState = tailRole === "user"
+    ? "waiting_for_customer" as const
+    : tailRole === "customer"
+      ? "reply_required" as const
+      : "evidence_insufficient" as const;
+
+  return {
+    rawVisionTranscript,
+    transcript: verification.transcript,
+    verification,
+    tailRole,
+    currentTurnState,
+    textHash: verification.tailText
+      ? createHash("sha256").update(verification.tailText).digest("hex").slice(0, 16)
+      : null,
+    localTailTextHash: rawLocalTranscript.messages.at(-1)?.text
+      ? createHash("sha256")
+          .update(rawLocalTranscript.messages.at(-1)?.text ?? "")
+          .digest("hex")
+          .slice(0, 16)
+      : null
+  };
+}
+
 async function parseWechatConversationImage(input: {
   buffer: Buffer;
   signal?: AbortSignal;
   wechatOutputMode?: "reply_script" | "full_answer";
+  tailRoleVerificationPolicy?: AdminIngestWechatTailRoleVerificationPolicy;
 }) {
   const detectedMimeType = detectImageMimeType(input.buffer);
 
@@ -1153,17 +1246,126 @@ async function parseWechatConversationImage(input: {
         buffer: input.buffer,
         focusedOnRecentConversation: false
       };
-  const visionResult = await extractChatImageText({
-    arrayBuffer: visionInput.buffer.buffer.slice(
-      visionInput.buffer.byteOffset,
-      visionInput.buffer.byteOffset + visionInput.buffer.byteLength
-    ) as ArrayBuffer,
-    filename: "wechat-conversation-image",
-    mimeType: detectedMimeType
-  });
-  const visionTranscript = visionResult.status === "ok" && visionResult.text
-    ? parseAdminIngestWechatRoleTranscript(visionResult.text)
+  const tailRoleResultPromise = input.wechatOutputMode === "full_answer"
+    ? prepareWechatTailRoleVerificationBuffer(input.buffer)
+      .then((tailBuffer) => extractAdminIngestWechatConversationText({
+        bytes: tailBuffer,
+        mimeType: detectedMimeType,
+        signal: input.signal
+      }))
+      .catch((error: unknown) => {
+        if (input.signal?.aborted) {
+          throw createAbortError(input.signal);
+        }
+        if (
+          error
+          && typeof error === "object"
+          && "name" in error
+          && error.name === "AbortError"
+        ) {
+          throw error;
+        }
+        return null;
+      })
+    : Promise.resolve(null);
+  const [visionResult, tailRoleResult] = await Promise.all([
+    extractChatImageText({
+      arrayBuffer: visionInput.buffer.buffer.slice(
+        visionInput.buffer.byteOffset,
+        visionInput.buffer.byteOffset + visionInput.buffer.byteLength
+      ) as ArrayBuffer,
+      filename: "wechat-conversation-image",
+      mimeType: detectedMimeType,
+      longImageSegmentConcurrency: 6
+    }),
+    tailRoleResultPromise
+  ]);
+  if (input.signal) {
+    throwIfAborted(input.signal);
+  }
+  const useTailStrictPolicy = input.tailRoleVerificationPolicy === "tail_strict";
+  const localTailTranscript = useTailStrictPolicy
+    ? tailRoleResult?.strictTailTranscript ?? tailRoleResult?.transcript ?? ""
+    : tailRoleResult?.transcript ?? "";
+  const localTailEvidence = useTailStrictPolicy
+    ? tailRoleResult?.strictTailRoleEvidence
+    : tailRoleResult?.tailRoleEvidence;
+  const visionText = visionResult.status === "ok" ? visionResult.text.trim() : "";
+  const parsedVisionBeforeResolve = visionText
+    ? parseAdminIngestWechatRoleTranscript(visionText, {
+        allowMarkdownRoleLabelWrapper: useTailStrictPolicy
+      })
     : null;
+  const parsedLocalBeforeResolve = localTailTranscript
+    ? parseAdminIngestWechatRoleTranscript(localTailTranscript)
+    : null;
+  const visionMissingReason = visionResult.status !== "ok"
+    ? "VISION_PROVIDER_FAILED" as const
+    : !visionText
+      ? "VISION_TEXT_EMPTY" as const
+      : (parsedVisionBeforeResolve?.messages.length ?? 0) < 1
+        ? "VISION_ROLE_FORMAT_UNPARSEABLE" as const
+        : undefined;
+
+  if (input.wechatOutputMode === "full_answer") {
+    logger.info("admin_ingest.wechat_tail_role_input", {
+      policy: input.tailRoleVerificationPolicy ?? "global",
+      visionOcrStatus: visionResult.status,
+      visionTextLength: visionText.length,
+      visionRoleMessageCount: parsedVisionBeforeResolve?.messages.length ?? 0,
+      localTranscriptLength: localTailTranscript.length,
+      localRoleMessageCount: parsedLocalBeforeResolve?.messages.length ?? 0,
+      visionMissingReason: visionMissingReason ?? null
+    });
+  }
+
+  const resolvedTailRole = input.wechatOutputMode === "full_answer"
+    ? resolveAdminIngestWechatVisionTailRole({
+        visionText,
+        localTranscript: localTailTranscript,
+        localRoleReliable: tailRoleResult?.roleReliable === true,
+        policy: input.tailRoleVerificationPolicy,
+        localTailEvidence,
+        visionMissingReason
+      })
+    : null;
+  const rawVisionTranscript = resolvedTailRole?.rawVisionTranscript ?? (visionResult.status === "ok" && visionResult.text
+    ? parseAdminIngestWechatRoleTranscript(visionResult.text, {
+        allowMarkdownRoleLabelWrapper: useTailStrictPolicy
+      })
+    : null);
+  const tailRoleVerification = resolvedTailRole?.verification ?? null;
+  const visionTranscript = resolvedTailRole?.transcript ?? rawVisionTranscript;
+  const currentTurnRoleInsufficient = input.wechatOutputMode === "full_answer"
+    && tailRoleVerification?.status !== "verified";
+
+  if (input.wechatOutputMode === "full_answer") {
+    const diagnostics = resolvedTailRole?.verification.diagnostics;
+
+    logger.info("admin_ingest.wechat_tail_role_verification", {
+      policy: diagnostics?.policy ?? input.tailRoleVerificationPolicy ?? "global",
+      reason: diagnostics?.reason ?? "VISION_TAIL_MISSING",
+      tailRole: resolvedTailRole?.tailRole ?? "uncertain",
+      currentTurnState: resolvedTailRole?.currentTurnState ?? "evidence_insufficient",
+      visionTailHash: resolvedTailRole?.textHash ?? null,
+      localTailHash: resolvedTailRole?.localTailTextHash ?? null,
+      visionTailLength: diagnostics?.visionTailLength ?? 0,
+      localTailLength: diagnostics?.localTailLength ?? 0,
+      localRoleReliable: diagnostics?.localRoleReliable ?? false,
+      bestScoreBucket: diagnostics?.bestScoreBucket ?? "none",
+      bestLocalIndex: diagnostics?.bestLocalIndex ?? -1,
+      visionTailIndex: diagnostics?.visionTailIndex
+        ?? Math.max(-1, (rawVisionTranscript?.messages.length ?? 0) - 1),
+      localTailIndex: diagnostics?.localTailIndex ?? -1,
+      localTailConfidence: diagnostics?.localTailConfidence ?? null,
+      localTailRoleSource: diagnostics?.localTailRoleSource ?? null,
+      localTailIsLowestNonNoiseEvidence:
+        diagnostics?.localTailIsLowestNonNoiseEvidence ?? null,
+      filteredTailComposerChromeCount: useTailStrictPolicy
+        ? tailRoleResult?.strictFilteredTailComposerChromeCount ?? 0
+        : 0
+    });
+  }
 
   if (visionTranscript?.transcript && visionTranscript.latestCustomerMessage) {
     const visionSegmentCount = Math.max(1, visionResult.segmentCount ?? 1);
@@ -1179,7 +1381,7 @@ async function parseWechatConversationImage(input: {
       { length: Math.max(0, visionSegmentCount - visionRecognizedCount) },
       (_, index) => visionRecognizedCount + index + 1
     );
-    const partial = visionRecognizedCount < visionSegmentCount;
+    const partial = visionRecognizedCount < visionSegmentCount || currentTurnRoleInsufficient;
     const focusNote = visionInput.focusedOnRecentConversation
       ? "为缩短精准回复等待时间，本轮只识别长截图底部最近对话区域；"
       : "";
@@ -1188,13 +1390,21 @@ async function parseWechatConversationImage(input: {
       extractedText: buildAdminIngestWechatReplyEvidence({
         transcript: visionTranscript.transcript,
         latestCustomerMessage: visionTranscript.latestCustomerMessage,
-        partial
+        partial,
+        currentTurnRoleVerification: currentTurnRoleInsufficient
+          ? "insufficient"
+          : "verified"
       }),
-      pageSummaries: [
-        `最近客户消息：${visionTranscript.latestCustomerMessage}`
-      ],
+      currentTurnState: input.wechatOutputMode === "full_answer"
+        ? resolvedTailRole?.currentTurnState ?? "evidence_insufficient" as const
+        : undefined,
+      pageSummaries: currentTurnRoleInsufficient
+        ? []
+        : [`最近客户消息：${visionTranscript.latestCustomerMessage}`],
       slideTexts: [],
-      limitationNote: partial
+      limitationNote: currentTurnRoleInsufficient
+        ? `${focusNote}已识别完整截图正文，但底部当前回合的左右角色缺少可靠本地几何核验；本轮不会回退到更早消息生成回复。`
+        : partial
         ? `${focusNote}已通过 ${visionResult.provider}/${visionResult.model} 进行分段角色识别；存在未识别片段，回答只能基于已识别对话正文。`
         : `${focusNote}已通过 ${visionResult.provider}/${visionResult.model} 进行分段角色识别；左侧白色气泡为客户，右侧绿色气泡为用户本人。`,
       parseStatus: partial ? "partial" as const : "parsed" as const,
@@ -1264,6 +1474,9 @@ async function parseWechatConversationImage(input: {
       ? "微信长截图识别超时，未能可靠确认客户最后一条消息；本轮不会猜测或调用回答模型。"
       : "微信长截图未能可靠区分左右角色或确认客户最后一条消息；本轮已停止，不会把低置信度 OCR 结果交给 DeepSeek 或豆包。请上传更清晰的原始截图或分段截图。",
     parseStatus: "metadata_only" as const,
+    currentTurnState: input.wechatOutputMode === "full_answer"
+      ? "evidence_insufficient" as const
+      : undefined,
     ...buildParseCoverage({
       totalPages: totalSegments,
       pageStart: 1,
@@ -1596,6 +1809,77 @@ async function parseText(buffer: Buffer) {
   };
 }
 
+type AdminIngestImageParseBody = Awaited<ReturnType<typeof parseImage>>
+  | Awaited<ReturnType<typeof parseWechatConversationImage>>;
+
+function canCacheAdminIngestImageParseBody(result: AdminIngestImageParseBody) {
+  return result.parseStatus === "parsed"
+    && result.complete === true
+    && result.deadlineReached !== true
+    && (result.failedPages?.length ?? 0) === 0
+    && (result.lowConfidencePages?.length ?? 0) === 0;
+}
+
+async function parseAdminIngestImageBody(input: {
+  buffer: Buffer;
+  recognitionMode?: "wechat_conversation";
+  wechatOutputMode?: "reply_script" | "full_answer";
+  signal?: AbortSignal;
+  cacheAccountScope?: string;
+  latencyTrace?: AdminIngestLatencyTrace;
+  tailRoleVerificationPolicy?: AdminIngestWechatTailRoleVerificationPolicy;
+}): Promise<AdminIngestImageParseBody> {
+  if (input.signal) {
+    throwIfAborted(input.signal);
+  }
+  const variant = input.recognitionMode === "wechat_conversation"
+    ? `wechat:${input.wechatOutputMode ?? "reply_script"}:${input.tailRoleVerificationPolicy ?? "global"}`
+    : "generic";
+  const cacheKey = input.cacheAccountScope
+    ? buildAdminIngestOcrCacheKey({
+        accountScope: input.cacheAccountScope,
+        bytes: input.buffer,
+        variant,
+        pipelineVersion: ADMIN_INGEST_IMAGE_OCR_PIPELINE_VERSION
+      })
+    : null;
+  const cacheLookupStartedAt = Date.now();
+  const cached = cacheKey
+    ? readAdminIngestOcrCache<AdminIngestImageParseBody>(cacheKey)
+    : null;
+
+  if (cached) {
+    if (input.signal) {
+      throwIfAborted(input.signal);
+    }
+    input.latencyTrace?.mark("ocr_cache_hit", cacheLookupStartedAt);
+    return cached;
+  }
+
+  input.latencyTrace?.mark("ocr_cache_miss", cacheLookupStartedAt);
+  const ocrStartedAt = Date.now();
+  const result = input.recognitionMode === "wechat_conversation"
+    ? await parseWechatConversationImage({
+        buffer: input.buffer,
+        signal: input.signal,
+        wechatOutputMode: input.wechatOutputMode,
+        tailRoleVerificationPolicy: input.tailRoleVerificationPolicy
+      })
+    : await parseImage({ buffer: input.buffer, signal: input.signal });
+
+  input.latencyTrace?.mark("ocr_completed", ocrStartedAt);
+
+  if (input.signal) {
+    throwIfAborted(input.signal);
+  }
+
+  if (cacheKey && canCacheAdminIngestImageParseBody(result)) {
+    writeAdminIngestOcrCache(cacheKey, result);
+  }
+
+  return result;
+}
+
 export async function parseAdminIngestFile(input: {
   fileName: string;
   mimeType: string;
@@ -1606,6 +1890,9 @@ export async function parseAdminIngestFile(input: {
   recognitionMode?: "wechat_conversation";
   wechatOutputMode?: "reply_script" | "full_answer";
   signal?: AbortSignal;
+  cacheAccountScope?: string;
+  latencyTrace?: AdminIngestLatencyTrace;
+  tailRoleVerificationPolicy?: AdminIngestWechatTailRoleVerificationPolicy;
 }): Promise<IngestParsedFileResult> {
   const fileType = inferFileType(input.fileName, input.mimeType);
   const batch = normalizeParseBatch(input);
@@ -1651,13 +1938,15 @@ export async function parseAdminIngestFile(input: {
     return {
       ...base,
       recognitionMode,
-      ...(recognitionMode === "wechat_conversation"
-        ? await parseWechatConversationImage({
-            buffer: input.buffer,
-            signal: batch.signal,
-            wechatOutputMode: input.wechatOutputMode
-          })
-        : await parseImage({ buffer: input.buffer, signal: batch.signal }))
+      ...(await parseAdminIngestImageBody({
+        buffer: input.buffer,
+        recognitionMode,
+        signal: batch.signal,
+        wechatOutputMode: input.wechatOutputMode,
+        cacheAccountScope: input.cacheAccountScope,
+        latencyTrace: input.latencyTrace,
+        tailRoleVerificationPolicy: input.tailRoleVerificationPolicy
+      }))
     };
   }
 

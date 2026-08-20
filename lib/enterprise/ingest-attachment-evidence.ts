@@ -1,5 +1,8 @@
 export const ATTACHMENT_CONTENT_MISSING_CODE = "ATTACHMENT_CONTENT_MISSING" as const;
 export const ATTACHMENT_EVIDENCE_MISMATCH_CODE = "ATTACHMENT_EVIDENCE_MISMATCH" as const;
+export const ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE = "ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED" as const;
+export const ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE = "无法可靠确认截图底部最后一条消息属于客户还是本人，请上传清晰底部截图或分段截图。" as const;
+const ADMIN_INGEST_WECHAT_TAIL_ROLE_INSUFFICIENT_MARKER = "【当前回合角色核验】证据不足";
 
 export type AttachmentEvidenceErrorCode =
   | typeof ATTACHMENT_CONTENT_MISSING_CODE
@@ -18,6 +21,7 @@ export interface AdminIngestAttachmentEvidenceSource {
   summary?: string;
   pageSummaries?: string[];
   slideTexts?: Array<{ text?: string; content?: string } | string>;
+  currentTurnState?: "reply_required" | "waiting_for_customer" | "evidence_insufficient";
 }
 
 export interface AdminIngestAttachmentEvidenceReport {
@@ -117,6 +121,17 @@ export function assessAdminIngestAttachmentEvidence(
     blocking: attachmentCount > 0 && groundedCount === 0,
     missingFiles
   };
+}
+
+export function hasAdminIngestWechatTailRoleEvidenceInsufficient(
+  attachments: AdminIngestAttachmentEvidenceSource[] = []
+) {
+  return attachments.some((attachment) => (
+    attachment.currentTurnState === "evidence_insufficient"
+    || readAdminIngestAttachmentEvidence(attachment).includes(
+      ADMIN_INGEST_WECHAT_TAIL_ROLE_INSUFFICIENT_MARKER
+    )
+  ));
 }
 
 const POSITIVE_EVIDENCE_CLAIM = /(?:仔细(?:看了|看过|看完)|完整(?:看完|阅读|识别|理解)|全部(?:看完|阅读|识别|理解)|完全理解|精准识别|逐页(?:看完|阅读|分析))/;

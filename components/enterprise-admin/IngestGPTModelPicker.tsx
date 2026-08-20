@@ -21,7 +21,19 @@ interface IngestGPTModelPickerProps {
   onCheckUnavailableProvider?: (provider: IngestModelOption["provider"]) => void;
 }
 
-const PRIMARY_INGEST_MODEL_PROVIDERS = new Set(["deepseek-pro", "doubao-pro"]);
+const PRIMARY_INGEST_MODEL_PROVIDERS = new Set(["deepseek-pro", "deepseek-flash", "doubao-pro"]);
+
+export function getVisibleIngestModelOptions(input: {
+  compact: boolean;
+}) {
+  if (!input.compact) {
+    return INGEST_MODEL_OPTIONS;
+  }
+
+  return INGEST_MODEL_OPTIONS.filter((option) => (
+    PRIMARY_INGEST_MODEL_PROVIDERS.has(option.provider)
+  ));
+}
 
 function getProviderPresentation(provider: IngestModelOption["provider"]) {
   if (provider === "doubao-pro") {
@@ -75,9 +87,9 @@ export function IngestGPTModelPicker({
     () => getProviderPresentation(selectedSelection.provider),
     [selectedSelection.provider]
   );
-  const visibleModelOptions = useMemo(() => compact
-    ? INGEST_MODEL_OPTIONS.filter((option) => PRIMARY_INGEST_MODEL_PROVIDERS.has(option.provider))
-    : INGEST_MODEL_OPTIONS, [compact]);
+  const visibleModelOptions = useMemo(() => getVisibleIngestModelOptions({
+    compact
+  }), [compact]);
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {

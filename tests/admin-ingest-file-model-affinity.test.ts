@@ -22,6 +22,13 @@ const DOUBAO_AFFINITY: AdminIngestFileModelAffinity = {
   strictModelAffinity: true
 };
 
+const DEEPSEEK_FLASH_AFFINITY: AdminIngestFileModelAffinity = {
+  modelProvider: "deepseek-flash",
+  preferredModel: "deepseek-v4-flash",
+  selectedModelLabel: "DeepSeek-V4-Flash",
+  strictModelAffinity: true
+};
+
 function createUpload(): IngestUploadState {
   const rawFile = new File(["投喂附件正文"], "沟通五步.txt", { type: "text/plain" });
 
@@ -70,11 +77,14 @@ async function testClientTransmitsSelectedAgentModelIdentity() {
   try {
     const doubaoResult = await parseUploadedFileForGpt(createUpload(), DOUBAO_AFFINITY);
     const deepSeekResult = await parseUploadedFileForGpt(createUpload(), DEEPSEEK_AFFINITY);
+    const flashResult = await parseUploadedFileForGpt(createUpload(), DEEPSEEK_FLASH_AFFINITY);
     const doubaoRequestBody = requestBodies[0];
     const deepSeekRequestBody = requestBodies[1];
+    const flashRequestBody = requestBodies[2];
 
     assert.equal(doubaoResult.parseStatus, "parsed");
     assert.equal(deepSeekResult.parseStatus, "parsed");
+    assert.equal(flashResult.parseStatus, "parsed");
     assert.ok(doubaoRequestBody);
     assert.equal(doubaoRequestBody.get("modelProvider"), "doubao-pro");
     assert.equal(doubaoRequestBody.get("preferredModel"), "doubao-seed-2-1-pro-260628");
@@ -85,6 +95,11 @@ async function testClientTransmitsSelectedAgentModelIdentity() {
     assert.equal(deepSeekRequestBody.get("preferredModel"), "deepseek-v4-pro");
     assert.equal(deepSeekRequestBody.get("selectedModelLabel"), "DeepSeek-V4-Pro");
     assert.equal(deepSeekRequestBody.get("strictModelAffinity"), "true");
+    assert.ok(flashRequestBody);
+    assert.equal(flashRequestBody.get("modelProvider"), "deepseek-flash");
+    assert.equal(flashRequestBody.get("preferredModel"), "deepseek-v4-flash");
+    assert.equal(flashRequestBody.get("selectedModelLabel"), "DeepSeek-V4-Flash");
+    assert.equal(flashRequestBody.get("strictModelAffinity"), "true");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -96,11 +111,16 @@ function testServerAcceptsOnlyExactStrictWebModelIdentity() {
     "utf8"
   );
 
-  assert.match(routeSource, /STRICT_WEB_INGEST_PROVIDERS[\s\S]*"deepseek-pro"[\s\S]*"doubao-pro"/);
+  assert.match(routeSource, /STRICT_WEB_INGEST_PROVIDERS[\s\S]*"deepseek-pro"[\s\S]*"deepseek-flash"[\s\S]*"doubao-pro"/);
   assert.match(routeSource, /strictValue !== "true" && strictValue !== "false"/);
   assert.match(routeSource, /preferredModel !== selectedOption\.defaultModel/);
   assert.match(routeSource, /selectedModelLabel !== selectedOption\.label/);
   assert.match(routeSource, /modelAffinity = readAdminIngestParseModelAffinity\(formData\)/);
+  assert.match(
+    routeSource,
+    /recognitionMode === "wechat_conversation"[\s\S]*wechatOutputMode === "full_answer"[\s\S]*modelAffinity\?\.modelProvider === "deepseek-pro"[\s\S]*modelAffinity\?\.modelProvider === "deepseek-flash"[\s\S]*\? "tail_strict" as const[\s\S]*: "global" as const/
+  );
+  assert.match(routeSource, /tailRoleVerificationPolicy/);
   assert.match(routeSource, /\{ \.\.\.parsed, modelAffinity \}/);
 }
 
@@ -110,7 +130,7 @@ function testComposerUsesStrictSelectedModelForAttachmentParsing() {
     "utf8"
   );
 
-  assert.match(source, /parseUploadedFilesForGpt\(composerUploads, 1, \{/);
+  assert.match(source, /parseUploadedFilesForGpt\(composerUploads, 2, \{/);
   assert.match(source, /modelProvider:\s*selectedFileModelProvider/);
   assert.match(source, /preferredModel:\s*requestModelOption\.defaultModel/);
   assert.match(source, /selectedModelLabel:\s*requestModelOption\.label/);

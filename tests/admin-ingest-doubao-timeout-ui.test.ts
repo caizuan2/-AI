@@ -171,6 +171,25 @@ async function main() {
   assert.equal(shouldSuppressFallbackToast(invalidKeyGuard), false);
   assert.equal(isRealIngestFailure(invalidKeyGuard), true);
 
+  const directProvider403Guard = {
+    reason: "豆包 Ark API Key 无效或无权访问当前模型。",
+    stateDomain: getStateDomain(new AdminIngestRequestError("豆包 Ark API Key 无效或无权访问当前模型。", {
+      status: 403,
+      errorCode: "DOUBAO_API_KEY_INVALID",
+      retryable: false,
+      selectedModelLabel: "Doubao-Seed-2.1-pro",
+      fallbackUsed: false
+    })),
+    requestId: "request-current-direct-provider-403",
+    activeRequestId: "request-current-direct-provider-403",
+    status: 403,
+    errorCode: "DOUBAO_API_KEY_INVALID",
+    retryable: false
+  } as const;
+  assert.equal(directProvider403Guard.stateDomain, "ingest");
+  assert.equal(shouldSuppressFallbackToast(directProvider403Guard), false);
+  assert.equal(isRealIngestFailure(directProvider403Guard), true);
+
   const streamPresentation = buildAdminIngestFailurePresentation(
     new AdminIngestRequestError("stream terminated", {
       status: 502,
@@ -521,6 +540,11 @@ async function main() {
   assert.match(routeSource, /enqueue\("visible"/);
   assert.match(routeSource, /enqueue\("status"/);
   assert.match(modeToggleSource, /!isStrictSelectedModelFailure\(retryError\)/);
+  assert.match(
+    modeToggleSource,
+    /const authAccessMessage = stateDomain === "ingest"\s*\? null\s*:\s*getAuthAccessErrorMessage\(handledError\)/,
+    "Provider 401/403 failures must bypass generic account auth handling so the persistent model failure card is committed."
+  );
   assert.match(modeToggleSource, /status: "failed"/);
   assert.match(modeToggleSource, /failureMeta:/);
   assert.match(modeToggleSource, /metadataState: "pending"/);

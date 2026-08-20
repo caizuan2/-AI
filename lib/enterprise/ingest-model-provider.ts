@@ -40,6 +40,7 @@ import {
 import {
   evaluateModelCost
 } from "@/lib/enterprise/gpt-os-cost-engine";
+import type { AdminIngestModelProgressEvent } from "@/lib/enterprise/admin-ingest-model-progress";
 
 export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput | DoubaoAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
@@ -47,6 +48,7 @@ export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminInges
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
   signal?: AbortSignal;
+  onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
 };
 
 export type AdminIngestModelResult = (OpenAIAdminIngestResult | DeepSeekAdminIngestResult | QwenAdminIngestResult | KimiAdminIngestResult | DoubaoAdminIngestResult) & {
@@ -168,6 +170,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     preferredModel: input.preferredModel
   });
   const providerSignal = input.signal;
+  const deepSeekProgressEvent = input.onProgressEvent;
   const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
   const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata;
   const baseInput = { ...input };
@@ -194,7 +197,10 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
 
   if (provider === "deepseek-pro" || provider === "deepseek-flash") {
     return runDeepSeekAdminIngest({
-      ...payload
+      ...payload,
+      modelProvider: provider,
+      signal: providerSignal,
+      onProgressEvent: deepSeekProgressEvent
     } as DeepSeekAdminIngestInput);
   }
 

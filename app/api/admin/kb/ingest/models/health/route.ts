@@ -52,6 +52,7 @@ export async function GET(request: Request) {
   });
   const provider = providerParam ? normalizeIngestModelProvider(providerParam) : runtime.provider;
   const input = {
+    provider: runtime.provider === "deepseek-flash" ? "deepseek-flash" as const : "deepseek-pro" as const,
     preferredModel: runtime.actualModel,
     selectedModelLabel: runtime.displayModelLabel
   };

@@ -13,9 +13,9 @@ import {
 } from "@/lib/enterprise/ingest-model-provider";
 import {
   runDoubaoMetadataRecovery,
-  type DoubaoAdminIngestProgressEvent,
   type DoubaoMetadataRecoveryResult
 } from "@/lib/enterprise/doubao-ingest-client";
+import type { AdminIngestModelProgressEvent } from "@/lib/enterprise/admin-ingest-model-progress";
 import {
   beginAdminIngestDoubaoProgress,
   readAdminIngestDoubaoProgress,
@@ -82,17 +82,21 @@ import {
 } from "@/lib/enterprise/ingest-logger";
 import { hasDatabaseUrl } from "@/lib/server-config";
 import {
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+  ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
   ATTACHMENT_CONTENT_MISSING_CODE,
   ATTACHMENT_EVIDENCE_MISMATCH_CODE,
   assessAdminIngestAttachmentEvidence,
   buildAttachmentContentMissingMessage,
-  findUnsupportedAdminIngestAttachmentClaim
+  findUnsupportedAdminIngestAttachmentClaim,
+  hasAdminIngestWechatTailRoleEvidenceInsufficient
 } from "@/lib/enterprise/ingest-attachment-evidence";
 
 export const runtime = "nodejs";
 
 type AdminIngestRequestAttachment = OpenAIAdminIngestAttachment & {
   wechatOutputMode?: AdminIngestWechatOutputMode;
+  currentTurnState?: "reply_required" | "waiting_for_customer" | "evidence_insufficient";
 };
 export const dynamic = "force-dynamic";
 
@@ -177,6 +181,7 @@ function encodeAdminIngestSseEvent(event: string, data: unknown) {
 function createDoubaoBrowserSseResponse(input: {
   signal: AbortSignal;
   requestId: string;
+  provider?: "doubao-pro" | "deepseek-pro" | "deepseek-flash";
   selectedModelLabel: string;
   requestedModel: string;
   onProgressSnapshot: (event: {
@@ -187,9 +192,11 @@ function createDoubaoBrowserSseResponse(input: {
   }) => void;
   producer: (
     signal: AbortSignal,
-    onProgressEvent: (event: DoubaoAdminIngestProgressEvent) => void
+    onProgressEvent: (event: AdminIngestModelProgressEvent) => void
   ) => Promise<Response>;
 }) {
+  const streamProvider = input.provider ?? "doubao-pro";
+  const providerErrorPrefix = streamProvider.startsWith("deepseek") ? "DEEPSEEK" : "DOUBAO";
   const encoder = new TextEncoder();
   const providerController = new AbortController();
   const startedAt = Date.now();
@@ -251,7 +258,7 @@ function createDoubaoBrowserSseResponse(input: {
       enqueue("accepted", {
         type: "accepted",
         requestId: input.requestId,
-        provider: "doubao-pro",
+        provider: streamProvider,
         selectedModelLabel: input.selectedModelLabel,
         requestedModel: input.requestedModel,
         fallbackUsed: false
@@ -264,7 +271,7 @@ function createDoubaoBrowserSseResponse(input: {
         });
       }, ADMIN_INGEST_SSE_HEARTBEAT_MS);
 
-      const onProgressEvent = (event: DoubaoAdminIngestProgressEvent) => {
+      const onProgressEvent = (event: AdminIngestModelProgressEvent) => {
         if (providerController.signal.aborted || closed) {
           return;
         }
@@ -279,7 +286,7 @@ function createDoubaoBrowserSseResponse(input: {
           enqueue("visible_delta", {
             type: "visible_delta",
             requestId: input.requestId,
-            provider: "doubao-pro",
+            provider: streamProvider,
             actualModel: event.model,
             responseId: event.responseId,
             fallbackUsed: false,
@@ -298,7 +305,7 @@ function createDoubaoBrowserSseResponse(input: {
           enqueue("visible", {
             type: "visible",
             requestId: input.requestId,
-            provider: "doubao-pro",
+            provider: streamProvider,
             actualModel: event.model,
             responseId: event.responseId,
             fallbackUsed: false,
@@ -360,12 +367,12 @@ function createDoubaoBrowserSseResponse(input: {
           ok: false,
           success: false,
           errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-          causeCode: "DOUBAO_RESPONSE_PARSE_FAILED",
+          causeCode: `${providerErrorPrefix}_RESPONSE_PARSE_FAILED`,
           retryable: true,
           fallback: false,
           fallbackUsed: false,
-          provider: "doubao-pro",
-          requestedProvider: "doubao-pro",
+          provider: streamProvider,
+          requestedProvider: streamProvider,
           selectedModelLabel: input.selectedModelLabel,
           requestedModel: input.requestedModel,
           requestId: input.requestId,
@@ -399,12 +406,12 @@ function createDoubaoBrowserSseResponse(input: {
             ok: false,
             success: false,
             errorCode: "ADMIN_INGEST_SELECTED_MODEL_UNAVAILABLE",
-            causeCode: "DOUBAO_REQUEST_FAILED",
+            causeCode: `${providerErrorPrefix}_REQUEST_FAILED`,
             retryable: true,
             fallback: false,
             fallbackUsed: false,
-            provider: "doubao-pro",
-            requestedProvider: "doubao-pro",
+            provider: streamProvider,
+            requestedProvider: streamProvider,
             selectedModelLabel: input.selectedModelLabel,
             requestedModel: input.requestedModel,
             requestId: input.requestId,
@@ -466,7 +473,7 @@ function buildAdminIngestGroundingMetadata(
 
 function strictAdminIngestGroundingError(input: {
   grounding: AdminIngestGroundingResult;
-  provider: "deepseek-pro" | "doubao-pro";
+  provider: "deepseek-pro" | "deepseek-flash" | "doubao-pro";
   selectedModelLabel: string;
   requestedModel: string;
   requestId: string;
@@ -521,7 +528,17 @@ function readRawString(value: unknown) {
 }
 
 function usesStrictSelectedModel(platform: AdminIngestPlatform, provider: string) {
-  return platform === "web" && (provider === "deepseek-pro" || provider === "doubao-pro");
+  if (provider === "doubao-pro") {
+    return platform === "web";
+  }
+
+  return (provider === "deepseek-pro" || provider === "deepseek-flash") && (
+    platform === "web"
+    || platform === "exe"
+    || platform === "apk"
+    || platform === "ios"
+    || platform === "macos"
+  );
 }
 
 function readStringArray(value: unknown, limit = 10) {
@@ -855,6 +872,13 @@ function readAttachments(value: unknown): AdminIngestRequestAttachment[] {
       successRatePercent: readBoundedPercent(item.successRatePercent),
       deadlineReached: item.deadlineReached === true,
       limitationNote: readString(item.limitationNote) || undefined,
+      currentTurnState: readString(item.currentTurnState) === "reply_required"
+        ? "reply_required"
+        : readString(item.currentTurnState) === "waiting_for_customer"
+          ? "waiting_for_customer"
+          : readString(item.currentTurnState) === "evidence_insufficient"
+            ? "evidence_insufficient"
+            : undefined,
       wechatOutputMode: readString(item.wechatOutputMode) === "full_answer"
         ? "full_answer"
         : readString(item.wechatOutputMode) === "reply_script"
@@ -1468,6 +1492,22 @@ export async function POST(request: Request) {
     }
   }
 
+  if (hasAdminIngestWechatTailRoleEvidenceInsufficient(input.attachments)) {
+    return jsonUtf8({
+      ok: false,
+      success: false,
+      fallback: false,
+      fallbackUsed: false,
+      retryable: false,
+      errorCode: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+      message: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+      userMessage: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+      actualProvider: null,
+      actualModel: null,
+      requestId
+    }, 422);
+  }
+
   const attachmentEvidence = assessAdminIngestAttachmentEvidence(input.attachments);
 
   if (attachmentEvidence.blocking) {
@@ -1569,7 +1609,7 @@ export async function POST(request: Request) {
 
   const executeRequest = async (
     signal?: AbortSignal,
-    onDoubaoProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void
+    onProgressEvent?: (event: AdminIngestModelProgressEvent) => void
   ) => {
   const enterpriseActor = toEnterpriseActor(actor);
   const effectiveActorId = enterpriseActor?.id ?? input.userId ?? "local-admin-ingest-dev";
@@ -1628,8 +1668,33 @@ export async function POST(request: Request) {
     attachments: input.attachments,
     modelProvider: groundingModelProvider
   });
+  if (
+    wechatGroundingRequest.isWechatConversation
+    && wechatGroundingRequest.currentTurnState === "evidence_insufficient"
+  ) {
+    return jsonUtf8({
+      ok: false,
+      success: false,
+      fallback: false,
+      fallbackUsed: false,
+      retryable: false,
+      errorCode: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_CODE,
+      message: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+      userMessage: ADMIN_INGEST_WECHAT_TAIL_ROLE_UNVERIFIED_MESSAGE,
+      provider: groundingModelProvider ?? undefined,
+      requestedProvider: groundingModelProvider ?? undefined,
+      actualProvider: null,
+      selectedModelLabel: input.selectedModelLabel,
+      actualModel: null,
+      requestId
+    }, 422);
+  }
   const strictWechatGrounding = wechatGroundingRequest.strictKnowledgeMode
-    && (groundingModelProvider === "deepseek-pro" || groundingModelProvider === "doubao-pro");
+    && (
+      groundingModelProvider === "deepseek-pro"
+      || groundingModelProvider === "deepseek-flash"
+      || groundingModelProvider === "doubao-pro"
+    );
   const strictKnowledgeGrounding = strictDoubaoGrounding || strictWechatGrounding;
   const groundingStartedAt = Date.now();
   const [grounding, publishedMemoryContext] = await Promise.all([
@@ -1665,9 +1730,11 @@ export async function POST(request: Request) {
     : [];
 
   if (strictKnowledgeGrounding && (!canonicalAgentScope || !grounding.applied)) {
-    const strictProvider = groundingModelProvider === "deepseek-pro"
-      ? "deepseek-pro" as const
-      : "doubao-pro" as const;
+    const strictProvider = groundingModelProvider === "deepseek-flash"
+      ? "deepseek-flash" as const
+      : groundingModelProvider === "deepseek-pro"
+        ? "deepseek-pro" as const
+        : "doubao-pro" as const;
     const strictRuntime = resolveIngestModelRuntime({
       provider: strictProvider,
       selectedModelLabel: input.selectedModelLabel,
@@ -1724,6 +1791,23 @@ export async function POST(request: Request) {
       });
     }
 
+    if (modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash") {
+      console.info("[admin-ingest:deepseek-request-stage]", {
+        requestId,
+        stage: "selected_model_start",
+        serverPreModelMs: selectedModelStartedAt - requestReceivedAt,
+        accessParseAndStreamSetupMs: groundingStartedAt - requestReceivedAt,
+        groundingAndMemoryMs: selectedModelStartedAt - groundingStartedAt,
+        clientToModelMs: input.requestStartedAt
+          ? Math.max(0, selectedModelStartedAt - input.requestStartedAt)
+          : null,
+        groundingApplied: grounding.applied,
+        groundingSourceCount: grounding.sources.length,
+        memoryContextCount: publishedMemoryContext.usedMemoryIds.length,
+        recentMessageCount: input.recentMessages.length
+      });
+    }
+
     const result = await runAdminIngestWithSelectedModel({
       input: wechatGroundingRequest.modelInput,
       attachments: input.attachments,
@@ -1758,8 +1842,8 @@ export async function POST(request: Request) {
       requestId,
       signal,
       deferMetadata: modelOption.provider === "doubao-pro"
-        && Boolean(onDoubaoProgressEvent),
-        onProgressEvent: onDoubaoProgressEvent
+        && Boolean(onProgressEvent),
+      onProgressEvent: onProgressEvent
         ? (event) => {
             if (
               signal?.aborted
@@ -1779,7 +1863,7 @@ export async function POST(request: Request) {
               return;
             }
 
-            onDoubaoProgressEvent(event);
+            onProgressEvent(event);
           }
         : undefined
     });
@@ -1788,6 +1872,20 @@ export async function POST(request: Request) {
 
     if (modelOption.provider === "doubao-pro") {
       console.info("[admin-ingest:doubao-request-stage]", {
+        requestId,
+        stage: "selected_model_completed",
+        selectedModelMs: Date.now() - selectedModelStartedAt,
+        serverTotalToModelCompletionMs: Date.now() - requestReceivedAt,
+        requestedModel: result.requestedModel,
+        actualModel: result.actualModel,
+        fallbackUsed: result.fallbackUsed === true,
+        replyLength: result.replyMarkdown.length
+      });
+    }
+
+
+    if (modelOption.provider === "deepseek-pro" || modelOption.provider === "deepseek-flash") {
+      console.info("[admin-ingest:deepseek-request-stage]", {
         requestId,
         stage: "selected_model_completed",
         selectedModelMs: Date.now() - selectedModelStartedAt,
@@ -2233,6 +2331,38 @@ export async function POST(request: Request) {
     clientSignal: request.signal
   });
   const stopRuntimeLeaseHeartbeat = startRuntimeLeaseHeartbeat();
+
+  if (
+    (
+      input.platform === "web"
+      || input.platform === "exe"
+      || input.platform === "apk"
+      || input.platform === "ios"
+      || input.platform === "macos"
+    )
+    && (streamModelOption.provider === "deepseek-pro" || streamModelOption.provider === "deepseek-flash")
+    && browserAcceptsAdminIngestSse(request)
+  ) {
+    return createDoubaoBrowserSseResponse({
+      signal: activeRequest.signal,
+      requestId,
+      provider: streamModelOption.provider,
+      selectedModelLabel: streamModelRuntime.displayModelLabel,
+      requestedModel: streamModelRuntime.actualModel,
+      onProgressSnapshot: () => {
+        // DeepSeek streams directly to this response and does not use the
+        // Doubao reconnect/polling progress store.
+      },
+      producer: async (signal, onProgressEvent) => {
+        try {
+          return await executeRequest(signal, onProgressEvent);
+        } finally {
+          stopRuntimeLeaseHeartbeat();
+          activeRequest.unregister();
+        }
+      }
+    });
+  }
 
   try {
     return await executeRequest(activeRequest.signal);

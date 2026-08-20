@@ -88,23 +88,17 @@ async function main() {
     request: fullAnswer
   }), false);
 
-  assert.equal(
-    fullAnswer.query,
-    defaultReply.query,
-    "两种输出方式必须使用完全相同的客户原话和知识库检索词。"
-  );
-  assert.equal(fullAnswer.latestCustomerMessage, defaultReply.latestCustomerMessage);
+  assert.match(defaultReply.modelInput, /唯一回复目标：左侧客户的最近消息“现在90%以上时间用来做完美”/);
+  assert.doesNotMatch(defaultReply.modelInput, /妹妹喜欢打篮球吗|你也在现场观看吗/);
+  assert.equal(fullAnswer.currentTurnState, "waiting_for_customer");
+  assert.equal(fullAnswer.latestCustomerMessage, null);
+  assert.equal(fullAnswer.latestUserMessage, "你也在现场观看吗");
+  assert.match(fullAnswer.query, /当前回合状态：用户已发送最后一条消息，正在等待客户回复/);
   assert.equal(fullAnswer.strictKnowledgeMode, true);
-  assert.match(fullAnswer.modelInput, /完整正文必须与“精准回复话术”有明显区别/);
-  assert.match(fullAnswer.modelInput, /不能退化为只输出一段可直接发送给客户的话术/);
-  assert.match(fullAnswer.modelInput, /完整说明当前沟通阶段、客户最近消息的真实意图或顾虑/);
-  assert.match(fullAnswer.modelInput, /关键依据；再给出有针对性的解决思路和可执行建议/);
-  assert.match(fullAnswer.modelInput, /补充可直接发送的回复示例、下一步沟通节奏及需要注意的风险/);
-  assert.match(fullAnswer.modelInput, /即使客户问题较简单/);
-  assert.match(fullAnswer.modelInput, /不能缩减成一句简短回复/);
-  assert.match(fullAnswer.modelInput, /结构、标题、段落数量、篇幅和表达重点由你根据真实对话自行决定/);
-  assert.match(fullAnswer.modelInput, /不得机械套用固定四段模板/);
-  assert.match(fullAnswer.modelInput, /不得虚构客户背景、沟通阶段或未出现的顾虑/);
+  assert.match(fullAnswer.modelInput, /当前回合锚点：.*右侧用户本人“你也在现场观看吗”/);
+  assert.match(fullAnswer.modelInput, /正在等待左侧客户的新回复/);
+  assert.match(fullAnswer.modelInput, /分支处理建议、推进动作和注意事项/);
+  assert.match(fullAnswer.modelInput, /不得虚构客户背景、客户新回复、沟通阶段或未出现的顾虑/);
   assert.doesNotMatch(
     fullAnswer.modelInput,
     /简单问题保持简洁|省略不适用的判断、话术、推进建议或注意事项/,
@@ -116,11 +110,7 @@ async function main() {
     "完整正文模式不能再强制模型输出固定四段标题。"
   );
   assert.match(fullAnswer.modelInput, /严格依据当前 Agent 已命中的固定知识库/);
-  assert.doesNotMatch(
-    fullAnswer.modelInput,
-    /妹妹喜欢打篮球吗|你也在现场观看吗/,
-    "右侧用户消息不能成为完整正文模式的回答目标。"
-  );
+  assert.doesNotMatch(fullAnswer.modelInput, /唯一回复目标：.*现在90%以上时间用来做完美/);
 
   const regularRequest = buildAdminIngestWechatGroundingRequest({
     input: "普通图片分析",
@@ -169,7 +159,7 @@ async function main() {
     /mb-2 rounded-2xl bg-\[#f8f8f7\] p-2/,
     "微信截图输入区不能恢复浅色卡片背景。"
   );
-  assert.match(shellSource, /<div className="mb-2">/);
+  assert.match(shellSource, /"mb-2 shrink overflow-y-auto overscroll-contain"/);
   assert.match(shellSource, /<fieldset className="mt-2 flex flex-wrap items-center gap-2">/);
   assert.match(shellSource, /onWechatOutputModeChange\?\.\(option\.mode\)/);
   assert.match(modeToggleSource, /file\.recognitionMode === "wechat_conversation"/);

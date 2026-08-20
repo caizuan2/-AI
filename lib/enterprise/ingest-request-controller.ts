@@ -27,6 +27,23 @@ export function shouldIgnoreRequestError(state: IngestConversationState | null |
   return isStaleRequest(state?.activeRequestId, requestId);
 }
 
+export function shouldRestoreAdminIngestEvidencePreflightRequest(input: {
+  activeRequestId?: string | null;
+  requestId: string;
+  cancelled: boolean;
+  conversationId: string;
+  requestConversationId: string;
+  selectedProvider: string;
+  requestProvider: string;
+  evidenceInsufficient: boolean;
+}) {
+  return input.evidenceInsufficient
+    && !input.cancelled
+    && input.activeRequestId === input.requestId
+    && input.conversationId === input.requestConversationId
+    && input.selectedProvider === input.requestProvider;
+}
+
 export function shouldResetLoading(state: IngestConversationState | null | undefined, requestId: string) {
   if (!state) {
     return false;

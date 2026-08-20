@@ -47,6 +47,20 @@ function createUpload(fileName = "60页扫描资料.pdf"): IngestUploadState {
   };
 }
 
+function createImageUpload(fileName = "微信长截图.png"): IngestUploadState {
+  const rawFile = new File(["mock-image"], fileName, { type: "image/png" });
+
+  return {
+    ...createUpload(fileName),
+    fileType: rawFile.type,
+    mimeType: rawFile.type,
+    rawFile,
+    isImage: true,
+    recognitionMode: "wechat_conversation",
+    wechatOutputMode: "full_answer"
+  };
+}
+
 function successfulResponse(data: ParseBatchData) {
   return new Response(JSON.stringify({
     ok: true,
@@ -394,11 +408,51 @@ async function testPreservesFirstBatchWhenFollowingHttpRequestFails() {
   }
 }
 
+async function testDoesNotRepeatWholeImageForFailedOcrSegments() {
+  const originalFetch = globalThis.fetch;
+  let requestCount = 0;
+
+  globalThis.fetch = async (_input, init) => {
+    requestCount += 1;
+    assert.equal(readPageStart(init), 1);
+    return successfulResponse({
+      fileName: "微信长截图.png",
+      fileType: "image/png",
+      mimeType: "image/png",
+      extractedText: "已经可靠识别的微信对话原文",
+      pageSummaries: ["最近客户消息：测试"],
+      totalPages: 3,
+      processedPageStart: 1,
+      processedPageEnd: 3,
+      nextPage: null,
+      complete: true,
+      successfulPages: [1],
+      failedPages: [2, 3],
+      lowConfidencePages: [1],
+      coveragePercent: 100,
+      successRatePercent: 33.33,
+      parseStatus: "partial"
+    });
+  };
+
+  try {
+    const result = await parseUploadedFileForGpt(createImageUpload());
+
+    assert.equal(requestCount, 1, "Failed OCR segments must not trigger complete-image re-uploads.");
+    assert.deepEqual(result.failedPages, [2, 3]);
+    assert.equal(result.parseStatus, "partial");
+    assert.match(result.extractedText ?? "", /微信对话原文/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+}
+
 async function main() {
   await testContinuesFromPageOneToFiveAndMergesCoverage();
   await testStopsWhenServerReturnsNonAdvancingNextPage();
   await testForwardsAndHonorsExternalAbortSignal();
   await testPreservesFirstBatchWhenFollowingHttpRequestFails();
+  await testDoesNotRepeatWholeImageForFailedOcrSegments();
 
   console.log("admin ingest client file batching tests passed");
 }

@@ -2,7 +2,7 @@
 
 export type IngestQueuedRequest = {
   conversationId: string;
-  prompt: string;
+  visibleInput: string;
   createdAt: number;
 };
 
