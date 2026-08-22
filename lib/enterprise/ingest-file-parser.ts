@@ -6,7 +6,8 @@ import type { JSZipObject } from "jszip";
 import {
   extractAdminIngestLocalOcrText,
   extractAdminIngestWechatConversationText,
-  type AdminIngestLocalOcrResult
+  type AdminIngestLocalOcrResult,
+  type AdminIngestWechatOcrResult
 } from "@/lib/enterprise/ingest-local-ocr";
 import { extractChatImageText } from "@/lib/ai-chat/image-ocr";
 import {
@@ -96,7 +97,7 @@ const DEFAULT_PDF_OCR_MAX_PAGES = 12;
 const DEFAULT_PARSE_BATCH_TIMEOUT_MS = 120_000;
 const DEFAULT_LOW_CONFIDENCE_THRESHOLD = 60;
 const MIN_PDF_PAGE_TEXT_EVIDENCE_CHARS = 80;
-export const ADMIN_INGEST_IMAGE_OCR_PIPELINE_VERSION = "admin-ingest-image-ocr-v4-tail-strict-composer";
+export const ADMIN_INGEST_IMAGE_OCR_PIPELINE_VERSION = "admin-ingest-image-ocr-v5-focused-tail-role";
 export const ADMIN_INGEST_DEFAULT_PAGE_BATCH_SIZE = 4;
 export const ADMIN_INGEST_MIN_PAGE_BATCH_SIZE = 1;
 export const ADMIN_INGEST_MAX_PAGE_BATCH_SIZE = 6;
@@ -1136,7 +1137,31 @@ async function prepareWechatReplyScriptVisionBuffer(buffer: Buffer) {
   };
 }
 
-async function prepareWechatTailRoleVerificationBuffer(buffer: Buffer) {
+const ADMIN_INGEST_WECHAT_TAIL_FOCUS_RATIO = 0.4;
+const ADMIN_INGEST_WECHAT_TAIL_FOCUS_MIN_HEIGHT = 900;
+const ADMIN_INGEST_WECHAT_TAIL_FOCUS_MAX_HEIGHT = 1_600;
+const ADMIN_INGEST_WECHAT_TAIL_LEGACY_MAX_HEIGHT = 4_200;
+
+export function calculateAdminIngestWechatTailPrimaryHeight(imageHeight: number) {
+  const height = Math.max(1, Math.floor(Number.isFinite(imageHeight) ? imageHeight : 1));
+
+  if (height > ADMIN_INGEST_WECHAT_TAIL_LEGACY_MAX_HEIGHT) {
+    return ADMIN_INGEST_WECHAT_TAIL_LEGACY_MAX_HEIGHT;
+  }
+
+  return Math.min(
+    height,
+    Math.max(
+      ADMIN_INGEST_WECHAT_TAIL_FOCUS_MIN_HEIGHT,
+      Math.min(
+        ADMIN_INGEST_WECHAT_TAIL_FOCUS_MAX_HEIGHT,
+        Math.round(height * ADMIN_INGEST_WECHAT_TAIL_FOCUS_RATIO)
+      )
+    )
+  );
+}
+
+async function prepareWechatTailRoleVerificationBuffers(buffer: Buffer) {
   const sharp = (await import("sharp")).default;
   const normalized = await sharp(buffer, {
     animated: false,
@@ -1144,23 +1169,61 @@ async function prepareWechatTailRoleVerificationBuffer(buffer: Buffer) {
   })
     .rotate()
     .toBuffer({ resolveWithObject: true });
-  const maxTailHeight = 4_200;
+  const cropBottom = async (height: number) => height >= normalized.info.height
+    ? normalized.data
+    : sharp(normalized.data, {
+        animated: false,
+        limitInputPixels: 60_000_000
+      })
+        .extract({
+          left: 0,
+          top: normalized.info.height - height,
+          width: normalized.info.width,
+          height
+        })
+        .toBuffer();
+  const focusedHeight = calculateAdminIngestWechatTailPrimaryHeight(normalized.info.height);
+  const legacyHeight = Math.min(
+    normalized.info.height,
+    ADMIN_INGEST_WECHAT_TAIL_LEGACY_MAX_HEIGHT
+  );
+  const focusedBuffer = await cropBottom(focusedHeight);
 
-  if (normalized.info.height <= maxTailHeight) {
-    return normalized.data;
+  return {
+    focusedBuffer,
+    primaryCropStrategy: normalized.info.height > ADMIN_INGEST_WECHAT_TAIL_LEGACY_MAX_HEIGHT
+      ? "legacy_bottom_v1" as const
+      : "focused_bottom_v2" as const,
+    legacyBuffer: legacyHeight === focusedHeight
+      ? null
+      : await cropBottom(legacyHeight)
+  };
+}
+
+function hasReliableFocusedWechatTailRole(
+  result: AdminIngestWechatOcrResult,
+  policy: AdminIngestWechatTailRoleVerificationPolicy
+) {
+  const transcript = policy === "tail_strict"
+    ? result.strictTailTranscript
+    : result.transcript;
+  const evidence = policy === "tail_strict"
+    ? result.strictTailRoleEvidence
+    : result.tailRoleEvidence;
+
+  if (
+    !transcript
+    || !evidence
+    || evidence.confidence < 60
+    || !evidence.isLowestNonNoiseEvidence
+    || evidence.roleSource === "uncertain"
+  ) {
+    return false;
   }
 
-  return sharp(normalized.data, {
-    animated: false,
-    limitInputPixels: 60_000_000
-  })
-    .extract({
-      left: 0,
-      top: normalized.info.height - maxTailHeight,
-      width: normalized.info.width,
-      height: maxTailHeight
-    })
-    .toBuffer();
+  return policy === "tail_strict"
+    ? true
+    : result.roleReliable === true && evidence.roleSource === "color";
 }
 
 export function resolveAdminIngestWechatVisionTailRole(input: {
@@ -1247,12 +1310,43 @@ async function parseWechatConversationImage(input: {
         focusedOnRecentConversation: false
       };
   const tailRoleResultPromise = input.wechatOutputMode === "full_answer"
-    ? prepareWechatTailRoleVerificationBuffer(input.buffer)
-      .then((tailBuffer) => extractAdminIngestWechatConversationText({
-        bytes: tailBuffer,
-        mimeType: detectedMimeType,
-        signal: input.signal
-      }))
+    ? prepareWechatTailRoleVerificationBuffers(input.buffer)
+      .then(async ({ focusedBuffer, legacyBuffer, primaryCropStrategy }) => {
+        const focusedResult = await extractAdminIngestWechatConversationText({
+          bytes: focusedBuffer,
+          mimeType: detectedMimeType,
+          signal: input.signal
+        });
+
+        if (
+          hasReliableFocusedWechatTailRole(
+            focusedResult,
+            input.tailRoleVerificationPolicy ?? "global"
+          )
+          || !legacyBuffer
+        ) {
+          return {
+            result: focusedResult,
+            cropStrategy: primaryCropStrategy,
+            legacyBuffer
+          };
+        }
+
+        if (input.signal) {
+          throwIfAborted(input.signal);
+        }
+        const legacyResult = await extractAdminIngestWechatConversationText({
+          bytes: legacyBuffer,
+          mimeType: detectedMimeType,
+          signal: input.signal
+        });
+
+        return {
+          result: legacyResult,
+          cropStrategy: "legacy_bottom_fallback_v1" as const,
+          legacyBuffer: null
+        };
+      })
       .catch((error: unknown) => {
         if (input.signal?.aborted) {
           throw createAbortError(input.signal);
@@ -1268,7 +1362,7 @@ async function parseWechatConversationImage(input: {
         return null;
       })
     : Promise.resolve(null);
-  const [visionResult, tailRoleResult] = await Promise.all([
+  const [visionResult, initialTailRoleOutcome] = await Promise.all([
     extractChatImageText({
       arrayBuffer: visionInput.buffer.buffer.slice(
         visionInput.buffer.byteOffset,
@@ -1280,6 +1374,34 @@ async function parseWechatConversationImage(input: {
     }),
     tailRoleResultPromise
   ]);
+  if (input.signal) {
+    throwIfAborted(input.signal);
+  }
+  let tailRoleResult = initialTailRoleOutcome?.result ?? null;
+  let tailRoleCropStrategy:
+    | "focused_bottom_v2"
+    | "legacy_bottom_v1"
+    | "legacy_bottom_fallback_v1"
+    | "none" = initialTailRoleOutcome?.cropStrategy ?? "none";
+  const legacyTailRoleBuffer = initialTailRoleOutcome?.legacyBuffer ?? null;
+  const visionHasStructuredTranscript = visionResult.status === "ok"
+    && Boolean(visionResult.text.trim())
+    && parseAdminIngestWechatRoleTranscript(visionResult.text, {
+      allowMarkdownRoleLabelWrapper: input.tailRoleVerificationPolicy === "tail_strict"
+    }).messages.length > 0;
+  const shouldRestoreLegacyLocalContext = input.tailRoleVerificationPolicy !== "tail_strict"
+    && !visionHasStructuredTranscript
+    && tailRoleCropStrategy === "focused_bottom_v2"
+    && legacyTailRoleBuffer !== null;
+
+  if (shouldRestoreLegacyLocalContext && legacyTailRoleBuffer) {
+    tailRoleResult = await extractAdminIngestWechatConversationText({
+      bytes: legacyTailRoleBuffer,
+      mimeType: detectedMimeType,
+      signal: input.signal
+    });
+    tailRoleCropStrategy = "legacy_bottom_fallback_v1";
+  }
   if (input.signal) {
     throwIfAborted(input.signal);
   }
@@ -1315,7 +1437,8 @@ async function parseWechatConversationImage(input: {
       visionRoleMessageCount: parsedVisionBeforeResolve?.messages.length ?? 0,
       localTranscriptLength: localTailTranscript.length,
       localRoleMessageCount: parsedLocalBeforeResolve?.messages.length ?? 0,
-      visionMissingReason: visionMissingReason ?? null
+      visionMissingReason: visionMissingReason ?? null,
+      tailRoleCropStrategy
     });
   }
 
@@ -1363,7 +1486,8 @@ async function parseWechatConversationImage(input: {
         diagnostics?.localTailIsLowestNonNoiseEvidence ?? null,
       filteredTailComposerChromeCount: useTailStrictPolicy
         ? tailRoleResult?.strictFilteredTailComposerChromeCount ?? 0
-        : 0
+        : 0,
+      tailRoleCropStrategy
     });
   }
 

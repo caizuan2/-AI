@@ -16,6 +16,7 @@ moduleLoader._load = (request, parent, isMain) => request === "server-only"
   : originalLoad(request, parent, isMain);
 const {
   ADMIN_INGEST_IMAGE_OCR_PIPELINE_VERSION,
+  calculateAdminIngestWechatTailPrimaryHeight,
   parseAdminIngestFile,
   resolveAdminIngestWechatVisionTailRole
 } = require("../lib/enterprise/ingest-file-parser") as typeof import("../lib/enterprise/ingest-file-parser");
@@ -55,7 +56,7 @@ async function main() {
     "utf8"
   );
 
-  assert.match(parserSource, /const \[visionResult, tailRoleResult\] = await Promise\.all/);
+  assert.match(parserSource, /const \[visionResult, initialTailRoleOutcome\] = await Promise\.all/);
   assert.match(parserSource, /resolveAdminIngestWechatVisionTailRole\(\{/);
   assert.match(parserSource, /localRoleReliable: tailRoleResult\?\.roleReliable === true/);
   assert.match(parserSource, /tailRoleResult\?\.tailRoleEvidence/);
@@ -63,7 +64,12 @@ async function main() {
   assert.match(parserSource, /tailRoleResult\?\.strictTailRoleEvidence/);
   assert.match(parserSource, /tailRoleVerificationPolicy/);
   assert.match(parserSource, /currentTurnRoleInsufficient/);
-  assert.match(parserSource, /admin-ingest-image-ocr-v4-tail-strict-composer/);
+  assert.match(parserSource, /admin-ingest-image-ocr-v5-focused-tail-role/);
+  assert.match(parserSource, /prepareWechatTailRoleVerificationBuffers/);
+  assert.match(parserSource, /hasReliableFocusedWechatTailRole/);
+  assert.match(parserSource, /legacy_bottom_fallback_v1/);
+  assert.match(parserSource, /shouldRestoreLegacyLocalContext/);
+  assert.match(parserSource, /tailRoleCropStrategy/);
   assert.match(parserSource, /visionTailHash/);
   assert.match(parserSource, /localTailHash/);
   assert.match(parserSource, /bestScoreBucket/);
@@ -74,11 +80,55 @@ async function main() {
   assert.match(parserSource, /VISION_ROLE_FORMAT_UNPARSEABLE/);
   assert.match(
     parserSource,
-    /const \[visionResult, tailRoleResult\] = await Promise\.all\([\s\S]*?if \(input\.signal\) \{\s*throwIfAborted\(input\.signal\);\s*\}/
+    /const \[visionResult, initialTailRoleOutcome\] = await Promise\.all\([\s\S]*?if \(input\.signal\) \{\s*throwIfAborted\(input\.signal\);\s*\}/
   );
   assert.match(
     parserSource,
     /input\.signal\?\.aborted[\s\S]*?throw createAbortError\(input\.signal\)/
+  );
+  assert.equal(calculateAdminIngestWechatTailPrimaryHeight(2_388), 955);
+  assert.equal(calculateAdminIngestWechatTailPrimaryHeight(13_063), 4_200);
+  assert.equal(calculateAdminIngestWechatTailPrimaryHeight(800), 800);
+
+  const pollutedViewerTailResolution = resolveAdminIngestWechatVisionTailRole({
+    visionText: [
+      "我(右侧)：你都做了一年多了，团队现在应该挺大的吧？",
+      "客户(左侧)：一般般"
+    ].join("\n"),
+    localTranscript: [
+      "我(右侧)：你都做了一年多了，团队现在应该挺大的吧？",
+      "客户(左侧)：一股般",
+      "我(右侧)：查看器"
+    ].join("\n"),
+    localRoleReliable: true
+  });
+  assert.equal(pollutedViewerTailResolution.currentTurnState, "evidence_insufficient");
+
+  const focusedBubbleTailResolution = resolveAdminIngestWechatVisionTailRole({
+    visionText: [
+      "客户(左侧)：十年挖一口井，也不要一年挖十口井",
+      "我(右侧)：说得太好了，深耕一件事，时间自然会给出答案",
+      "我(右侧)：你都做了一年多了，团队现在应该挺大的吧？",
+      "客户(左侧)：一般般"
+    ].join("\n"),
+    localTranscript: [
+      "我(右侧)：你都做了一年多了，团队现在应该挺大的吧？",
+      "客户(左侧)：一般般"
+    ].join("\n"),
+    localRoleReliable: true,
+    localTailEvidence: {
+      confidence: 96,
+      roleSource: "color",
+      isLowestNonNoiseEvidence: true
+    }
+  });
+  assert.equal(focusedBubbleTailResolution.currentTurnState, "reply_required");
+  assert.equal(focusedBubbleTailResolution.tailRole, "customer");
+  assert.equal(focusedBubbleTailResolution.transcript.messages.length, 4);
+  assert.equal(focusedBubbleTailResolution.transcript.messages.at(-1)?.text, "一般般");
+  assert.match(
+    focusedBubbleTailResolution.transcript.transcript,
+    /客户\(左侧\)：十年挖一口井，也不要一年挖十口井/
   );
 
   const coldResolution = resolveAdminIngestWechatVisionTailRole({
