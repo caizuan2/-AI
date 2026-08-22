@@ -1,9 +1,9 @@
 {
-  "version": "1.0.39",
-  "build": 139,
-  "minimum_build": 139,
+  "version": "1.0.40",
+  "build": 140,
+  "minimum_build": 140,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.39-build.139",
+  "release_tag": "release/admin-ingest-1.0.40-build.140",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -11,9 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "修复投喂端 Android APK 未登录或未激活时错误跳转到手机本机 localhost 的问题",
-    "投喂端登录与激活保持阿里云公网地址，并完整保留原页面返回路径",
-    "DeepSeek V4 Pro、DeepSeek V4 Flash、豆包、用户端、超级管理员与知识规则保持不变",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.39 Build 139"
+    "修复微信截图底部带图片查看器工具栏或手机导航栏时的最后气泡误判问题",
+    "完整保留整图对话上下文，并按白色左侧客户、绿色右侧本人核验最新消息",
+    "DeepSeek V4 Pro、DeepSeek V4 Flash、豆包、用户端、超级管理员与 APK 自动更新逻辑保持不变",
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.40 Build 140"
   ]
 }
