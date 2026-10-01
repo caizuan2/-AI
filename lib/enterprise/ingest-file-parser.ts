@@ -24,7 +24,7 @@ import {
 import {
   buildAdminIngestOcrCacheKey,
   readAdminIngestOcrCache,
-  writeAdminIngestOcrCache
+  runAdminIngestOcrSingleFlight
 } from "@/lib/enterprise/admin-ingest-ocr-cache";
 import type {
   AdminIngestLatencyTrace
@@ -1982,23 +1982,27 @@ async function parseAdminIngestImageBody(input: {
 
   input.latencyTrace?.mark("ocr_cache_miss", cacheLookupStartedAt);
   const ocrStartedAt = Date.now();
-  const result = input.recognitionMode === "wechat_conversation"
-    ? await parseWechatConversationImage({
+  const parse = (signal?: AbortSignal) => input.recognitionMode === "wechat_conversation"
+    ? parseWechatConversationImage({
         buffer: input.buffer,
-        signal: input.signal,
+        signal,
         wechatOutputMode: input.wechatOutputMode,
         tailRoleVerificationPolicy: input.tailRoleVerificationPolicy
       })
-    : await parseImage({ buffer: input.buffer, signal: input.signal });
+    : parseImage({ buffer: input.buffer, signal });
+  const result = cacheKey
+    ? await runAdminIngestOcrSingleFlight({
+        key: cacheKey,
+        signal: input.signal,
+        parse,
+        canCache: canCacheAdminIngestImageParseBody
+      })
+    : await parse(input.signal);
 
   input.latencyTrace?.mark("ocr_completed", ocrStartedAt);
 
   if (input.signal) {
     throwIfAborted(input.signal);
-  }
-
-  if (cacheKey && canCacheAdminIngestImageParseBody(result)) {
-    writeAdminIngestOcrCache(cacheKey, result);
   }
 
   return result;

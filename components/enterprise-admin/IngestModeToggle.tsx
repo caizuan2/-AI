@@ -42,7 +42,16 @@ import {
   type IngestVoiceState,
   type IngestUploadState
 } from "@/lib/enterprise/ingest-client";
-import { createAdminIngestLatencyTrace } from "@/lib/enterprise/admin-ingest-latency-trace";
+import {
+  createAdminIngestLatencyTrace,
+  forgetAdminIngestBodyLatencyTrace,
+  registerAdminIngestBodyLatencyTrace
+} from "@/lib/enterprise/admin-ingest-latency-trace";
+import {
+  getAdminIngestRemainingVisibleBudgetMs,
+  prepareAdminIngestAttachments
+} from "@/lib/enterprise/admin-ingest-attachment-preparation";
+import { createAdminIngestSendPreflightGuard } from "@/lib/enterprise/admin-ingest-send-preflight";
 import {
   defaultAdminIngestPlatformContext,
   resolveAdminIngestPlatformContext,
@@ -968,6 +977,7 @@ export function IngestModeToggle({
   const conversationLastInputByIdRef = useRef<Record<string, string>>({});
   const selectedModelRef = useRef(DEFAULT_INGEST_MODEL_OPTION.label);
   const pendingModelSelectionRef = useRef<AdminIngestPendingModelSelection | null>(null);
+  const sendPreflightGuardRef = useRef(createAdminIngestSendPreflightGuard());
   const draftRef = useRef<IngestKnowledgeDraft>(ingestChatInitialDraft);
   const messagesRef = useRef<IngestChatMessage[]>([]);
   const requestQueueRef = useRef<IngestRequestQueueState>(createIngestQueueState());
@@ -1038,6 +1048,12 @@ export function IngestModeToggle({
     () => visibleAgents.find((agent) => agent.id === activeAgentId) ?? visibleAgents[0] ?? createEmptyAgent(platformContext),
     [activeAgentId, platformContext, visibleAgents]
   );
+
+  useEffect(() => {
+    const guard = sendPreflightGuardRef.current;
+    guard.activate();
+    return () => guard.dispose();
+  }, []);
 
   useEffect(() => {
     activeAgentIdRef.current = activeAgent.id;
@@ -1847,6 +1863,7 @@ export function IngestModeToggle({
 
   const stopAccountHistoryActivity = useCallback(() => {
     isAccountTransitioningRef.current = true;
+    sendPreflightGuardRef.current.invalidate();
     setHistoryLoadState("loading");
     conversationHydrationAbortControllerRef.current?.abort();
     conversationHydrationAbortControllerRef.current = null;
@@ -4517,10 +4534,10 @@ export function IngestModeToggle({
     }
   }
 
-  async function verifyCurrentAccountHistoryScope() {
+  async function verifyCurrentAccountHistoryScope(isCurrentAttempt = () => true) {
     const expectedHistoryScope = historyScopeRef.current;
 
-    if (!expectedHistoryScope) {
+    if (!expectedHistoryScope || !isCurrentAttempt()) {
       return false;
     }
 
@@ -4535,6 +4552,7 @@ export function IngestModeToggle({
         signal: controller.signal
       });
       const payload = await response.json() as unknown;
+      if (!isCurrentAttempt()) return false;
       const currentHistoryScope =
         readAdminIngestHistoryScopeFromApiResponse(payload);
 
@@ -4550,6 +4568,7 @@ export function IngestModeToggle({
 
       return true;
     } catch (error) {
+      if (!isCurrentAttempt()) return false;
       if (!controller.signal.aborted) {
         console.warn("[admin-ingest:account:history-scope-check]", error);
       }
@@ -4565,6 +4584,11 @@ export function IngestModeToggle({
   }
 
   async function handleSend(textOverride?: string, options?: IngestSendOptions): Promise<IngestActionResult | null> {
+    const latencyStartedAt = Date.now();
+    const latencyTrace = createAdminIngestLatencyTrace({
+      traceId: createIngestRequestId(),
+      startedAt: latencyStartedAt
+    });
     const value = (textOverride ?? input).trim();
     const pendingModelSelection = pendingModelSelectionRef.current;
 
@@ -4585,6 +4609,7 @@ export function IngestModeToggle({
     const requestModelOption = getIngestModelOptionByLabel(currentModelLabel) ?? selectedModelOption;
 
     const requestHistoryScope = historyScopeRef.current;
+    const requestConversationId = activeConversationId;
 
     if (
       isAccountTransitioningRef.current
@@ -4603,15 +4628,43 @@ export function IngestModeToggle({
       return null;
     }
 
-    // The long-running Doubao transport sends the current history scope in
-    // every POST and progress poll, and the server rejects a mismatched actor
-    // before inference. Avoid serializing the model request behind the same
-    // WebView account probe; other providers keep their existing preflight.
-    if (
-      requestModelOption.provider !== "doubao-pro"
-      && !await verifyCurrentAccountHistoryScope()
-    ) {
+    let composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
+    // Plain-text Doubao requests already check scope at the transport boundary.
+    // Concurrent image parsing also needs the existing account preflight before
+    // OCR starts, because it no longer waits behind scope-checked persistence.
+    const requiresAccountPreflight = requestModelOption.provider !== "doubao-pro"
+      || composerUploads.some((file) => file.isImage && file.rawFile && !file.persistentUrl);
+    const accountPreflightStartedAt = Date.now();
+    const preflightAttempt = sendPreflightGuardRef.current.acquire({
+      historyScope: requestHistoryScope,
+      agentId: activeAgent.id,
+      conversationId: requestConversationId
+    });
+    if (!preflightAttempt) {
+      setNoticeMessage("正在确认本轮发送，请勿重复点击。");
       return null;
+    }
+    const isCurrentSendPreflight = () => (
+      sendPreflightGuardRef.current.isCurrent(preflightAttempt)
+      && !isAccountTransitioningRef.current
+      && historyScope === requestHistoryScope
+      && historyScopeRef.current === requestHistoryScope
+      && activeAgentIdRef.current === activeAgent.id
+      && activeConversationIdRef.current === requestConversationId
+    );
+    try {
+      if (
+        requiresAccountPreflight
+        && !await verifyCurrentAccountHistoryScope(isCurrentSendPreflight)
+      ) {
+        return null;
+      }
+      if (!isCurrentSendPreflight()) return null;
+    } finally {
+      sendPreflightGuardRef.current.release(preflightAttempt);
+    }
+    if (requiresAccountPreflight) {
+      latencyTrace.mark("auth_completed", accountPreflightStartedAt);
     }
 
     if (!hasActiveAgent) {
@@ -4645,7 +4698,6 @@ export function IngestModeToggle({
       return null;
     }
 
-    let composerUploads = resolveIngestSendAttachments(uploadedFiles, options?.retryAttachments);
     let draftAttachments = composerUploads.map((file) => ({
       ...stripUploadRuntimeFields(file),
       status: "attached" as const,
@@ -4683,7 +4735,9 @@ export function IngestModeToggle({
       : baseInput;
     let visibleInput = buildVisibleInput(isWechatConversationReply);
     let effectiveInput = buildEffectiveInput(isWechatConversationReply);
-    let preparedDeepSeekUploads: IngestUploadState[] | null = null;
+    let preparedAttachmentUploads: IngestUploadState[] | null = null;
+    let imagePersistCompletedAt: number | null = null;
+    let attachmentPreparationDeadlineReached = false;
 
     if (!effectiveInput) {
       setNoticeMessage("请输入投喂任务或先选择附件后再发送。");
@@ -4693,10 +4747,6 @@ export function IngestModeToggle({
 
     const conversationId = ensureConversationForSend(activeAgent);
     const sendAttemptAt = Date.now();
-    const latencyTrace = createAdminIngestLatencyTrace({
-      traceId: createIngestRequestId(),
-      startedAt: sendAttemptAt
-    });
     const hasActiveConversationRequest = Boolean(conversationStateByIdRef.current[conversationId]?.activeRequestId)
       || Boolean(preparingConversationIdsRef.current[conversationId])
       || !canStartRequest(requestQueueRef.current, conversationId);
@@ -4749,89 +4799,42 @@ export function IngestModeToggle({
       setErrorMessage("");
 
       try {
-        const imagePersistenceStartedAt = Date.now();
         const imagePersistenceController = new AbortController();
         preparationAbortControllerByConversationRef.current[conversationId] =
           imagePersistenceController;
         accountScopedMutationAbortControllersRef.current.add(imagePersistenceController);
 
         try {
-          const uploadsBeforePersistence = composerUploads;
-          const imagePersistencePromise = (async () => await persistAdminIngestUploadImages(
-            composerUploads,
-            requestHistoryScope,
-            imagePersistenceController.signal
-          ))().catch((error: unknown) => {
-            imagePersistenceController.abort(error);
-            throw error;
+          const attachmentProvider = requestModelOption.provider;
+          const shouldOverlapAttachmentParsing = attachmentProvider === "deepseek-pro"
+            || attachmentProvider === "deepseek-flash"
+            || attachmentProvider === "doubao-pro";
+          const preparation = await prepareAdminIngestAttachments({
+            uploads: composerUploads,
+            controller: imagePersistenceController,
+            trace: latencyTrace,
+            maxWaitAfterPersistMs: attachmentProvider === "doubao-pro"
+              ? ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS
+              : undefined,
+            persist: (files, signal) => persistAdminIngestUploadImages(files, requestHistoryScope, signal),
+            parse: shouldOverlapAttachmentParsing
+              ? (files, signal) => parseUploadedFilesForGpt(files, 2, {
+                modelProvider: attachmentProvider,
+                preferredModel: requestModelOption.defaultModel,
+                selectedModelLabel: requestModelOption.label,
+                strictModelAffinity: true
+              }, {
+                signal,
+                traceId: latencyTrace.traceId,
+                pageBatchSize: 4
+              })
+              : undefined,
+            isParseCancellation: (error) => error instanceof AdminIngestFileParseCancelledError
           });
-          const shouldOverlapDeepSeekAttachmentParsing = (
-            (requestModelOption.provider === "deepseek-pro" || requestModelOption.provider === "deepseek-flash")
-            && uploadsBeforePersistence.length > 0
-          );
-          const deepSeekAttachmentProvider = requestModelOption.provider === "deepseek-flash"
-            ? "deepseek-flash" as const
-            : "deepseek-pro" as const;
-          const overlappingAttachmentParseStartedAt = Date.now();
-          const overlappingAttachmentParsePromise = shouldOverlapDeepSeekAttachmentParsing
-            ? parseUploadedFilesForGpt(uploadsBeforePersistence, 2, {
-              modelProvider: deepSeekAttachmentProvider,
-              preferredModel: requestModelOption.defaultModel,
-              selectedModelLabel: requestModelOption.label,
-              strictModelAffinity: true
-            }, {
-              signal: imagePersistenceController.signal,
-              traceId: latencyTrace.traceId,
-              pageBatchSize: 4
-            }).then(
-              (files) => ({ files, error: null }),
-              (error: unknown) => ({ files: null, error })
-            )
-            : Promise.resolve({ files: null, error: null });
-          const [persistedUploads, overlappingAttachmentParse] = await Promise.all([
-            imagePersistencePromise,
-            overlappingAttachmentParsePromise
-          ]);
-          composerUploads = persistedUploads;
-
-          if (overlappingAttachmentParse.files) {
-            const persistedUploadById = new Map(
-              persistedUploads.map((file) => [file.id, file] as const)
-            );
-            preparedDeepSeekUploads = overlappingAttachmentParse.files.map((file) => {
-              const persistedFile = persistedUploadById.get(file.id);
-
-              return persistedFile?.persistentUrl
-                ? {
-                  ...file,
-                  previewUrl: persistedFile.previewUrl,
-                  persistentUrl: persistedFile.persistentUrl
-                }
-                : file;
-            });
-            latencyTrace.mark(
-              "attachment_parse_completed",
-              overlappingAttachmentParseStartedAt
-            );
-          } else if (
-            imagePersistenceController.signal.aborted
-            || overlappingAttachmentParse.error instanceof AdminIngestFileParseCancelledError
-            || (
-              overlappingAttachmentParse.error instanceof DOMException
-              && overlappingAttachmentParse.error.name === "AbortError"
-            )
-          ) {
-            const cancellationReason = imagePersistenceController.signal.reason;
-
-            throw cancellationReason instanceof DOMException
-              && cancellationReason.name === "AbortError"
-              ? cancellationReason
-              : new DOMException(
-                "Admin ingest DeepSeek attachment preparation cancelled.",
-                "AbortError"
-              );
-          }
-          latencyTrace.mark("image_persist_completed", imagePersistenceStartedAt);
+          composerUploads = preparation.persistedUploads;
+          preparedAttachmentUploads = preparation.preparedUploads;
+          imagePersistCompletedAt = preparation.imagePersistCompletedAt;
+          attachmentPreparationDeadlineReached = preparation.parseDeadlineReached;
         } finally {
           accountScopedMutationAbortControllersRef.current.delete(imagePersistenceController);
         }
@@ -4922,6 +4925,7 @@ export function IngestModeToggle({
     const requestId = latencyTrace.traceId;
     const requestStartedAt = Date.now();
     const assistantMessageId = `assistant-result-${requestId}`;
+    registerAdminIngestBodyLatencyTrace(assistantMessageId, latencyTrace);
     const abortController = new AbortController();
     let conversationState = ensureConversationState(conversationStateByIdRef.current[conversationId], {
       conversationId,
@@ -5084,7 +5088,7 @@ export function IngestModeToggle({
 
     let successRendered = false;
     let visibleReplyRendered = false;
-    let firstVisibleReplyMarked = false;
+    let firstReplyReceivedMarked = false;
     let visibleReplySnapshot = "";
     let deferredDoubaoMetadataRecovery: {
       draft: IngestKnowledgeDraft;
@@ -5194,25 +5198,46 @@ export function IngestModeToggle({
       });
     };
 
-    if (shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)) {
-      doubaoVisibleBudgetTimeout = window.setTimeout(() => {
-        if (
-          visibleReplyRendered
-          || isRequestCancelled()
-          || !isCurrentRequest()
-        ) {
-          return;
-        }
+    // Preserve the existing Doubao budget anchored after image persistence;
+    // moving OCR into preparation must not grant a fresh 180 seconds afterward.
+    const doubaoVisibleBudgetRemainingMs = attachmentPreparationDeadlineReached ? 0 : getAdminIngestRemainingVisibleBudgetMs({
+      provider: requestModelOption.provider,
+      budgetMs: ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
+      imagePersistCompletedAt
+    });
+    const expireDoubaoVisibleBudget = () => {
+      if (
+        visibleReplyRendered
+        || isRequestCancelled()
+        || !isCurrentRequest()
+      ) {
+        return;
+      }
 
-        doubaoVisibleBudgetTimedOut = true;
-        commitDoubaoVisibleTimeout();
-        abortController.abort(
-          createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
-        );
-      }, ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS);
+      doubaoVisibleBudgetTimedOut = true;
+      commitDoubaoVisibleTimeout();
+      abortController.abort(
+        createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
+      );
+    };
+    if (
+      shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)
+      && doubaoVisibleBudgetRemainingMs > 0
+    ) {
+      doubaoVisibleBudgetTimeout = window.setTimeout(
+        expireDoubaoVisibleBudget,
+        doubaoVisibleBudgetRemainingMs
+      );
     }
 
     try {
+      if (
+        shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)
+        && doubaoVisibleBudgetRemainingMs === 0
+      ) {
+        expireDoubaoVisibleBudget();
+        throw createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel);
+      }
       if (composerUploads.length > 0) {
         const selectedFileModelProvider = requestModelOption.provider;
         const attachmentParseStartedAt = Date.now();
@@ -5225,7 +5250,7 @@ export function IngestModeToggle({
           throw new Error("Web 投喂端附件解析仅支持当前选定的 DeepSeek Pro 或 Doubao Pro 模型。");
         }
 
-        const preparedUploads = preparedDeepSeekUploads ?? await parseUploadedFilesForGpt(composerUploads, 2, {
+        const preparedUploads = preparedAttachmentUploads ?? await parseUploadedFilesForGpt(composerUploads, 2, {
           modelProvider: selectedFileModelProvider,
           preferredModel: requestModelOption.defaultModel,
           selectedModelLabel: requestModelOption.label,
@@ -5256,7 +5281,7 @@ export function IngestModeToggle({
             );
           }
         });
-        if (!preparedDeepSeekUploads) {
+        if (!preparedAttachmentUploads) {
           latencyTrace.mark("attachment_parse_completed", attachmentParseStartedAt);
         }
         resumableUploads = preparedUploads;
@@ -5461,9 +5486,9 @@ export function IngestModeToggle({
                 }
 
                 clearDoubaoVisibleBudget();
-                if (!firstVisibleReplyMarked) {
-                  firstVisibleReplyMarked = true;
-                  latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+                if (!firstReplyReceivedMarked) {
+                  firstReplyReceivedMarked = true;
+                  latencyTrace.mark("first_reply_received", latestModelRequestStartedAt);
                 }
                 conversationStateByIdRef.current[conversationId] =
                   updateAssistantMessage(
@@ -5526,9 +5551,9 @@ export function IngestModeToggle({
                 }
 
                 clearDoubaoVisibleBudget();
-                if (!firstVisibleReplyMarked) {
-                  firstVisibleReplyMarked = true;
-                  latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+                if (!firstReplyReceivedMarked) {
+                  firstReplyReceivedMarked = true;
+                  latencyTrace.mark("first_reply_received", latestModelRequestStartedAt);
                 }
                 latencyTrace.mark("model_completed", latestModelRequestStartedAt);
                 visibleReplySnapshot = event.replyMarkdown;
@@ -5732,9 +5757,9 @@ export function IngestModeToggle({
         : undefined;
       const metadataPausedNotice = "正文已按豆包原文保留；豆包推理服务已暂停，后台知识草稿暂缓入库。管理员恢复限额后，请点击“检查豆包连接”。";
 
-      if (!firstVisibleReplyMarked) {
-        firstVisibleReplyMarked = true;
-        latencyTrace.mark("first_visible_reply", latestModelRequestStartedAt);
+      if (!firstReplyReceivedMarked) {
+        firstReplyReceivedMarked = true;
+        latencyTrace.mark("first_reply_received", latestModelRequestStartedAt);
       }
 
       if (visibleReplyRendered && assistantContent !== visibleReplySnapshot) {
@@ -6322,6 +6347,9 @@ export function IngestModeToggle({
       return null;
     } finally {
       clearDoubaoVisibleBudget();
+      if (!successRendered || abortController.signal.aborted) {
+        forgetAdminIngestBodyLatencyTrace(assistantMessageId);
+      }
       if (successRendered) {
         requestQueueRef.current = completeRequest(requestQueueRef.current, conversationId, requestId);
       } else {
@@ -6339,10 +6367,10 @@ export function IngestModeToggle({
         const requestWasStopped =
           cancelledIngestRequestIdsRef.current.has(requestId)
           || abortController.signal.aborted;
-        const terminalState = requestWasStopped
-          ? "stopped" as const
-          : doubaoVisibleBudgetTimedOut
-            ? "timed_out" as const
+        const terminalState = doubaoVisibleBudgetTimedOut
+          ? "timed_out" as const
+          : requestWasStopped
+            ? "stopped" as const
             : "failed" as const;
         setConversationRuntimeStatusById((current) => (
           markAdminIngestConversationRequestTerminal(current, {

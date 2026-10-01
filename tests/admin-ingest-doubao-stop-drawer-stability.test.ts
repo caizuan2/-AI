@@ -162,8 +162,13 @@ async function testProductionWiringAndFrozenProviderBoundary() {
   );
   assert.match(
     modeToggle,
-    /requestModelOption\.provider !== "doubao-pro"\s*&& !await verifyCurrentAccountHistoryScope\(\)/,
-    "Doubao must not wait on the redundant WebView history preflight before starting inference."
+    /const requiresAccountPreflight = requestModelOption\.provider !== "doubao-pro"\s*\|\| composerUploads\.some\(\(file\) => file\.isImage && file\.rawFile && !file\.persistentUrl\);/,
+    "Only Doubao's new concurrent image preparation needs preflight; plain text retains its transport scope check."
+  );
+  assert.match(
+    modeToggle,
+    /requiresAccountPreflight\s*&& !await verifyCurrentAccountHistoryScope\(isCurrentSendPreflight\)\s*\) \{\s*return null;/,
+    "Failed image-preparation preflight must prevent OCR and persistence from starting."
   );
   assert.match(
     ingestClient,

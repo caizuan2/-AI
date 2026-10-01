@@ -2,7 +2,9 @@ export type AdminIngestLatencyStage =
   | "image_persist_completed"
   | "attachment_parse_completed"
   | "model_request_started"
+  | "first_reply_received"
   | "first_visible_reply"
+  | "complete_visible_reply"
   | "model_completed"
   | "terminal_committed"
   | "history_persist_completed"
@@ -75,4 +77,67 @@ export function createAdminIngestLatencyTrace(
       return event;
     }
   };
+}
+
+interface AdminIngestBodyLatencyEntry {
+  trace: AdminIngestLatencyTrace;
+  registeredAt: number;
+  firstBodyCommitted: boolean;
+}
+
+export interface AdminIngestBodyCommittedEvent {
+  messageId: string;
+  phase: "first_body" | "complete_body";
+  characters: number;
+}
+
+// Browser-memory-only correlation; never attach timings or body text to history.
+// Bounded entries also cover a completed response in a temporarily hidden chat.
+const bodyLatencyEntries = new Map<string, AdminIngestBodyLatencyEntry>();
+const BODY_LATENCY_ENTRY_TTL_MS = 30 * 60 * 1_000;
+const MAX_BODY_LATENCY_ENTRIES = 128;
+
+function pruneBodyLatencyEntries(now: number) {
+  bodyLatencyEntries.forEach((entry, messageId) => {
+    if (now - entry.registeredAt >= BODY_LATENCY_ENTRY_TTL_MS) {
+      bodyLatencyEntries.delete(messageId);
+    }
+  });
+}
+
+export function registerAdminIngestBodyLatencyTrace(
+  messageId: string,
+  trace: AdminIngestLatencyTrace
+) {
+  pruneBodyLatencyEntries(Date.now());
+  bodyLatencyEntries.delete(messageId);
+  while (bodyLatencyEntries.size >= MAX_BODY_LATENCY_ENTRIES) {
+    const oldestMessageId = bodyLatencyEntries.keys().next().value as string | undefined;
+    if (!oldestMessageId) break;
+    bodyLatencyEntries.delete(oldestMessageId);
+  }
+  bodyLatencyEntries.set(messageId, {
+    trace,
+    registeredAt: Date.now(),
+    firstBodyCommitted: false
+  });
+}
+
+export function forgetAdminIngestBodyLatencyTrace(messageId: string) {
+  bodyLatencyEntries.delete(messageId);
+}
+
+export function markAdminIngestBodyCommitted(event: AdminIngestBodyCommittedEvent) {
+  pruneBodyLatencyEntries(Date.now());
+  const entry = bodyLatencyEntries.get(event.messageId);
+  if (!entry || !Number.isFinite(event.characters) || event.characters <= 0) return;
+
+  if (!entry.firstBodyCommitted) {
+    entry.firstBodyCommitted = true;
+    entry.trace.mark("first_visible_reply");
+  }
+  if (event.phase === "complete_body") {
+    entry.trace.mark("complete_visible_reply");
+    bodyLatencyEntries.delete(event.messageId);
+  }
 }
