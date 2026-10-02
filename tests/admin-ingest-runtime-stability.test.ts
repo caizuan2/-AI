@@ -21,20 +21,42 @@ async function main() {
   const imagePreparationStart = modeToggle.indexOf(
     "if (composerUploads.some((file) => file.isImage"
   );
-  const imagePersistenceStart = modeToggle.indexOf(
-    "await persistAdminIngestUploadImages(",
+  const attachmentPreparationStart = modeToggle.indexOf(
+    "await prepareAdminIngestAttachments({",
     imagePreparationStart
   );
   const clearComposerStart = modeToggle.indexOf(
     'setInput("");',
     imagePreparationStart
   );
+  const clearUploadsStart = modeToggle.indexOf(
+    "setUploadedFiles([]);",
+    imagePreparationStart
+  );
 
   assert.ok(imagePreparationStart >= 0);
+  assert.ok(attachmentPreparationStart > imagePreparationStart);
   assert.ok(clearComposerStart > imagePreparationStart);
   assert.ok(
-    clearComposerStart < imagePersistenceStart,
+    clearComposerStart < attachmentPreparationStart,
     "发送已通过校验后，输入框必须在图片永久保存网络等待前立即清空。"
+  );
+  assert.ok(
+    clearUploadsStart > clearComposerStart && clearUploadsStart < attachmentPreparationStart,
+    "待发送附件必须与输入框一起在附件准备网络等待前清空。"
+  );
+  const attachmentPreparationResultStart = modeToggle.indexOf(
+    "composerUploads = preparation.persistedUploads;",
+    attachmentPreparationStart
+  );
+  assert.ok(attachmentPreparationResultStart > attachmentPreparationStart);
+  const attachmentPreparation = modeToggle.slice(attachmentPreparationStart, attachmentPreparationResultStart);
+  assert.match(attachmentPreparation, /uploads: composerUploads/);
+  assert.match(attachmentPreparation, /controller: imagePersistenceController/);
+  assert.match(
+    attachmentPreparation,
+    /persist: \(files, signal\) => persistAdminIngestUploadImages\(files, requestHistoryScope, signal\)/,
+    "附件准备必须仍接入真实永久保存函数，并传递发送时账户范围和取消信号。"
   );
   assert.match(
     modeToggle,

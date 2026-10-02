@@ -47,6 +47,7 @@ import {
 import { IngestChatOnlyWelcome } from "@/components/enterprise-admin/IngestChatOnlyWelcome";
 import { IngestWelcomeHero } from "@/components/enterprise-admin/IngestWelcomeHero";
 import { IngestGPTMessageRenderer } from "@/components/enterprise-admin/IngestGPTMessageRenderer";
+import { markAdminIngestBodyCommitted } from "@/lib/enterprise/admin-ingest-latency-trace";
 import {
   IngestPromptHistoryHoverRail,
   type IngestPromptHistoryItem
@@ -2939,7 +2940,11 @@ export function IngestChatGPTShell({
                         evidenceIds={messageEvidenceIds}
                         metadata={{ role: message.role, provider: message.provider ?? null }}
                       />
-                      <IngestGPTMessageRenderer content={message.content} message={message} />
+                      <IngestGPTMessageRenderer
+                        content={message.content}
+                        message={message}
+                        onBodyCommitted={markAdminIngestBodyCommitted}
+                      />
                       {canUseFullIngestTools ? (
                         message.metadataState === "pending" ? (
                           <p className="mt-3 text-xs text-[#8a7a5c]">正文已生成，正在用同一个豆包模型整理知识草稿...</p>

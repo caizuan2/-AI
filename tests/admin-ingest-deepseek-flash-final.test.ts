@@ -139,7 +139,8 @@ async function main() {
   assert.match(parseRouteSource, /modelProvider === "deepseek-flash"[\s\S]*\? "tail_strict" as const/);
   assert.match(modeToggleSource, /health\.actualModel === health\.requestedModel/);
   assert.match(modeToggleSource, /pendingModelSelectionRef\.current = pendingSelection/);
-  assert.match(modeToggleSource, /requestModelOption\.provider === "deepseek-pro" \|\| requestModelOption\.provider === "deepseek-flash"/);
+  assert.match(modeToggleSource, /const attachmentProvider = requestModelOption\.provider;[\s\S]*?attachmentProvider === "deepseek-pro"\s*\|\| attachmentProvider === "deepseek-flash"/);
+  assert.match(modeToggleSource, /parseUploadedFilesForGpt\(files, 2, \{\s*modelProvider: attachmentProvider,[\s\S]*?strictModelAffinity: true/);
   assert.doesNotMatch(modeToggleSource, /DeepSeek Flash 临时验收未启用，已停止本次请求/);
   assert.match(pickerSource, /if \(!input\.compact\) \{\s*return INGEST_MODEL_OPTIONS;/);
   assert.match(pickerSource, /PRIMARY_INGEST_MODEL_PROVIDERS = new Set\(\["deepseek-pro", "deepseek-flash", "doubao-pro"\]\)/);

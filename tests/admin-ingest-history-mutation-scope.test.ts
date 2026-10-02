@@ -54,7 +54,7 @@ test("final ingest, save and URL requests carry the captured account history sco
   );
   assert.ok(
     handleSendSource.indexOf("const requestHistoryScope")
-      < handleSendSource.indexOf("await verifyCurrentAccountHistoryScope()"),
+      < handleSendSource.indexOf("await verifyCurrentAccountHistoryScope(isCurrentSendPreflight)"),
     "the account scope must be captured before the async preflight"
   );
   assert.match(
@@ -198,7 +198,16 @@ test("memory extraction, public links and persistent image uploads are bound to 
   );
   assert.match(
     componentSource,
-    /persistAdminIngestUploadImages\([\s\S]*?composerUploads,[\s\S]*?requestHistoryScope,[\s\S]*?imagePersistenceController\.signal/
+    /prepareAdminIngestAttachments\(\{\s*uploads: composerUploads,\s*controller: imagePersistenceController,/
+  );
+  assert.match(
+    componentSource,
+    /persist: \(files, signal\) => persistAdminIngestUploadImages\(files, requestHistoryScope, signal\)/
+  );
+  const preparationSource = await readFile("lib/enterprise/admin-ingest-attachment-preparation.ts", "utf8");
+  assert.match(
+    preparationSource,
+    /const \{ controller, trace \} = input;[\s\S]*?input\.persist\(input\.uploads, controller\.signal\)/
   );
   assert.match(persistImagesSource, /historyScope:\s*string/);
   assert.match(persistImagesSource, /signal\?:\s*AbortSignal/);

@@ -11,6 +11,7 @@ import { processAIOutput } from "@/lib/enterprise/gpt-os-style-layer";
 type RenderPhase = "thinking" | "streaming" | "done";
 
 type MessageRenderState = {
+  id?: string;
   isRestored?: boolean;
   isHistorical?: boolean;
   isStreaming?: boolean;
@@ -20,12 +21,19 @@ type MessageRenderState = {
   provider?: string | null;
 };
 
+export type IngestBodyCommit = {
+  messageId: string;
+  phase: "first_body" | "complete_body";
+  characters: number;
+};
+
 export function prepareIngestMessageMarkdown(content: string, provider?: string | null) {
   const normalizedProvider = provider?.trim().toLowerCase();
 
   if (
     normalizedProvider === "deepseek"
     || normalizedProvider === "deepseek-pro"
+    || normalizedProvider === "deepseek-flash"
   ) {
     return normalizeAdminIngestVisibleReply(content, normalizedProvider);
   }
@@ -366,22 +374,42 @@ function getChunkSize(length: number) {
 export function IngestGPTMessageRenderer({
   content,
   message,
-  enableTyping
+  enableTyping,
+  onBodyCommitted
 }: {
   content: string;
   message?: MessageRenderState;
   enableTyping?: boolean;
+  onBodyCommitted?: (commit: IngestBodyCommit) => void;
 }) {
   const fullMarkdown = useMemo(
     () => prepareIngestMessageMarkdown(content, message?.provider),
     [content, message?.provider]
   );
-  const shouldAnimate = Boolean(enableTyping ?? (
+  const shouldAnimate = message?.status !== "failed" && Boolean(enableTyping ?? (
     (message?.isStreaming === true || message?.isGenerating === true || message?.typing === true || message?.status === "streaming")
     && message?.isHistorical !== true
     && message?.isRestored !== true
     && message?.status !== "completed"
   ));
+  // Real SSE messages explicitly disable synthetic typing. Their received
+  // Markdown is already incremental and must not restart a second typewriter.
+  const isLiveStream = enableTyping !== false
+    && message?.typing === false
+    && (message.isStreaming === true || message.isGenerating === true || message.status === "streaming")
+    && message.isHistorical !== true
+    && message.isRestored !== true
+    && message.status !== "completed"
+    && message.status !== "failed";
+  const [liveControls, setLiveControls] = useState<{
+    messageId?: string;
+    paused: boolean;
+    stopped: boolean;
+    snapshot: string;
+  }>({ paused: false, stopped: false, snapshot: "" });
+  const activeLiveControls = liveControls.messageId === message?.id ? liveControls : null;
+  const livePaused = activeLiveControls?.paused === true;
+  const liveStopped = activeLiveControls?.stopped === true;
   const [visibleContent, setVisibleContent] = useState("");
   const [phase, setPhase] = useState<RenderPhase>("thinking");
   const [paused, setPaused] = useState(false);
@@ -389,12 +417,18 @@ export function IngestGPTMessageRenderer({
   const stoppedRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const bodyCommitRef = useRef({ messageId: "", first: false, complete: false });
 
   useEffect(() => {
     pausedRef.current = paused;
   }, [paused]);
 
   useEffect(() => {
+    if (isLiveStream) {
+      return;
+    }
+
     let index = 0;
     const chunkSize = getChunkSize(fullMarkdown.length);
 
@@ -469,10 +503,15 @@ export function IngestGPTMessageRenderer({
         delayRef.current = null;
       }
     };
-  }, [fullMarkdown, shouldAnimate]);
+  }, [fullMarkdown, shouldAnimate, isLiveStream, message?.id]);
 
-  const streaming = shouldAnimate && phase !== "done";
-  const renderedContent = shouldAnimate ? visibleContent || "" : fullMarkdown;
+  const streaming = isLiveStream ? !liveStopped : shouldAnimate && phase !== "done";
+  const renderedContent = isLiveStream
+    ? livePaused ? activeLiveControls?.snapshot ?? "" : fullMarkdown
+    : shouldAnimate ? visibleContent || "" : fullMarkdown;
+  const displayedPhase = isLiveStream
+    ? liveStopped ? "done" : renderedContent ? "streaming" : "thinking"
+    : shouldAnimate ? phase : "done";
   const enableCustomerScriptCards = !streaming
     && message?.status !== "pending"
     && message?.status !== "streaming"
@@ -480,11 +519,75 @@ export function IngestGPTMessageRenderer({
     && message?.isStreaming !== true
     && message?.typing !== true;
 
+  useEffect(() => {
+    const messageId = message?.id;
+
+    if (
+      !onBodyCommitted
+      || !messageId
+      || message?.isHistorical === true
+      || message?.isRestored === true
+      || message?.status === "failed"
+      || message?.status === "pending"
+      || !renderedContent.trim()
+    ) {
+      return;
+    }
+
+    const reportCommittedBody = () => {
+      if (document.hidden || !bodyRef.current?.isConnected || !bodyRef.current.textContent?.trim()) {
+        return;
+      }
+
+      // Measure committed Markdown in a foreground document, not SSE arrival
+      // or queued state. This is a DOM-commit timestamp, not proof of a paint.
+      if (bodyCommitRef.current.messageId !== messageId) {
+        bodyCommitRef.current = { messageId, first: false, complete: false };
+      }
+
+      if (!bodyCommitRef.current.first) {
+        bodyCommitRef.current.first = true;
+        onBodyCommitted({ messageId, phase: "first_body", characters: renderedContent.length });
+      }
+
+      if (
+        !bodyCommitRef.current.complete
+        && message?.status === "completed"
+        && message?.isStreaming !== true
+        && message?.isGenerating !== true
+        && message?.typing !== true
+        && renderedContent === fullMarkdown
+      ) {
+        bodyCommitRef.current.complete = true;
+        onBodyCommitted({ messageId, phase: "complete_body", characters: renderedContent.length });
+      }
+    };
+
+    reportCommittedBody();
+    document.addEventListener("visibilitychange", reportCommittedBody);
+    return () => document.removeEventListener("visibilitychange", reportCommittedBody);
+  }, [fullMarkdown, renderedContent, message?.id, message?.isHistorical, message?.isRestored, message?.status, message?.isStreaming, message?.isGenerating, message?.typing, onBodyCommitted]);
+
   const handlePauseToggle = () => {
+    if (isLiveStream) {
+      setLiveControls({
+        messageId: message?.id,
+        paused: !livePaused,
+        stopped: false,
+        snapshot: fullMarkdown
+      });
+      return;
+    }
+
     setPaused((current) => !current);
   };
 
   const handleStop = () => {
+    if (isLiveStream) {
+      setLiveControls({ messageId: message?.id, paused: false, stopped: true, snapshot: fullMarkdown });
+      return;
+    }
+
     stoppedRef.current = true;
     setVisibleContent(fullMarkdown);
     setPhase("done");
@@ -509,11 +612,11 @@ export function IngestGPTMessageRenderer({
       `}</style>
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3 px-1">
-        <ThinkingIndicator phase={shouldAnimate ? phase : "done"} />
-        <StreamControls paused={paused} streaming={streaming} onPauseToggle={handlePauseToggle} onStop={handleStop} />
+        <ThinkingIndicator phase={displayedPhase} />
+        <StreamControls paused={isLiveStream ? livePaused : paused} streaming={streaming} onPauseToggle={handlePauseToggle} onStop={handleStop} />
       </div>
 
-      <div className="animate-[gpt-message-in_240ms_ease-out_both] rounded-[18px] border border-neutral-100 bg-[#f7f7f8] px-5 py-4 shadow-none">
+      <div ref={bodyRef} className="animate-[gpt-message-in_240ms_ease-out_both] rounded-[18px] border border-neutral-100 bg-[#f7f7f8] px-5 py-4 shadow-none">
         {renderedContent ? (
           <MarkdownBubbleContent
             content={renderedContent}
