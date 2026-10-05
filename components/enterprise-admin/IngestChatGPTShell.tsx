@@ -2588,7 +2588,7 @@ export function IngestChatGPTShell({
         {!isExpertMarketplace ? (
           <div
             className={[
-              "relative flex shrink-0 items-center overflow-hidden border-b border-[#f0f0ee]",
+              "relative z-[35] flex shrink-0 items-center overflow-visible border-b border-[#f0f0ee]",
               isAdminApk ? "justify-between" : "h-16 justify-end px-5",
               isAdminApk && compactMobileViewport ? "h-[52px] px-3" : isAdminApk ? "h-16 px-5" : ""
             ].join(" ")}
