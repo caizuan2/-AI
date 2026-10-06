@@ -297,7 +297,7 @@ async function testClientMetadataBinding(model: string = DOUBAO_PRO_MODEL_ID) {
       originalInput: "旧历史草稿模型身份不能改写",
       historyScope: "test-history-scope-metadata-recovery",
       replyMarkdown: exactReply,
-      sourceResponseId: draft.responseId,
+      sourceResponseId: "visible-response-original",
       messageId: "assistant-result-current",
       draft: historicalDraft,
       agent,
@@ -324,7 +324,7 @@ async function testClientMetadataBinding(model: string = DOUBAO_PRO_MODEL_ID) {
     originalInput: "拒绝跨模型元数据",
     historyScope: "test-history-scope-metadata-recovery",
     replyMarkdown: exactReply,
-    sourceResponseId: draft.responseId,
+    sourceResponseId: "visible-response-original",
     messageId: "assistant-result-current",
     draft,
     agent
