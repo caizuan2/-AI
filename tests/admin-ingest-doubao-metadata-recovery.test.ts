@@ -8,6 +8,7 @@ import {
   retryDoubaoKnowledgeDraftMetadata
 } from "../lib/enterprise/ingest-client";
 import {
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
   DOUBAO_PRO_MODEL_ID
 } from "../lib/enterprise/ingest-model-options";
 import type {
@@ -34,11 +35,11 @@ function restoreEnv() {
   }
 }
 
-function createSseResponse(content: string, responseId: string) {
+function createSseResponse(content: string, responseId: string, model: string = DOUBAO_PRO_MODEL_ID) {
   const payload = [
     `data: ${JSON.stringify({
       id: responseId,
-      model: DOUBAO_PRO_MODEL_ID,
+      model,
       created: 1_786_000_000,
       choices: [{
         delta: { role: "assistant", content },
@@ -47,7 +48,7 @@ function createSseResponse(content: string, responseId: string) {
     })}\n\n`,
     `data: ${JSON.stringify({
       id: responseId,
-      model: DOUBAO_PRO_MODEL_ID,
+      model,
       choices: [],
       usage: {
         prompt_tokens: 120,
@@ -81,7 +82,7 @@ const validMetadata = JSON.stringify({
   saveRecommendation: "可以入库"
 });
 
-async function testProviderMetadataRecovery() {
+async function testProviderMetadataRecovery(model: string = DOUBAO_PRO_MODEL_ID) {
   process.env.ARK_API_KEY = "test-ark-key";
   delete process.env.DOUBAO_API_KEY;
   delete process.env.DOUBAO_PRO_MODEL;
@@ -97,7 +98,8 @@ async function testProviderMetadataRecovery() {
 
     return createSseResponse(
       callCount === 1 ? "{\"knowledgeDraft\":{\"title\":\"未闭合\"" : validMetadata,
-      `metadata-recovery-${callCount}`
+      `metadata-recovery-${callCount}`,
+      model
     );
   };
 
@@ -113,7 +115,7 @@ async function testProviderMetadataRecovery() {
     syncTarget: ["web", "exe", "apk"],
     tenantId: "tenant-test",
     userId: "user-test",
-    preferredModel: DOUBAO_PRO_MODEL_ID,
+    preferredModel: model,
     selectedModelLabel: "Doubao-Seed-2.1-pro",
     modelDisplayName: "Doubao-Seed-2.1-pro",
     replyMarkdown: exactReply,
@@ -122,20 +124,20 @@ async function testProviderMetadataRecovery() {
   });
 
   assert.equal(callCount, 2, "Malformed metadata should trigger exactly one same-model structure retry.");
-  assert.equal(result.actualModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(result.actualModel, model);
   assert.equal(result.fallbackUsed, false);
   assert.equal(result.replyMarkdown, exactReply);
   assert.equal(result.knowledgeDraft.standardAnswer, exactReply);
   assert.equal(result.structured.answer, exactReply);
   assert.equal(result.sourceResponseId, "visible-response-original");
   assert.ok(result.diagnostics.includes("doubao:metadataStructureAttempts:2"));
-  assert.ok(requestBodies.every((body) => body.model === DOUBAO_PRO_MODEL_ID));
+  assert.ok(requestBodies.every((body) => body.model === model));
   assert.ok(requestBodies.every((body) => body.max_tokens === 1000));
 
   let invalidCalls = 0;
   globalThis.fetch = async () => {
     invalidCalls += 1;
-    return createSseResponse("{}", `metadata-invalid-${invalidCalls}`);
+    return createSseResponse("{}", `metadata-invalid-${invalidCalls}`, model);
   };
   await assert.rejects(
     () => runDoubaoMetadataRecovery({
@@ -144,7 +146,7 @@ async function testProviderMetadataRecovery() {
       source: "admin_ingest",
       platform: "web",
       syncTarget: ["web"],
-      preferredModel: DOUBAO_PRO_MODEL_ID,
+      preferredModel: model,
       selectedModelLabel: "Doubao-Seed-2.1-pro",
       modelDisplayName: "Doubao-Seed-2.1-pro",
       replyMarkdown: exactReply,
@@ -159,7 +161,7 @@ async function testProviderMetadataRecovery() {
   assert.equal(invalidCalls, 2);
 }
 
-async function testClientMetadataBinding() {
+async function testClientMetadataBinding(model: string = DOUBAO_PRO_MODEL_ID) {
   const agent: IngestChatAgent = {
     id: "expert-career",
     expertId: "expert-career",
@@ -186,8 +188,8 @@ async function testClientMetadataBinding() {
     saveStatus: "待确认",
     providerUsed: "doubao",
     model: "Doubao-Seed-2.1-pro",
-    sourceModel: DOUBAO_PRO_MODEL_ID,
-    actualModel: DOUBAO_PRO_MODEL_ID,
+    sourceModel: model,
+    actualModel: model,
     responseId: "visible-response-original",
     replyMarkdown: exactReply,
     fallbackUsed: false
@@ -203,9 +205,9 @@ async function testClientMetadataBinding() {
         provider: "doubao",
         requestedProvider: "doubao-pro",
         actualProvider: "doubao-pro",
-        model: DOUBAO_PRO_MODEL_ID,
-        requestedModel: DOUBAO_PRO_MODEL_ID,
-        actualModel: DOUBAO_PRO_MODEL_ID,
+        model,
+        requestedModel: model,
+        actualModel: model,
         selectedModelLabel: "Doubao-Seed-2.1-pro",
         modelDisplayName: "Doubao-Seed-2.1-pro",
         modelMode: "highest",
@@ -274,7 +276,9 @@ async function testClientMetadataBinding() {
   assert.equal("expectedReplyHash" in requestBody, false);
   assert.match(String(requestBody.attemptId), /^metadata-recovery-.+:attempt-1$/);
   assert.equal(requestBody.modelProvider, "doubao-pro");
-  assert.equal(requestBody.preferredModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(requestBody.preferredModel, model);
+  assert.equal(result.requestedModel, model);
+  assert.equal(result.actualModel, model);
   assert.equal(result.replyMarkdown, exactReply);
   assert.equal(result.draft.replyMarkdown, exactReply);
   assert.equal(result.draft.standardAnswer, exactReply);
@@ -284,6 +288,47 @@ async function testClientMetadataBinding() {
   assert.equal(result.draft.saveStatus, "待确认");
   assert.equal(result.fallbackUsed, false);
   assert.equal(result.records.filter((record) => record.jobId === draft.jobId).length, 1);
+
+  for (const historicalDraft of [
+    { ...draft, actualModel: undefined },
+    { ...draft, actualModel: undefined, sourceModel: undefined, model }
+  ]) {
+    const historicalResult = await retryDoubaoKnowledgeDraftMetadata({
+      originalInput: "旧历史草稿模型身份不能改写",
+      historyScope: "test-history-scope-metadata-recovery",
+      replyMarkdown: exactReply,
+      sourceResponseId: draft.responseId,
+      messageId: "assistant-result-current",
+      draft: historicalDraft,
+      agent,
+      platform: "web"
+    });
+    assert.equal(requestBody.preferredModel, model, "Older drafts may store their bound model only in sourceModel or model.");
+    assert.equal(historicalResult.actualModel, model);
+    assert.equal(historicalResult.replyMarkdown, exactReply);
+  }
+
+  const boundFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const response = await boundFetch(url, init);
+    const payload = await response.json();
+    payload.data.actualModel = model === DOUBAO_PRO_MODEL_ID
+      ? ADMIN_INGEST_DOUBAO_PRO_MODEL_ID
+      : DOUBAO_PRO_MODEL_ID;
+    return new Response(JSON.stringify(payload), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    });
+  };
+  await assert.rejects(() => retryDoubaoKnowledgeDraftMetadata({
+    originalInput: "拒绝跨模型元数据",
+    historyScope: "test-history-scope-metadata-recovery",
+    replyMarkdown: exactReply,
+    sourceResponseId: draft.responseId,
+    messageId: "assistant-result-current",
+    draft,
+    agent
+  }), /恢复结果与当前正文绑定不一致/);
 }
 
 function testStaticSafetyContracts() {
@@ -319,6 +364,8 @@ async function main() {
   try {
     await testProviderMetadataRecovery();
     await testClientMetadataBinding();
+    await testProviderMetadataRecovery(ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
+    await testClientMetadataBinding(ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
     testStaticSafetyContracts();
     console.log("admin-ingest-doubao-metadata-recovery tests passed");
   } finally {

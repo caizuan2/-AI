@@ -15,6 +15,8 @@ import {
   type GptVersion
 } from "@/lib/enterprise/gpt-model-options";
 import {
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
+  DOUBAO_PRO_MODEL_ID,
   getIngestModelOptionByProvider,
   getIngestModelOptionByLabel,
   normalizeIngestModelSelection,
@@ -1944,6 +1946,9 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
 
   const platform = input.platform ?? "web";
   const doubaoOption = getIngestModelOptionByProvider("doubao-pro");
+  const expectedModel = [input.draft.actualModel, input.draft.sourceModel, input.draft.model]
+    .find((model) => model === DOUBAO_PRO_MODEL_ID || model === ADMIN_INGEST_DOUBAO_PRO_MODEL_ID)
+    ?? doubaoOption.defaultModel;
   const requestId = `metadata-recovery-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const attemptId = `${requestId}:attempt-1`;
   const agentKnowledgeScope = buildClientAgentKnowledgeScope(input.agent);
@@ -1973,7 +1978,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
       modelProvider: "doubao-pro",
       modelMode: "highest",
       deferMetadata: input.preserveInitialMetadataProfile === true,
-      preferredModel: doubaoOption.defaultModel,
+      preferredModel: expectedModel,
       selectedModelLabel: doubaoOption.label,
       modelDisplayName: doubaoOption.label
     })
@@ -1996,8 +2001,8 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
       provider: "doubao-pro",
       requestedProvider: "doubao-pro",
       actualProvider: "doubao-pro",
-      requestedModel: doubaoOption.defaultModel,
-      actualModel: doubaoOption.defaultModel,
+      requestedModel: expectedModel,
+      actualModel: expectedModel,
       requestId,
       fallbackUsed: false
     });
@@ -2015,7 +2020,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
     || data.metadataState !== "ready"
     || data.replyMarkdown !== input.replyMarkdown
     || actualProvider !== "doubao-pro"
-    || actualModel !== doubaoOption.defaultModel
+    || actualModel !== expectedModel
     || data.fallbackUsed === true
   ) {
     throw new AdminIngestRequestError("豆包知识草稿恢复结果与当前正文绑定不一致，已拒绝更新。", {
@@ -2026,7 +2031,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
       provider: "doubao-pro",
       requestedProvider: "doubao-pro",
       actualProvider,
-      requestedModel: doubaoOption.defaultModel,
+      requestedModel: expectedModel,
       actualModel,
       requestId,
       fallbackUsed: false
@@ -2119,7 +2124,7 @@ export async function retryDoubaoKnowledgeDraftMetadata(input: {
     metadataResponseId: data.metadataResponseId ?? null,
     replyMarkdown: input.replyMarkdown,
     provider: "doubao-pro" as const,
-    requestedModel: data.requestedModel ?? doubaoOption.defaultModel,
+    requestedModel: data.requestedModel ?? expectedModel,
     actualModel,
     fallbackUsed: false as const,
     diagnostics: data.diagnostics ?? []

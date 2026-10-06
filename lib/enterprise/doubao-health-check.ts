@@ -1,7 +1,7 @@
 import "server-only";
 
 import {
-  DOUBAO_PRO_MODEL_ID,
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
@@ -66,7 +66,7 @@ function baseStatus(input: {
   const apiKey = readEnv("ARK_API_KEY") || readEnv("DOUBAO_API_KEY");
   const configuredModel = readEnv("DOUBAO_PRO_MODEL") || readEnv("DOUBAO_MODEL");
   const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
-  const model = preferredModel || resolveIngestActualModel("doubao-pro") || DOUBAO_PRO_MODEL_ID;
+  const model = preferredModel || resolveIngestActualModel("doubao-pro") || ADMIN_INGEST_DOUBAO_PRO_MODEL_ID;
 
   return {
     apiKey,

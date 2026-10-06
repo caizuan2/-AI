@@ -26,6 +26,7 @@ import {
   type DoubaoAdminIngestResult
 } from "@/lib/enterprise/doubao-ingest-client";
 import {
+  DOUBAO_PRO_MODEL_ID,
   getIngestModelOptionByProvider,
   normalizeIngestModelSelection,
   resolveIngestActualModel,
@@ -44,6 +45,7 @@ import type { AdminIngestModelProgressEvent } from "@/lib/enterprise/admin-inges
 
 export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput | DoubaoAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
+  modelScope?: "admin-ingest";
   strictModelAffinity?: boolean;
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
@@ -161,6 +163,13 @@ function deriveTaskType(input: AdminIngestModelInput) {
   return "general" as const;
 }
 
+function resolveScopedActualModel(provider: ModelType, scope: AdminIngestModelInput["modelScope"]) {
+  // User answers share this provider; only the server's ingest route opts into its upgrade.
+  return provider === "doubao-pro" && scope !== "admin-ingest"
+    ? DOUBAO_PRO_MODEL_ID
+    : resolveIngestActualModel(provider);
+}
+
 async function runProvider(provider: ModelType, input: AdminIngestModelInput, preserveUserSelection: boolean) {
   const option = getIngestModelOptionByProvider(provider);
   const normalizedSelection = normalizeIngestModelSelection({
@@ -174,7 +183,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
   const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata;
   const baseInput = { ...input };
-  const actualModel = resolveIngestActualModel(provider);
+  const actualModel = resolveScopedActualModel(provider, input.modelScope);
   const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
   const displayModelLabel = shouldPreserveUserSelection
     ? input.selectedModelLabel || input.modelDisplayName || option.label
@@ -184,6 +193,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
     : option.displayName;
 
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
+  delete (baseInput as { modelScope?: unknown }).modelScope;
   delete (baseInput as { signal?: unknown }).signal;
   delete (baseInput as { onProgressEvent?: unknown }).onProgressEvent;
   delete (baseInput as { deferMetadata?: unknown }).deferMetadata;
@@ -302,7 +312,7 @@ export async function runAdminIngestWithSelectedModel(input: AdminIngestModelInp
     priority: costMode === "high" ? "high_quality" : costMode === "low" ? "low_cost" : "balanced"
   });
   const primaryProvider = isModelProvider(option.provider) ? option.provider : "openai";
-  const requestedModel = resolveIngestActualModel(primaryProvider);
+  const requestedModel = resolveScopedActualModel(primaryProvider, input.modelScope);
   const fallbackChain = input.strictModelAffinity === true
     ? [primaryProvider]
     : buildEnterpriseFallbackChain(primaryProvider);

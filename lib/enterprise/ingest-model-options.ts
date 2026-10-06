@@ -19,10 +19,12 @@ export const ADMIN_INGEST_MODEL_STORAGE_KEY = "admin-ingest-selected-model-deeps
 export const DEEPSEEK_PRO_MODEL_ID = "deepseek-v4-pro";
 export const DEEPSEEK_FLASH_MODEL_ID = "deepseek-v4-flash";
 export const DOUBAO_PRO_MODEL_ID = "doubao-seed-2-1-pro-260628";
+export const ADMIN_INGEST_DOUBAO_PRO_MODEL_ID = "doubao-seed-2-1-pro-260915";
 
 const LEGACY_DOUBAO_MODEL_IDENTIFIERS = new Set([
   "豆包 2.0 Pro",
-  "doubao-seed-2-0-pro-260215"
+  "doubao-seed-2-0-pro-260215",
+  DOUBAO_PRO_MODEL_ID
 ].map((value) => value.toLowerCase()));
 
 const LEGACY_DEEPSEEK_MODEL_IDS = new Set([
@@ -106,7 +108,7 @@ export const ALL_INGEST_MODEL_OPTIONS: IngestModelOption[] = [
     shortLabel: "豆包 Pro",
     displayName: "Doubao-Seed-2.1-pro",
     modelEnvKey: "DOUBAO_PRO_MODEL",
-    defaultModel: DOUBAO_PRO_MODEL_ID,
+    defaultModel: ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
     description: "适合中文知识整理、沟通话术和完整 Markdown 正文生成。",
     scenario: "中文知识 / 沟通话术 / 完整正文",
     speedLabel: "均衡",
@@ -172,7 +174,8 @@ const DISPLAY_MODEL_LABELS = new Set([
   "豆包",
   "豆包 Pro",
   "豆包 2.0 Pro",
-  "doubao-seed-2-0-pro-260215"
+  "doubao-seed-2-0-pro-260215",
+  DOUBAO_PRO_MODEL_ID
 ].map(normalizeLabel));
 
 function isOpenAIModelLike(value: string | null | undefined) {
@@ -304,7 +307,7 @@ export function resolveIngestActualModel(provider: string | null | undefined) {
   }
 
   if (normalized === "doubao-pro") {
-    return DOUBAO_PRO_MODEL_ID;
+    return ADMIN_INGEST_DOUBAO_PRO_MODEL_ID;
   }
 
   if (normalized === "kimi") {

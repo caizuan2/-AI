@@ -1809,6 +1809,7 @@ export async function POST(request: Request) {
     }
 
     const result = await runAdminIngestWithSelectedModel({
+      modelScope: "admin-ingest",
       input: wechatGroundingRequest.modelInput,
       attachments: input.attachments,
       agentId: input.agentId,

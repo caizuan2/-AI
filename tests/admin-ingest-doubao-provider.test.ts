@@ -13,6 +13,7 @@ import {
 import { runDeepSeekAdminIngest } from "../lib/enterprise/deepseek-ingest-client";
 import { checkDoubaoIngestHealth } from "../lib/enterprise/doubao-health-check";
 import {
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
   DOUBAO_PRO_MODEL_ID,
   getIngestModelOptionByProvider,
   normalizeIngestModelProvider,
@@ -165,11 +166,11 @@ try {
 
   delete process.env.DOUBAO_PRO_MODEL;
   delete process.env.DOUBAO_MODEL;
-  assert.equal(resolveIngestActualModel("doubao-pro"), DOUBAO_PRO_MODEL_ID);
+  assert.equal(resolveIngestActualModel("doubao-pro"), ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
   process.env.DOUBAO_PRO_MODEL = "ep-doubao-provider-test";
   assert.equal(
     resolveIngestActualModel("doubao-pro"),
-    DOUBAO_PRO_MODEL_ID,
+    ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
     "The admin-ingest Doubao selection must stay pinned to Doubao-Seed-2.1-pro."
   );
   assert.equal(
@@ -177,7 +178,7 @@ try {
       provider: "doubao-pro",
       preferredModel: DOUBAO_PRO_MODEL_ID
     }).actualModel,
-    DOUBAO_PRO_MODEL_ID,
+    ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
     "The admin-ingest runtime must not drift from Doubao-Seed-2.1-pro when another Ark model is configured."
   );
 
@@ -889,7 +890,7 @@ try {
   });
   assert.equal(health.ok, true);
   assert.equal(health.provider, "doubao");
-  assert.equal(health.actualModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(health.actualModel, ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
 
   let passiveHealthFetchCalls = 0;
   globalThis.fetch = async () => {
@@ -989,7 +990,7 @@ try {
   });
   assert.equal(restoredHealth.ok, true);
   assert.equal(restoredHealth.requestTested, true);
-  assert.equal(restoredHealth.actualModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(restoredHealth.actualModel, ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
   assert.equal(pausedHealthCalls, 2, "A paused health result must not block the next forced real connection check.");
 
   let invalidRestorationHealthCalls = 0;
@@ -1009,7 +1010,7 @@ try {
     if (invalidRestorationHealthCalls === 2) {
       return new Response(JSON.stringify({
         id: "doubao-health-empty-content",
-        model: DOUBAO_PRO_MODEL_ID,
+        model: ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
         choices: [{ message: { role: "assistant", content: "   " } }]
       }), {
         status: 200,
