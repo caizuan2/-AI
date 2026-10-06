@@ -35,6 +35,7 @@ import {
   normalizeLLMResponse
 } from "@/lib/enterprise/gpt-os-api-adapter";
 import {
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
   DOUBAO_PRO_MODEL_ID,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
@@ -458,7 +459,10 @@ export function buildDoubaoChatCompletionsUrl(baseUrl: string) {
 function resolveDoubaoConfig(input: DoubaoAdminIngestInput) {
   const configuredModel = readEnv("DOUBAO_PRO_MODEL") || readEnv("DOUBAO_MODEL");
   const preferredModel = sanitizeIngestPreferredModel(input.preferredModel);
-  const model = preferredModel || resolveIngestActualModel("doubao-pro") || DOUBAO_PRO_MODEL_ID;
+  // Preserve the explicit historical model for user answers and bound metadata jobs.
+  const model = input.preferredModel?.trim() === DOUBAO_PRO_MODEL_ID
+    ? DOUBAO_PRO_MODEL_ID
+    : preferredModel || resolveIngestActualModel("doubao-pro") || ADMIN_INGEST_DOUBAO_PRO_MODEL_ID;
   const selectedModelLabel = input.selectedModelLabel
     || input.modelDisplayName
     || readEnv("DOUBAO_DISPLAY_NAME")
@@ -706,7 +710,9 @@ export async function callDoubao(payload: {
   signal?: AbortSignal;
 }) {
   const apiKey = payload.apiKey || readArkApiKey();
-  const model = sanitizeIngestPreferredModel(payload.model) || resolveIngestActualModel("doubao-pro");
+  const model = payload.model?.trim() === DOUBAO_PRO_MODEL_ID
+    ? DOUBAO_PRO_MODEL_ID
+    : sanitizeIngestPreferredModel(payload.model) || resolveIngestActualModel("doubao-pro");
   const url = buildDoubaoChatCompletionsUrl(payload.baseUrl || readEnv("DOUBAO_BASE_URL") || DEFAULT_BASE_URL);
   const messages = payload.messages?.length
     ? payload.messages

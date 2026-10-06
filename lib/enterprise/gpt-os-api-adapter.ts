@@ -1,4 +1,5 @@
 import {
+  DOUBAO_PRO_MODEL_ID,
   normalizeIngestModelProvider,
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
@@ -135,7 +136,9 @@ function getProviderConfig(provider: LLMCallProvider, payload: LLMCallPayload) {
   if (provider === "doubao" || provider === "doubao-pro") {
     return {
       apiKey: payload.apiKey || readEnv("ARK_API_KEY") || readEnv("DOUBAO_API_KEY"),
-      model: requestedModel || resolveIngestActualModel("doubao-pro"),
+      model: payload.model?.trim() === DOUBAO_PRO_MODEL_ID
+        ? DOUBAO_PRO_MODEL_ID
+        : requestedModel || resolveIngestActualModel("doubao-pro"),
       url: buildChatCompletionsUrl(payload.baseUrl || readEnv("DOUBAO_BASE_URL") || "https://ark.cn-beijing.volces.com/api/v3"),
       mode: "chat" as const
     };

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import {
+  ADMIN_INGEST_DOUBAO_PRO_MODEL_ID,
   DEFAULT_INGEST_MODEL_OPTION,
   DOUBAO_PRO_MODEL_ID,
   getIngestModelOptionByLabel,
@@ -24,7 +25,8 @@ import { prepareIngestMessageMarkdown } from "@/components/enterprise-admin/Inge
 function testAgentScopedModelPreferences() {
   const doubao = getIngestModelOptionByProvider("doubao-pro");
   assert.equal(doubao.label, "Doubao-Seed-2.1-pro");
-  assert.equal(doubao.defaultModel, "doubao-seed-2-1-pro-260628");
+  assert.equal(doubao.defaultModel, "doubao-seed-2-1-pro-260915");
+  assert.equal(ADMIN_INGEST_DOUBAO_PRO_MODEL_ID, "doubao-seed-2-1-pro-260915");
   assert.equal(DOUBAO_PRO_MODEL_ID, "doubao-seed-2-1-pro-260628");
   assert.equal(getIngestModelOptionByLabel("豆包 2.0 Pro").provider, "doubao-pro");
   assert.equal(getIngestModelOptionByLabel("doubao-seed-2-0-pro-260215").provider, "doubao-pro");
