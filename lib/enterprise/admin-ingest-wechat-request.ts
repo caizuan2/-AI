@@ -14,15 +14,6 @@ type AdminIngestHealthPreflightInput = {
   skipHealthPreflight?: boolean;
 };
 
-const WECHAT_RETRYABLE_MODEL_TIMEOUT_CODES = new Set([
-  "DEEPSEEK_TIMEOUT",
-  "DOUBAO_TIMEOUT"
-]);
-
-function normalizeErrorCode(value?: string) {
-  return value?.trim().toUpperCase() ?? "";
-}
-
 export function hasAdminIngestWechatConversationAttachment(
   attachments: AdminIngestWechatAttachment[]
 ) {
@@ -30,23 +21,9 @@ export function hasAdminIngestWechatConversationAttachment(
 }
 
 export function shouldRetryAdminIngestWechatModelTimeout(
-  input: AdminIngestWechatRetryInput
+  _input: AdminIngestWechatRetryInput
 ) {
-  if (
-    input.attempt !== 0
-    || (
-      input.modelProvider !== "deepseek-pro"
-      && input.modelProvider !== "deepseek-flash"
-      && input.modelProvider !== "doubao-pro"
-    )
-  ) {
-    return false;
-  }
-
-  return [
-    normalizeErrorCode(input.errorCode),
-    normalizeErrorCode(input.causeCode)
-  ].some((code) => WECHAT_RETRYABLE_MODEL_TIMEOUT_CODES.has(code));
+  return false;
 }
 
 export function shouldRunAdminIngestHealthPreflight(

@@ -184,8 +184,9 @@ import {
 import {
   ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
   ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
+  ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS,
   createAdminIngestDoubaoVisibleTimeoutError,
-  shouldApplyAdminIngestDoubaoVisibleBudget
+  shouldApplyAdminIngestVisibleBudget
 } from "@/lib/enterprise/admin-ingest-doubao-visible-budget";
 import type {
   AdminIngestHistoryLoadState
@@ -198,7 +199,6 @@ import {
   updateAssistantMessage
 } from "@/lib/enterprise/ingest-message-reducer";
 import { buildIngestContextPayload } from "@/lib/enterprise/ingest-context-builder";
-import { MAX_INGEST_CONTEXT_CHARS } from "@/lib/enterprise/ingest-context-compressor";
 import type {
   IngestAccessTier,
   IngestCapabilities
@@ -262,8 +262,7 @@ import {
   resolveIngestSendAttachments
 } from "@/lib/enterprise/ingest-retry-state";
 import {
-  hasAdminIngestWechatConversationAttachment,
-  shouldRetryAdminIngestWechatModelTimeout
+  hasAdminIngestWechatConversationAttachment
 } from "@/lib/enterprise/admin-ingest-wechat-request";
 import {
   refineAdminIngestNativeVoice,
@@ -408,6 +407,8 @@ const INGEST_SUCCESS_TOAST_SUPPRESS_MS = 30_000;
 const INGEST_CONVERSATION_SYNC_ENDPOINT = "/api/admin/ingest-conversations";
 const INGEST_REMOTE_SYNC_DEBOUNCE_MS = 800;
 const INGEST_REMOTE_SYNC_POLL_INTERVAL_MS = 2_000;
+const INGEST_REMOTE_SYNC_IDLE_POLL_INTERVAL_MS = 6_000;
+const INGEST_REQUEST_CONTEXT_MAX_CHARS = 16_000;
 
 function readConfirmedAdminIngestSyncSnapshot(
   serialized: string,
@@ -4813,8 +4814,8 @@ export function IngestModeToggle({
             uploads: composerUploads,
             controller: imagePersistenceController,
             trace: latencyTrace,
-            maxWaitAfterPersistMs: attachmentProvider === "doubao-pro"
-              ? ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS
+            maxWaitAfterPersistMs: shouldOverlapAttachmentParsing
+              ? ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS
               : undefined,
             persist: (files, signal) => persistAdminIngestUploadImages(files, requestHistoryScope, signal),
             parse: shouldOverlapAttachmentParsing
@@ -5090,6 +5091,7 @@ export function IngestModeToggle({
     let visibleReplyRendered = false;
     let firstReplyReceivedMarked = false;
     let visibleReplySnapshot = "";
+    let latestStreamedReplyMarkdown = "";
     let deferredDoubaoMetadataRecovery: {
       draft: IngestKnowledgeDraft;
       replyMarkdown: string;
@@ -5120,7 +5122,7 @@ export function IngestModeToggle({
       }
 
       doubaoVisibleTimeoutCommitted = true;
-      const message = `${currentModelLabel} 深度思考已达到 ${doubaoVisibleBudgetSeconds} 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`;
+      const message = `${currentModelLabel} 已达到 ${doubaoVisibleBudgetSeconds} 秒时限，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`;
       conversationStateByIdRef.current[conversationId] = failAssistantMessage(
         conversationStateByIdRef.current[conversationId],
         {
@@ -5149,7 +5151,7 @@ export function IngestModeToggle({
           model: currentModelLabel,
           provider: requestModelOption.provider,
           failureMeta: {
-            title: "豆包深度思考等待超时",
+            title: "原文等待超时",
             errorCode: ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
             retryable: true,
             requestedModel: currentModelLabel,
@@ -5194,12 +5196,11 @@ export function IngestModeToggle({
       setRequestErrorMessage(message);
       showRequestActionToast({
         type: "warning",
-        title: "豆包本轮等待已结束，可使用同模型重试。"
+        title: "本轮等待已结束，可使用同模型重试。"
       });
     };
 
-    // Preserve the existing Doubao budget anchored after image persistence;
-    // moving OCR into preparation must not grant a fresh 180 seconds afterward.
+    // Visible original SLO is 60s, anchored after image persistence so parse cannot add a fresh minute.
     const doubaoVisibleBudgetRemainingMs = attachmentPreparationDeadlineReached ? 0 : getAdminIngestRemainingVisibleBudgetMs({
       provider: requestModelOption.provider,
       budgetMs: ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
@@ -5214,6 +5215,77 @@ export function IngestModeToggle({
         return;
       }
 
+      if (latestStreamedReplyMarkdown.trim()) {
+        clearDoubaoVisibleBudget();
+        if (!firstReplyReceivedMarked) {
+          firstReplyReceivedMarked = true;
+          latencyTrace.mark("first_reply_received", latestModelRequestStartedAt);
+        }
+        latencyTrace.mark("model_completed", latestModelRequestStartedAt);
+        visibleReplySnapshot = latestStreamedReplyMarkdown;
+        visibleReplyRendered = true;
+        conversationStateByIdRef.current[conversationId] = completeAssistantMessage(
+          conversationStateByIdRef.current[conversationId],
+          {
+            requestId,
+            messageId: assistantMessageId,
+            content: latestStreamedReplyMarkdown,
+            meta: {
+              provider: requestModelOption.provider,
+              model: currentModelLabel,
+              metadataState: "pending"
+            }
+          }
+        );
+        commitRequestMessages((current) => replaceIngestRetryOutcome(
+          current.map(markMessageCompleted),
+          options?.failedMessageId,
+          {
+            id: assistantMessageId,
+            role: "assistant",
+            content: latestStreamedReplyMarkdown,
+            time: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+            source: "admin_ingest",
+            platform: platformContext.platform,
+            syncTarget: [...platformContext.syncTarget],
+            tenantId,
+            userId,
+            agentId: activeAgent.id,
+            expertId: activeAgent.expertId ?? null,
+            conversationId,
+            agentName: activeAgent.name,
+            expertName: activeAgent.expertId ? activeAgent.name : null,
+            model: currentModelLabel,
+            provider: requestModelOption.provider,
+            metadataState: "pending",
+            isRestored: false,
+            isHistorical: false,
+            isStreaming: false,
+            isGenerating: false,
+            typing: false,
+            status: "completed"
+          }
+        ));
+        setConversationRuntimeStatusById((current) => (
+          markAdminIngestConversationVisibleCompleted(current, {
+            conversationId,
+            requestId
+          })
+        ));
+        setIsParsing(
+          countActiveIngestConversationRequests(
+            conversationStateByIdRef.current
+          ) > 0
+        );
+        setRequestNoticeMessage(`${requestModelOption.label} 已按 ${doubaoVisibleBudgetSeconds} 秒时限交卷原文。`);
+        setRequestErrorMessage("");
+        doubaoVisibleBudgetTimedOut = true;
+        abortController.abort(
+          createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
+        );
+        return;
+      }
+
       doubaoVisibleBudgetTimedOut = true;
       commitDoubaoVisibleTimeout();
       abortController.abort(
@@ -5221,7 +5293,7 @@ export function IngestModeToggle({
       );
     };
     if (
-      shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)
+      shouldApplyAdminIngestVisibleBudget(requestModelOption.provider)
       && doubaoVisibleBudgetRemainingMs > 0
     ) {
       doubaoVisibleBudgetTimeout = window.setTimeout(
@@ -5232,7 +5304,7 @@ export function IngestModeToggle({
 
     try {
       if (
-        shouldApplyAdminIngestDoubaoVisibleBudget(requestModelOption.provider)
+        shouldApplyAdminIngestVisibleBudget(requestModelOption.provider)
         && doubaoVisibleBudgetRemainingMs === 0
       ) {
         expireDoubaoVisibleBudget();
@@ -5413,7 +5485,7 @@ export function IngestModeToggle({
         messages: isWechatConversationReply ? [] : conversationState.messages,
         prompt: effectiveInput,
         maxMessages: 12,
-        maxChars: MAX_INGEST_CONTEXT_CHARS,
+        maxChars: INGEST_REQUEST_CONTEXT_MAX_CHARS,
         memoryContextText: memoryV2Preview?.memoryContextText,
         usedMemoryIds: memoryV2Preview?.usedMemoryIds,
         agentLearningInstruction: memoryV2Preview?.agentLearningInstruction
@@ -5476,7 +5548,7 @@ export function IngestModeToggle({
                   event.requestId !== requestId
                   || !isCurrentRequest()
                   || isRequestCancelled()
-                  || doubaoVisibleBudgetTimedOut
+                  || (doubaoVisibleBudgetTimedOut && visibleReplyRendered)
                   || shouldIgnoreRequestResult(
                     conversationStateByIdRef.current[conversationId],
                     requestId
@@ -5485,7 +5557,7 @@ export function IngestModeToggle({
                   return;
                 }
 
-                clearDoubaoVisibleBudget();
+                latestStreamedReplyMarkdown = event.replyMarkdown;
                 if (!firstReplyReceivedMarked) {
                   firstReplyReceivedMarked = true;
                   latencyTrace.mark("first_reply_received", latestModelRequestStartedAt);
@@ -5611,7 +5683,11 @@ export function IngestModeToggle({
                     conversationStateByIdRef.current
                   ) > 0
                 );
-                setRequestNoticeMessage(`${requestModelOption.label} 深度思考原文正文已完整生成，后台正在整理知识草稿...`);
+                setRequestNoticeMessage(event.truncated
+                  ? `${requestModelOption.label} 已按 ${doubaoVisibleBudgetSeconds} 秒时限交卷原文。`
+                  : capabilities.saveKnowledge
+                    ? `${requestModelOption.label} 原文正文已完整生成，后台正在整理知识草稿...`
+                    : `${requestModelOption.label} 原文正文已完整生成。`);
                 setRequestErrorMessage("");
               },
               onStatus: (event) => {
@@ -5630,12 +5706,17 @@ export function IngestModeToggle({
                 }
 
                 if (event.type === "queue_wait") {
-                  setRequestNoticeMessage(`豆包请求正在排队（前方 ${event.queueDepth ?? 0} 个任务）...`);
+                  const waitedSeconds = Math.max(0, Math.ceil((event.waitedMs ?? 0) / 1000));
+                  setRequestNoticeMessage(
+                    waitedSeconds >= 5
+                      ? `原文请求排队已超过 ${waitedSeconds} 秒（前方 ${event.queueDepth ?? 0} 个任务）...`
+                      : `原文请求正在排队（前方 ${event.queueDepth ?? 0} 个任务）...`
+                  );
                   return;
                 }
 
                 if (event.type === "reasoning_activity") {
-                  setRequestNoticeMessage("豆包正在深度思考，最终正文将在生成后按原文显示...");
+                  setRequestNoticeMessage("正在生成原文正文...");
                   setRequestErrorMessage("");
                   return;
                 }
@@ -5671,22 +5752,13 @@ export function IngestModeToggle({
             throw retryError;
           }
 
-          const retryRequestError = readAdminIngestRequestError(retryError);
-          const canRetryWechatTimeout = isWechatConversationReply
-            && !visibleReplyRendered
-            && shouldRetryAdminIngestWechatModelTimeout({
-              attempt,
-              modelProvider: requestModelOption.provider,
-              errorCode: retryRequestError?.errorCode,
-              causeCode: retryRequestError?.causeCode
-            });
           const canRetry = attempt < 1
             && !abortController.signal.aborted
             && isCurrentRequest()
             && !isRequestCancelled()
             && !doubaoVisibleBudgetTimedOut
             && isRetryableIngestError(retryError)
-            && (canRetryWechatTimeout || !isStrictSelectedModelFailure(retryError));
+            && !isStrictSelectedModelFailure(retryError);
 
           if (!canRetry) {
             throw retryError;
@@ -5694,10 +5766,6 @@ export function IngestModeToggle({
 
           attempt += 1;
           const retryDelayMs = getRetryDelayMs(attempt);
-
-          if (canRetryWechatTimeout) {
-            setRequestNoticeMessage(`${requestModelOption.label} 首次等待超时，正在使用同一个模型自动重试...`);
-          }
 
           console.warn("[admin-ingest:gpt:retry]", {
             requestId,
@@ -5713,8 +5781,12 @@ export function IngestModeToggle({
         latencyTrace.mark("model_completed", latestModelRequestStartedAt);
       }
 
-      if (doubaoVisibleBudgetTimedOut) {
+      if (doubaoVisibleBudgetTimedOut && !visibleReplyRendered) {
         throw createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel);
+      }
+
+      if (doubaoVisibleBudgetTimedOut && visibleReplyRendered) {
+        return null;
       }
 
       if (isRequestCancelled()) {
@@ -5997,6 +6069,10 @@ export function IngestModeToggle({
         records: nextRecords
       };
     } catch (error) {
+      if (doubaoVisibleBudgetTimedOut && visibleReplyRendered) {
+        return null;
+      }
+
       const handledError = doubaoVisibleBudgetTimedOut
         ? createAdminIngestDoubaoVisibleTimeoutError(currentModelLabel)
         : error;
@@ -6121,7 +6197,9 @@ export function IngestModeToggle({
         ));
         successRendered = true;
         setRequestFallbackToast(null);
-        setRequestNoticeMessage("豆包正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。");
+        setRequestNoticeMessage(requestModelOption.provider === "doubao-pro"
+          ? "豆包正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。"
+          : `${requestModelOption.label} 正文已完整保留，后台知识草稿本轮暂缓入库，可继续阅读或重新发送。`);
         setRequestErrorMessage("");
         return null;
       }
@@ -6235,8 +6313,8 @@ export function IngestModeToggle({
 
       const failurePresentation = doubaoVisibleBudgetTimedOut
         ? {
-            title: "豆包深度思考等待超时",
-            message: `${currentModelLabel} 深度思考已达到 ${doubaoVisibleBudgetSeconds} 秒，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`,
+            title: "原文等待超时",
+            message: `${currentModelLabel} 已达到 ${doubaoVisibleBudgetSeconds} 秒时限，本轮未形成正文。没有切换其他模型，请点击“同模型重试”。`,
             retryable: true,
             retryAfterMs: undefined
           }

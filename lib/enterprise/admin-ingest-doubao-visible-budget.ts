@@ -1,8 +1,16 @@
 "use client";
 
-export const ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS = 180_000;
+export const ADMIN_INGEST_VISIBLE_BUDGET_MS = 60_000;
+export const ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS = ADMIN_INGEST_VISIBLE_BUDGET_MS;
+export const ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS = 10_000;
 export const ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE =
   "ADMIN_INGEST_DOUBAO_VISIBLE_ANSWER_TIMEOUT";
+
+export function shouldApplyAdminIngestVisibleBudget(provider?: string | null) {
+  return provider === "doubao-pro"
+    || provider === "deepseek-pro"
+    || provider === "deepseek-flash";
+}
 
 export function shouldApplyAdminIngestDoubaoVisibleBudget(provider?: string | null) {
   return provider === "doubao-pro";
@@ -10,10 +18,10 @@ export function shouldApplyAdminIngestDoubaoVisibleBudget(provider?: string | nu
 
 export function createAdminIngestDoubaoVisibleTimeoutError(modelLabel: string) {
   const visibleBudgetSeconds = Math.round(
-    ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS / 1_000
+    ADMIN_INGEST_VISIBLE_BUDGET_MS / 1_000
   );
   const error = new Error(
-    `${ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE}: ${modelLabel || "当前豆包模型"} 深度思考已达到 ${visibleBudgetSeconds} 秒，本轮未形成完整正文。`
+    `${ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE}: ${modelLabel || "当前模型"} 已达到 ${visibleBudgetSeconds} 秒时限，本轮未形成正文。`
   );
 
   error.name = ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE;

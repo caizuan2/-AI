@@ -149,8 +149,8 @@ try {
     runQueuedTask("visible", 20),
     runQueuedTask("metadata", 5)
   ]);
-  assert.equal(maximumQueuedRequests, 1, "The server-side Doubao scheduler must serialize requests by default.");
-  assert.deepEqual(queueEvents, ["metadata:1"]);
+  assert.equal(maximumQueuedRequests, 2, "Metadata must not occupy the visible original slot.");
+  assert.deepEqual(queueEvents, []);
 
   activeQueuedRequests = 0;
   maximumQueuedRequests = 0;
@@ -413,20 +413,16 @@ try {
   assert.equal(capturedRequestBodies.length, 2, "Doubao must separate visible Markdown and background metadata into two calls.");
   const visibleRequestBody = capturedRequestBodies[0];
   const metadataRequestBody = capturedRequestBodies[1];
-  assert.equal(
-    "max_tokens" in visibleRequestBody,
-    false,
-    "Deep-thinking requests must use the provider completion budget that includes reasoning and final content."
-  );
-  assert.equal(visibleRequestBody.max_completion_tokens, 6000);
-  assert.equal(visibleRequestBody.reasoning_effort, "low");
+  assert.equal(visibleRequestBody.max_tokens, 1600);
+  assert.equal("max_completion_tokens" in visibleRequestBody, false);
+  assert.equal("reasoning_effort" in visibleRequestBody, false);
   assert.equal(metadataRequestBody.max_tokens, 1500);
   assert.equal("max_completion_tokens" in metadataRequestBody, false);
   assert.equal("reasoning_effort" in metadataRequestBody, false);
-  assert.deepEqual(
-    visibleRequestBody.thinking,
-    { type: "enabled" },
-    "Visible Doubao requests must explicitly enable the provider deep-thinking protocol."
+  assert.equal(
+    "thinking" in visibleRequestBody,
+    false,
+    "Visible Doubao requests must not enable provider deep-thinking for the 60s original-body SLO."
   );
   assert.equal(
     "thinking" in metadataRequestBody,
@@ -459,7 +455,8 @@ try {
   assert.match(finalPrompt, /历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据/);
   assert.match(finalPrompt, /不得跨 Agent、跨知识库或使用通用模型知识替代/);
   assert.match(finalPrompt, /豆包专用可见正文协议/);
-  assert.match(finalPrompt, /不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
+  assert.match(finalPrompt, /请在 60 秒内给出可执行的完整答案/);
+  assert.doesNotMatch(finalPrompt, /不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
   assert.doesNotMatch(
     finalPrompt,
     /Continuous Reasoning Loop|Autonomous Business Growth OS|你必须返回一个 JSON 对象/,
@@ -494,7 +491,7 @@ try {
   ]);
   assert.equal(result.gptProof.deepenAttempts, 0, "Doubao must not rewrite the body through a quality-deepening retry.");
   assert.ok(result.diagnostics.includes("doubao:replyMarkdownPassthrough:true"));
-  assert.ok(result.diagnostics.includes("doubao:thinkingEnabled:true"));
+  assert.ok(result.diagnostics.includes("doubao:thinkingEnabled:false"));
   assert.ok(result.diagnostics.includes("doubao:visiblePromptProfile:focused-v1"));
   assert.ok(result.diagnostics.includes("doubao:reasoningActivityChars:25"));
   assert.ok(
@@ -523,8 +520,8 @@ try {
     "Deferred metadata must return immediately after the unchanged visible request."
   );
   assert.equal(deferredVisibleRequestBody.model, visibleRequestBody.model);
-  assert.equal(deferredVisibleRequestBody.max_completion_tokens, 6000);
-  assert.equal(deferredVisibleRequestBody.reasoning_effort, "low");
+  assert.equal(deferredVisibleRequestBody.max_tokens, 1600);
+  assert.equal("reasoning_effort" in deferredVisibleRequestBody, false);
   assert.equal(
     deferredVisibleRequestBody.temperature,
     visibleRequestBody.temperature
@@ -538,10 +535,10 @@ try {
     deferredMessages.map((message) => message.content).join("\n"),
     /CURRENT_INPUT_SENTINEL/
   );
-  assert.deepEqual(
-    deferredVisibleRequestBody.thinking,
-    { type: "enabled" },
-    "Deferred metadata must not disable deep thinking for the unchanged visible request."
+  assert.equal(
+    "thinking" in deferredVisibleRequestBody,
+    false,
+    "Deferred metadata must keep the same no-thinking visible request."
   );
   assert.equal(
     deferredResult.replyMarkdown,
@@ -1221,17 +1218,10 @@ try {
       headers: { "Content-Type": "text/event-stream" }
     });
   };
-  await assert.rejects(
-    () => runDoubaoAdminIngest(doubaoInput),
-    (error: unknown) => Boolean(
-      error
-      && typeof error === "object"
-      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
-      && (error as { details?: { receivedContent?: unknown } }).details?.receivedContent === true
-    ),
-    "A stream EOF without [DONE] or finish_reason=stop must never persist partial Markdown."
-  );
-  assert.equal(incompleteEofCalls, 1);
+  const incompleteEofResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(incompleteEofResult.replyMarkdown, "INCOMPLETE_EOF_SENTINEL");
+  assert.ok(incompleteEofResult.diagnostics.includes("doubao:visibleTruncated:true"));
+  assert.ok(incompleteEofCalls >= 1);
 
   const continuationFirstPart = "\n# 超长豆包正文\n\n第一段保持原样，";
   const continuationSecondPart = "第二段从截断点继续。  \n";
@@ -1286,14 +1276,14 @@ try {
     });
   };
   const continuationResult = await runDoubaoAdminIngest(doubaoInput);
-  assert.equal(continuationResult.replyMarkdown, continuationFirstPart + continuationSecondPart);
-  assert.equal(continuationCalls, 3, "Visible first pass, same-model continuation and metadata extraction must remain separate.");
+  assert.equal(continuationResult.replyMarkdown, continuationFirstPart);
+  assert.equal(continuationCalls, 2, "Visible original must be handed in without a second thinking continuation.");
   assert.deepEqual(continuationRequestModels, [
-    "ep-doubao-provider-test",
     "ep-doubao-provider-test",
     "ep-doubao-provider-test"
   ]);
-  assert.ok(continuationResult.diagnostics.includes("doubao:visibleContinuationCount:1"));
+  assert.ok(continuationResult.diagnostics.includes("doubao:visibleContinuationCount:0"));
+  assert.ok(continuationResult.diagnostics.includes("doubao:visibleTruncated:true"));
 
   globalThis.fetch = async () => {
     const sse = [
@@ -1315,15 +1305,9 @@ try {
       headers: { "Content-Type": "text/event-stream" }
     });
   };
-  await assert.rejects(
-    () => runDoubaoAdminIngest(doubaoInput),
-    (error: unknown) => Boolean(
-      error
-      && typeof error === "object"
-      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"
-    ),
-    "finish_reason=length must not be treated as a complete answer even when [DONE] follows."
-  );
+  const lengthFinishResult = await runDoubaoAdminIngest(doubaoInput);
+  assert.equal(lengthFinishResult.replyMarkdown, "TRUNCATED_BY_LENGTH_SENTINEL");
+  assert.ok(lengthFinishResult.diagnostics.includes("doubao:visibleTruncated:true"));
 
   globalThis.fetch = async () => {
     const sse = [

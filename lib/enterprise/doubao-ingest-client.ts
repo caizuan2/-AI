@@ -40,6 +40,7 @@ import {
   resolveIngestActualModel,
   sanitizeIngestPreferredModel
 } from "@/lib/enterprise/ingest-model-options";
+import { ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS } from "@/lib/enterprise/admin-ingest-visible-prompt";
 
 export type DoubaoRequestPhase = "visible" | "continuation" | "metadata" | "health";
 
@@ -48,6 +49,7 @@ export type DoubaoAdminIngestProgressEvent =
       type: "queue_wait";
       phase: DoubaoRequestPhase;
       queueDepth: number;
+      waitedMs?: number;
     }
   | {
       type: "rate_limit_wait";
@@ -68,6 +70,7 @@ export type DoubaoAdminIngestProgressEvent =
       model: string;
       responseId: string;
       metadataPending: true;
+      truncated?: boolean;
     }
   | {
       type: "visible_delta";
@@ -227,13 +230,15 @@ export class DoubaoIngestError extends Error {
 
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL_LABEL = "Doubao-Seed-2.1-pro";
-const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
-const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 90_000;
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
-const DEFAULT_HARD_TIMEOUT_MS = 270_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
+const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 12_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 20_000;
+const DEFAULT_HARD_TIMEOUT_MS = 55_000;
 const DEFAULT_METADATA_RECOVERY_TIMEOUT_MS = 150_000;
-const DEFAULT_DOUBAO_CONCURRENCY = 1;
-const MAX_CONTINUATION_PREFIX_CHARS = 8_000;
+const DEFAULT_DOUBAO_CONCURRENCY = 2;
+const DEFAULT_VISIBLE_MAX_TOKENS = 1_600;
+const DEFAULT_VISIBLE_QUEUE_HINT_MS = 5_000;
+const DEFAULT_VISIBLE_QUEUE_FAIL_MS = 15_000;
 
 type DoubaoQueueEntry = {
   id: number;
@@ -276,28 +281,24 @@ function resolveDoubaoConcurrency() {
   const parsed = Number(readEnv("DOUBAO_MAX_CONCURRENCY"));
 
   return Number.isSafeInteger(parsed) && parsed > 0
-    ? Math.min(parsed, 2)
+    ? Math.min(parsed, 4)
     : DEFAULT_DOUBAO_CONCURRENCY;
 }
 
 function canStartDoubaoPhase(phase: DoubaoRequestPhase) {
-  const concurrency = resolveDoubaoConcurrency();
-
-  if (activeDoubaoRequests < concurrency) {
-    return true;
-  }
-
-  const isVisibleOutput = phase === "visible" || phase === "continuation";
+  const visibleLimit = resolveDoubaoConcurrency();
   const visibleOutputActive = activeDoubaoRequestsByPhase.visible
     + activeDoubaoRequestsByPhase.continuation;
 
-  return (
-    concurrency === 1
-    && isVisibleOutput
-    && visibleOutputActive === 0
-    && activeDoubaoRequestsByPhase.metadata > 0
-    && activeDoubaoRequests < 2
-  );
+  if (phase === "visible" || phase === "continuation") {
+    return visibleOutputActive < visibleLimit;
+  }
+
+  if (phase === "metadata") {
+    return activeDoubaoRequestsByPhase.metadata < 1;
+  }
+
+  return activeDoubaoRequestsByPhase.health < 1;
 }
 
 function markDoubaoPhaseStarted(phase: DoubaoRequestPhase) {
@@ -349,13 +350,32 @@ async function acquireDoubaoRequestSlot(input: {
   }
 
   await new Promise<void>((resolve, reject) => {
+    let hintTimer: ReturnType<typeof setTimeout> | null = null;
+    let failTimer: ReturnType<typeof setTimeout> | null = null;
+    const isVisibleOutput = input.phase === "visible" || input.phase === "continuation";
+    const clearQueueTimers = () => {
+      if (hintTimer) {
+        clearTimeout(hintTimer);
+        hintTimer = null;
+      }
+      if (failTimer) {
+        clearTimeout(failTimer);
+        failTimer = null;
+      }
+    };
     const entry: DoubaoQueueEntry = {
       id: ++doubaoQueueSequence,
       priority: requestPhasePriority(input.phase),
       phase: input.phase,
       signal: input.signal,
-      resolve,
-      reject,
+      resolve: () => {
+        clearQueueTimers();
+        resolve();
+      },
+      reject: (error: unknown) => {
+        clearQueueTimers();
+        reject(error);
+      },
       onProgressEvent: input.onProgressEvent,
       onAbort: () => {
         const index = pendingDoubaoRequests.findIndex((candidate) => candidate.id === entry.id);
@@ -364,6 +384,7 @@ async function acquireDoubaoRequestSlot(input: {
           pendingDoubaoRequests.splice(index, 1);
         }
 
+        clearQueueTimers();
         reject(new DOMException("The operation was aborted.", "AbortError"));
       }
     };
@@ -375,6 +396,32 @@ async function acquireDoubaoRequestSlot(input: {
       phase: input.phase,
       queueDepth: pendingDoubaoRequests.length
     });
+
+    if (isVisibleOutput) {
+      hintTimer = setTimeout(() => {
+        input.onProgressEvent?.({
+          type: "queue_wait",
+          phase: input.phase,
+          queueDepth: pendingDoubaoRequests.length,
+          waitedMs: DEFAULT_VISIBLE_QUEUE_HINT_MS
+        });
+      }, DEFAULT_VISIBLE_QUEUE_HINT_MS);
+      failTimer = setTimeout(() => {
+        const index = pendingDoubaoRequests.findIndex((candidate) => candidate.id === entry.id);
+
+        if (index >= 0) {
+          pendingDoubaoRequests.splice(index, 1);
+        }
+
+        input.signal.removeEventListener("abort", entry.onAbort);
+        entry.reject(new DoubaoIngestError(
+          "DOUBAO_TIMEOUT",
+          "豆包原文排队超过 15 秒，已停止等待以免堵住正文。",
+          { timeoutStage: "first_event", receivedContent: false }
+        ));
+      }, DEFAULT_VISIBLE_QUEUE_FAIL_MS);
+    }
+
     pumpDoubaoQueue();
   });
 }
@@ -517,15 +564,14 @@ function buildDoubaoVisibleSystemPrompt() {
   return [
     "你是“小董AI投喂端”当前管理员明确选择的豆包模型。",
     "## 豆包专用可见正文协议",
-    "请对当前问题进行高质量深度思考，但只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
+    "只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
     "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
     "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
     "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
     "准确保留管理员给出的事实，不要虚构经历、承诺结果或声称已执行外部动作。",
     "直接回答本轮问题；可按需要给出判断、引导思路、执行步骤和自然话术，但不要机械套固定模板。",
     "如果适合直接发给客户或沟通对象，可以给出“可直接复制”的自然话术。",
-    "只输出最终自然 Markdown 正文，不要输出 JSON、代码围栏、字段名、内部推理或后台元数据。",
-    "答案应完整、专业、温和、可执行；不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容。"
+    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
   ].join("\n");
 }
 
@@ -566,8 +612,9 @@ function buildDoubaoVisibleUserPrompt(input: DoubaoAdminIngestInput, gptOS?: Gpt
     input.input,
     "",
     "## 唯一输出",
-    "请基于以上上下文完成深度思考，并只输出用户可见的最终自然 Markdown 正文。",
-    "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。"
+    "请基于以上上下文直接输出用户可见的最终自然 Markdown 正文。",
+    "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。",
+    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
   ].join("\n");
 }
 
@@ -1108,19 +1155,23 @@ async function collectDoubaoSseCompletion(input: {
     }
 
     if (!accumulator.done && accumulator.finishReason !== "stop") {
-      throw new DoubaoIngestError(
-        "DOUBAO_RESPONSE_PARSE_FAILED",
-        "豆包流式返回提前结束，未保存不完整正文。",
-        {
-          receivedContent: accumulator.content.length > 0,
-          receivedReasoning: accumulator.reasoningChars > 0,
-          reasoningChars: accumulator.reasoningChars,
-          parseStage: "stream_eof",
-          finishReason: accumulator.finishReason,
-          eventCount: accumulator.eventCount,
-          receivedChars: accumulator.content.length
-        }
-      );
+      if (accumulator.content.trim() && accumulator.model) {
+        accumulator.finishReason = accumulator.finishReason || "length";
+      } else {
+        throw new DoubaoIngestError(
+          "DOUBAO_RESPONSE_PARSE_FAILED",
+          "豆包流式返回提前结束，未保存不完整正文。",
+          {
+            receivedContent: accumulator.content.length > 0,
+            receivedReasoning: accumulator.reasoningChars > 0,
+            reasoningChars: accumulator.reasoningChars,
+            parseStage: "stream_eof",
+            finishReason: accumulator.finishReason,
+            eventCount: accumulator.eventCount,
+            receivedChars: accumulator.content.length
+          }
+        );
+      }
     }
 
     if (!accumulator.model) {
@@ -1139,26 +1190,38 @@ async function collectDoubaoSseCompletion(input: {
       );
     }
   } catch (error) {
-    if (
+    const abortReason = input.controller.signal.reason;
+    const timeoutError = error instanceof DoubaoIngestError && error.code === "DOUBAO_TIMEOUT"
+      ? error
+      : abortReason instanceof DoubaoIngestError && abortReason.code === "DOUBAO_TIMEOUT"
+        ? abortReason
+        : null;
+    const timeoutWithVisibleBody = Boolean(timeoutError)
+      && Boolean(accumulator.content.trim())
+      && Boolean(accumulator.model);
+
+    if (timeoutWithVisibleBody) {
+      accumulator.finishReason = accumulator.finishReason || "length";
+    } else if (
       error instanceof DoubaoIngestError
       || (error && typeof error === "object" && (error as { name?: string }).name === "AbortError")
     ) {
       throw error;
+    } else {
+      throw new DoubaoIngestError(
+        "DOUBAO_REQUEST_FAILED",
+        "豆包流式连接中断，请重新尝试。",
+        {
+          receivedContent: accumulator.content.length > 0,
+          receivedReasoning: accumulator.reasoningChars > 0,
+          reasoningChars: accumulator.reasoningChars,
+          parseStage: "stream_eof",
+          finishReason: accumulator.finishReason,
+          eventCount: accumulator.eventCount,
+          receivedChars: accumulator.content.length
+        }
+      );
     }
-
-    throw new DoubaoIngestError(
-      "DOUBAO_REQUEST_FAILED",
-      "豆包流式连接中断，请重新尝试。",
-      {
-        receivedContent: accumulator.content.length > 0,
-        receivedReasoning: accumulator.reasoningChars > 0,
-        reasoningChars: accumulator.reasoningChars,
-        parseStage: "stream_eof",
-        finishReason: accumulator.finishReason,
-        eventCount: accumulator.eventCount,
-        receivedChars: accumulator.content.length
-      }
-    );
   } finally {
     try {
       // Abort is the authoritative transport cancellation. Some mocked or
@@ -1392,7 +1455,7 @@ async function callDoubaoChatCompletions(input: {
         ]
       : [])
   ];
-  const thinkingPhase = input.phase === "visible" || input.phase === "continuation"
+  const reasoningPhase = input.phase === "visible" || input.phase === "continuation"
     ? input.phase
     : null;
   let retryCount = 0;
@@ -1410,15 +1473,15 @@ async function callDoubaoChatCompletions(input: {
           model: input.model,
           messages,
           temperature: input.temperature ?? 0.7,
-          maxTokens: input.maxTokens ?? 6000,
+          maxTokens: input.maxTokens ?? DEFAULT_VISIBLE_MAX_TOKENS,
           signal: input.signal,
-          enableThinking: thinkingPhase !== null,
+          enableThinking: false,
           visiblePrefix: input.visiblePrefix,
-          onReasoningActivity: thinkingPhase
+          onReasoningActivity: reasoningPhase
             ? (event) => {
                 input.onProgressEvent?.({
                   type: "reasoning_activity",
-                  phase: thinkingPhase,
+                  phase: reasoningPhase,
                   ...event
                 });
               }
@@ -1849,9 +1912,7 @@ async function runDoubaoVisiblePhase(input: {
 }) {
   const systemPrompt = buildDoubaoVisibleSystemPrompt();
   const userPrompt = buildDoubaoVisibleUserPrompt(input.ingestInput, input.gptOS);
-  const responses = [];
-  let replyMarkdown = "";
-  let response = await callDoubaoChatCompletions({
+  const response = await callDoubaoChatCompletions({
     chatCompletionsUrl: input.config.chatCompletionsUrl,
     apiKey: input.config.apiKey,
     model: input.config.model,
@@ -1861,79 +1922,37 @@ async function runDoubaoVisiblePhase(input: {
     phase: "visible",
     visiblePrefix: "",
     onProgressEvent: input.ingestInput.onProgressEvent,
-    maxTokens: 6000
+    maxTokens: DEFAULT_VISIBLE_MAX_TOKENS
   });
-  responses.push(response);
-  replyMarkdown += response.text;
+  const replyMarkdown = response.text;
+  const truncated = response.finishReason === "length";
 
-  for (let continuation = 0; response.finishReason === "length" && continuation < 2; continuation += 1) {
-    if (!replyMarkdown.trim()) {
-      break;
-    }
-
-    const nextResponse = await callDoubaoChatCompletions({
-      chatCompletionsUrl: input.config.chatCompletionsUrl,
-      apiKey: input.config.apiKey,
-      model: input.config.model,
-      systemPrompt,
-      userPrompt,
-      assistantPrefix: replyMarkdown.length > 12_000
-        ? replyMarkdown.slice(-MAX_CONTINUATION_PREFIX_CHARS)
-        : replyMarkdown,
-      continuationInstruction: replyMarkdown.length > 12_000
-        ? "你收到的是已生成正文的最后一段衔接内容。上一段 Markdown 因输出长度结束，请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。"
-        : "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
-      signal: input.signal,
-      phase: "continuation",
-      visiblePrefix: replyMarkdown,
-      onProgressEvent: input.ingestInput.onProgressEvent,
-      maxTokens: 4000
-    });
-
-    if (nextResponse.model !== response.model) {
-      throw new DoubaoIngestError(
-        "DOUBAO_RESPONSE_PARSE_FAILED",
-        "豆包续写返回的模型标识不一致。",
-        {
-          receivedContent: true,
-          parseStage: "model_identity",
-          receivedChars: replyMarkdown.length
-        }
-      );
-    }
-
-    replyMarkdown += nextResponse.text;
-    response = nextResponse;
-    responses.push(nextResponse);
-  }
-
-  if (!replyMarkdown.trim() || response.finishReason === "length") {
+  if (!replyMarkdown.trim()) {
     throw new DoubaoIngestError(
       "DOUBAO_RESPONSE_PARSE_FAILED",
-      response.finishReason === "length"
-        ? "豆包正文达到长度上限，已使用同模型续写但仍未完整结束。"
-        : "豆包未返回可见正文。",
+      "豆包未返回可见正文。",
       {
-        receivedContent: Boolean(replyMarkdown),
-        parseStage: response.finishReason === "length" ? "finish_reason" : "reply_json",
+        receivedContent: false,
+        parseStage: "reply_json",
         finishReason: response.finishReason,
-        receivedChars: replyMarkdown.length
+        receivedChars: 0
       }
     );
   }
 
   return {
-    primary: responses[0],
+    primary: response,
     final: response,
     replyMarkdown,
-    continuationCount: responses.length - 1,
-    usage: mergeDoubaoUsage(...responses.map((item) => item.usage)),
-    responseLatency: responses.reduce((total, item) => total + item.responseLatency, 0),
-    retryCount: responses.reduce((total, item) => total + item.retryCount, 0),
-    reasoningChars: responses.reduce((total, item) => total + item.reasoningChars, 0),
-    firstReasoningLatencyMs: responses[0]?.firstReasoningLatencyMs,
-    firstContentLatencyMs: responses[0]?.firstContentLatencyMs,
-    streamEventCount: responses.reduce((total, item) => total + item.streamEventCount, 0)
+    truncated,
+    continuationCount: 0,
+    usage: response.usage,
+    responseLatency: response.responseLatency,
+    retryCount: response.retryCount,
+    reasoningChars: response.reasoningChars,
+    firstReasoningLatencyMs: response.firstReasoningLatencyMs,
+    firstContentLatencyMs: response.firstContentLatencyMs,
+    streamEventCount: response.streamEventCount
   };
 }
 
@@ -1955,7 +1974,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
 
   const timeout = setTimeout(() => {
     hardTimeoutReached = true;
-    controller.abort();
+    controller.abort(makeDoubaoTimeoutError("hard", false));
   }, hardMs);
   const startedAt = Date.now();
 
@@ -1985,7 +2004,8 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       replyMarkdown,
       model: response.model,
       responseId: response.responseId,
-      metadataPending: true
+      metadataPending: true,
+      truncated: visiblePhase.truncated === true
     });
     input.onProgressEvent?.({
       type: "metadata_status",
@@ -2165,7 +2185,8 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:responseLatency:${visiblePhase.responseLatency + (metadataResponse?.responseLatency ?? 0)}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
-        "doubao:thinkingEnabled:true",
+        "doubao:thinkingEnabled:false",
+        `doubao:visibleTruncated:${visiblePhase.truncated ? "true" : "false"}`,
         "doubao:visiblePromptProfile:focused-v1",
         `doubao:reasoningActivityChars:${visiblePhase.reasoningChars}`,
         `doubao:firstReasoningLatencyMs:${visiblePhase.firstReasoningLatencyMs ?? -1}`,

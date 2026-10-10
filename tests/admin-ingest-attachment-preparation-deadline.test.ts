@@ -26,7 +26,7 @@ const flush = async () => { for (let index = 0; index < 12; index += 1) await Pr
 
 async function main() {
   const source = await readFile("components/enterprise-admin/IngestModeToggle.tsx", "utf8");
-  assert.match(source, /maxWaitAfterPersistMs: attachmentProvider === "doubao-pro"\s*\? ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS\s*: undefined/);
+  assert.match(source, /maxWaitAfterPersistMs: shouldOverlapAttachmentParsing\s*\? ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS\s*: undefined/);
   assert.match(source, /attachmentPreparationDeadlineReached = preparation\.parseDeadlineReached/);
   assert.match(source, /const doubaoVisibleBudgetRemainingMs = attachmentPreparationDeadlineReached \? 0 : getAdminIngestRemainingVisibleBudgetMs/);
   const actualNow = Date.now;

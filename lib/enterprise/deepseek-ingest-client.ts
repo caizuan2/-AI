@@ -12,10 +12,12 @@ import {
   buildGptIngestBrainSystemPrompt,
   buildGptIngestBrainUserPrompt
 } from "@/lib/enterprise/gpt-ingest-brain-prompt";
-import type {
-  GptIngestKnowledgeContext,
-  GptIngestMemoryMessage,
-  GptIngestMemoryRecord
+import { ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS } from "@/lib/enterprise/admin-ingest-visible-prompt";
+import {
+  buildGptIngestMemoryPrompt,
+  type GptIngestKnowledgeContext,
+  type GptIngestMemoryMessage,
+  type GptIngestMemoryRecord
 } from "@/lib/enterprise/gpt-ingest-memory";
 import type {
   GptKnowledgeDraft,
@@ -82,6 +84,8 @@ export interface DeepSeekAdminIngestInput {
   autonomous?: AutonomousTaskRequest;
   requestId?: string;
   strictModelAffinity?: boolean;
+  /** Stop reading once replyMarkdown closes; the knowledge metadata is not needed. */
+  replyOnly?: boolean;
   signal?: AbortSignal;
   onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
 }
@@ -161,11 +165,12 @@ export class DeepSeekIngestError extends Error {
   }
 }
 
-const REQUEST_TIMEOUT_MS = 150_000;
+const REQUEST_TIMEOUT_MS = 55_000;
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = DEEPSEEK_PRO_MODEL_ID;
 const DEFAULT_MODEL_LABEL = "DeepSeek-V4-Pro";
-const DEFAULT_ADMIN_INGEST_MAX_TOKENS = 6_000;
+const DEFAULT_ADMIN_INGEST_MAX_TOKENS = 1_600;
+const DEEPSEEK_METADATA_FALLBACK_NOTE = "DeepSeek 原文正文已完整返回，但后台结构化元数据未完成；正文保留原样，知识草稿暂缓入库。";
 
 function readEnv(name: string) {
   return process.env[name]?.trim() ?? "";
@@ -259,6 +264,62 @@ function buildGptOSRouteInput(input: DeepSeekAdminIngestInput) {
   };
 }
 
+function buildDeepSeekVisibleSystemPrompt() {
+  return [
+    "你是“小董AI投喂端”当前管理员明确选择的 DeepSeek 模型。",
+    "## DeepSeek 专用可见正文协议",
+    "只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
+    "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
+    "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
+    "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
+    "准确保留管理员给出的事实，不要虚构经历、承诺结果或声称已执行外部动作。",
+    "直接回答本轮问题；可按需要给出判断、引导思路、执行步骤和自然话术，但不要机械套固定模板。",
+    "如果适合直接发给客户或沟通对象，可以给出“可直接复制”的自然话术。",
+    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
+  ].join("\n");
+}
+
+function buildDeepSeekVisibleUserPrompt(input: DeepSeekAdminIngestInput, gptOS?: GptOSRouteResult) {
+  return [
+    buildGptIngestMemoryPrompt({
+      currentInput: input.input,
+      currentAgent: {
+        agentId: input.agentId,
+        expertId: input.expertId,
+        agentName: input.agentName,
+        category: input.category,
+        description: input.agentDescription,
+        targetUser: input.targetUser
+      },
+      recentMessages: input.recentMessages,
+      contextSummary: input.contextSummary,
+      memoryContextText: input.memoryContextText,
+      agentLearningInstruction: input.agentLearningInstruction,
+      usedMemoryIds: input.usedMemoryIds,
+      knowledgeContexts: input.knowledgeContexts,
+      uploadedAttachments: input.attachments,
+      previousKnowledgeDrafts: input.previousKnowledgeDrafts,
+      recentTrainingRecords: input.recentTrainingRecords,
+      selectedModelLabel: input.selectedModelLabel || input.modelDisplayName || input.preferredModel,
+      platform: input.platform,
+      syncTarget: input.syncTarget
+    }),
+    "",
+    "## 本轮私有任务信号",
+    `intent: ${gptOS?.planner.intent || "general"}`,
+    `complexity: ${gptOS?.planner.complexity || "medium"}`,
+    `selectedAgent: ${gptOS?.selectedAgent.label || input.agentName || "当前 Agent"}`,
+    "",
+    "## 本次管理员问题",
+    input.input,
+    "",
+    "## 唯一输出",
+    "请基于以上上下文直接输出用户可见的最终自然 Markdown 正文。",
+    "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。",
+    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
+  ].join("\n");
+}
+
 function buildUserPrompt(input: DeepSeekAdminIngestInput, gptOS?: GptOSRouteResult) {
   return buildGptIngestBrainUserPrompt({
     currentInput: input.input,
@@ -301,6 +362,12 @@ function normalizeDeepSeekResponseError(status: number) {
   return new DeepSeekIngestError("DEEPSEEK_REQUEST_FAILED", "AI暂时不稳定，请稍后再试。");
 }
 
+type DeepSeekReplyClosedEvent = {
+  replyMarkdown: string;
+  model: string;
+  responseId: string;
+};
+
 async function callDeepSeekChatCompletions(input: {
   provider: "deepseek-pro" | "deepseek-flash";
   chatCompletionsUrl: string;
@@ -311,6 +378,9 @@ async function callDeepSeekChatCompletions(input: {
   signal: AbortSignal;
   requestId?: string;
   onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
+  onReplyClosed?: (event: DeepSeekReplyClosedEvent) => void;
+  stopAfterReply?: boolean;
+  allowPartialAfterReply?: () => boolean;
 }) {
   const stream = Boolean(input.onProgressEvent);
   const requestStartedAt = Date.now();
@@ -345,7 +415,10 @@ async function callDeepSeekChatCompletions(input: {
         signal: input.signal,
         requestId: input.requestId,
         requestStartedAt,
-        onProgressEvent: input.onProgressEvent
+        onProgressEvent: input.onProgressEvent,
+        onReplyClosed: input.onReplyClosed,
+        stopAfterReply: input.stopAfterReply,
+        allowPartialAfterReply: input.allowPartialAfterReply
       })
     : null;
   const bodyText = streamResult?.bodyText ?? await response.text();
@@ -361,6 +434,8 @@ async function callDeepSeekChatCompletions(input: {
   return {
     ...parseDeepSeekPayload(bodyText, input.model),
     streamedReplyMarkdown: streamResult?.replyMarkdown ?? null,
+    closedReplyMarkdown: streamResult?.closedReplyMarkdown ?? null,
+    stoppedAfterReply: streamResult?.stoppedAfterReply === true,
     streamTimings: streamResult?.timings ?? null,
     streamDiagnostics: streamResult?.diagnostics ?? null,
     retryCount: call.retryCount,
@@ -376,6 +451,9 @@ async function readDeepSeekChatCompletionStream(input: {
   requestId?: string;
   requestStartedAt: number;
   onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
+  onReplyClosed?: (event: DeepSeekReplyClosedEvent) => void;
+  stopAfterReply?: boolean;
+  allowPartialAfterReply?: () => boolean;
 }) {
   const reader = input.response.body?.getReader();
 
@@ -398,6 +476,8 @@ async function readDeepSeekChatCompletionStream(input: {
   let firstReasoningAt: number | null = null;
   let firstContentAt: number | null = null;
   let firstVisibleAt: number | null = null;
+  let replyClosedAt: number | null = null;
+  let stoppedAfterReply = false;
   let eventCount = 0;
 
   const buildFailureDetails = (parseStage: "sse_event" | "stream_eof") => ({
@@ -473,13 +553,37 @@ async function readDeepSeekChatCompletionStream(input: {
       if (contentDelta) {
         firstContentAt ??= Date.now();
         rawText += contentDelta;
-        const visible = projector.push(contentDelta);
+        const structuredCandidate = looksLikeAdminIngestStructuredReply(rawText);
 
-        if (visible) {
+        if (structuredCandidate) {
+          const visible = projector.push(contentDelta);
+
+          if (visible) {
+            firstVisibleAt ??= Date.now();
+            input.onProgressEvent?.({
+              type: "visible_delta",
+              ...visible,
+              model: actualModel,
+              responseId: responseId || undefined
+            });
+          }
+
+          const closedReply = projector.closedReplyMarkdown();
+
+          if (replyClosedAt === null && closedReply?.trim()) {
+            replyClosedAt = Date.now();
+            input.onReplyClosed?.({
+              replyMarkdown: closedReply,
+              model: actualModel,
+              responseId
+            });
+          }
+        } else {
           firstVisibleAt ??= Date.now();
           input.onProgressEvent?.({
             type: "visible_delta",
-            ...visible,
+            delta: contentDelta,
+            replyMarkdown: rawText,
             model: actualModel,
             responseId: responseId || undefined
           });
@@ -514,43 +618,93 @@ async function readDeepSeekChatCompletionStream(input: {
         buffer = "";
         break;
       }
+
+      if (input.stopAfterReply && replyClosedAt !== null) {
+        stoppedAfterReply = true;
+        await reader.cancel("DeepSeek reply closed");
+        buffer = "";
+        break;
+      }
     }
 
     if (buffer.trim()) {
       parseBlock(buffer);
     }
   } catch (error) {
-    try {
-      await reader.cancel(error instanceof Error ? error.message : "DeepSeek stream failed");
-    } catch {
-      // The provider may already have closed the stream. Preserve the original error.
+    const isAbort = Boolean(
+      error
+      && typeof error === "object"
+      && (error as { name?: unknown }).name === "AbortError"
+    );
+
+    const markdownVisible = !looksLikeAdminIngestStructuredReply(rawText) && rawText.trim();
+    const partialVisible = projector.closedReplyMarkdown()
+      || projector.current()
+      || (markdownVisible ? rawText : "");
+    if (!(isAbort && partialVisible.trim() && input.allowPartialAfterReply?.() === true)) {
+      try {
+        await reader.cancel(error instanceof Error ? error.message : "DeepSeek stream failed");
+      } catch {
+        // The provider may already have closed the stream. Preserve the original error.
+      }
+
+      const details = error instanceof DeepSeekIngestError && error.details
+        ? error.details
+        : buildFailureDetails("stream_eof");
+      logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
+        requestId: input.requestId,
+        model: actualModel,
+        code: error instanceof DeepSeekIngestError ? error.code : "DEEPSEEK_RESPONSE_PARSE_FAILED",
+        ...details
+      });
+      if (isAbort) {
+        throw error;
+      }
+      throw error instanceof DeepSeekIngestError
+        ? error
+        : new DeepSeekIngestError(
+            "DEEPSEEK_RESPONSE_PARSE_FAILED",
+            "DeepSeek 流式返回读取失败。",
+            details
+          );
     }
 
-    const details = error instanceof DeepSeekIngestError && error.details
-      ? error.details
-      : buildFailureDetails("stream_eof");
-    logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
-      requestId: input.requestId,
-      model: actualModel,
-      code: error instanceof DeepSeekIngestError ? error.code : "DEEPSEEK_RESPONSE_PARSE_FAILED",
-      ...details
-    });
-    if (error && typeof error === "object" && (error as { name?: unknown }).name === "AbortError") {
-      throw error;
+    // The deadline expired while only metadata was still streaming; keep the closed reply.
+    stoppedAfterReply = true;
+    buffer = "";
+    if (replyClosedAt === null && partialVisible.trim()) {
+      replyClosedAt = Date.now();
+      input.onReplyClosed?.({
+        replyMarkdown: partialVisible,
+        model: actualModel,
+        responseId
+      });
     }
-    throw error instanceof DeepSeekIngestError
-      ? error
-      : new DeepSeekIngestError(
-          "DEEPSEEK_RESPONSE_PARSE_FAILED",
-          "DeepSeek 流式返回读取失败。",
-          details
-        );
+
+    try {
+      await reader.cancel("DeepSeek metadata deadline reached");
+    } catch {
+      // The aborted provider stream is usually already closed.
+    }
   } finally {
     try {
       reader.releaseLock();
     } catch {
       // The reader can already be released after abort or EOF.
     }
+  }
+
+  if (
+    replyClosedAt === null
+    && !looksLikeAdminIngestStructuredReply(rawText)
+    && rawText.trim()
+  ) {
+    replyClosedAt = Date.now();
+    input.onReplyClosed?.({
+      replyMarkdown: rawText,
+      model: actualModel,
+      responseId
+    });
   }
 
   if (!rawText.trim()) {
@@ -581,6 +735,9 @@ async function readDeepSeekChatCompletionStream(input: {
     projectionDelayMs: firstContentAt === null || firstVisibleAt === null
       ? null
       : firstVisibleAt - firstContentAt,
+    replyClosedLatencyMs: replyClosedAt === null
+      ? null
+      : replyClosedAt - input.requestStartedAt,
     streamCompletedLatencyMs: completedAt - input.requestStartedAt,
     reasoningChars
   };
@@ -588,6 +745,7 @@ async function readDeepSeekChatCompletionStream(input: {
   logger.info("enterprise_admin_ingest.deepseek_stream_latency", {
     requestId: input.requestId,
     model: actualModel,
+    stoppedAfterReply,
     ...timings
   });
 
@@ -602,7 +760,10 @@ async function readDeepSeekChatCompletionStream(input: {
       }],
       usage
     }),
-    replyMarkdown: projector.current(),
+    replyMarkdown: projector.current() || (!looksLikeAdminIngestStructuredReply(rawText) ? rawText : ""),
+    closedReplyMarkdown: projector.closedReplyMarkdown()
+      || (!looksLikeAdminIngestStructuredReply(rawText) && rawText.trim() ? rawText : null),
+    stoppedAfterReply,
     timings,
     diagnostics: {
       finishReason: finishReason || undefined,
@@ -678,10 +839,48 @@ function buildMissingReplyQuality(rawText: string, userInput: string) {
   };
 }
 
+function withDeepSeekMetadataFallback(
+  normalized: ReturnType<typeof normalizeGptOutput>,
+  replyMarkdown: string
+) {
+  const knowledgeDraft: GptKnowledgeDraft = {
+    ...normalized.knowledgeDraft,
+    standardAnswer: replyMarkdown,
+    standardAnswers: [replyMarkdown],
+    complianceNotes: Array.from(new Set([
+      ...(normalized.knowledgeDraft.complianceNotes ?? []),
+      DEEPSEEK_METADATA_FALLBACK_NOTE
+    ])),
+    missingFields: Array.from(new Set([
+      ...normalized.knowledgeDraft.missingFields,
+      DEEPSEEK_METADATA_FALLBACK_NOTE
+    ])),
+    trainingScore: Math.min(normalized.knowledgeDraft.trainingScore, 60),
+    saveRecommendation: "暂缓入库"
+  };
+  const structured: GptStructuredKnowledge = {
+    ...normalized.structured,
+    answer: replyMarkdown,
+    confidence: Math.min(normalized.structured.confidence, 60),
+    saveSuggestion: false
+  };
+
+  return {
+    ...normalized,
+    knowledgeDraft,
+    structured,
+    saveRecommendation: knowledgeDraft.saveRecommendation
+  };
+}
+
 export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): Promise<DeepSeekAdminIngestResult> {
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(input.signal?.reason);
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let hardTimeoutReached = false;
+  const timeout = setTimeout(() => {
+    hardTimeoutReached = true;
+    controller.abort();
+  }, REQUEST_TIMEOUT_MS);
   const startedAt = Date.now();
 
   if (input.signal?.aborted) {
@@ -693,9 +892,13 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
   try {
     const resolved = resolveDeepSeekConfig(input);
     const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
-    const systemPrompt = buildGptIngestBrainSystemPrompt();
-    const userPrompt = buildUserPrompt(input, gptOS);
     const preserveRawReply = input.strictModelAffinity === true;
+    const systemPrompt = preserveRawReply
+      ? buildDeepSeekVisibleSystemPrompt()
+      : buildGptIngestBrainSystemPrompt();
+    const userPrompt = preserveRawReply
+      ? buildDeepSeekVisibleUserPrompt(input, gptOS)
+      : buildUserPrompt(input, gptOS);
     // Streaming is a transport optimization for strict original-body requests.
     // Non-strict requests keep the existing quality/deepening semantics.
     const progressEvent = preserveRawReply ? input.onProgressEvent : undefined;
@@ -712,6 +915,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       memoryContextChars: input.memoryContextText?.length ?? 0
     });
 
+    let visibleReplyEmitted = false;
     let response = await callDeepSeekChatCompletions({
       provider: resolved.provider,
       chatCompletionsUrl: resolved.chatCompletionsUrl,
@@ -721,15 +925,36 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       userPrompt,
       signal: controller.signal,
       requestId: input.requestId,
-      onProgressEvent: progressEvent
+      onProgressEvent: progressEvent,
+      onReplyClosed: progressEvent
+        ? (closed) => {
+            visibleReplyEmitted = true;
+            progressEvent({
+              type: "visible_reply",
+              replyMarkdown: closed.replyMarkdown,
+              model: closed.model,
+              responseId: closed.responseId,
+              metadataPending: true
+            });
+          }
+        : undefined,
+      stopAfterReply: preserveRawReply && input.replyOnly === true,
+      allowPartialAfterReply: () => hardTimeoutReached
     });
     const completeStructuredReplyMarkdown = preserveRawReply
       ? extractCompleteAdminIngestReplyMarkdown(response.text)
       : "";
+    const closedStreamReplyMarkdown = preserveRawReply
+      ? response.closedReplyMarkdown ?? ""
+      : "";
+    const metadataMissing = preserveRawReply
+      && !completeStructuredReplyMarkdown
+      && Boolean(closedStreamReplyMarkdown.trim());
     const structuredReplyCandidate = preserveRawReply
       && looksLikeAdminIngestStructuredReply(response.text);
     let rawReplyMarkdown = preserveRawReply
       ? completeStructuredReplyMarkdown
+        || (metadataMissing ? closedStreamReplyMarkdown : "")
         || (structuredReplyCandidate ? "" : extractRawGptReplyMarkdown(response.text))
       : "";
 
@@ -781,12 +1006,19 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     let qualitySoftAccepted = false;
 
     try {
-      normalized = normalizeGptOutput({
-        rawText: response.text,
-        originalInput: input.input,
-        fallbackCategory: input.category ?? "",
-        strictReply: true
-      });
+      normalized = metadataMissing
+        ? withDeepSeekMetadataFallback(normalizeGptOutput({
+            rawText: JSON.stringify({ replyMarkdown: rawReplyMarkdown }),
+            originalInput: input.input,
+            fallbackCategory: input.category ?? "",
+            strictReply: true
+          }), rawReplyMarkdown)
+        : normalizeGptOutput({
+            rawText: response.text,
+            originalInput: input.input,
+            fallbackCategory: input.category ?? "",
+            strictReply: true
+          });
       quality = assessGptProResponseQuality(preserveRawReply ? rawReplyMarkdown : normalized.replyMarkdown, {
         userInput: input.input
       });
@@ -886,7 +1118,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       });
     }
 
-    if (progressEvent) {
+    if (progressEvent && !visibleReplyEmitted) {
       progressEvent({
         type: "visible_reply",
         replyMarkdown: rawReplyMarkdown,
@@ -928,6 +1160,9 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       outputTokens: response.usage.outputTokens,
       promptCacheHitTokens: response.promptCacheHitTokens,
       promptCacheMissTokens: response.promptCacheMissTokens,
+      replyClosedLatencyMs: response.streamTimings?.replyClosedLatencyMs ?? null,
+      metadataCompleted: !metadataMissing,
+      stoppedAfterReply: response.stoppedAfterReply,
       replySha256,
       deepenAttempts
     });
@@ -971,12 +1206,16 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         `apiResilience:fallbackUsed:false`,
         `apiResilience:qualitySoftAccepted:${qualitySoftAccepted ? "true" : "false"}`,
         `deepseek:replyMarkdownPassthrough:${preserveRawReply ? "true" : "false"}`,
+        `deepseek:visibleMarkdownProtocol:${preserveRawReply ? "true" : "false"}`,
         `deepseek:firstProviderEventLatencyMs:${response.streamTimings?.firstProviderEventLatencyMs ?? -1}`,
         `deepseek:firstReasoningLatencyMs:${response.streamTimings?.firstReasoningLatencyMs ?? -1}`,
         `deepseek:firstContentLatencyMs:${response.streamTimings?.firstContentLatencyMs ?? -1}`,
         `deepseek:firstVisibleLatencyMs:${response.streamTimings?.firstVisibleLatencyMs ?? -1}`,
         `deepseek:projectionDelayMs:${response.streamTimings?.projectionDelayMs ?? -1}`,
+        `deepseek:replyClosedLatencyMs:${response.streamTimings?.replyClosedLatencyMs ?? -1}`,
         `deepseek:streamCompletedLatencyMs:${response.streamTimings?.streamCompletedLatencyMs ?? -1}`,
+        `deepseek:metadataCompleted:${metadataMissing ? "false" : "true"}`,
+        `deepseek:stoppedAfterReply:${response.stoppedAfterReply ? "true" : "false"}`,
         `deepseek:reasoningChars:${response.streamTimings?.reasoningChars ?? 0}`,
         `deepseek:promptCacheHitTokens:${response.promptCacheHitTokens ?? -1}`,
         `deepseek:promptCacheMissTokens:${response.promptCacheMissTokens ?? -1}`,

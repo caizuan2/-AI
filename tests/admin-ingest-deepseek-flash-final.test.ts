@@ -78,7 +78,7 @@ async function main() {
 
   assert.equal(requestedBody?.model, "deepseek-v4-flash", "Explicit provider identity must win over a misleading label.");
   assert.equal(requestedBody?.temperature, 0.7);
-  assert.equal(requestedBody?.max_tokens, 6000);
+  assert.equal(requestedBody?.max_tokens, 1600);
   assert.equal(requestedBody?.reasoning_effort, undefined);
   assert.equal(requestedBody?.thinking, undefined);
   assert.equal(requestedBody?.stream, true);
