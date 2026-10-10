@@ -138,7 +138,7 @@ async function checkIncompleteMetadata() {
     const result = await runAdminIngestWithSelectedModel({ ...baseInput, modelProvider: "doubao-pro", replyOnly: false, deferMetadata: false, onProgressEvent: (event) => events.push(event) });
     assert.equal(result.replyMarkdown, exactReply, "A completed body survives an incomplete metadata phase.");
     assert.notEqual(result.saveRecommendation, "可以入库");
-    assert.equal(result.structured.shouldSave, false);
+    assert.equal(result.structured.saveSuggestion, false);
     assert.ok(events.some((event) => event.type === "metadata_status" && event.state === "deferred"));
     assert.equal(events.some((event) => event.type === "metadata_status" && event.state === "completed"), false);
   }
