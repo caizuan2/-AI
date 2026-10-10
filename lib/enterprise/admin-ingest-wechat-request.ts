@@ -21,8 +21,9 @@ export function hasAdminIngestWechatConversationAttachment(
 }
 
 export function shouldRetryAdminIngestWechatModelTimeout(
-  _input: AdminIngestWechatRetryInput
+  input: AdminIngestWechatRetryInput
 ) {
+  void input;
   return false;
 }
 
