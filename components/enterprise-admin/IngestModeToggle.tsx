@@ -5201,6 +5201,7 @@ export function IngestModeToggle({
     };
 
     // Visible original SLO is 60s, anchored after image persistence so parse cannot add a fresh minute.
+    let latestModelRequestStartedAt = Date.now();
     const doubaoVisibleBudgetRemainingMs = attachmentPreparationDeadlineReached ? 0 : getAdminIngestRemainingVisibleBudgetMs({
       provider: requestModelOption.provider,
       budgetMs: ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
@@ -5501,7 +5502,6 @@ export function IngestModeToggle({
 
       let attempt = 0;
       let result: IngestActionResult;
-      let latestModelRequestStartedAt = Date.now();
 
       while (true) {
         try {
