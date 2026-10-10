@@ -1,9 +1,9 @@
 {
-  "version": "1.0.42",
-  "build": 142,
-  "minimum_build": 142,
+  "version": "1.0.43",
+  "build": 143,
+  "minimum_build": 143,
   "force_update": true,
-  "release_tag": "release/admin-ingest-1.0.42-build.142",
+  "release_tag": "release/admin-ingest-1.0.43-build.143",
   "web_url": "http://47.238.0.23/admin-ingest?app=ingest-admin&platform=web",
   "apk_asset": "admin-ingest.apk",
   "exe_asset": "admin-ingest.exe",
@@ -14,6 +14,6 @@
     "投喂端原文在 60 秒内交卷，可见阶段不再无限思考和续写",
     "DeepSeek 与豆包超时后交卷已经生成的正文，不再因等待元数据拖住原文",
     "用户端、超级管理员、登录卡密与数据库结构保持不变",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.42 Build 142"
+    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.43 Build 143"
   ]
 }
