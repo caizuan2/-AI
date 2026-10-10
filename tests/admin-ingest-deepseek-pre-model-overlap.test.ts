@@ -102,28 +102,31 @@ async function main() {
     Date.now = actualNow;
   }
 
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 180_000, imagePersistCompletedAt: 1_030, now: 61_030 }), 120_000);
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 180_000, imagePersistCompletedAt: 1_030, now: 181_030 }), 0);
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 180_000, imagePersistCompletedAt: 1_030, now: 201_030 }), 0);
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 180_000, imagePersistCompletedAt: null, now: 201_030 }), 180_000);
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "deepseek-pro", budgetMs: 180_000, imagePersistCompletedAt: 1_030, now: 201_030 }), 180_000);
-  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "deepseek-flash", budgetMs: 180_000, imagePersistCompletedAt: 1_030, now: 201_030 }), 180_000);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 60_000, imagePersistCompletedAt: 1_030, now: 11_030 }), 50_000);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 60_000, imagePersistCompletedAt: 1_030, now: 61_030 }), 0);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 60_000, imagePersistCompletedAt: 1_030, now: 81_030 }), 0);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "doubao-pro", budgetMs: 60_000, imagePersistCompletedAt: null, now: 81_030 }), 60_000);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "deepseek-pro", budgetMs: 60_000, imagePersistCompletedAt: 1_030, now: 81_030 }), 0);
+  assert.equal(getAdminIngestRemainingVisibleBudgetMs({ provider: "deepseek-flash", budgetMs: 60_000, imagePersistCompletedAt: 1_030, now: 81_030 }), 0);
 
-  const budgetGateStart = source.indexOf("      if (\n        shouldApplyAdminIngestDoubaoVisibleBudget", source.indexOf("const expireDoubaoVisibleBudget"));
-  const budgetGateEnd = source.indexOf("      if (composerUploads.length > 0)", budgetGateStart);
-  assert.ok(budgetGateStart > 0 && budgetGateEnd > budgetGateStart);
-  const budgetGate = new Function("shouldApplyAdminIngestDoubaoVisibleBudget", "requestModelOption", "doubaoVisibleBudgetRemainingMs", "expireDoubaoVisibleBudget", "createAdminIngestDoubaoVisibleTimeoutError", "currentModelLabel", "invokeModel", `${source.slice(budgetGateStart, budgetGateEnd)} return invokeModel();`);
+  const expireIdx = source.indexOf("const expireDoubaoVisibleBudget");
+  const remainingZeroIdx = source.indexOf("doubaoVisibleBudgetRemainingMs === 0", expireIdx);
+  const budgetGateStart = source.lastIndexOf("if (", remainingZeroIdx);
+  const budgetGateEnd = source.indexOf("if (composerUploads.length > 0)", remainingZeroIdx);
+  assert.ok(expireIdx > 0 && budgetGateStart > expireIdx && budgetGateEnd > budgetGateStart);
+  const budgetGate = new Function("shouldApplyAdminIngestVisibleBudget", "requestModelOption", "doubaoVisibleBudgetRemainingMs", "expireDoubaoVisibleBudget", "createAdminIngestDoubaoVisibleTimeoutError", "currentModelLabel", "invokeModel", `${source.slice(budgetGateStart, budgetGateEnd)} return invokeModel();`);
   let modelCalls = 0;
   let expiredCalls = 0;
   const runBudgetGate = (provider: string, remaining: number) => budgetGate(
-    (value: string) => value === "doubao-pro", { provider }, remaining,
+    (value: string) => value === "doubao-pro" || value === "deepseek-pro" || value === "deepseek-flash", { provider }, remaining,
     () => { expiredCalls += 1; }, () => new Error("existing timeout card"), "selected model", () => { modelCalls += 1; }
   );
   assert.throws(() => runBudgetGate("doubao-pro", 0), /existing timeout card/);
   assert.equal(expiredCalls, 1);
   assert.equal(modelCalls, 0, "expired preparation must never call the model");
-  runBudgetGate("doubao-pro", 120_000);
-  runBudgetGate("deepseek-pro", 0);
+  runBudgetGate("doubao-pro", 50_000);
+  assert.throws(() => runBudgetGate("deepseek-pro", 0), /existing timeout card/);
+  runBudgetGate("deepseek-flash", 50_000);
   assert.equal(modelCalls, 2);
   assert.match(source, /window\.setTimeout\(\s*expireDoubaoVisibleBudget,\s*doubaoVisibleBudgetRemainingMs\s*\)/);
 

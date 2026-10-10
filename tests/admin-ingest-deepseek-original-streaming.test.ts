@@ -135,7 +135,10 @@ async function main() {
 
     assert.equal(requestBody.model, "deepseek-v4-pro");
     assert.equal(requestBody.temperature, 0.7, "Streaming must not change temperature.");
-    assert.equal(requestBody.max_tokens, 6000, "Streaming must not change the output token budget.");
+    assert.equal(requestBody.max_tokens, 1600, "Visible original output must stay inside the 60s token budget.");
+    const promptText = JSON.stringify(requestBody.messages ?? []);
+    assert.match(promptText, /请在 60 秒内给出可执行的完整答案/);
+    assert.doesNotMatch(promptText, /你必须返回一个 JSON 对象|replyMarkdown 严禁/);
     assert.equal(requestBody.reasoning_effort, undefined, "Control must preserve the provider default reasoning effort.");
     assert.equal(requestBody.stream, true);
 
@@ -148,6 +151,7 @@ async function main() {
   };
 
   const result = await runAdminIngestWithSelectedModel({
+    modelScope: "admin-ingest",
     input: "请根据固定知识给出完整原文正文",
     source: "admin_ingest",
     platform: "web",
@@ -269,7 +273,7 @@ async function main() {
   const providerSource = readFileSync("lib/enterprise/ingest-model-provider.ts", "utf8");
   const deepSeekSource = readFileSync("lib/enterprise/deepseek-ingest-client.ts", "utf8");
 
-  assert.match(providerSource, /runDeepSeekAdminIngest\(\{[\s\S]*?\.\.\.payload,\s*modelProvider: provider,\s*signal: providerSignal,\s*onProgressEvent: deepSeekProgressEvent/);
+  assert.match(providerSource, /runDeepSeekAdminIngest\(\{[\s\S]*?\.\.\.payload,\s*modelScope: input\.modelScope,\s*modelProvider: provider,\s*signal: providerSignal,\s*onProgressEvent: deepSeekProgressEvent/);
   assert.match(providerSource, /onProgressEvent: doubaoProgressEvent,\s*deferMetadata: deferDoubaoMetadata/);
   assert.match(deepSeekSource, /const progressEvent = preserveRawReply \? input\.onProgressEvent : undefined/);
   assert.doesNotMatch(deepSeekSource, /rawText \+= reasoningDelta|contentDelta \+= reasoningDelta/);

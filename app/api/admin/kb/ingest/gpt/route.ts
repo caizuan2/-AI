@@ -310,7 +310,8 @@ function createDoubaoBrowserSseResponse(input: {
             responseId: event.responseId,
             fallbackUsed: false,
             replyMarkdown: event.replyMarkdown,
-            metadataPending: true
+            metadataPending: true,
+            truncated: event.truncated === true
           });
           return;
         }
@@ -320,7 +321,8 @@ function createDoubaoBrowserSseResponse(input: {
             type: event.type,
             requestId: input.requestId,
             phase: event.phase,
-            queueDepth: event.queueDepth
+            queueDepth: event.queueDepth,
+            waitedMs: event.waitedMs
           });
           return;
         }
@@ -1787,7 +1789,8 @@ export async function POST(request: Request) {
         groundingApplied: grounding.applied,
         groundingSourceCount: grounding.sources.length,
         memoryContextCount: publishedMemoryContext.usedMemoryIds.length,
-        recentMessageCount: input.recentMessages.length
+        recentMessageCount: input.recentMessages.length,
+        replyOnly: !hasFullIngestAccess
       });
     }
 
@@ -1804,12 +1807,14 @@ export async function POST(request: Request) {
         groundingApplied: grounding.applied,
         groundingSourceCount: grounding.sources.length,
         memoryContextCount: publishedMemoryContext.usedMemoryIds.length,
-        recentMessageCount: input.recentMessages.length
+        recentMessageCount: input.recentMessages.length,
+        replyOnly: !hasFullIngestAccess
       });
     }
 
     const result = await runAdminIngestWithSelectedModel({
       modelScope: "admin-ingest",
+      replyOnly: !hasFullIngestAccess,
       input: wechatGroundingRequest.modelInput,
       attachments: input.attachments,
       agentId: input.agentId,

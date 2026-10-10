@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import {
   ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS,
-  shouldApplyAdminIngestDoubaoVisibleBudget
+  ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS,
+  shouldApplyAdminIngestDoubaoVisibleBudget,
+  shouldApplyAdminIngestVisibleBudget
 } from "../lib/enterprise/admin-ingest-doubao-visible-budget";
 
 async function main() {
@@ -11,24 +13,36 @@ async function main() {
     browserRoute,
     ingestClient,
     modeToggle,
-    deepseekClient
+    deepseekClient,
+    visiblePrompt
   ] = await Promise.all([
     readFile("lib/enterprise/doubao-ingest-client.ts", "utf8"),
     readFile("app/api/admin/kb/ingest/gpt/route.ts", "utf8"),
     readFile("lib/enterprise/ingest-client.ts", "utf8"),
     readFile("components/enterprise-admin/IngestModeToggle.tsx", "utf8"),
-    readFile("lib/enterprise/deepseek-ingest-client.ts", "utf8")
+    readFile("lib/enterprise/deepseek-ingest-client.ts", "utf8"),
+    readFile("lib/enterprise/admin-ingest-visible-prompt.ts", "utf8")
   ]);
 
-  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 180_000);
+  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 60_000);
+  assert.equal(ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS, 60_000);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("doubao-pro"), true);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("deepseek-pro"), false);
+  assert.equal(shouldApplyAdminIngestVisibleBudget("doubao-pro"), true);
+  assert.equal(shouldApplyAdminIngestVisibleBudget("deepseek-pro"), true);
+  assert.equal(shouldApplyAdminIngestVisibleBudget("deepseek-flash"), true);
 
-  assert.match(doubaoClient, /thinking:\s*\{\s*type:\s*"enabled"/);
-  assert.match(doubaoClient, /reasoning_effort:\s*"low"/);
-  assert.match(doubaoClient, /max_completion_tokens:\s*payload\.maxTokens/);
+  assert.match(doubaoClient, /enableThinking:\s*input\.modelScope !== "admin-ingest" && reasoningPhase !== null/);
+  assert.match(doubaoClient, /DEFAULT_HARD_TIMEOUT_MS = 270_000/);
+  assert.match(doubaoClient, /ADMIN_INGEST_HARD_TIMEOUT_MS = 55_000/);
+  assert.match(doubaoClient, /DEFAULT_VISIBLE_MAX_TOKENS = 6_000/);
+  assert.match(doubaoClient, /ADMIN_INGEST_VISIBLE_MAX_TOKENS = 1_600/);
+  assert.match(doubaoClient, /DEFAULT_DOUBAO_CONCURRENCY = 1/);
+  assert.match(doubaoClient, /modelScope === "admin-ingest" \? 2 : DEFAULT_DOUBAO_CONCURRENCY/);
   assert.match(doubaoClient, /豆包专用可见正文协议/);
-  assert.match(doubaoClient, /不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
+  assert.match(doubaoClient, /ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS/);
+  assert.match(visiblePrompt, /请在 60 秒内给出可执行的完整答案/);
+  assert.match(doubaoClient, /modelScope === "admin-ingest" \? ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS : \[\s*"只输出最终自然 Markdown 正文[^\n]+\s*"答案应完整、专业、温和、可执行；不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容/);
   assert.doesNotMatch(
     doubaoClient,
     /buildGptIngestBrainSystemPrompt|buildGptIngestBrainUserPrompt/,
@@ -48,19 +62,24 @@ async function main() {
   );
   assert.match(browserRoute, /event\.type === "reasoning_activity"/);
   assert.match(ingestClient, /"reasoning_activity"/);
-  assert.match(
-    modeToggle,
-    /豆包正在深度思考，最终正文将在生成后按原文显示/
-  );
+  assert.match(modeToggle, /已达到 \$\{doubaoVisibleBudgetSeconds\} 秒时限，本轮未形成完整正文/);
+  assert.doesNotMatch(modeToggle, /秒时限交卷原文/);
+  assert.match(modeToggle, /shouldApplyAdminIngestVisibleBudget\(requestModelOption\.provider\)/);
 
   assert.match(deepseekClient, /runDeepSeekAdminIngest/);
+  assert.match(deepseekClient, /buildDeepSeekVisibleSystemPrompt/);
+  assert.match(deepseekClient, /REQUEST_TIMEOUT_MS = 150_000/);
+  assert.match(deepseekClient, /ADMIN_INGEST_REQUEST_TIMEOUT_MS = 55_000/);
+  assert.match(deepseekClient, /DEFAULT_ADMIN_INGEST_MAX_TOKENS = 6_000/);
+  assert.match(deepseekClient, /ADMIN_INGEST_VISIBLE_MAX_TOKENS = 1_600/);
+  assert.match(deepseekClient, /const useVisibleSlo = input\.modelScope === "admin-ingest" && preserveRawReply/);
   assert.doesNotMatch(
     deepseekClient,
-    /reasoning_activity|doubao_stream_diagnostics|thinking:\s*\{\s*type:\s*"enabled"/,
-    "The DeepSeek request and response path must remain independent from this Doubao-only fix."
+    /thinking:\s*\{\s*type:\s*"enabled"/,
+    "The DeepSeek request must not enable Doubao-only thinking payloads."
   );
 
-  console.log("Admin ingest Doubao deep-thinking protocol tests passed.");
+  console.log("Admin ingest visible original SLO protocol tests passed.");
 }
 
 void main().catch((error) => {

@@ -300,6 +300,7 @@ export interface IngestStreamingOptions {
     actualModel?: string;
     responseId?: string;
     metadataPending: true;
+    truncated?: boolean;
   }) => void;
   onVisibleDelta?: (event: {
     requestId: string;
@@ -312,6 +313,7 @@ export interface IngestStreamingOptions {
     type: "queue_wait" | "rate_limit_wait" | "reasoning_activity" | "metadata_status";
     phase?: "visible" | "continuation" | "metadata" | "health";
     queueDepth?: number;
+    waitedMs?: number;
     retryAfterMs?: number;
     attempt?: number;
     reasoningChars?: number;
@@ -691,7 +693,8 @@ function parseAdminIngestSseBlock(
       replyMarkdown,
       actualModel: readString(envelope.actualModel),
       responseId: readString(envelope.responseId),
-      metadataPending: true
+      metadataPending: true,
+      truncated: envelope.truncated === true
     });
     return null;
   }
@@ -714,6 +717,9 @@ function parseAdminIngestSseBlock(
           : undefined,
         queueDepth: Number.isSafeInteger(Number(envelope.queueDepth)) && Number(envelope.queueDepth) >= 0
           ? Number(envelope.queueDepth)
+          : undefined,
+        waitedMs: Number.isSafeInteger(Number(envelope.waitedMs)) && Number(envelope.waitedMs) >= 0
+          ? Number(envelope.waitedMs)
           : undefined,
         retryAfterMs: Number.isSafeInteger(Number(envelope.retryAfterMs)) && Number(envelope.retryAfterMs) >= 0
           ? Number(envelope.retryAfterMs)

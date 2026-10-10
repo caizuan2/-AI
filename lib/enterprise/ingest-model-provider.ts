@@ -46,6 +46,8 @@ import type { AdminIngestModelProgressEvent } from "@/lib/enterprise/admin-inges
 export type AdminIngestModelInput = (OpenAIAdminIngestInput | DeepSeekAdminIngestInput | QwenAdminIngestInput | KimiAdminIngestInput | DoubaoAdminIngestInput) & {
   modelProvider?: IngestModelProvider | string | null;
   modelScope?: "admin-ingest";
+  /** Only the visible answer is consumed; knowledge metadata may be skipped. */
+  replyOnly?: boolean;
   strictModelAffinity?: boolean;
   costOptimized?: boolean;
   priority?: "high_quality" | "balanced" | "low_cost";
@@ -181,7 +183,8 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   const providerSignal = input.signal;
   const deepSeekProgressEvent = input.onProgressEvent;
   const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
-  const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata;
+  const replyOnly = input.modelScope === "admin-ingest" && input.replyOnly === true;
+  const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata || replyOnly;
   const baseInput = { ...input };
   const actualModel = resolveScopedActualModel(provider, input.modelScope);
   const shouldPreserveUserSelection = preserveUserSelection && !normalizedSelection.normalizedFrom;
@@ -194,6 +197,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
 
   delete (baseInput as { modelProvider?: unknown }).modelProvider;
   delete (baseInput as { modelScope?: unknown }).modelScope;
+  delete (baseInput as { replyOnly?: unknown }).replyOnly;
   delete (baseInput as { signal?: unknown }).signal;
   delete (baseInput as { onProgressEvent?: unknown }).onProgressEvent;
   delete (baseInput as { deferMetadata?: unknown }).deferMetadata;
@@ -208,9 +212,11 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   if (provider === "deepseek-pro" || provider === "deepseek-flash") {
     return runDeepSeekAdminIngest({
       ...payload,
+      modelScope: input.modelScope,
       modelProvider: provider,
       signal: providerSignal,
-      onProgressEvent: deepSeekProgressEvent
+      onProgressEvent: deepSeekProgressEvent,
+      replyOnly
     } as DeepSeekAdminIngestInput);
   }
 
@@ -223,6 +229,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   if (provider === "doubao-pro") {
     return runDoubaoAdminIngest({
       ...payload,
+      modelScope: input.modelScope,
       signal: providerSignal,
       onProgressEvent: doubaoProgressEvent,
       deferMetadata: deferDoubaoMetadata

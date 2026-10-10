@@ -5,7 +5,8 @@ import {
   ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE,
   createAdminIngestDoubaoVisibleTimeoutError,
   isAdminIngestDoubaoVisibleTimeoutError,
-  shouldApplyAdminIngestDoubaoVisibleBudget
+  shouldApplyAdminIngestDoubaoVisibleBudget,
+  shouldApplyAdminIngestVisibleBudget
 } from "../lib/enterprise/admin-ingest-doubao-visible-budget";
 import {
   resolveAdminIngestHistoryDisplayState
@@ -19,14 +20,15 @@ import {
 } from "../lib/enterprise/ingest-request-queue";
 
 function testDoubaoVisibleAnswerBudget() {
-  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 180_000);
+  assert.equal(ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS, 60_000);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("doubao-pro"), true);
   assert.equal(shouldApplyAdminIngestDoubaoVisibleBudget("deepseek-pro"), false);
+  assert.equal(shouldApplyAdminIngestVisibleBudget("deepseek-pro"), true);
 
   const error = createAdminIngestDoubaoVisibleTimeoutError("Doubao Seed");
   assert.equal(error.name, ADMIN_INGEST_DOUBAO_VISIBLE_TIMEOUT_CODE);
   assert.equal(isAdminIngestDoubaoVisibleTimeoutError(error), true);
-  assert.match(error.message, /180 秒/);
+  assert.match(error.message, /60 秒/);
 }
 
 function testCancelClearsOnlyTheMatchingConversationQueue() {
@@ -118,7 +120,7 @@ async function testProductionWiringAndFrozenProviderBoundary() {
 
   assert.match(
     modeToggle,
-    /shouldApplyAdminIngestDoubaoVisibleBudget\(requestModelOption\.provider\)/
+    /shouldApplyAdminIngestVisibleBudget\(requestModelOption\.provider\)/
   );
   assert.match(
     modeToggle,

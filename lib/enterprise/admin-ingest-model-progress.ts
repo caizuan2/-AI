@@ -10,6 +10,7 @@ export type AdminIngestModelProgressEvent =
       type: "queue_wait";
       phase: AdminIngestRequestPhase;
       queueDepth: number;
+      waitedMs?: number;
     }
   | {
       type: "rate_limit_wait";
@@ -30,6 +31,7 @@ export type AdminIngestModelProgressEvent =
       model: string;
       responseId: string;
       metadataPending: true;
+      truncated?: boolean;
     }
   | {
       type: "visible_delta";
@@ -142,13 +144,21 @@ function findTopLevelReplyMarkdownValueStart(raw: string) {
 }
 
 function decodeJsonStringPrefix(raw: string, start: number) {
+  return decodeJsonStringValue(raw, start).value;
+}
+
+/**
+ * `closed` is true only when decoding stopped at the unescaped closing quote,
+ * never when it stopped at the end of the input or at an incomplete escape.
+ */
+function decodeJsonStringValue(raw: string, start: number) {
   let output = "";
 
   for (let index = start; index < raw.length; index += 1) {
     const character = raw[index];
 
     if (character === '"') {
-      return output;
+      return { value: output, closed: true };
     }
 
     if (character !== "\\") {
@@ -219,7 +229,7 @@ function decodeJsonStringPrefix(raw: string, start: number) {
     index += 1;
   }
 
-  return output;
+  return { value: output, closed: false };
 }
 
 export function extractStreamingReplyMarkdown(rawText: string) {
@@ -307,12 +317,33 @@ export function looksLikeAdminIngestStructuredReply(rawText: string) {
 
 export function createAdminIngestReplyProjector() {
   let rawText = "";
+  // The provider text is append-only, so the value start never moves once found.
+  let valueStart = -1;
   let visibleReplyMarkdown = "";
+  let closedReplyMarkdown: string | null = null;
 
   return {
     push(rawDelta: string) {
       rawText += rawDelta;
-      const nextReplyMarkdown = extractStreamingReplyMarkdown(rawText);
+
+      if (closedReplyMarkdown !== null) {
+        return null;
+      }
+
+      if (valueStart < 0) {
+        valueStart = findTopLevelReplyMarkdownValueStart(rawText);
+
+        if (valueStart < 0) {
+          return null;
+        }
+      }
+
+      const decoded = decodeJsonStringValue(rawText, valueStart);
+      const nextReplyMarkdown = decoded.value;
+
+      if (decoded.closed && nextReplyMarkdown.startsWith(visibleReplyMarkdown)) {
+        closedReplyMarkdown = nextReplyMarkdown;
+      }
 
       if (!nextReplyMarkdown || nextReplyMarkdown === visibleReplyMarkdown) {
         return null;
@@ -332,6 +363,9 @@ export function createAdminIngestReplyProjector() {
     },
     current() {
       return visibleReplyMarkdown;
+    },
+    closedReplyMarkdown() {
+      return closedReplyMarkdown;
     }
   };
 }

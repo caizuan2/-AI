@@ -19,12 +19,12 @@ async function main() {
     attempt: 0,
     modelProvider: "doubao-pro",
     causeCode: "DOUBAO_TIMEOUT"
-  }), true);
+  }), false);
   assert.equal(shouldRetryAdminIngestWechatModelTimeout({
     attempt: 0,
     modelProvider: "deepseek-pro",
     errorCode: "DEEPSEEK_TIMEOUT"
-  }), true);
+  }), false);
   assert.equal(shouldRetryAdminIngestWechatModelTimeout({
     attempt: 1,
     modelProvider: "doubao-pro",
@@ -75,13 +75,13 @@ async function main() {
     modeToggleSource,
     /skipHealthPreflight:\s*isWechatConversationReply/
   );
-  assert.match(
+  assert.doesNotMatch(
     modeToggleSource,
-    /canRetryWechatTimeout = isWechatConversationReply\s*&& !visibleReplyRendered\s*&& shouldRetryAdminIngestWechatModelTimeout\(\{[\s\S]*modelProvider:\s*requestModelOption\.provider/
+    /canRetryWechatTimeout/
   );
-  assert.match(
+  assert.doesNotMatch(
     modeToggleSource,
-    /setRequestNoticeMessage\(`\$\{requestModelOption\.label\} 首次等待超时，正在使用同一个模型自动重试\.\.\.`\)/
+    /首次等待超时，正在使用同一个模型自动重试/
   );
   assert.match(
     ingestClientSource,

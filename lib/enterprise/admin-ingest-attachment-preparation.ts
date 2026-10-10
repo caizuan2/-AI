@@ -21,7 +21,14 @@ export function getAdminIngestRemainingVisibleBudgetMs(input: {
   imagePersistCompletedAt: number | null;
   now?: number;
 }) {
-  if (input.provider !== "doubao-pro" || input.imagePersistCompletedAt === null) {
+  if (
+    (
+      input.provider !== "doubao-pro"
+      && input.provider !== "deepseek-pro"
+      && input.provider !== "deepseek-flash"
+    )
+    || input.imagePersistCompletedAt === null
+  ) {
     return input.budgetMs;
   }
   const preparationElapsedMs = Math.max(0, (input.now ?? Date.now()) - input.imagePersistCompletedAt);
@@ -89,8 +96,8 @@ export async function prepareAdminIngestAttachments(input: PrepareAdminIngestAtt
     : Promise.resolve({ files: null, error: null });
 
   try {
-    // Both tasks are already running. Only Doubao supplies a deadline; it is
-    // anchored at persistence completion, exactly like its existing UI budget.
+    // Both tasks are already running. OCR retains the complete image evidence
+    // until the shared post-persistence budget expires; it is never skipped.
     const persistedUploads = await (outerAbortPromise
       ? Promise.race([imagePersistencePromise, outerAbortPromise])
       : imagePersistencePromise);

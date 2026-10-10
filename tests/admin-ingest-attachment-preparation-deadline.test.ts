@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { getEventListeners } from "node:events";
 import { readFile } from "node:fs/promises";
-import { prepareAdminIngestAttachments } from "../lib/enterprise/admin-ingest-attachment-preparation";
+import { getAdminIngestRemainingVisibleBudgetMs, prepareAdminIngestAttachments } from "../lib/enterprise/admin-ingest-attachment-preparation";
+import { ADMIN_INGEST_VISIBLE_BUDGET_MS, ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS } from "../lib/enterprise/admin-ingest-doubao-visible-budget";
 import { createAdminIngestLatencyTrace, type AdminIngestLatencyEvent } from "../lib/enterprise/admin-ingest-latency-trace";
 import type { IngestUploadState } from "../lib/enterprise/ingest-client";
 
@@ -26,7 +27,7 @@ const flush = async () => { for (let index = 0; index < 12; index += 1) await Pr
 
 async function main() {
   const source = await readFile("components/enterprise-admin/IngestModeToggle.tsx", "utf8");
-  assert.match(source, /maxWaitAfterPersistMs: attachmentProvider === "doubao-pro"\s*\? ADMIN_INGEST_DOUBAO_VISIBLE_BUDGET_MS\s*: undefined/);
+  assert.match(source, /maxWaitAfterPersistMs: shouldOverlapAttachmentParsing\s*\? ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS\s*: undefined/);
   assert.match(source, /attachmentPreparationDeadlineReached = preparation\.parseDeadlineReached/);
   assert.match(source, /const doubaoVisibleBudgetRemainingMs = attachmentPreparationDeadlineReached \? 0 : getAdminIngestRemainingVisibleBudgetMs/);
   const actualNow = Date.now;
@@ -60,6 +61,48 @@ async function main() {
   const onUnhandled = (error: unknown) => unhandled.push(error);
   process.on("unhandledRejection", onUnhandled);
   try {
+    assert.equal(ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS, ADMIN_INGEST_VISIBLE_BUDGET_MS);
+    for (const provider of ["doubao-pro", "deepseek-pro", "deepseek-flash"]) {
+      const parseResult = deferred<IngestUploadState[]>();
+      let preparationFinished = false;
+      const budgeted = prepareAdminIngestAttachments({
+        uploads: [image], controller: new AbortController(), trace: trace(),
+        maxWaitAfterPersistMs: ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS,
+        persist: async () => [persisted], parse: async () => parseResult.promise,
+        isParseCancellation: () => false
+      }).then((result) => { preparationFinished = true; return result; });
+      await flush();
+      await tick(10_000);
+      assert.equal(preparationFinished, false, `${provider} must not skip OCR or call its full budget exhausted at ten seconds`);
+      await tick(500);
+      parseResult.resolve([parsed]);
+      const prepared = await budgeted;
+      assert.equal(prepared.parseDeadlineReached, false);
+      assert.equal(prepared.preparedUploads?.[0].extractedText, parsed.extractedText);
+      assert.equal(prepared.preparedUploads?.[0].persistentUrl, persisted.persistentUrl);
+      assert.equal(getAdminIngestRemainingVisibleBudgetMs({
+        provider, budgetMs: ADMIN_INGEST_VISIBLE_BUDGET_MS,
+        imagePersistCompletedAt: prepared.imagePersistCompletedAt, now: clock
+      }), 49_500, "OCR elapsed time must be deducted once, leaving the real reply budget");
+      assert.equal(timers.size, 0);
+    }
+
+    const neverCompletes = prepareAdminIngestAttachments({
+      uploads: [image], controller: new AbortController(), trace: trace(),
+      maxWaitAfterPersistMs: ADMIN_INGEST_VISIBLE_PARSE_WAIT_MS,
+      persist: async () => [persisted], parse: async () => new Promise<IngestUploadState[]>(() => undefined),
+      isParseCancellation: () => false
+    });
+    await flush();
+    await tick(ADMIN_INGEST_VISIBLE_BUDGET_MS);
+    const exhausted = await neverCompletes;
+    assert.equal(exhausted.parseDeadlineReached, true);
+    assert.equal(exhausted.preparedUploads, null, "incomplete OCR must never become image evidence");
+    assert.equal(getAdminIngestRemainingVisibleBudgetMs({
+      provider: "doubao-pro", budgetMs: ADMIN_INGEST_VISIBLE_BUDGET_MS,
+      imagePersistCompletedAt: exhausted.imagePersistCompletedAt, now: clock
+    }), 0);
+
     // The timer starts after persistence, with OCR already in flight. A parser
     // ignoring abort must not postpone the old 180 second UI terminal state.
     const upload = deferred<IngestUploadState[]>();

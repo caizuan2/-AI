@@ -9,7 +9,7 @@ import {
 
 const source = readFileSync("components/enterprise-admin/IngestModeToggle.tsx", "utf8").replace(/\r\n/g, "\n");
 const expireStart = source.indexOf("    const expireDoubaoVisibleBudget =");
-const expireEnd = source.indexOf("    if (\n      shouldApplyAdminIngestDoubaoVisibleBudget", expireStart);
+const expireEnd = source.indexOf("    if (\n      shouldApplyAdminIngestVisibleBudget", expireStart);
 const finalStart = source.indexOf("      if (successRendered && !abortController.signal.aborted)");
 const finalEnd = source.indexOf("      if (abortControllerByConversationRef.current[conversationId] === abortController)", finalStart);
 assert.ok(expireStart > 0 && expireEnd > expireStart && finalStart > 0 && finalEnd > finalStart);
@@ -26,6 +26,7 @@ function harness() {
   const cancelled = new Set<string>();
   const context = {
     visibleReplyRendered: false, successRendered: false,
+    latestStreamedReplyMarkdown: "",
     doubaoVisibleBudgetTimedOut: false,
     abortController: controller,
     isRequestCancelled: () => cancelled.has("request"),
