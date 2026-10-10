@@ -60,6 +60,7 @@ async function main() {
 
   const progress: string[] = [];
   const result = await runDeepSeekAdminIngest({
+    modelScope: "admin-ingest",
     input: "Flash 临时验收",
     source: "admin_ingest",
     platform: "web",
@@ -150,7 +151,7 @@ async function main() {
   )].join("\n");
   assert.doesNotMatch(sourceBundle, /ADMIN_INGEST_(?:ACCEPTANCE|DEEPSEEK_(?:FLASH_AB|FLASH_VARIANT|ACCEPTANCE_AB|AB_VARIANT|CANDIDATE))/);
   assert.doesNotMatch(sourceBundle, /reasoning_effort/);
-  assert.match(sourceBundle, /max_tokens: DEFAULT_ADMIN_INGEST_MAX_TOKENS/);
+  assert.match(sourceBundle, /max_tokens: input\.modelScope === "admin-ingest"\s*\? ADMIN_INGEST_VISIBLE_MAX_TOKENS\s*: DEFAULT_ADMIN_INGEST_MAX_TOKENS/);
 
   console.log("admin ingest DeepSeek Flash final tests passed");
 }

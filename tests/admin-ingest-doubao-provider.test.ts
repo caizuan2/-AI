@@ -130,6 +130,7 @@ try {
   const queueEvents: string[] = [];
   const runQueuedTask = async (phase: "visible" | "metadata", durationMs: number) => (
     runWithDoubaoRequestSlot({
+      modelScope: "admin-ingest",
       phase,
       signal: new AbortController().signal,
       onProgressEvent(event) {
@@ -352,6 +353,7 @@ try {
   };
 
   const doubaoInput = {
+    modelScope: "admin-ingest",
     input: "CURRENT_INPUT_SENTINEL",
     attachments: [{
       fileName: "doubao-context.pptx",
@@ -746,8 +748,8 @@ try {
   assert.equal(routedResult.provider, "doubao", "A successful Doubao request must report the actual provider.");
   assert.equal(routedResult.requestedProvider, "doubao-pro");
   assert.equal(routedResult.actualProvider, "doubao-pro");
-  assert.equal(routedResult.requestedModel, DOUBAO_PRO_MODEL_ID);
-  assert.equal(capturedRequestBody.model, DOUBAO_PRO_MODEL_ID);
+  assert.equal(routedResult.requestedModel, ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
+  assert.equal(capturedRequestBody.model, ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
   assert.equal(routedResult.fallbackUsed, false);
   assert.ok(routedResult.diagnostics.includes("modelRouter:actualProvider:doubao-pro"));
 
@@ -811,7 +813,7 @@ try {
       id: "deepseek-raw-passthrough-test",
       model: "deepseek-v4-pro",
       created: 1_786_000_001,
-      choices: [{ message: { role: "assistant", content: deepSeekProviderContent } }],
+      choices: [{ message: { role: "assistant", content: deepSeekProviderContent }, finish_reason: "stop" }],
       usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 }
     }), {
       status: 200,
@@ -846,7 +848,7 @@ try {
     return new Response(JSON.stringify({
       id: "doubao-affinity-mismatch-test",
       model: "unexpected-doubao-model",
-      choices: [{ message: { role: "assistant", content: providerContent } }],
+      choices: [{ message: { role: "assistant", content: providerContent }, finish_reason: "stop" }],
       usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
       requested_model: requestBody.model
     }), {
@@ -1082,7 +1084,7 @@ try {
       id: "deepseek-fallback-response",
       model: "deepseek-v4-pro",
       created: 1_786_000_001,
-      choices: [{ message: { role: "assistant", content: deepSeekFallbackContent } }],
+      choices: [{ message: { role: "assistant", content: deepSeekFallbackContent }, finish_reason: "stop" }],
       usage: { prompt_tokens: 100, completion_tokens: 200, total_tokens: 300 }
     }), {
       status: 200,
@@ -1112,7 +1114,7 @@ try {
   assert.equal(fallbackResult.provider, "deepseek", "A Doubao failure must report the actual fallback provider.");
   assert.equal(fallbackResult.requestedProvider, "doubao-pro");
   assert.equal(fallbackResult.actualProvider, "deepseek-pro");
-  assert.equal(fallbackResult.requestedModel, DOUBAO_PRO_MODEL_ID);
+  assert.equal(fallbackResult.requestedModel, ADMIN_INGEST_DOUBAO_PRO_MODEL_ID);
   assert.equal(fallbackResult.actualModel, "deepseek-v4-pro");
   assert.equal(fallbackResult.fallbackUsed, true);
   assert.equal(deepSeekCalls, 1, "Non-Web compatibility mode must keep the existing provider fallback.");
@@ -1218,10 +1220,10 @@ try {
       headers: { "Content-Type": "text/event-stream" }
     });
   };
-  const incompleteEofResult = await runDoubaoAdminIngest(doubaoInput);
-  assert.equal(incompleteEofResult.replyMarkdown, "INCOMPLETE_EOF_SENTINEL");
-  assert.ok(incompleteEofResult.diagnostics.includes("doubao:visibleTruncated:true"));
-  assert.ok(incompleteEofCalls >= 1);
+  await assert.rejects(() => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(error && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"));
+  assert.equal(incompleteEofCalls, 1, "An EOF prefix must not restart or become a completed answer.");
 
   const continuationFirstPart = "\n# 超长豆包正文\n\n第一段保持原样，";
   const continuationSecondPart = "第二段从截断点继续。  \n";
@@ -1275,15 +1277,15 @@ try {
       headers: { "Content-Type": "text/event-stream" }
     });
   };
-  const continuationResult = await runDoubaoAdminIngest(doubaoInput);
-  assert.equal(continuationResult.replyMarkdown, continuationFirstPart);
-  assert.equal(continuationCalls, 2, "Visible original must be handed in without a second thinking continuation.");
+  const continuationResult = await runDoubaoAdminIngest({ ...doubaoInput, modelScope: undefined });
+  assert.equal(continuationResult.replyMarkdown, continuationFirstPart + continuationSecondPart);
+  assert.equal(continuationCalls, 3, "Frozen unscoped callers retain same-model continuation before metadata.");
   assert.deepEqual(continuationRequestModels, [
+    "ep-doubao-provider-test",
     "ep-doubao-provider-test",
     "ep-doubao-provider-test"
   ]);
-  assert.ok(continuationResult.diagnostics.includes("doubao:visibleContinuationCount:0"));
-  assert.ok(continuationResult.diagnostics.includes("doubao:visibleTruncated:true"));
+  assert.ok(continuationResult.diagnostics.includes("doubao:visibleContinuationCount:1"));
 
   globalThis.fetch = async () => {
     const sse = [
@@ -1305,9 +1307,9 @@ try {
       headers: { "Content-Type": "text/event-stream" }
     });
   };
-  const lengthFinishResult = await runDoubaoAdminIngest(doubaoInput);
-  assert.equal(lengthFinishResult.replyMarkdown, "TRUNCATED_BY_LENGTH_SENTINEL");
-  assert.ok(lengthFinishResult.diagnostics.includes("doubao:visibleTruncated:true"));
+  await assert.rejects(() => runDoubaoAdminIngest(doubaoInput),
+    (error: unknown) => Boolean(error && typeof error === "object"
+      && (error as { code?: unknown }).code === "DOUBAO_RESPONSE_PARSE_FAILED"));
 
   globalThis.fetch = async () => {
     const sse = [

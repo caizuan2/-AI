@@ -57,6 +57,7 @@ import {
 
 export interface DeepSeekAdminIngestInput {
   input: string;
+  modelScope?: "admin-ingest";
   attachments?: OpenAIAdminIngestAttachment[];
   agentId?: string | null;
   expertId?: string | null;
@@ -165,11 +166,13 @@ export class DeepSeekIngestError extends Error {
   }
 }
 
-const REQUEST_TIMEOUT_MS = 55_000;
+const REQUEST_TIMEOUT_MS = 150_000;
+const ADMIN_INGEST_REQUEST_TIMEOUT_MS = 55_000;
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 const DEFAULT_MODEL = DEEPSEEK_PRO_MODEL_ID;
 const DEFAULT_MODEL_LABEL = "DeepSeek-V4-Pro";
-const DEFAULT_ADMIN_INGEST_MAX_TOKENS = 1_600;
+const DEFAULT_ADMIN_INGEST_MAX_TOKENS = 6_000;
+const ADMIN_INGEST_VISIBLE_MAX_TOKENS = 1_600;
 const DEEPSEEK_METADATA_FALLBACK_NOTE = "DeepSeek 原文正文已完整返回，但后台结构化元数据未完成；正文保留原样，知识草稿暂缓入库。";
 
 function readEnv(name: string) {
@@ -369,6 +372,7 @@ type DeepSeekReplyClosedEvent = {
 };
 
 async function callDeepSeekChatCompletions(input: {
+  modelScope?: "admin-ingest";
   provider: "deepseek-pro" | "deepseek-flash";
   chatCompletionsUrl: string;
   apiKey: string;
@@ -379,8 +383,6 @@ async function callDeepSeekChatCompletions(input: {
   requestId?: string;
   onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
   onReplyClosed?: (event: DeepSeekReplyClosedEvent) => void;
-  stopAfterReply?: boolean;
-  allowPartialAfterReply?: () => boolean;
 }) {
   const stream = Boolean(input.onProgressEvent);
   const requestStartedAt = Date.now();
@@ -397,7 +399,9 @@ async function callDeepSeekChatCompletions(input: {
           { role: "user", content: input.userPrompt }
         ],
         temperature: 0.7,
-        max_tokens: DEFAULT_ADMIN_INGEST_MAX_TOKENS,
+        max_tokens: input.modelScope === "admin-ingest"
+          ? ADMIN_INGEST_VISIBLE_MAX_TOKENS
+          : DEFAULT_ADMIN_INGEST_MAX_TOKENS,
         stream
       }),
       signal: input.signal,
@@ -411,14 +415,13 @@ async function callDeepSeekChatCompletions(input: {
   const streamResult = stream && response.ok && contentType.includes("text/event-stream")
     ? await readDeepSeekChatCompletionStream({
         response,
+        modelScope: input.modelScope,
         fallbackModel: input.model,
         signal: input.signal,
         requestId: input.requestId,
         requestStartedAt,
         onProgressEvent: input.onProgressEvent,
-        onReplyClosed: input.onReplyClosed,
-        stopAfterReply: input.stopAfterReply,
-        allowPartialAfterReply: input.allowPartialAfterReply
+        onReplyClosed: input.onReplyClosed
       })
     : null;
   const bodyText = streamResult?.bodyText ?? await response.text();
@@ -432,7 +435,7 @@ async function callDeepSeekChatCompletions(input: {
   }
 
   return {
-    ...parseDeepSeekPayload(bodyText, input.model),
+    ...parseDeepSeekPayload(bodyText, input.model, input.modelScope),
     streamedReplyMarkdown: streamResult?.replyMarkdown ?? null,
     closedReplyMarkdown: streamResult?.closedReplyMarkdown ?? null,
     stoppedAfterReply: streamResult?.stoppedAfterReply === true,
@@ -445,6 +448,7 @@ async function callDeepSeekChatCompletions(input: {
 }
 
 async function readDeepSeekChatCompletionStream(input: {
+  modelScope?: "admin-ingest";
   response: Response;
   fallbackModel: string;
   signal: AbortSignal;
@@ -452,8 +456,6 @@ async function readDeepSeekChatCompletionStream(input: {
   requestStartedAt: number;
   onProgressEvent?: (event: AdminIngestModelProgressEvent) => void;
   onReplyClosed?: (event: DeepSeekReplyClosedEvent) => void;
-  stopAfterReply?: boolean;
-  allowPartialAfterReply?: () => boolean;
 }) {
   const reader = input.response.body?.getReader();
 
@@ -477,7 +479,7 @@ async function readDeepSeekChatCompletionStream(input: {
   let firstContentAt: number | null = null;
   let firstVisibleAt: number | null = null;
   let replyClosedAt: number | null = null;
-  let stoppedAfterReply = false;
+  const stoppedAfterReply = false;
   let eventCount = 0;
 
   const buildFailureDetails = (parseStage: "sse_event" | "stream_eof") => ({
@@ -553,7 +555,8 @@ async function readDeepSeekChatCompletionStream(input: {
       if (contentDelta) {
         firstContentAt ??= Date.now();
         rawText += contentDelta;
-        const structuredCandidate = looksLikeAdminIngestStructuredReply(rawText);
+        const structuredCandidate = input.modelScope !== "admin-ingest"
+          || looksLikeAdminIngestStructuredReply(rawText);
 
         if (structuredCandidate) {
           const visible = projector.push(contentDelta);
@@ -572,11 +575,6 @@ async function readDeepSeekChatCompletionStream(input: {
 
           if (replyClosedAt === null && closedReply?.trim()) {
             replyClosedAt = Date.now();
-            input.onReplyClosed?.({
-              replyMarkdown: closedReply,
-              model: actualModel,
-              responseId
-            });
           }
         } else {
           firstVisibleAt ??= Date.now();
@@ -601,7 +599,12 @@ async function readDeepSeekChatCompletionStream(input: {
         throw new DOMException("The operation was aborted.", "AbortError");
       }
 
-      const chunk = await reader.read();
+      const chunk = await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        const onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+        input.signal.addEventListener("abort", onAbort, { once: true });
+        if (input.signal.aborted) onAbort();
+        reader.read().then(resolve, reject).finally(() => input.signal.removeEventListener("abort", onAbort));
+      });
 
       if (chunk.done) {
         buffer += decoder.decode();
@@ -614,17 +617,11 @@ async function readDeepSeekChatCompletionStream(input: {
       blocks.forEach(parseBlock);
 
       if (providerDone) {
-        await reader.cancel("DeepSeek stream completed");
+        void reader.cancel("DeepSeek stream completed").catch(() => undefined);
         buffer = "";
         break;
       }
 
-      if (input.stopAfterReply && replyClosedAt !== null) {
-        stoppedAfterReply = true;
-        await reader.cancel("DeepSeek reply closed");
-        buffer = "";
-        break;
-      }
     }
 
     if (buffer.trim()) {
@@ -637,55 +634,29 @@ async function readDeepSeekChatCompletionStream(input: {
       && (error as { name?: unknown }).name === "AbortError"
     );
 
-    const markdownVisible = !looksLikeAdminIngestStructuredReply(rawText) && rawText.trim();
-    const partialVisible = projector.closedReplyMarkdown()
-      || projector.current()
-      || (markdownVisible ? rawText : "");
-    if (!(isAbort && partialVisible.trim() && input.allowPartialAfterReply?.() === true)) {
-      try {
-        await reader.cancel(error instanceof Error ? error.message : "DeepSeek stream failed");
-      } catch {
-        // The provider may already have closed the stream. Preserve the original error.
-      }
-
-      const details = error instanceof DeepSeekIngestError && error.details
-        ? error.details
-        : buildFailureDetails("stream_eof");
-      logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
-        requestId: input.requestId,
-        model: actualModel,
-        code: error instanceof DeepSeekIngestError ? error.code : "DEEPSEEK_RESPONSE_PARSE_FAILED",
-        ...details
-      });
-      if (isAbort) {
-        throw error;
-      }
-      throw error instanceof DeepSeekIngestError
-        ? error
-        : new DeepSeekIngestError(
-            "DEEPSEEK_RESPONSE_PARSE_FAILED",
-            "DeepSeek 流式返回读取失败。",
-            details
-          );
-    }
-
-    // The deadline expired while only metadata was still streaming; keep the closed reply.
-    stoppedAfterReply = true;
-    buffer = "";
-    if (replyClosedAt === null && partialVisible.trim()) {
-      replyClosedAt = Date.now();
-      input.onReplyClosed?.({
-        replyMarkdown: partialVisible,
-        model: actualModel,
-        responseId
-      });
-    }
-
     try {
-      await reader.cancel("DeepSeek metadata deadline reached");
+      void reader.cancel(error instanceof Error ? error.message : "DeepSeek stream failed").catch(() => undefined);
     } catch {
-      // The aborted provider stream is usually already closed.
+      // The provider may already have closed the stream. Preserve the original error.
     }
+    const details = error instanceof DeepSeekIngestError && error.details
+      ? error.details
+      : buildFailureDetails("stream_eof");
+    logger.warn("enterprise_admin_ingest.deepseek_stream_failed", {
+      requestId: input.requestId,
+      model: actualModel,
+      code: error instanceof DeepSeekIngestError ? error.code : "DEEPSEEK_RESPONSE_PARSE_FAILED",
+      ...details
+    });
+    if (isAbort) {
+      if (input.modelScope === "admin-ingest") {
+        throw new DeepSeekIngestError("DEEPSEEK_TIMEOUT", "DeepSeek 请求超时，请使用同模型重试。", details);
+      }
+      throw error;
+    }
+    throw error instanceof DeepSeekIngestError
+      ? error
+      : new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 流式返回读取失败。", details);
   } finally {
     try {
       reader.releaseLock();
@@ -694,14 +665,19 @@ async function readDeepSeekChatCompletionStream(input: {
     }
   }
 
-  if (
-    replyClosedAt === null
-    && !looksLikeAdminIngestStructuredReply(rawText)
-    && rawText.trim()
-  ) {
-    replyClosedAt = Date.now();
+  if (input.modelScope === "admin-ingest" && (!providerDone || finishReason !== "stop")) {
+    throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 流式正文未完整结束，请使用同模型重试。", buildFailureDetails("stream_eof"));
+  }
+  if (input.modelScope === "admin-ingest" && looksLikeAdminIngestStructuredReply(rawText) && !extractCompleteAdminIngestReplyMarkdown(rawText)) {
+    throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 结构化正文未完整闭合，请使用同模型重试。", buildFailureDetails("stream_eof"));
+  }
+
+  const completeReply = projector.closedReplyMarkdown()
+    || (!looksLikeAdminIngestStructuredReply(rawText) ? rawText : "");
+  if (completeReply.trim()) {
+    replyClosedAt ??= Date.now();
     input.onReplyClosed?.({
-      replyMarkdown: rawText,
+      replyMarkdown: completeReply,
       model: actualModel,
       responseId
     });
@@ -756,7 +732,7 @@ async function readDeepSeekChatCompletionStream(input: {
       created,
       choices: [{
         message: { role: "assistant", content: rawText },
-        finish_reason: finishReason || "stop"
+        finish_reason: finishReason
       }],
       usage
     }),
@@ -776,7 +752,7 @@ async function readDeepSeekChatCompletionStream(input: {
   };
 }
 
-function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
+function parseDeepSeekPayload(bodyText: string, fallbackModel: string, modelScope?: "admin-ingest") {
   let payload: unknown = null;
 
   try {
@@ -795,6 +771,19 @@ function parseDeepSeekPayload(bodyText: string, fallbackModel: string) {
   const message = firstChoice.message && typeof firstChoice.message === "object" ? firstChoice.message as Record<string, unknown> : {};
   const rawChatText = typeof message.content === "string" ? message.content : "";
   const text = rawChatText.trim() ? rawChatText : normalized.text;
+  if (modelScope === "admin-ingest" && (
+    firstChoice.finish_reason !== "stop"
+    || (looksLikeAdminIngestStructuredReply(text) && !extractCompleteAdminIngestReplyMarkdown(text))
+  )) {
+    throw new DeepSeekIngestError("DEEPSEEK_RESPONSE_PARSE_FAILED", "DeepSeek 正文未完整结束，请使用同模型重试。", {
+      parseStage: "reply_json",
+      receivedChars: text.length,
+      projectedChars: 0,
+      eventCount: 0,
+      reasoningChars: 0,
+      finishReason: typeof firstChoice.finish_reason === "string" ? firstChoice.finish_reason : undefined
+    });
+  }
   const rawResponseId = normalized.responseId ?? "";
   const actualModel = normalized.model ?? fallbackModel;
   const createdAt = normalized.createdAt ?? normalizeCreatedAt(record.created);
@@ -876,11 +865,9 @@ function withDeepSeekMetadataFallback(
 export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): Promise<DeepSeekAdminIngestResult> {
   const controller = new AbortController();
   const forwardAbort = () => controller.abort(input.signal?.reason);
-  let hardTimeoutReached = false;
   const timeout = setTimeout(() => {
-    hardTimeoutReached = true;
     controller.abort();
-  }, REQUEST_TIMEOUT_MS);
+  }, input.modelScope === "admin-ingest" ? ADMIN_INGEST_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
   const startedAt = Date.now();
 
   if (input.signal?.aborted) {
@@ -893,10 +880,11 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     const resolved = resolveDeepSeekConfig(input);
     const gptOS = routeGptOSAgent(buildGptOSRouteInput(input));
     const preserveRawReply = input.strictModelAffinity === true;
-    const systemPrompt = preserveRawReply
+    const useVisibleSlo = input.modelScope === "admin-ingest" && preserveRawReply;
+    const systemPrompt = useVisibleSlo
       ? buildDeepSeekVisibleSystemPrompt()
       : buildGptIngestBrainSystemPrompt();
-    const userPrompt = preserveRawReply
+    const userPrompt = useVisibleSlo
       ? buildDeepSeekVisibleUserPrompt(input, gptOS)
       : buildUserPrompt(input, gptOS);
     // Streaming is a transport optimization for strict original-body requests.
@@ -917,6 +905,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
 
     let visibleReplyEmitted = false;
     let response = await callDeepSeekChatCompletions({
+      modelScope: input.modelScope,
       provider: resolved.provider,
       chatCompletionsUrl: resolved.chatCompletionsUrl,
       apiKey: resolved.apiKey,
@@ -926,7 +915,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
       signal: controller.signal,
       requestId: input.requestId,
       onProgressEvent: progressEvent,
-      onReplyClosed: progressEvent
+      onReplyClosed: useVisibleSlo && progressEvent
         ? (closed) => {
             visibleReplyEmitted = true;
             progressEvent({
@@ -938,8 +927,6 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
             });
           }
         : undefined,
-      stopAfterReply: preserveRawReply && input.replyOnly === true,
-      allowPartialAfterReply: () => hardTimeoutReached
     });
     const completeStructuredReplyMarkdown = preserveRawReply
       ? extractCompleteAdminIngestReplyMarkdown(response.text)
@@ -947,7 +934,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
     const closedStreamReplyMarkdown = preserveRawReply
       ? response.closedReplyMarkdown ?? ""
       : "";
-    const metadataMissing = preserveRawReply
+    const metadataMissing = useVisibleSlo
       && !completeStructuredReplyMarkdown
       && Boolean(closedStreamReplyMarkdown.trim());
     const structuredReplyCandidate = preserveRawReply
@@ -1049,6 +1036,7 @@ export async function runDeepSeekAdminIngest(input: DeepSeekAdminIngestInput): P
         failedReasons: quality.failedReasons
       });
       response = await callDeepSeekChatCompletions({
+        modelScope: input.modelScope,
         provider: resolved.provider,
         chatCompletionsUrl: resolved.chatCompletionsUrl,
         apiKey: resolved.apiKey,

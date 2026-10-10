@@ -11,9 +11,9 @@
   "exe_url": "http://47.238.0.23/admin-installers/admin-ingest.exe",
   "download_page": "http://47.238.0.23/admin-download",
   "changelog": [
-    "投喂端原文在 60 秒内交卷，可见阶段不再无限思考和续写",
-    "DeepSeek 与豆包超时后交卷已经生成的正文，不再因等待元数据拖住原文",
+    "投喂端设置 60 秒原文等待预算，并持续展示已收到的原文片段；该预算不保证完整答案在 60 秒内生成",
+    "正文未完整结束时明确标记返回中断，保留原文片段并支持同模型重试",
     "用户端、超级管理员、登录卡密与数据库结构保持不变",
-    "投喂端 Web、Windows EXE 与 Android APK 统一升级到 1.0.43 Build 143"
+    "已发布的 1.0.43 Build 143 APK/EXE 保留现有一键 Web 内容更新方式"
   ]
 }

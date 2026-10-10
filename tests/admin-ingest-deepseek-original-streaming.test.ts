@@ -151,6 +151,7 @@ async function main() {
   };
 
   const result = await runAdminIngestWithSelectedModel({
+    modelScope: "admin-ingest",
     input: "请根据固定知识给出完整原文正文",
     source: "admin_ingest",
     platform: "web",
@@ -272,7 +273,7 @@ async function main() {
   const providerSource = readFileSync("lib/enterprise/ingest-model-provider.ts", "utf8");
   const deepSeekSource = readFileSync("lib/enterprise/deepseek-ingest-client.ts", "utf8");
 
-  assert.match(providerSource, /runDeepSeekAdminIngest\(\{[\s\S]*?\.\.\.payload,\s*modelProvider: provider,\s*signal: providerSignal,\s*onProgressEvent: deepSeekProgressEvent/);
+  assert.match(providerSource, /runDeepSeekAdminIngest\(\{[\s\S]*?\.\.\.payload,\s*modelScope: input\.modelScope,\s*modelProvider: provider,\s*signal: providerSignal,\s*onProgressEvent: deepSeekProgressEvent/);
   assert.match(providerSource, /onProgressEvent: doubaoProgressEvent,\s*deferMetadata: deferDoubaoMetadata/);
   assert.match(deepSeekSource, /const progressEvent = preserveRawReply \? input\.onProgressEvent : undefined/);
   assert.doesNotMatch(deepSeekSource, /rawText \+= reasoningDelta|contentDelta \+= reasoningDelta/);

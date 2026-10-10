@@ -96,8 +96,8 @@ export async function prepareAdminIngestAttachments(input: PrepareAdminIngestAtt
     : Promise.resolve({ files: null, error: null });
 
   try {
-    // Both tasks are already running. Original-reply models supply a short
-    // parse deadline anchored at persistence completion so the 60s body SLO remains.
+    // Both tasks are already running. OCR retains the complete image evidence
+    // until the shared post-persistence budget expires; it is never skipped.
     const persistedUploads = await (outerAbortPromise
       ? Promise.race([imagePersistencePromise, outerAbortPromise])
       : imagePersistencePromise);

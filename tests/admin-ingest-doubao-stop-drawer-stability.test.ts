@@ -144,11 +144,11 @@ async function testProductionWiringAndFrozenProviderBoundary() {
   );
   assert.match(
     modeToggle,
-    /if \(doubaoVisibleBudgetTimedOut && !visibleReplyRendered\) \{\s*throw createAdminIngestDoubaoVisibleTimeoutError/
+    /if \(doubaoVisibleBudgetTimedOut\) \{\s*throw createAdminIngestDoubaoVisibleTimeoutError/
   );
   assert.match(
     modeToggle,
-    /\|\| \(doubaoVisibleBudgetTimedOut && visibleReplyRendered\)\s*\|\| shouldIgnoreRequestResult/
+    /\|\| doubaoVisibleBudgetTimedOut\s*\|\| shouldIgnoreRequestResult/
   );
   assert.match(
     modeToggle,

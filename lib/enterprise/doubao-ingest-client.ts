@@ -86,6 +86,7 @@ export type DoubaoAdminIngestProgressEvent =
     };
 
 export interface DoubaoAdminIngestInput {
+  modelScope?: "admin-ingest";
   input: string;
   attachments?: OpenAIAdminIngestAttachment[];
   agentId?: string | null;
@@ -230,17 +231,21 @@ export class DoubaoIngestError extends Error {
 
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL_LABEL = "Doubao-Seed-2.1-pro";
-const DEFAULT_CONNECT_TIMEOUT_MS = 10_000;
-const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 12_000;
-const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 20_000;
-const DEFAULT_HARD_TIMEOUT_MS = 55_000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
+const DEFAULT_FIRST_EVENT_TIMEOUT_MS = 90_000;
+const DEFAULT_STREAM_IDLE_TIMEOUT_MS = 60_000;
+const DEFAULT_HARD_TIMEOUT_MS = 270_000;
+const ADMIN_INGEST_HARD_TIMEOUT_MS = 55_000;
 const DEFAULT_METADATA_RECOVERY_TIMEOUT_MS = 150_000;
-const DEFAULT_DOUBAO_CONCURRENCY = 2;
-const DEFAULT_VISIBLE_MAX_TOKENS = 1_600;
+const DEFAULT_DOUBAO_CONCURRENCY = 1;
+const DEFAULT_VISIBLE_MAX_TOKENS = 6_000;
+const ADMIN_INGEST_VISIBLE_MAX_TOKENS = 1_600;
+const MAX_CONTINUATION_PREFIX_CHARS = 8_000;
 const DEFAULT_VISIBLE_QUEUE_HINT_MS = 5_000;
 const DEFAULT_VISIBLE_QUEUE_FAIL_MS = 15_000;
 
 type DoubaoQueueEntry = {
+  modelScope?: "admin-ingest";
   id: number;
   priority: number;
   phase: DoubaoRequestPhase;
@@ -277,16 +282,24 @@ function requestPhasePriority(phase: DoubaoRequestPhase) {
   return 3;
 }
 
-function resolveDoubaoConcurrency() {
+function resolveDoubaoConcurrency(modelScope?: "admin-ingest") {
   const parsed = Number(readEnv("DOUBAO_MAX_CONCURRENCY"));
 
   return Number.isSafeInteger(parsed) && parsed > 0
-    ? Math.min(parsed, 4)
-    : DEFAULT_DOUBAO_CONCURRENCY;
+    ? Math.min(parsed, modelScope === "admin-ingest" ? 4 : 2)
+    : modelScope === "admin-ingest" ? 2 : DEFAULT_DOUBAO_CONCURRENCY;
 }
 
-function canStartDoubaoPhase(phase: DoubaoRequestPhase) {
-  const visibleLimit = resolveDoubaoConcurrency();
+function canStartDoubaoPhase(phase: DoubaoRequestPhase, modelScope?: "admin-ingest") {
+  const visibleLimit = resolveDoubaoConcurrency(modelScope);
+  if (modelScope !== "admin-ingest") {
+    return activeDoubaoRequests < visibleLimit || (
+      visibleLimit === 1 && phase === "visible"
+      && activeDoubaoRequestsByPhase.visible === 0
+      && activeDoubaoRequestsByPhase.metadata > 0
+      && activeDoubaoRequests < 2
+    );
+  }
   const visibleOutputActive = activeDoubaoRequestsByPhase.visible
     + activeDoubaoRequestsByPhase.continuation;
 
@@ -310,7 +323,7 @@ function pumpDoubaoQueue() {
   while (pendingDoubaoRequests.length > 0) {
     pendingDoubaoRequests.sort((left, right) => left.priority - right.priority || left.id - right.id);
     const nextIndex = pendingDoubaoRequests.findIndex((entry) => (
-      canStartDoubaoPhase(entry.phase)
+      canStartDoubaoPhase(entry.phase, entry.modelScope)
     ));
 
     if (nextIndex < 0) {
@@ -336,6 +349,7 @@ function pumpDoubaoQueue() {
 }
 
 async function acquireDoubaoRequestSlot(input: {
+  modelScope?: "admin-ingest";
   phase: DoubaoRequestPhase;
   signal: AbortSignal;
   onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
@@ -344,7 +358,7 @@ async function acquireDoubaoRequestSlot(input: {
     throw new DOMException("The operation was aborted.", "AbortError");
   }
 
-  if (canStartDoubaoPhase(input.phase) && pendingDoubaoRequests.length === 0) {
+  if (canStartDoubaoPhase(input.phase, input.modelScope) && pendingDoubaoRequests.length === 0) {
     markDoubaoPhaseStarted(input.phase);
     return;
   }
@@ -364,6 +378,7 @@ async function acquireDoubaoRequestSlot(input: {
       }
     };
     const entry: DoubaoQueueEntry = {
+      modelScope: input.modelScope,
       id: ++doubaoQueueSequence,
       priority: requestPhasePriority(input.phase),
       phase: input.phase,
@@ -397,7 +412,7 @@ async function acquireDoubaoRequestSlot(input: {
       queueDepth: pendingDoubaoRequests.length
     });
 
-    if (isVisibleOutput) {
+    if (isVisibleOutput && input.modelScope === "admin-ingest") {
       hintTimer = setTimeout(() => {
         input.onProgressEvent?.({
           type: "queue_wait",
@@ -436,6 +451,7 @@ function releaseDoubaoRequestSlot(phase: DoubaoRequestPhase) {
 }
 
 export async function runWithDoubaoRequestSlot<T>(input: {
+  modelScope?: "admin-ingest";
   phase: DoubaoRequestPhase;
   signal: AbortSignal;
   onProgressEvent?: (event: DoubaoAdminIngestProgressEvent) => void;
@@ -468,12 +484,13 @@ function readTimeoutMs(name: string, fallback: number, maximum = fallback) {
     : fallback;
 }
 
-function resolveDoubaoStreamTimeouts() {
+function resolveDoubaoStreamTimeouts(modelScope?: "admin-ingest") {
+  const admin = modelScope === "admin-ingest";
   return {
-    connectMs: readTimeoutMs("DOUBAO_CONNECT_TIMEOUT_MS", DEFAULT_CONNECT_TIMEOUT_MS),
-    firstEventMs: readTimeoutMs("DOUBAO_FIRST_EVENT_TIMEOUT_MS", DEFAULT_FIRST_EVENT_TIMEOUT_MS),
-    idleMs: readTimeoutMs("DOUBAO_STREAM_IDLE_TIMEOUT_MS", DEFAULT_STREAM_IDLE_TIMEOUT_MS),
-    hardMs: readTimeoutMs("DOUBAO_HARD_TIMEOUT_MS", DEFAULT_HARD_TIMEOUT_MS)
+    connectMs: readTimeoutMs("DOUBAO_CONNECT_TIMEOUT_MS", admin ? 10_000 : DEFAULT_CONNECT_TIMEOUT_MS),
+    firstEventMs: readTimeoutMs("DOUBAO_FIRST_EVENT_TIMEOUT_MS", admin ? 12_000 : DEFAULT_FIRST_EVENT_TIMEOUT_MS),
+    idleMs: readTimeoutMs("DOUBAO_STREAM_IDLE_TIMEOUT_MS", admin ? 20_000 : DEFAULT_STREAM_IDLE_TIMEOUT_MS),
+    hardMs: readTimeoutMs("DOUBAO_HARD_TIMEOUT_MS", admin ? ADMIN_INGEST_HARD_TIMEOUT_MS : DEFAULT_HARD_TIMEOUT_MS)
   };
 }
 
@@ -560,18 +577,23 @@ function buildGptOSRouteInput(input: DoubaoAdminIngestInput) {
   };
 }
 
-function buildDoubaoVisibleSystemPrompt() {
+function buildDoubaoVisibleSystemPrompt(modelScope?: "admin-ingest") {
   return [
     "你是“小董AI投喂端”当前管理员明确选择的豆包模型。",
     "## 豆包专用可见正文协议",
-    "只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
+    modelScope === "admin-ingest"
+      ? "只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。"
+      : "请对当前问题进行高质量深度思考，但只把最终回答放入供应商返回的 content；reasoning_content 仅作为私有活动信号，不得展示、复述或混入最终正文。",
     "【最高优先级固定知识库约束】正文中的专业事实、专业流程、业务结论和示例话术只能来自当前 knowledgeContexts。",
     "最近对话、历史上下文、长期记忆、训练记录和附件只用于理解用户场景、对象与表达需求，不得作为专业依据，也不得补充 knowledgeContexts 中不存在的专业内容。",
     "如果其他上下文与当前 knowledgeContexts 冲突，必须以当前 knowledgeContexts 为唯一专业依据；不得跨 Agent、跨知识库或使用通用模型知识替代。",
     "准确保留管理员给出的事实，不要虚构经历、承诺结果或声称已执行外部动作。",
     "直接回答本轮问题；可按需要给出判断、引导思路、执行步骤和自然话术，但不要机械套固定模板。",
     "如果适合直接发给客户或沟通对象，可以给出“可直接复制”的自然话术。",
-    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
+    ...(modelScope === "admin-ingest" ? ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS : [
+      "只输出最终自然 Markdown 正文，不要输出 JSON、代码围栏、字段名、内部推理或后台元数据。",
+      "答案应完整、专业、温和、可执行；不要为了缩短生成时间而压缩、裁剪或省略有价值的最终内容。"
+    ])
   ].join("\n");
 }
 
@@ -612,9 +634,11 @@ function buildDoubaoVisibleUserPrompt(input: DoubaoAdminIngestInput, gptOS?: Gpt
     input.input,
     "",
     "## 唯一输出",
-    "请基于以上上下文直接输出用户可见的最终自然 Markdown 正文。",
+    input.modelScope === "admin-ingest"
+      ? "请基于以上上下文直接输出用户可见的最终自然 Markdown 正文。"
+      : "请基于以上上下文完成深度思考，并只输出用户可见的最终自然 Markdown 正文。",
     "不要输出 replyMarkdown 包装、JSON、knowledgeDraft、userClientCallPlan、suggestedQuestions 或 diagnostics。",
-    ...ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS
+    ...(input.modelScope === "admin-ingest" ? ADMIN_INGEST_VISIBLE_SLO_INSTRUCTIONS : [])
   ].join("\n");
 }
 
@@ -956,21 +980,35 @@ function parseDoubaoSseEvent(block: string, accumulator: DoubaoStreamAccumulator
 
 function readWithTimeout<T>(input: {
   promise: Promise<T>;
+  signal?: AbortSignal;
   timeoutMs: number;
   onTimeout: () => void;
   timeoutError: DoubaoIngestError;
 }) {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", onAbort);
+    };
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(input.signal?.reason || new DOMException("The operation was aborted.", "AbortError"));
+    };
     const timeout = setTimeout(() => {
       if (settled) {
         return;
       }
 
       settled = true;
+      cleanup();
       input.onTimeout();
       reject(input.timeoutError);
     }, input.timeoutMs);
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    if (input.signal?.aborted) onAbort();
 
     input.promise.then((value) => {
       if (settled) {
@@ -978,7 +1016,7 @@ function readWithTimeout<T>(input: {
       }
 
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
       resolve(value);
     }, (error: unknown) => {
       if (settled) {
@@ -986,13 +1024,14 @@ function readWithTimeout<T>(input: {
       }
 
       settled = true;
-      clearTimeout(timeout);
+      cleanup();
       reject(error);
     });
   });
 }
 
 async function collectDoubaoSseCompletion(input: {
+  modelScope?: "admin-ingest";
   response: Response;
   controller: AbortController;
   firstEventTimeoutMs: number;
@@ -1053,6 +1092,7 @@ async function collectDoubaoSseCompletion(input: {
 
       const chunk = await readWithTimeout({
         promise: reader.read(),
+        signal: input.controller.signal,
         timeoutMs: remainingTimeoutMs,
         onTimeout: () => input.controller.abort(),
         timeoutError: makeDoubaoTimeoutError(
@@ -1154,10 +1194,10 @@ async function collectDoubaoSseCompletion(input: {
       );
     }
 
-    if (!accumulator.done && accumulator.finishReason !== "stop") {
-      if (accumulator.content.trim() && accumulator.model) {
-        accumulator.finishReason = accumulator.finishReason || "length";
-      } else {
+    if (
+      (input.modelScope === "admin-ingest" && (!accumulator.done || accumulator.finishReason !== "stop"))
+      || (!accumulator.done && accumulator.finishReason !== "stop")
+    ) {
         throw new DoubaoIngestError(
           "DOUBAO_RESPONSE_PARSE_FAILED",
           "豆包流式返回提前结束，未保存不完整正文。",
@@ -1171,7 +1211,6 @@ async function collectDoubaoSseCompletion(input: {
             receivedChars: accumulator.content.length
           }
         );
-      }
     }
 
     if (!accumulator.model) {
@@ -1196,12 +1235,14 @@ async function collectDoubaoSseCompletion(input: {
       : abortReason instanceof DoubaoIngestError && abortReason.code === "DOUBAO_TIMEOUT"
         ? abortReason
         : null;
-    const timeoutWithVisibleBody = Boolean(timeoutError)
-      && Boolean(accumulator.content.trim())
-      && Boolean(accumulator.model);
-
-    if (timeoutWithVisibleBody) {
-      accumulator.finishReason = accumulator.finishReason || "length";
+    if (timeoutError) {
+      throw new DoubaoIngestError(timeoutError.code, timeoutError.message, {
+        ...timeoutError.details,
+        receivedContent: accumulator.content.length > 0,
+        receivedReasoning: accumulator.reasoningChars > 0,
+        reasoningChars: accumulator.reasoningChars,
+        receivedChars: accumulator.content.length
+      });
     } else if (
       error instanceof DoubaoIngestError
       || (error && typeof error === "object" && (error as { name?: string }).name === "AbortError")
@@ -1268,6 +1309,7 @@ async function collectDoubaoSseCompletion(input: {
 }
 
 async function callDoubaoStreaming(payload: {
+  modelScope?: "admin-ingest";
   apiKey: string;
   baseUrl: string;
   model: string;
@@ -1289,13 +1331,13 @@ async function callDoubaoStreaming(payload: {
     responseId?: string;
   }) => void;
 }) {
-  const timeouts = resolveDoubaoStreamTimeouts();
+  const timeouts = resolveDoubaoStreamTimeouts(payload.modelScope);
   const controller = new AbortController();
-  const forwardAbort = () => controller.abort();
+  const forwardAbort = () => controller.abort(payload.signal.reason);
   const requestStartedAtMs = Date.now();
 
   if (payload.signal.aborted) {
-    controller.abort();
+    controller.abort(payload.signal.reason);
   } else {
     payload.signal.addEventListener("abort", forwardAbort, { once: true });
   }
@@ -1325,6 +1367,7 @@ async function callDoubaoStreaming(payload: {
         signal: controller.signal,
         cache: "no-store"
       }),
+      signal: controller.signal,
       timeoutMs: timeouts.connectMs,
       onTimeout: () => controller.abort(),
       timeoutError: makeDoubaoTimeoutError("connect", false)
@@ -1364,7 +1407,8 @@ async function callDoubaoStreaming(payload: {
       }
     }
 
-    return collectDoubaoSseCompletion({
+    return await collectDoubaoSseCompletion({
+      modelScope: payload.modelScope,
       response,
       controller,
       firstEventTimeoutMs: timeouts.firstEventMs,
@@ -1425,6 +1469,7 @@ function waitForDoubaoRetry(delayMs: number, signal: AbortSignal) {
 }
 
 async function callDoubaoChatCompletions(input: {
+  modelScope?: "admin-ingest";
   chatCompletionsUrl: string;
   apiKey: string;
   model: string;
@@ -1464,10 +1509,12 @@ async function callDoubaoChatCompletions(input: {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       value = await runWithDoubaoRequestSlot({
+        modelScope: input.modelScope,
         phase: input.phase,
         signal: input.signal,
         onProgressEvent: input.onProgressEvent,
         task: () => callDoubaoStreaming({
+          modelScope: input.modelScope,
           apiKey: input.apiKey,
           baseUrl: input.chatCompletionsUrl,
           model: input.model,
@@ -1475,7 +1522,7 @@ async function callDoubaoChatCompletions(input: {
           temperature: input.temperature ?? 0.7,
           maxTokens: input.maxTokens ?? DEFAULT_VISIBLE_MAX_TOKENS,
           signal: input.signal,
-          enableThinking: false,
+          enableThinking: input.modelScope !== "admin-ingest" && reasoningPhase !== null,
           visiblePrefix: input.visiblePrefix,
           onReasoningActivity: reasoningPhase
             ? (event) => {
@@ -1534,8 +1581,17 @@ async function callDoubaoChatCompletions(input: {
     throw new DoubaoIngestError("DOUBAO_REQUEST_FAILED", "豆包请求未返回结果。");
   }
 
+  const parsed = parseDoubaoPayload(value, input.model);
+  if (input.modelScope === "admin-ingest" && parsed.finishReason !== "stop") {
+    throw new DoubaoIngestError("DOUBAO_RESPONSE_PARSE_FAILED", "豆包返回未完整结束，请使用同模型重试。", {
+      receivedContent: parsed.text.length > 0,
+      parseStage: "finish_reason",
+      finishReason: parsed.finishReason,
+      receivedChars: parsed.text.length
+    });
+  }
   return {
-    ...parseDoubaoPayload(value, input.model),
+    ...parsed,
     retryCount,
     responseLatency: Date.now() - startedAt,
     circuitBreaker: "not_used" as const
@@ -1822,6 +1878,7 @@ async function runDoubaoMetadataPhase(input: {
 
   for (let structureAttempt = 0; structureAttempt < input.maxStructureAttempts; structureAttempt += 1) {
     const response = await callDoubaoChatCompletions({
+      modelScope: input.ingestInput.modelScope,
       chatCompletionsUrl: input.config.chatCompletionsUrl,
       apiKey: input.config.apiKey,
       model: input.config.model,
@@ -1910,9 +1967,11 @@ async function runDoubaoVisiblePhase(input: {
   gptOS: GptOSRouteResult;
   signal: AbortSignal;
 }) {
-  const systemPrompt = buildDoubaoVisibleSystemPrompt();
+  const systemPrompt = buildDoubaoVisibleSystemPrompt(input.ingestInput.modelScope);
   const userPrompt = buildDoubaoVisibleUserPrompt(input.ingestInput, input.gptOS);
-  const response = await callDoubaoChatCompletions({
+  const scopedAdmin = input.ingestInput.modelScope === "admin-ingest";
+  let response = await callDoubaoChatCompletions({
+    modelScope: input.ingestInput.modelScope,
     chatCompletionsUrl: input.config.chatCompletionsUrl,
     apiKey: input.config.apiKey,
     model: input.config.model,
@@ -1922,42 +1981,70 @@ async function runDoubaoVisiblePhase(input: {
     phase: "visible",
     visiblePrefix: "",
     onProgressEvent: input.ingestInput.onProgressEvent,
-    maxTokens: DEFAULT_VISIBLE_MAX_TOKENS
+    maxTokens: scopedAdmin ? ADMIN_INGEST_VISIBLE_MAX_TOKENS : DEFAULT_VISIBLE_MAX_TOKENS
   });
-  const replyMarkdown = response.text;
-  const truncated = response.finishReason === "length";
+  const responses = [response];
+  let replyMarkdown = response.text;
+  // Frozen user callers retain their existing same-model continuation protocol.
+  for (let continuation = 0; !scopedAdmin && response.finishReason === "length" && continuation < 2; continuation += 1) {
+    if (!replyMarkdown.trim()) break;
+    const nextResponse = await callDoubaoChatCompletions({
+      modelScope: input.ingestInput.modelScope,
+      chatCompletionsUrl: input.config.chatCompletionsUrl,
+      apiKey: input.config.apiKey,
+      model: input.config.model,
+      systemPrompt,
+      userPrompt,
+      assistantPrefix: replyMarkdown.length > 12_000 ? replyMarkdown.slice(-MAX_CONTINUATION_PREFIX_CHARS) : replyMarkdown,
+      continuationInstruction: replyMarkdown.length > 12_000
+        ? "你收到的是已生成正文的最后一段衔接内容。上一段 Markdown 因输出长度结束，请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。"
+        : "上一段 Markdown 因输出长度结束。请从最后一个字符之后继续，只输出缺失的正文；不要重复、不要总结、不要输出 JSON 或后台字段。",
+      signal: input.signal,
+      phase: "continuation",
+      visiblePrefix: replyMarkdown,
+      onProgressEvent: input.ingestInput.onProgressEvent,
+      maxTokens: 4_000
+    });
+    if (nextResponse.model !== response.model) {
+      throw new DoubaoIngestError("DOUBAO_RESPONSE_PARSE_FAILED", "豆包续写返回的模型标识不一致。", {
+        receivedContent: true, parseStage: "model_identity", receivedChars: replyMarkdown.length
+      });
+    }
+    replyMarkdown += nextResponse.text;
+    response = nextResponse;
+    responses.push(nextResponse);
+  }
 
-  if (!replyMarkdown.trim()) {
+  if (!replyMarkdown.trim() || response.finishReason === "length" || (scopedAdmin && response.finishReason !== "stop")) {
     throw new DoubaoIngestError(
       "DOUBAO_RESPONSE_PARSE_FAILED",
-      "豆包未返回可见正文。",
+      replyMarkdown.trim() ? "豆包正文未完整结束，请使用同模型重试。" : "豆包未返回可见正文。",
       {
-        receivedContent: false,
-        parseStage: "reply_json",
+        receivedContent: Boolean(replyMarkdown),
+        parseStage: replyMarkdown.trim() ? "finish_reason" : "reply_json",
         finishReason: response.finishReason,
-        receivedChars: 0
+        receivedChars: replyMarkdown.length
       }
     );
   }
 
   return {
-    primary: response,
+    primary: responses[0],
     final: response,
     replyMarkdown,
-    truncated,
-    continuationCount: 0,
-    usage: response.usage,
-    responseLatency: response.responseLatency,
-    retryCount: response.retryCount,
-    reasoningChars: response.reasoningChars,
-    firstReasoningLatencyMs: response.firstReasoningLatencyMs,
-    firstContentLatencyMs: response.firstContentLatencyMs,
-    streamEventCount: response.streamEventCount
+    continuationCount: responses.length - 1,
+    usage: mergeDoubaoUsage(...responses.map((item) => item.usage)),
+    responseLatency: responses.reduce((total, item) => total + item.responseLatency, 0),
+    retryCount: responses.reduce((total, item) => total + item.retryCount, 0),
+    reasoningChars: responses.reduce((total, item) => total + item.reasoningChars, 0),
+    firstReasoningLatencyMs: responses[0]?.firstReasoningLatencyMs,
+    firstContentLatencyMs: responses[0]?.firstContentLatencyMs,
+    streamEventCount: responses.reduce((total, item) => total + item.streamEventCount, 0)
   };
 }
 
 export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promise<DoubaoAdminIngestResult> {
-  const { hardMs } = resolveDoubaoStreamTimeouts();
+  const { hardMs } = resolveDoubaoStreamTimeouts(input.modelScope);
   const controller = new AbortController();
   let hardTimeoutReached = false;
   let clientAbortReached = input.signal?.aborted === true;
@@ -2004,8 +2091,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
       replyMarkdown,
       model: response.model,
       responseId: response.responseId,
-      metadataPending: true,
-      truncated: visiblePhase.truncated === true
+      metadataPending: true
     });
     input.onProgressEvent?.({
       type: "metadata_status",
@@ -2023,6 +2109,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
     } else {
       try {
         metadataResponse = await callDoubaoChatCompletions({
+          modelScope: input.modelScope,
           chatCompletionsUrl: resolved.chatCompletionsUrl,
           apiKey: resolved.apiKey,
           model: resolved.model,
@@ -2185,8 +2272,7 @@ export async function runDoubaoAdminIngest(input: DoubaoAdminIngestInput): Promi
         `apiResilience:responseLatency:${visiblePhase.responseLatency + (metadataResponse?.responseLatency ?? 0)}`,
         `apiResilience:circuitBreaker:${response.circuitBreaker}`,
         "doubao:replyMarkdownPassthrough:true",
-        "doubao:thinkingEnabled:false",
-        `doubao:visibleTruncated:${visiblePhase.truncated ? "true" : "false"}`,
+        `doubao:thinkingEnabled:${input.modelScope === "admin-ingest" ? "false" : "true"}`,
         "doubao:visiblePromptProfile:focused-v1",
         `doubao:reasoningActivityChars:${visiblePhase.reasoningChars}`,
         `doubao:firstReasoningLatencyMs:${visiblePhase.firstReasoningLatencyMs ?? -1}`,

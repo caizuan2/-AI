@@ -183,7 +183,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   const providerSignal = input.signal;
   const deepSeekProgressEvent = input.onProgressEvent;
   const doubaoProgressEvent = (input as DoubaoAdminIngestInput).onProgressEvent;
-  const replyOnly = input.replyOnly === true;
+  const replyOnly = input.modelScope === "admin-ingest" && input.replyOnly === true;
   const deferDoubaoMetadata = (input as DoubaoAdminIngestInput).deferMetadata || replyOnly;
   const baseInput = { ...input };
   const actualModel = resolveScopedActualModel(provider, input.modelScope);
@@ -212,6 +212,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   if (provider === "deepseek-pro" || provider === "deepseek-flash") {
     return runDeepSeekAdminIngest({
       ...payload,
+      modelScope: input.modelScope,
       modelProvider: provider,
       signal: providerSignal,
       onProgressEvent: deepSeekProgressEvent,
@@ -228,6 +229,7 @@ async function runProvider(provider: ModelType, input: AdminIngestModelInput, pr
   if (provider === "doubao-pro") {
     return runDoubaoAdminIngest({
       ...payload,
+      modelScope: input.modelScope,
       signal: providerSignal,
       onProgressEvent: doubaoProgressEvent,
       deferMetadata: deferDoubaoMetadata
